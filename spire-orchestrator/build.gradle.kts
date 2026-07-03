@@ -24,6 +24,9 @@ val quarkusPlatformVersion: String by project
 dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
+    implementation(project(":spire-diff"))
+    implementation(project(":spire-scm-bitbucket"))
+    implementation(project(":spire-llm"))
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-websockets-next")
@@ -35,6 +38,7 @@ dependencies {
 
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
+    testImplementation("org.wiremock:wiremock:3.9.1")
 }
 
 tasks.test {

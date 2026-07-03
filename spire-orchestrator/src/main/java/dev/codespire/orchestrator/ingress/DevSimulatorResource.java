@@ -20,11 +20,13 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Phase 0 stand-in for the real Bitbucket webhook ingress (spire-gateway, P1):
- * emits an OBVIOUSLY-SYNTHETIC PullRequestEventReceived so the pipeline can be
- * exercised end-to-end. All values are self-labeling test data — no real repo,
- * author, or commit is referenced.
+ * Dev/test stand-in for the real webhook ingress: emits an OBVIOUSLY-SYNTHETIC
+ * PullRequestEventReceived so the pipeline can be exercised end-to-end. All
+ * values are self-labeling test data — no real repo, author, or commit.
+ * EXCLUDED from prod builds (rules-compliance note: synthetic events must not
+ * be injectable into a production pipeline).
  */
+@io.quarkus.arc.profile.UnlessBuildProfile("prod")
 @Path("/dev/simulate-pr")
 public class DevSimulatorResource {
 

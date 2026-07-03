@@ -40,10 +40,13 @@ Resolves edge cases the async / at-least-once design creates. Decided defaults:
   the bot's own `providerUserId`. Without this, the bot's follow-up comment fires
   `comment_created` and it answers itself forever.
 - **Comment idempotency (non-idempotent side effect).** Posting a comment is not idempotent, and
-  `consumed_event` dedups *consumption*, not the external effect. Before posting, the worker records
-  an idempotency key `(reviewId, commit, anchorKey)`; on retry it **reconciles** by listing existing
-  bot comments for the PR/commit and skips already-posted ones. `CommentsPosted` carries the posted
-  comment ids so a crash-after-post reconciles instead of duplicating.
+  `consumed_event` dedups *consumption*, not the external effect. Implemented semantics (P1): the
+  worker CLAIMS `(reviewId, commit, anchorKey)` before posting and stores the comment id after; a
+  row **with** a comment id is final proof-of-post (skipped forever, id reused to reconstruct
+  `CommentsPosted` on redelivery); a row **without** one is a crashed claim and is **reclaimable**
+  — the retry re-posts rather than silently losing the comment (one duplicate possible only in the
+  narrow posted-but-not-marked crash window; at-least-once preferred over loss). Stronger
+  reconcile-by-listing-bot-comments remains the escalation if that window ever matters.
 - **Stale-run pre-check (not just discard).** Before the expensive `GenerateReview` LLM call and
   before `PostComments`, the worker checks the aggregate's current commit; if the run's commit is no
   longer current, it abandons — **no LLM spend, no stale comment on an old commit**.

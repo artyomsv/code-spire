@@ -12,4 +12,7 @@ pluginManagement {
 rootProject.name = "code-spire"
 
 include("spire-contract")
+include("spire-diff")
+include("spire-scm-bitbucket")
+include("spire-llm")
 include("spire-orchestrator")

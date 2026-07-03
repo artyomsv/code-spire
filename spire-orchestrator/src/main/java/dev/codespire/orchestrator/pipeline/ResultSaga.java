@@ -38,7 +38,7 @@ public class ResultSaga {
     Emitter<ActionCommand> commands;
 
     @Inject
-    StubWorkers.PrRegistry registry;
+    PrRegistry registry;
 
     @Incoming("results")
     @Blocking

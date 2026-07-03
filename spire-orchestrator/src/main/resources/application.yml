@@ -8,8 +8,21 @@ quarkus:
   flyway:
     migrate-at-start: true
 
-# Dev: docker-compose Postgres. Credentials come from .env (Quarkus loads it
-# from the project root) — NO defaults for credentials, fail fast if unset.
+# Provider selection — NO defaults outside dev/test (ADR-001 fail-fast):
+# the operator explicitly chooses the SCM and the LLM and brings the keys.
+# Credentials/keys are NOT declared here at all (secrets rule: no fallback
+# expressions): the producers read spire.scm.bitbucket.* / spire.llm.* which
+# map canonically from env vars (SPIRE_SCM_BITBUCKET_BOT_APP_PASSWORD etc.,
+# see .env.example) and fail startup naming the exact missing key.
+spire:
+  scm:
+    provider: ${SPIRE_SCM_PROVIDER}         # stub | bitbucket-cloud
+  llm:
+    provider: ${SPIRE_LLM_PROVIDER}         # stub | openai-compatible
+
+# Dev: docker-compose Postgres + stub providers so the dashboard demo runs
+# with zero external dependencies. Credentials come from .env (Quarkus loads
+# it from the project root) — NO defaults for credentials, fail fast if unset.
 "%dev":
   quarkus:
     datasource:
@@ -17,9 +30,19 @@ quarkus:
       password: ${POSTGRES_PASSWORD}
       jdbc:
         url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
+  spire:
+    scm:
+      provider: ${SPIRE_SCM_PROVIDER:stub}
+    llm:
+      provider: ${SPIRE_LLM_PROVIDER:stub}
 
 # Test: no URL configured -> Quarkus DevServices boots a Testcontainers Postgres.
 "%test":
   quarkus:
     http:
       port: 0
+  spire:
+    scm:
+      provider: stub
+    llm:
+      provider: stub

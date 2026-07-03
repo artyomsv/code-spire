@@ -24,14 +24,27 @@ The design is fully specified in `docs/` — **treat those files as the source o
 ## Status (keep current)
 
 - **Phase 0 delivered:** `spire-contract` (pure domain lib: events, commands, hand-rolled
-  Decider/View/Saga, SPI ports, `ReviewLifecycle` decider + 13 GWT tests) and `spire-orchestrator`
+  Decider/View/Saga, SPI ports, `ReviewLifecycle` decider + GWT tests) and `spire-orchestrator`
   (single-process pipeline over SmallRye in-memory channels, Postgres event store with optimistic
-  concurrency, stub workers with the ADR-013 stale-run pre-check, live WebSocket timeline dashboard).
-  Exit criterion green: `PipelineSmokeTest` drives a synthetic PR to `ReviewCompleted`.
-- **Next (P1):** split into `spire-gateway`/`spire-orchestrator`/`spire-review-worker` over Redpanda;
-  port PR-Agent's diff/token algorithms + prompts into `spire-diff` (source reference:
-  `qodo-ai/pr-agent`, Apache-2.0); real Bitbucket Cloud adapter (`ScmIngress`/`DiffSource`/
-  `CommentSink`); one LangChain4j `LlmProvider`; Tink encryption of event payloads.
+  concurrency, live WebSocket timeline dashboard).
+- **Phase 1 feature delivered (single-process):** `spire-diff` (unified-diff parser with dual line
+  numbers, token clip, prompt renderer, anchor resolver — ported semantics from qodo-ai/pr-agent),
+  `spire-scm-bitbucket` (real Bitbucket Cloud `ScmIngress` with HMAC verify + bot-drop + /command
+  parse, `DiffSource`, `CommentSink` per SCM-MAPPING), `spire-llm` (LangChain4j OpenAI-compatible
+  `LlmProvider`, injection-fenced review prompt, lenient findings parser), orchestrator wiring
+  (`/webhooks/bitbucket` returning 202, real `ReviewWorker` with comment_idempotency
+  insert-before-post + stale-run pre-check, provider selection `spire.scm.provider` /
+  `spire.llm.provider` — stub for dev/test, fail-fast in prod). Exit criterion green:
+  `BitbucketWebhookE2ETest` — signed webhook → real adapters (WireMock Bitbucket) → inline+summary
+  posted exactly once, duplicate delivery posts nothing.
+- **Phase 1 code-reviewed:** 4-agent review (security-officer, code-reviewer, rules-compliance, qa);
+  all 15 findings fixed — recovery-aware comment idempotency (reclaimable NULL claims + id reuse),
+  per-finding post isolation + retryable classification, PR-head re-check before LLM/post,
+  prompt-fence sentinel neutralization, host-pinned redirects, HTML-escaped model output, unordered
+  dispatcher. Semgrep clean. **86 tests green** across 17 suites (incl. webhook E2E + idempotency
+  integration). Two LOW items tracked in `techdebt/`.
+- **Still pending from P1 scope:** the physical service split over Redpanda; Tink event-payload
+  encryption; SmallRye Fault Tolerance retry budgets; cost table for `ModelUsage.costMillicents`.
 
 ## Build & run
 
