@@ -1,0 +1,25 @@
+quarkus:
+  application:
+    name: spire-orchestrator
+  http:
+    port: ${APP_HTTP_PORT:34080}   # host-exposed port lives in the 34xxx project range
+  datasource:
+    db-kind: postgresql
+  flyway:
+    migrate-at-start: true
+
+# Dev: docker-compose Postgres. Credentials come from .env (Quarkus loads it
+# from the project root) — NO defaults for credentials, fail fast if unset.
+"%dev":
+  quarkus:
+    datasource:
+      username: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      jdbc:
+        url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
+
+# Test: no URL configured -> Quarkus DevServices boots a Testcontainers Postgres.
+"%test":
+  quarkus:
+    http:
+      port: 0

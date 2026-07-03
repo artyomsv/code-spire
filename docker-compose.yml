@@ -1,0 +1,28 @@
+# Local development infrastructure for Code Spire (Phase 0: Postgres only;
+# Redpanda arrives with the Phase 1 service split, Keycloak/MinIO with P2).
+# Copy .env.example -> .env first. Host ports live in the 34xxx project range.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: spire-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    ports:
+      - "${POSTGRES_PORT:-34432}:5432"
+    volumes:
+      - spire-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  spire-pgdata:

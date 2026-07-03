@@ -1,0 +1,26 @@
+// Pure domain library: events, commands, value types, ports, and the
+// ReviewLifecycle decider. NO infrastructure dependencies (no Quarkus) —
+// deciders/views/sagas are pure functions, unit-tested without a runtime.
+plugins {
+    `java-library`
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation(platform("org.junit:junit-bom:5.12.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}

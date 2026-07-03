@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Code Spire - Phase 0 timeline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{--bg:#0b0e15;--panel:#141926;--ink:#e9ecf2;--soft:#9aa3b8;--line:#232a3d;
+    --integration:#9aa3b8;--command:#4a90d9;--domain:#e5555a;--result:#e8a44c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--soft);font-size:13px;margin:0 0 20px}
+  .bar{display:flex;gap:12px;align-items:center;margin-bottom:16px}
+  button{background:var(--command);border:none;color:#fff;font-size:14px;font-weight:600;
+    padding:9px 16px;border-radius:8px;cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  #status{font-size:12px;color:var(--soft)}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--soft);margin-bottom:10px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+  #log{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:8px 0;max-height:65vh;overflow-y:auto;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:12.5px}
+  .row{display:grid;grid-template-columns:70px 96px 220px 1fr;gap:10px;padding:5px 14px;
+    border-left:3px solid transparent}
+  .row:hover{background:rgba(255,255,255,.03)}
+  .t{color:var(--soft)}
+  .lane-integration{border-left-color:var(--integration)}.lane-integration .k{color:var(--integration)}
+  .lane-command{border-left-color:var(--command)}.lane-command .k{color:var(--command)}
+  .lane-domain{border-left-color:var(--domain)}.lane-domain .k{color:var(--domain)}
+  .lane-result{border-left-color:var(--result)}.lane-result .k{color:var(--result)}
+  .rid{color:var(--soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .done{color:#46a758;font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Code Spire &mdash; live event timeline</h1>
+  <p class="sub">Phase 0 operator view (FR-8 initial). Fire a synthetic PR and watch the
+    review pipeline flow: integration &rarr; command &rarr; domain &rarr; result.</p>
+  <div class="bar">
+    <button id="fire">Simulate PR</button>
+    <span id="status">connecting&hellip;</span>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--integration)"></span>integration</span>
+    <span><span class="dot" style="background:var(--command)"></span>command</span>
+    <span><span class="dot" style="background:var(--domain)"></span>domain event</span>
+    <span><span class="dot" style="background:var(--result)"></span>worker result</span>
+  </div>
+  <div id="log"></div>
+</div>
+<script>
+  const log = document.getElementById('log');
+  const status = document.getElementById('status');
+
+  function row(e) {
+    const div = document.createElement('div');
+    div.className = 'row lane-' + e.lane;
+    const at = new Date(e.at).toLocaleTimeString();
+    const typeCls = e.type === 'ReviewCompleted' ? 'k done' : 'k';
+    div.innerHTML = '<span class="t">' + at + '</span>' +
+      '<span class="t">' + e.lane + '</span>' +
+      '<span class="' + typeCls + '">' + e.type + '</span>' +
+      '<span class="rid">' + (e.reviewId || '') + (e.detail ? ' &middot; ' + e.detail : '') + '</span>';
+    log.prepend(div);
+  }
+
+  function connect() {
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/timeline');
+    ws.onopen = () => { status.textContent = 'live'; };
+    ws.onmessage = (m) => {
+      const data = JSON.parse(m.data);
+      if (Array.isArray(data)) { log.innerHTML = ''; data.forEach(row); } else { row(data); }
+    };
+    ws.onclose = () => { status.textContent = 'reconnecting…'; setTimeout(connect, 1500); };
+  }
+  connect();
+
+  document.getElementById('fire').onclick = async () => {
+    const r = await fetch('/dev/simulate-pr', { method: 'POST' });
+    const body = await r.json();
+    status.textContent = 'fired ' + body.reviewId;
+  };
+</script>
+</body>
+</html>

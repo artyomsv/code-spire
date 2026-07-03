@@ -1,0 +1,319 @@
+# Decisions
+
+Architecture decision records for Code Spire. Newest first.
+
+---
+
+## ADR-014 — Kafka at-rest posture: no app-layer Tink on the bus (v1)
+
+**Context.** Source-quoting review output (`ReviewGenerated.findings[].message/suggestion`,
+`FollowUpGenerated.answerText`) rides **inline** on `cs.results` (ADR-011), and Kafka/Redpanda brokers
+persist topic messages to disk for the retention window — so this data rests on the broker in a form
+the app does not encrypt. Three stated goals collide: (1) ADR-011 findings-inline; (2) the "source
+never rests in cleartext" bar; (3) the KEK blast radius (workers are plaintext-only, no KEK). Only two
+can hold as written.
+
+**Decision (v1): accept + infrastructure-encrypt.** App-layer Tink is **not** applied to bus payloads.
+The broker boundary is covered instead by:
+- **Short retention on `cs.results`** (hours, not days — it is a work queue, not the source of truth;
+  the durable copies are the encrypted event log, the encrypted `review_finding` table, and the PR
+  itself).
+- **Broker disk/volume encryption** (LUKS/cloud-disk encryption on Redpanda/Kafka data dirs) — a
+  deployment requirement documented for self-hosters.
+- Transport stays SASL/mTLS (SECURITY).
+
+This keeps findings small on the bus (ADR-011 intact) and keeps the KEK held by exactly two services
+(ADR-013/SECURITY intact), at the cost of scoping the "never rests in cleartext" guarantee to
+**application-managed stores** (Postgres, MinIO) — now stated honestly in SECURITY.md.
+
+**Escalation path** if a stricter threat model ever demands app-layer encryption everywhere: move
+findings off the bus behind an encrypted blob ref (reversing ADR-011's inline choice) — option noted,
+not taken for v1.
+
+---
+
+## ADR-013 — Operational & distributed-systems guards (correctness before scaffolding)
+
+Resolves edge cases the async / at-least-once design creates. Decided defaults:
+
+- **Ignore bot-authored events (self-loop).** `ScmIngress` drops any webhook whose actor ==
+  the bot's own `providerUserId`. Without this, the bot's follow-up comment fires
+  `comment_created` and it answers itself forever.
+- **Comment idempotency (non-idempotent side effect).** Posting a comment is not idempotent, and
+  `consumed_event` dedups *consumption*, not the external effect. Before posting, the worker records
+  an idempotency key `(reviewId, commit, anchorKey)`; on retry it **reconciles** by listing existing
+  bot comments for the PR/commit and skips already-posted ones. `CommentsPosted` carries the posted
+  comment ids so a crash-after-post reconciles instead of duplicating.
+- **Stale-run pre-check (not just discard).** Before the expensive `GenerateReview` LLM call and
+  before `PostComments`, the worker checks the aggregate's current commit; if the run's commit is no
+  longer current, it abandons — **no LLM spend, no stale comment on an old commit**.
+- **Cancellation.** Only **PR close/merge/decline** (and operator actions) emit `CancelReview{reviewId}`;
+  in-flight workers check cooperatively at each stage boundary (best-effort cancel of the LLM call).
+  **Supersede does NOT emit `CancelReview`** — it is fully handled by the workers' stale-run pre-check.
+  (A supersede-triggered cancel would be a bug: by the time it reached the aggregate, `currentCommit`
+  is already the new commit, so the unconditional REVIEWING→CANCELLED row would kill the new run.)
+- **PR closed/merged/declined.** `ScmIngress` translates close events → `PullRequestClosed`; a saga
+  cancels any in-flight review and halts further stages.
+- **Forced re-review.** `RequestReview{force}` bypasses the reviewed-commit idempotency; a human
+  `/review` command sets `force=true`.
+- **Head-SHA identity & 12-char expansion.** The idempotency/supersede key uses the provider's head
+  identifier **as delivered** (Bitbucket's 12-char short hash is a stable, repo-unique prefix). The
+  40-char SHA is expanded **only in the worker** when an outbound API needs it (GitHub `commit_id`) —
+  never in the gateway, preserving the "ingress returns 202, no processing" rule.
+- **Aggregator timer ownership.** Context aggregation for a `reviewId` is owned by the single
+  consumer of that `reviewId`'s Kafka partition; the completeness timeout is a **DB-backed scheduled
+  sweep** keyed by `reviewId` (survives rebalance/restart), not an in-memory timer.
+- **Retry / resilience budgets** (SmallRye Fault Tolerance) per external-call class: SCM read/write
+  10s timeout, 3 retries w/ exp backoff + jitter, circuit breaker; LLM 60s timeout, 1 retry then the
+  provider-fallback saga (cost-aware — no retry storms on a paid call); context providers time-boxed
+  by the 20s aggregator. Budget exhausted → `cs.dlq` + `ReviewFailed`, surfaced on the dashboard with
+  a replay action (FR-8) — "in the DLQ" never means silently dropped.
+- **Truncated-diff behavior — never silent.** If `Diff.truncated`/`FilePatch.tooLarge`, the summary
+  comment states which files / how many lines were not fully reviewed.
+- **Cross-service schema compatibility.** `spire-contract` events get round-trip + snapshot tests in
+  CI; a compat-gate fails the build on a breaking change lacking an `eventVersion` bump + upcaster.
+  A schema registry is considered post-v1.
+- **Bitbucket description quirk.** The gateway forwards the webhook's raw description; the worker
+  (already calling Bitbucket for the diff) fetches the authoritative PR resource when the rendered
+  markdown description is needed — no extra call in the gateway.
+
+LLM-specific threats (prompt injection, output sanitization, untrusted retrieved content) and
+cost/abuse caps are in SECURITY.md.
+
+---
+
+## ADR-012 — Provider-neutral SCM model, verified against 4 real APIs
+
+**Decision:** the canonical SCM value types are a true common denominator across Bitbucket Cloud, GitHub,
+GitLab, and Bitbucket DC — verified against their official API docs, not assumed. Key shapes:
+- **`Author{providerUserId, username, displayName, email?}`** — key on the stable `providerUserId`
+  (never the mutable username); `email` optional (only Bitbucket DC exposes it), never logged/persisted.
+- **`DiffRefs{baseSha, startSha, headSha}`** on the PR — GitLab *requires all three* to anchor an inline
+  comment; GitHub uses `headSha` as `commit_id`; Bitbucket needs none. Carry all; populate what's given.
+- **`DiffLine{type, oldLine, newLine, content}`** — every diff line carries BOTH line numbers; this is
+  what lets one `InlineAnchor` map to every provider's anchoring scheme.
+- **`ThreadRef` is opaque** — a comment id for Bitbucket/GitHub/DC, a *discussion_id* for GitLab
+  (GitLab threads are discussions, not comment chains).
+- **`ScmIngress.verifySignature` is per-provider** — HMAC-SHA256 for GitHub/Bitbucket, a constant-time
+  static-token compare for GitLab (`X-Gitlab-Token`, not HMAC).
+
+**Why:** inline-comment anchoring + threading diverge hard across providers; modelling top-down from
+Bitbucket would have broken GitLab (mandatory SHAs, discussion threading) and needed rework for
+GitHub/DC. Verifying first means the plugin-first "any SCM" promise is real, not aspirational.
+
+Full per-provider field mappings + quirks + sources: **SCM-MAPPING.md**.
+
+---
+
+## ADR-011 — Data model: no diff persistence, S3/MinIO for transient blobs, schema-per-service
+
+**Decisions (reviewed):**
+1. **Diffs are never persisted** — re-fetched from Bitbucket by `(repo, commit)`; `DiffFetched` carries
+   metadata only. Minimizes stored source (a liability) and keeps replay correct.
+2. **Object store = S3-compatible (MinIO self-host)** from v1 — not Postgres blobs — to avoid a later
+   migration. Holds only **transient assembled-context**, client-side Tink-encrypted, TTL auto-deleted.
+   Behind a `BlobStore` port (swappable to AWS S3 / GCS).
+3. **One Postgres, schema-per-service** for v1 (logical ownership, simpler ops).
+4. **Snapshots deferred** until streams grow.
+5. **Findings** ride inline in `ReviewGenerated` (small) and are projected to a `review_finding`
+   read-model table (encrypted message/suggestion) — not stored as blobs.
+6. **`spire-ui` owns the dashboard read models** (status/thread/finding/event); the context-aggregation
+   view lives in `spire-context-worker`. No dedicated projection service.
+
+See DATA-MODEL.md.
+
+---
+
+## ADR-010 — Contract conventions: single-writer aggregate, integration-vs-domain events, reviewId keying
+
+**Decision:** (1) The `ReviewLifecycle` aggregate is the **sole writer** of its domain-event stream;
+workers never append to aggregate streams — they emit *integration* result events that sagas translate
+into Record commands. (2) Two explicit event kinds: **integration events** (boundary/ingress/worker
+results) vs **domain events** (aggregate-sourced source of truth). (3) Everything is keyed by
+`reviewId` (= one aggregate per PR) for strict per-PR ordering. (4) The aggregate holds only
+decision-relevant state (idempotency + completion); fine-grained progress lives in read models. (5)
+Large blobs (diff, findings, context) are stored encrypted and referenced by id; events stay small.
+
+**Why:** single-writer gives clean optimistic concurrency; the integration/domain split keeps the
+aggregate pure while allowing async workers; reviewId keying makes ordering trivial; small events keep
+Kafka healthy and avoid putting source code on the bus in cleartext. See CONTRACT.md.
+
+**Confirmed facts:** SCM target = **Bitbucket Cloud** (`api.bitbucket.org/2.0`, App Password, signed
+webhooks). Local dev = **docker-compose** (Redpanda + Postgres + Keycloak).
+
+---
+
+## ADR-009 — Clean-room, OSS-standard security (no private-code reuse)
+
+**Decision:** Code Spire depends only on public building blocks. The private monorepo
+(`encryption-common`, Keycloak config) is **design reference only — zero code copied**.
+
+**Why:** Code Spire is public OSS that strangers self-host; it cannot ship private artifacts (users
+don't have them), and copying private code into a public repo relicenses IP and risks leaking secrets
+(Keycloak realm exports contain client secrets/redirect URIs). Reuse the *patterns*, not the *code*.
+
+**The stack:**
+- **Encryption at rest:** Google Tink (AES-GCM envelope, key ids + rotation), field-level via a JPA
+  `AttributeConverter`. **Event payloads are encrypted** because findings/context items may quote source code (diffs themselves are never stored — ADR-011) —
+  not just token columns.
+- **Human auth:** `quarkus-oidc`, provider-pluggable (Keycloak recommended, not required); auth-code + PKCE.
+- **RBAC:** roles `spire-viewer` / `spire-admin` via `@RolesAllowed`.
+- **Webhook:** HMAC + source allow-list (machine, no OIDC).
+- **Service→service:** OAuth2 client-credentials for REST; Kafka SASL/mTLS for the bus (most traffic).
+- **Secrets:** env / K8s Secret / Vault, never in image.
+
+**Later:** if a piece (likely encryption) proves broadly reusable, extract it to its *own* public
+library under Apache-2.0 that both the monorepo and Code Spire depend on. See SECURITY.md.
+
+---
+
+## ADR-008 — Microservices (revised; supersedes the earlier modular-monolith call)
+
+**Decision:** Multiple independently-deployable Quarkus services over a **Kafka** event backbone:
+`spire-gateway`, `spire-orchestrator`, `spire-review-worker`, `spire-context-worker`,
+`spire-indexer` (P3), `spire-ui`, + shared `spire-contract` lib. Kafka is a **v1 dependency**.
+
+**Why (revised):** the earlier modulith call assumed building the platform from scratch. The author
+runs a mature Maven microservice platform (Keycloak, gateways, devops) and prefers this topology as
+the primary supported deployment — the fixed cost of another service is already paid, and the
+event-driven design maps naturally onto per-service choreography.
+
+**Consequences:** a durable broker is required from day one (Kafka/Redpanda; in-memory connector kept
+for dev/test). `spire-orchestrator` owns the event store; workers are stateless consumers/producers.
+Per-service durability via transactional-outbox → Kafka → idempotent consumers (at-least-once).
+Heavier for external adopters — accepted as an explicit choice (ADR-006 is personal/OSS but the author
+optimizes for their own topology; simplicity for strangers is secondary).
+
+**Note:** the original modulith rationale (trivial one-container run) still stands as a *possible*
+future "all-in-one" packaging if broad adoption ever makes it worthwhile — not pursued now.
+
+**Build sequencing (refinement).** Separate services cannot talk over the SmallRye *in-memory*
+connector (it doesn't cross process boundaries), so **Phase 0 runs all modules in one process** (the
+in-memory connector as a dev/test harness) to prove the pipeline; **Phase 1+ split into the `spire-*`
+deployables over Redpanda/Kafka.** The **target topology stays microservices** — only the build order
+is modulith-first, which also de-risks single-process timers and idempotency before Kafka is added.
+Modules are written behind the ports from day one so the split is a wiring change, not a rewrite.
+
+---
+
+## ADR-007 — Event store: Postgres for v1; KurrentDB as an optional adapter, not the default
+
+**Decision:** v1 uses an append-only **Postgres** table behind an `EventStore` port. **KurrentDB**
+(the rebranded EventStoreDB, first release under the new name = KurrentDB 25.0, 2025) is kept as a
+*possible pluggable adapter*, not a hard dependency.
+
+**Why not KurrentDB as the default, despite the best technical fit:** KurrentDB is event-native
+(streams, append-with-expected-version, catch-up subscriptions, `$all`, projections) with an official
+Java SDK — genuinely the most purpose-built option. **But since v24.10 it is licensed under Event
+Store License v2 (ESLv2), a variant of the Elastic License v2 — explicitly NOT OSI open source, i.e.
+"source-available."** ESLv2 restricts offering it as a hosted/managed service and gates enterprise
+features behind a paid key. For a **public Apache-2.0 project** that others will self-host (and we
+might one day host), hard-depending on a source-available, competitor-restricted datastore is a
+strategic liability and off-putting to contributors. Self-hosting our own reviews would be fine; a
+core dependency is not.
+
+**Consequence:** The `EventStore` port hides the choice. v1 = Postgres append-only (permissive,
+zero new moving parts, trivially embeddable). If we outgrow it, evaluate license-clean options
+(Postgres + thin event-store layer, Marten-style patterns) before any source-available engine. Anyone
+who wants KurrentDB's subscriptions/projections can write the adapter.
+
+Sources: https://github.com/kurrent-io/KurrentDB ·
+https://www.kurrent.io/releases/kurrentdb/25-0/ ·
+https://www.kurrent.io/blog/introducing-event-store-license-v2-eslv2 ·
+https://discuss.kurrent.io/t/important-information-eventstoredb-is-transitioning-to-event-store-license-v2-eslv2-with-the-upcoming-24-10-lts-release/5423
+
+---
+
+## ADR-006 — Personal open-source project
+
+**Decision:** Code Spire is a personal, public open-source project (intended Apache-2.0), built
+in private time — not internal tooling.
+
+**Why:** The fillable market gap (plugin-first + self-hosted whole-repo RAG + residency-friendly)
+is broadly useful, not employer-specific. Open-sourcing brings more options to a market where the
+only mature OSS option (PR-Agent) is Python/single-shot and the good tools are closed SaaS. Keeping
+it public also sidesteps any internal-IP entanglement.
+
+**Consequence:** All docs are domain-neutral (no employer references). License decided before first
+commit. Maintenance is a real commitment (issues, CVEs, releases) — accepted as the cost of the bet.
+
+---
+
+## ADR-005 — Event Modeling as the design method
+
+**Decision:** Model the domain with Event Modeling; formalize with the Fraktalio
+`Decider / View / Saga` triad.
+
+**Why:** The review pipeline is a sequence of state changes reacting to facts — a natural fit.
+Event Modeling gives a shared blueprint (slices), and the fmodel formalism maps cleanly to pure,
+testable, event-sourced components. See [EVENT-MODEL.md](EVENT-MODEL.md).
+
+---
+
+## ADR-004 — Fully event-driven core, no synchronous processing
+
+**Decision:** Components communicate only via asynchronous events/commands (choreography). The only
+synchronous edges are at the system boundary (inbound webhook → 202; outbound SCM/LLM API calls),
+isolated inside adapter plugins.
+
+**Why:** (1) It is the structural enabler of the plugin-first goal — a plugin is a component that
+subscribes to and emits events, so capabilities attach with zero core change. (2) Replayable,
+auditable review history. (3) Natural back-pressure and horizontal scale for PR bursts.
+
+**Consequence:** Requires an event store + messaging backbone (SmallRye Reactive Messaging over the
+Kafka protocol — Redpanda/Kafka from v1; in-memory connector for dev/test). Idempotent deciders keyed
+by event id. Slightly more upfront machinery than a request/response service — accepted.
+
+---
+
+## ADR-003 — Stack: Quarkus + WebSockets + LangChain4j
+
+**Decision:** Quarkus (Java) reactive core; SmallRye Reactive Messaging as the event bus; Quarkus
+WebSockets Next for live read-model/token push; LangChain4j for LLM provider adapters.
+
+**Why:** Matches the author's Java competency (explicit non-preference for Python — the deciding
+factor against forking PR-Agent). Quarkus gives reactive messaging, CDI-based plugin discovery,
+fast startup, and GKE/container friendliness. WebSockets carries the read side / live dashboard.
+
+---
+
+## ADR-002 — Build (hybrid greenfield), do not fork PR-Agent
+
+**Decision:** Greenfield in Quarkus, but **port PR-Agent's hard-won algorithms + prompts** rather
+than reimplement them from scratch.
+
+**Why:** A 5-part code review of `qodo-ai/pr-agent` (22k LOC Python) found: SCM abstraction 3/5
+(a 50-method God-object ABC; **thread-reply and PR-author are unimplemented on both Bitbucket
+providers** — exactly the two features needed); plugin extensibility **2/5** (hardcoded dispatch
+dict, single-shot engine with no tool-use loop, no hook point for RAG); LLM layer 3.5/5 (embedded
+LiteLLM; the diff/token/prompt logic is the real IP); RAG/memory **0/5** (diff-only reviews; its one
+vector feature indexes *issues, not code*, GitHub-only — the differentiator is greenfield either
+way); quality 3/5 (stateless, but 729× global-config coupling).
+
+Cost: extend Python ≈ 5–9 pw · full greenfield ≈ 12–20 pw · **hybrid greenfield ≈ 8–12 pw**.
+Extending is ~2× cheaper but saves only ~2k LOC of diff algorithms (which are *portable*) while
+leaving the plugin system, RAG/memory, and Bitbucket thread-reply/author to build anyway — on top
+of a Python codebase that structurally fights the agentic vision and won't be staffed.
+
+**Port faithfully:** `git_patch_processing.py`, `pr_processing.py`, `token_handler.py`/`clip_tokens`,
+YAML-repair, and the ~1,500 lines of prompt templates (→ Qute). **Build clean:** the event-driven
+core, the plugin SPI, segregated SCM ports (thread-reply + author first-class), the context-provider
+pipeline, injected config.
+
+---
+
+## ADR-001 — Self-hosted, provider-agnostic, one-bot reviewer
+
+**Decision:** A single bot service reviews every PR in a workspace via a workspace/project-level
+webhook + one service identity — no per-seat licensing. Source-control platform, LLM provider,
+context sources, and storage are all pluggable and chosen at configuration time (no hard defaults;
+fail-fast if unset). Code and inference can stay entirely self-hosted.
+
+**Why:** Rules out per-seat SaaS (Rovo Dev is per-user; Qodo Merge/CodeRabbit are per-contributor
+and/or SaaS-egress). Greptile — the closest inspiration — does not support Bitbucket at all and is
+closed. The one-bot + webhook model is what makes "all PRs, author-agnostic, no seats" true.
+Author identity is optional data captured on every event (per-user analytics later), never a gate.
+
+**On LLM routing:** do **not** route inference through GitHub Copilot's backend — it has no official
+API; only reverse-engineered OAuth proxies exist (unsupported, ToS-risky). Use direct provider APIs
+(Vertex/Anthropic/Azure) or in-cluster models (Ollama) via LangChain4j, selected at config.

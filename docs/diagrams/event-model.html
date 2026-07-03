@@ -1,0 +1,273 @@
+<title>Code Spire - Event Model</title>
+<style>
+  :root{
+    --bg:#0b0e15; --panel:#111624; --ink:#e9ecf2; --soft:#9aa3b8;
+    --line:#e8a44c;
+    --cmd:#4a90d9; --cmd-fill:#12243a; --cmd-ink:#8fc0f0;
+    --evt:#e5555a; --evt-fill:#2a1518; --evt-ink:#f0a7aa;
+    --view:#46a758; --view-fill:#14261b; --view-ink:#8fd69b;
+    --cream:#e8d9a0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:36px 22px 8px;}
+  .eyebrow{font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:var(--line);
+    font-weight:700;margin:0 0 8px;}
+  h1{font-size:clamp(22px,3vw,31px);margin:0 0 9px;letter-spacing:-.01em;text-wrap:balance;font-weight:680;}
+  .lede{max-width:70ch;color:var(--soft);font-size:14.5px;margin:0;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .board{overflow-x:auto;padding:8px 0 28px;}
+  svg{display:block;}
+  .hint{max-width:1140px;margin:0 auto;padding:0 22px 40px;color:var(--soft);font-size:13px;}
+  .hint code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em;color:var(--ink);
+    background:var(--panel);border:1px solid #263049;border-radius:5px;padding:.05em .35em;}
+  .hint b{color:var(--ink);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Code Spire / Event Modeling</p>
+  <h1>The review pipeline as a timeline</h1>
+  <p class="lede">Actors and their screens sit in swimlanes up top. Time runs left to right along the
+    axis. A <b style="color:var(--cmd-ink)">command</b> (blue) is an intent; it produces an
+    <b style="color:var(--evt-ink)">event</b> (red) on the stream; a <b style="color:var(--view-ink)">view</b>
+    (green) folds events for a screen. The <b style="color:var(--line)">automation gears</b> are the sagas
+    that react to an event and fire the next command -- which is almost the whole pipeline here.</p>
+</div>
+
+<div class="board">
+<svg width="2620" height="900" viewBox="0 0 2620 900" role="img"
+     aria-label="Event Modeling timeline for the Code Spire PR review pipeline">
+  <defs>
+    <marker id="arw" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto">
+      <path d="M0,0 L9,3.2 L0,6.4 Z" fill="#e8a44c"/>
+    </marker>
+    <style>
+      text{font-family:"Comic Sans MS","Chalkboard SE","Bradley Hand","Marker Felt",ui-rounded,system-ui,sans-serif;
+        text-anchor:middle;fill:#e9ecf2;}
+      .lane{font-size:19px;fill:#e8a44c;text-anchor:start;font-weight:700;}
+      .nid{font-size:12.5px;font-weight:600;}
+      .sub{font-size:10px;fill:#9aa3b8;}
+      .flow{stroke:#e8a44c;stroke-width:2;fill:none;marker-end:url(#arw);}
+      .dot{stroke-dasharray:2 6;stroke-linecap:round;}
+      .div{stroke:#e8a44c;stroke-width:1.4;stroke-dasharray:6 9;opacity:.55;}
+      .wire-out{fill:#10141c;stroke:#e8d9a0;stroke-width:2;}
+      .wire-hd{fill:#e8d9a0;}
+      .wire-f{fill:#39414f;} .wire-g{fill:#2f6b3d;stroke:#46a758;stroke-width:1.2;}
+      .wire-b{fill:#e8a44c;}
+    </style>
+    <g id="wire">
+      <rect class="wire-out" x="0" y="0" width="164" height="112" rx="8"/>
+      <path class="wire-hd" d="M0,10 a8,8 0 0 1 8,-8 h148 a8,8 0 0 1 8,8 v10 h-164 z"/>
+      <rect class="wire-f" x="16" y="36" width="66" height="10" rx="3"/>
+      <rect class="wire-f" x="16" y="54" width="66" height="10" rx="3"/>
+      <rect class="wire-f" x="16" y="72" width="66" height="10" rx="3"/>
+      <rect class="wire-g" x="94" y="42" width="56" height="16" rx="3"/>
+      <rect class="wire-b" x="94" y="78" width="44" height="14" rx="3"/>
+    </g>
+    <g id="gear">
+      <rect x="-15" y="-15" width="30" height="30" rx="5" fill="#e8912d"/>
+      <rect x="-15" y="-15" width="30" height="30" rx="5" fill="#e8912d" transform="rotate(45)"/>
+      <circle r="8" fill="#0b0e15"/><circle r="3.4" fill="#e8912d"/>
+    </g>
+  </defs>
+
+  <!-- swimlane dividers + labels -->
+  <text class="lane" x="24" y="112">Automation</text>
+  <line class="div" x1="150" y1="162" x2="2580" y2="162"/>
+  <text class="lane" x="24" y="258">Operator</text>
+  <line class="div" x1="150" y1="352" x2="2580" y2="352"/>
+  <text class="lane" x="24" y="452">Bitbucket</text>
+  <line class="div" x1="150" y1="548" x2="2580" y2="548"/>
+
+  <!-- time axis -->
+  <line class="flow" x1="150" y1="612" x2="2570" y2="612"/>
+  <text class="sub" x="1080" y="604" style="font-size:12px;fill:#e8a44c">time</text>
+
+  <!-- ============ WIREFRAMES ============ -->
+  <use href="#wire" x="168" y="382"/>
+  <text class="sub" x="250" y="376">Bitbucket / PR opened</text>
+  <use href="#wire" x="1638" y="382"/>
+  <text class="sub" x="1720" y="376">Bitbucket / comment</text>
+  <!-- operator dashboard (bigger) in Operator lane -->
+  <g transform="translate(1300,196)">
+    <rect class="wire-out" x="0" y="0" width="188" height="128" rx="9"/>
+    <path class="wire-hd" d="M0,10 a8,8 0 0 1 8,-8 h172 a8,8 0 0 1 8,8 v10 h-188 z"/>
+    <rect class="wire-f" x="16" y="40" width="70" height="9" rx="3"/>
+    <rect class="wire-f" x="16" y="56" width="70" height="9" rx="3"/>
+    <rect class="wire-g" x="100" y="38" width="72" height="14" rx="3"/>
+    <rect class="wire-g" x="100" y="60" width="72" height="14" rx="3"/>
+    <rect class="wire-f" x="16" y="86" width="156" height="9" rx="3"/>
+    <rect class="wire-f" x="16" y="102" width="120" height="9" rx="3"/>
+  </g>
+  <text class="sub" x="1394" y="188">Code Spire / dashboard</text>
+
+  <!-- ============ AUTOMATION GEARS ============ -->
+  <use href="#gear" transform="translate(430,112)"/>
+  <use href="#gear" transform="translate(740,112)"/>
+  <use href="#gear" transform="translate(900,112)"/>
+  <use href="#gear" transform="translate(1075,112)"/>
+  <use href="#gear" transform="translate(1400,112)"/>
+  <use href="#gear" transform="translate(1890,112)"/>
+
+  <!-- ============ CONNECTORS (behind nodes) ============ -->
+  <!-- S1: wire -> event -->
+  <path class="flow" d="M250,494 L250,682"/>
+  <!-- S2 -->
+  <path class="flow dot" d="M430,130 L430,580"/>
+  <path class="flow" d="M430,640 L430,682"/>
+  <path class="flow dot" d="M488,700 C556,702 574,672 586,640"/>
+  <!-- S3 -->
+  <path class="flow dot" d="M740,130 L740,580"/>
+  <path class="flow" d="M740,640 L740,682"/>
+  <!-- S4 -->
+  <path class="flow dot" d="M900,130 L900,580"/>
+  <path class="flow" d="M900,640 L900,682"/>
+  <!-- S5 -->
+  <path class="flow dot" d="M1075,130 L1075,580"/>
+  <path class="flow" d="M1075,640 L1075,682"/>
+  <path class="flow dot" d="M1131,700 C1186,702 1206,672 1220,640"/>
+  <!-- findings view -> dashboard -->
+  <path class="flow dot" d="M1235,582 C1300,504 1330,410 1372,326"/>
+  <!-- S6 post comments -->
+  <path class="flow dot" d="M1400,130 L1400,580"/>
+  <path class="flow" d="M1400,640 L1400,682"/>
+  <path class="flow" d="M1456,710 L1508,710"/>
+  <!-- reviewCompleted -> status view -->
+  <path class="flow dot" d="M1560,684 L1560,640"/>
+  <!-- status view -> dashboard -->
+  <path class="flow dot" d="M1560,582 C1520,470 1500,384 1470,328"/>
+  <!-- S7 reply wire -> event -->
+  <path class="flow" d="M1720,494 L1720,682"/>
+  <!-- S8 -->
+  <path class="flow dot" d="M1890,130 L1890,580"/>
+  <path class="flow" d="M1890,640 L1890,682"/>
+  <path class="flow dot" d="M1946,710 C1996,702 2016,672 2028,640"/>
+
+  <!-- ============ NODES ============ -->
+  <!-- event PullRequestEventReceived -->
+  <g><rect x="192" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="250" y="706" fill="#f0a7aa">PullRequest</text>
+    <text class="nid" x="250" y="722" fill="#f0a7aa">EventReceived</text></g>
+
+  <!-- cmd RequestReview + evt ReviewRequested -->
+  <ellipse cx="430" cy="612" rx="62" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="430" y="616" fill="#8fc0f0">RequestReview</text>
+  <g><rect x="372" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="430" y="716" fill="#f0a7aa">ReviewRequested</text></g>
+
+  <!-- view ReviewStatus -->
+  <rect x="530" y="586" width="118" height="52" rx="10" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+  <text class="nid" x="589" y="608" fill="#8fd69b">ReviewStatus</text>
+  <text class="sub" x="589" y="624">status: Reviewing</text>
+
+  <!-- cmd FetchDiff + evt DiffFetched -->
+  <ellipse cx="740" cy="612" rx="58" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="740" y="616" fill="#8fc0f0">FetchDiff</text>
+  <g><rect x="682" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="740" y="708" fill="#f0a7aa">DiffFetched</text>
+    <text class="sub" x="740" y="724">metadata only</text></g>
+
+  <!-- cmd GatherContext + evt ContextAssembled -->
+  <ellipse cx="900" cy="612" rx="62" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="900" y="616" fill="#8fc0f0">GatherContext</text>
+  <g><rect x="842" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="900" y="708" fill="#f0a7aa">Context</text>
+    <text class="nid" x="900" y="724" fill="#f0a7aa">Assembled</text></g>
+
+  <!-- cmd GenerateReview + evt ReviewGenerated -->
+  <ellipse cx="1075" cy="612" rx="64" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="1075" y="616" fill="#8fc0f0">GenerateReview</text>
+  <g><rect x="1017" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="1075" y="716" fill="#f0a7aa">ReviewGenerated</text></g>
+
+  <!-- view ReviewFindings -->
+  <rect x="1176" y="586" width="118" height="52" rx="10" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+  <text class="nid" x="1235" y="616" fill="#8fd69b">ReviewFindings</text>
+
+  <!-- cmd PostComments + evt CommentsPosted -->
+  <ellipse cx="1400" cy="612" rx="60" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="1400" y="616" fill="#8fc0f0">PostComments</text>
+  <g><rect x="1342" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="1400" y="716" fill="#f0a7aa">CommentsPosted</text></g>
+
+  <!-- evt ReviewCompleted + view ReviewStatus done -->
+  <g><rect x="1502" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="1560" y="716" fill="#f0a7aa">ReviewCompleted</text></g>
+  <rect x="1501" y="586" width="118" height="52" rx="10" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+  <text class="nid" x="1560" y="608" fill="#8fd69b">ReviewStatus</text>
+  <text class="sub" x="1560" y="624">status: Completed</text>
+
+  <!-- evt AuthorReplied -->
+  <g><rect x="1662" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="1720" y="716" fill="#f0a7aa">AuthorReplied</text></g>
+
+  <!-- cmd AnswerFollowUp + evt FollowUpPosted -->
+  <ellipse cx="1890" cy="612" rx="64" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="1890" y="616" fill="#8fc0f0">AnswerFollowUp</text>
+  <g><rect x="1832" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="1890" y="716" fill="#f0a7aa">FollowUpPosted</text></g>
+
+  <!-- view ReviewThread -->
+  <rect x="1972" y="586" width="120" height="52" rx="10" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+  <text class="nid" x="2032" y="616" fill="#8fd69b">ReviewThread</text>
+
+  <!-- ============ S9 CANCELLATION (PR merged/declined mid-review) ============ -->
+  <!-- wireframe: Bitbucket PR closed -->
+  <use href="#wire" x="2118" y="382"/>
+  <text class="sub" x="2200" y="376">Bitbucket / PR merged or declined</text>
+  <text class="sub" x="2200" y="514">pullrequest:fulfilled / :rejected</text>
+  <!-- automation gear -->
+  <use href="#gear" transform="translate(2340,112)"/>
+  <!-- connectors (behind nodes) -->
+  <path class="flow" d="M2200,494 L2200,682"/>
+  <path class="flow dot" d="M2340,130 L2340,580"/>
+  <path class="flow" d="M2340,640 L2340,682"/>
+  <path class="flow dot" d="M2398,700 C2448,702 2466,672 2478,640"/>
+  <!-- evt PullRequestClosed -->
+  <g><rect x="2142" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="2200" y="706" fill="#f0a7aa">PullRequest</text>
+    <text class="nid" x="2200" y="722" fill="#f0a7aa">Closed</text></g>
+  <!-- cmd CancelReview + evt ReviewCancelled -->
+  <ellipse cx="2340" cy="612" rx="58" ry="29" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+  <text class="nid" x="2340" y="616" fill="#8fc0f0">CancelReview</text>
+  <g><rect x="2282" y="684" width="116" height="58" rx="10" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="2340" y="716" fill="#f0a7aa">ReviewCancelled</text></g>
+  <!-- view ReviewStatus: Cancelled -->
+  <rect x="2420" y="586" width="118" height="52" rx="10" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+  <text class="nid" x="2479" y="608" fill="#8fd69b">ReviewStatus</text>
+  <text class="sub" x="2479" y="624">status: Cancelled</text>
+
+  <!-- ============ LEGEND ============ -->
+  <g transform="translate(150,806)">
+    <rect x="0" y="0" width="720" height="72" rx="12" fill="none" stroke="#6b56c9" stroke-width="1.6" stroke-dasharray="4 6"/>
+    <text x="46" y="42" style="font-size:16px;fill:#b9a9ff">legend</text>
+    <ellipse cx="150" cy="36" rx="46" ry="20" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+    <text class="nid" x="150" y="40" fill="#8fc0f0">command</text>
+    <rect x="238" y="16" width="92" height="40" rx="9" fill="#2a1518" stroke="#e5555a" stroke-width="2"/>
+    <text class="nid" x="284" y="40" fill="#f0a7aa">event</text>
+    <rect x="356" y="16" width="82" height="40" rx="9" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+    <text class="nid" x="397" y="40" fill="#8fd69b">view</text>
+    <use href="#gear" transform="translate(486,36) scale(0.8)"/>
+    <text class="sub" x="486" y="66">automation</text>
+    <path class="flow" d="M548,28 L612,28"/>
+    <text class="sub" x="580" y="20" style="text-anchor:middle">produces</text>
+    <path class="flow dot" d="M548,50 L612,50"/>
+    <text class="sub" x="580" y="66" style="text-anchor:middle">informs</text>
+  </g>
+</svg>
+</div>
+
+<p class="hint"><b>Reading one slice (S2, the command pattern).</b> The automation gear reacts to
+  <b style="color:var(--evt-ink)">PullRequestEventReceived</b> and fires the
+  <b style="color:var(--cmd-ink)">RequestReview</b> command; the <code>ReviewLifecycle</code> aggregate
+  turns it into <b style="color:var(--evt-ink)">ReviewRequested</b> on the stream; the
+  <b style="color:var(--view-ink)">ReviewStatus</b> view folds that and it appears on the operator
+  dashboard. <b>S1 and S7</b> are translations -- a Bitbucket webhook becomes an event with no command.
+  Solid lines are "produces"; dotted lines "inform / are displayed on". Diffs are re-fetched by commit,
+  so <b style="color:var(--evt-ink)">DiffFetched</b> carries metadata only. The rightmost slice (S9) is
+  <b>cancellation</b>: merging or declining the PR fires
+  <b style="color:var(--evt-ink)">PullRequestClosed</b>, the automation issues
+  <b style="color:var(--cmd-ink)">CancelReview</b>, the aggregate records
+  <b style="color:var(--evt-ink)">ReviewCancelled</b>, and in-flight workers abandon at their next stage
+  boundary -- no LLM spend completes, no comment lands on a closed PR (ADR-013).</p>
