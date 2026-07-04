@@ -6,21 +6,30 @@ import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
+import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
+import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
-import io.smallrye.common.annotation.Blocking;
+import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.reactive.messaging.Channel;
-import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
 
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+
 /**
- * Reacts to worker results (the "results" channel = cs.results topic at P1):
- * issues the next Action command and the matching Record command (CONTRACT §5).
+ * Reacts to worker results (cs.results): issues the next Action command and
+ * the matching Record command (CONTRACT §5).
+ *
+ * <p>Post-split home of the ADR-013 stale-run guard: the orchestrator owns the
+ * aggregate, so results belonging to a superseded/cancelled run are dropped
+ * HERE, before the next (possibly expensive) command is ever emitted. The
+ * worker keeps only the PR-head re-check for its own visible actions.
  */
 @ApplicationScoped
 public class ResultSaga {
@@ -34,40 +43,57 @@ public class ResultSaga {
     TimelineBroadcaster timeline;
 
     @Inject
-    @Channel("commands")
-    Emitter<ActionCommand> commands;
+    CommandsEmitter commands;
 
-    @Inject
-    PrRegistry registry;
-
-    @Incoming("results")
-    @Blocking
+    @Incoming("results-in")
+    @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
+        if (event == null) {
+            return; // poison record already logged by the deserializer
+        }
         timeline.record("result", event.getClass().getSimpleName(), reviewIdOf(event), "");
         switch (event) {
-            case DiffFetched e -> send(new ActionCommand.GatherContext(
-                    e.reviewId(), registry.repo(e.reviewId()), e.prId(), e.commit(),
-                    java.util.Set.of(), java.util.List.of()));
-            case ContextAssembled e -> send(new ActionCommand.GenerateReview(
-                    e.reviewId(), registry.repo(e.reviewId()), e.prId(), e.commit(), e.contextRef(), 1, null));
-            case ReviewGenerated e -> {
+            // repo/prId are derived from the reviewId itself — no in-memory
+            // registry, nothing lost on restart or scale-out (finding H2).
+            case DiffFetched e -> ifCurrentRun(e.reviewId(), e.commit(), "DiffFetched", () ->
+                    commands.emit(new ActionCommand.GatherContext(
+                            e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
+                            Set.of(), List.of())));
+            case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () ->
+                    commands.emit(new ActionCommand.GenerateReview(
+                            e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
+                            e.contextRef(), 1, null)));
+            case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                         e.commit(), e.result().findings().size(),
                         Integer.toHexString(e.result().summary().hashCode())));
-                send(new ActionCommand.PostComments(
-                        e.reviewId(), registry.repo(e.reviewId()), e.prId(), e.commit(), e.result()));
-            }
+                commands.emit(new ActionCommand.PostComments(
+                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result()));
+            });
             case CommentsPosted e -> lifecycle.handle(e.reviewId(), new RecordCommand.RecordCommentsPosted(
                     e.commit(), e.summaryCommentId(), e.inline().size()));
-            case ReviewFailed e -> lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(
-                    e.commit(), e.phase(), e.retryable()));
+            case ReviewFailed e -> {
+                lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(
+                        e.commit(), e.phase(), e.retryable()));
+                if (e.retryable()) {
+                    // No retry budget yet (ADR-013 TODO): surface the stall on
+                    // the dashboard instead of letting the run vanish (M3).
+                    timeline.record("result", "stalled:" + e.phase(), e.reviewId(),
+                            "retryable failure, retry budget not implemented yet — re-push or /review to restart");
+                }
+            }
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
     }
 
-    private void send(ActionCommand command) {
-        commands.send(command);
-        timeline.record("command", command.getClass().getSimpleName(), command.reviewId(), "");
+    /** ADR-013: a superseded/cancelled run's results never trigger the next command. */
+    private void ifCurrentRun(String reviewId, String commit, String phase, Runnable action) {
+        ReviewState state = lifecycle.currentState(reviewId);
+        if (state.isReviewing() && Objects.equals(commit, state.currentCommit())) {
+            action.run();
+        } else {
+            timeline.record("result", "dropped:" + phase, reviewId, "stale run — superseded or cancelled");
+        }
     }
 
     private String reviewIdOf(IntegrationEvent event) {

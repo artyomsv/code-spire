@@ -6,13 +6,17 @@ import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewLifecycle;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.port.EventStore;
+import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
+import org.eclipse.microprofile.reactive.messaging.Message;
+import org.eclipse.microprofile.reactive.messaging.Metadata;
 import org.jboss.logging.Logger;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Command side of the ReviewLifecycle aggregate: load -> fold -> decide ->
@@ -30,7 +34,7 @@ public class ReviewLifecycleService {
     EventStore eventStore;
 
     @Inject
-    @Channel("events")
+    @Channel("events-out")
     Emitter<EventEnvelope> events;
 
     /** Handles a record command; returns the domain events that were appended (empty = no-op). */
@@ -64,7 +68,15 @@ public class ReviewLifecycleService {
         eventStore.append(reviewId, nextSequence, envelopes);
 
         for (EventEnvelope envelope : envelopes) {
-            events.send(envelope);
+            // keyed by streamId (= reviewId) for per-PR ordering on cs.events
+            events.send(Message.of(envelope,
+                    Metadata.of(OutgoingKafkaRecordMetadata.<String>builder()
+                            .withKey(envelope.streamId()).build()),
+                    () -> CompletableFuture.<Void>completedFuture(null),
+                    failure -> {
+                        LOG.warnf(failure, "Failed to publish %s", envelope.eventType());
+                        return CompletableFuture.<Void>completedFuture(null);
+                    }));
         }
         return newEvents;
     }

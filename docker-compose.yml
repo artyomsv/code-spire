@@ -1,7 +1,37 @@
-# Local development infrastructure for Code Spire (Phase 0: Postgres only;
-# Redpanda arrives with the Phase 1 service split, Keycloak/MinIO with P2).
-# Copy .env.example -> .env first. Host ports live in the 34xxx project range.
+# Local development infrastructure for Code Spire (P1 split: Postgres +
+# Redpanda; Keycloak/MinIO arrive with P2). Copy .env.example -> .env first.
+# Host ports live in the 34xxx project range.
 services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.4
+    container_name: spire-redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      # dev services run on the host (quarkusDev) and reach the broker here:
+      - --advertise-kafka-addr=PLAINTEXT://localhost:${KAFKA_PORT:-34092}
+    ports:
+      - "${KAFKA_PORT:-34092}:9092"
+    volumes:
+      - spire-redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   postgres:
     image: postgres:17-alpine
     container_name: spire-postgres
@@ -26,3 +56,4 @@ services:
 
 volumes:
   spire-pgdata:
+  spire-redpanda:

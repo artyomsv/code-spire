@@ -3,15 +3,15 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
-import io.smallrye.common.annotation.Blocking;
+import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 
 /**
- * Consumer of the "events" channel (= cs.events topic at P1). In Phase 0 its
- * job is projection: fold published domain events into the timeline read model.
- * At P1 this seam becomes the Kafka publisher / projector split.
+ * Projector consuming cs.events: folds published domain events into the
+ * timeline read model. The dedicated read-model service (spire-ui) takes this
+ * seam over in P2.
  */
 @ApplicationScoped
 public class DomainEventSink {
@@ -19,9 +19,12 @@ public class DomainEventSink {
     @Inject
     TimelineBroadcaster timeline;
 
-    @Incoming("events")
+    @Incoming("events-in")
     @Blocking
     public void on(EventEnvelope envelope) {
+        if (envelope == null) {
+            return; // undeserializable envelope already logged by the deserializer
+        }
         timeline.record("domain", envelope.eventType(), envelope.streamId(), describe(envelope.payload()));
     }
 

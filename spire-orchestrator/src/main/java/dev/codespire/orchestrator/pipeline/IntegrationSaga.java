@@ -10,18 +10,15 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
-import io.smallrye.common.annotation.Blocking;
+import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.reactive.messaging.Channel;
-import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
 
 /**
- * Reacts to ingress events (the "integration" channel = cs.integration topic
- * at P1): translates them into Record commands for the aggregate and, when a
- * run starts, the first Action command of the pipeline.
+ * Reacts to ingress events (cs.integration): translates them into Record
+ * commands for the aggregate and, when a run starts, the first Action command.
  */
 @ApplicationScoped
 public class IntegrationSaga {
@@ -35,12 +32,14 @@ public class IntegrationSaga {
     TimelineBroadcaster timeline;
 
     @Inject
-    @Channel("commands")
-    Emitter<ActionCommand> commands;
+    CommandsEmitter commands;
 
-    @Incoming("integration")
-    @Blocking
+    @Incoming("integration-in")
+    @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
+        if (event == null) {
+            return; // poison record already logged by the deserializer
+        }
         timeline.record("integration", event.getClass().getSimpleName(), reviewIdOf(event), "");
         switch (event) {
             case PullRequestEventReceived e -> onPullRequestEvent(e);
@@ -60,8 +59,7 @@ public class IntegrationSaga {
 
         boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
         if (started) {
-            commands.send(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit));
-            timeline.record("command", "FetchDiff", reviewId, "commit " + commit);
+            commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit));
         }
     }
 

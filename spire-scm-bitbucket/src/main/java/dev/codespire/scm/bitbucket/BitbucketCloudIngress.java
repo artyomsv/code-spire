@@ -153,8 +153,13 @@ public class BitbucketCloudIngress implements ScmIngress {
                 author));
     }
 
-    /** Bitbucket workspace/repo slug charset — second layer behind the HMAC (security finding L2). */
-    private static final java.util.regex.Pattern SLUG = java.util.regex.Pattern.compile("[A-Za-z0-9._-]+");
+    /**
+     * Bitbucket workspace/repo slug charset — second layer behind the HMAC
+     * (security finding L2). Must start and end alphanumeric, so path-traversal
+     * shapes like ".." can never form a URL segment.
+     */
+    private static final java.util.regex.Pattern SLUG =
+            java.util.regex.Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
 
     private RepoRef repo(JsonNode payload) {
         String fullName = payload.path("repository").path("full_name").asText("");

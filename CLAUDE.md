@@ -43,8 +43,25 @@ The design is fully specified in `docs/` — **treat those files as the source o
   prompt-fence sentinel neutralization, host-pinned redirects, HTML-escaped model output, unordered
   dispatcher. Semgrep clean. **86 tests green** across 17 suites (incl. webhook E2E + idempotency
   integration). Two LOW items tracked in `techdebt/`.
-- **Still pending from P1 scope:** the physical service split over Redpanda; Tink event-payload
-  encryption; SmallRye Fault Tolerance retry budgets; cost table for `ModelUsage.costMillicents`.
+- **P1 service split delivered:** three deployables over the Kafka protocol — `spire-gateway`
+  (webhook -> cs.integration, :34081), `spire-orchestrator` (deciders/sagas/event store/dashboard,
+  cs.commands + cs.events, :34080), `spire-review-worker` (cs.commands -> adapters -> cs.results,
+  own `worker` schema for comment_idempotency, :34082). Wire format = polymorphic JSON
+  (type discriminator on the sealed hierarchies); everything keyed by reviewId. The ADR-013
+  stale-run guard lives in the orchestrator's ResultSaga (it owns the aggregate); the worker keeps
+  the PR-head re-check. Split tests per service run against Testcontainers Kafka + Postgres
+  (gateway webhook->topic, orchestrator choreography incl. stale-drop, worker command->result incl.
+  idempotent redelivery). Redpanda in docker-compose at :34092.
+- **Split code-reviewed (4 agents) and hardened:** poison records never kill consumers
+  (never-throw deserializers) and processing failures go to **cs.dlq** (never silently dropped,
+  ADR-013); repo/prId derive from the reviewId itself (`ReviewIds.parse` — no in-memory registry,
+  nothing lost on restart); ordered per-partition dispatch (no same-review races); the paid LLM
+  call has its own idempotency claim (no duplicate spend on redelivery); gateway awaits broker acks
+  before the 202 (Bitbucket retries on failure) and holds only the webhook secret + bot account id
+  (never the App Password); work queues use `latest` offsets (no side-effect replay for new groups);
+  per-service HTTP port vars. Semgrep clean.
+- **Still pending from P1 scope:** Tink event-payload encryption; SmallRye Fault Tolerance retry
+  budgets; cost table for `ModelUsage.costMillicents`.
 
 ## Build & run
 
@@ -52,9 +69,11 @@ JDK 25 (SDKMAN `25.0.3-tem`) + Docker required.
 
 ```bash
 cp .env.example .env                      # set POSTGRES_PASSWORD (dev-only)
-docker compose up -d                      # Postgres on :34432
-./gradlew build                           # unit tests + Testcontainers smoke test
+docker compose up -d                      # Postgres :34432 + Redpanda :34092
+./gradlew build                           # unit + per-service split tests (Testcontainers: Kafka + Postgres)
 ./gradlew :spire-orchestrator:quarkusDev  # dashboard at http://localhost:34080
+./gradlew :spire-gateway:quarkusDev       # webhook edge :34081
+./gradlew :spire-review-worker:quarkusDev # worker :34082
 ```
 
 ## Conventions (enforced by design docs — do not regress)

@@ -35,10 +35,16 @@ reviewer you can extend without touching the core.**
 
 ## Status
 
-**Phase 0 — skeleton & event backbone.** `spire-contract` (the domain: events, commands,
-Decider/View/Saga, SPI ports, the `ReviewLifecycle` decider + tests) and `spire-orchestrator`
-(single-process pipeline over in-memory channels with stub workers, Postgres event store, live
-WebSocket timeline dashboard). Services split over Redpanda at Phase 1 (ADR-008).
+**Phase 1 — the service split is live.** Three deployables over the Kafka protocol (Redpanda):
+
+| Service | Port | Role |
+|---|---|---|
+| `spire-gateway` | 34081 | webhook verify -> translate -> `cs.integration`, returns 202 |
+| `spire-orchestrator` | 34080 | `ReviewLifecycle` decider + sagas, owns the event store, emits `cs.commands`, serves the live dashboard |
+| `spire-review-worker` | 34082 | consumes `cs.commands`: diff fetch, LLM review, idempotent comment posting -> `cs.results` |
+
+Shared libraries: `spire-contract` (domain + wire format), `spire-diff`, `spire-scm-bitbucket`,
+`spire-llm`.
 
 ## Development
 
@@ -46,13 +52,20 @@ Requirements: JDK 25 (e.g. SDKMAN `25.0.3-tem`), Docker.
 
 ```bash
 cp .env.example .env          # fill in POSTGRES_PASSWORD (dev-only value)
-docker compose up -d          # Postgres on localhost:34432
-./gradlew build               # compiles + decider unit tests + pipeline smoke test (Testcontainers)
+docker compose up -d          # Postgres :34432 + Redpanda :34092
+./gradlew build               # unit + per-service split tests (Testcontainers: Kafka + Postgres)
+
+# three terminals (or run only the orchestrator for the dashboard demo):
 ./gradlew :spire-orchestrator:quarkusDev
+./gradlew :spire-gateway:quarkusDev
+./gradlew :spire-review-worker:quarkusDev
 ```
 
-Open http://localhost:34080 — press **Simulate PR** and watch the review pipeline flow across the
-live event timeline (integration -> command -> domain -> result) to `ReviewCompleted`.
+Open http://localhost:34080 — press **Simulate PR** and watch the review flow across the live
+event timeline (integration -> command -> domain -> result) to `ReviewCompleted`. With real
+Bitbucket/LLM credentials in `.env` (`SPIRE_SCM_PROVIDER=bitbucket-cloud`,
+`SPIRE_LLM_PROVIDER=openai-compatible`), point a Bitbucket webhook at
+`http://<gateway>/webhooks/bitbucket` and the bot reviews real PRs.
 
 ## Docs
 

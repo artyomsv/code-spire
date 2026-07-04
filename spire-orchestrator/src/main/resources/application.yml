@@ -2,47 +2,113 @@ quarkus:
   application:
     name: spire-orchestrator
   http:
-    port: ${APP_HTTP_PORT:34080}   # host-exposed port lives in the 34xxx project range
+    port: ${ORCHESTRATOR_HTTP_PORT:34080}   # host-exposed port lives in the 34xxx project range
   datasource:
     db-kind: postgresql
+    jdbc:
+      additional-jdbc-properties:
+        currentSchema: orchestrator
   flyway:
     migrate-at-start: true
+    # schema-per-service: the orchestrator owns the event log.
+    default-schema: orchestrator
+    create-schemas: true
 
-# Provider selection — NO defaults outside dev/test (ADR-001 fail-fast):
-# the operator explicitly chooses the SCM and the LLM and brings the keys.
-# Credentials/keys are NOT declared here at all (secrets rule: no fallback
-# expressions): the producers read spire.scm.bitbucket.* / spire.llm.* which
-# map canonically from env vars (SPIRE_SCM_BITBUCKET_BOT_APP_PASSWORD etc.,
-# see .env.example) and fail startup naming the exact missing key.
-spire:
-  scm:
-    provider: ${SPIRE_SCM_PROVIDER}         # stub | bitbucket-cloud
-  llm:
-    provider: ${SPIRE_LLM_PROVIDER}         # stub | openai-compatible
+# cs.* topics (CONTRACT §9), all keyed by reviewId. Broker address from
+# KAFKA_BOOTSTRAP_SERVERS; Dev Services boots one in dev/test when unset.
+mp:
+  messaging:
+    outgoing:
+      integration-out:               # dev simulator only
+        connector: smallrye-kafka
+        topic: cs.integration
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.pipeline.IntegrationEventSerializer
+      commands-out:
+        connector: smallrye-kafka
+        topic: cs.commands
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.pipeline.ActionCommandSerializer
+      events-out:
+        connector: smallrye-kafka
+        topic: cs.events
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+    incoming:
+      integration-in:
+        connector: smallrye-kafka
+        topic: cs.integration
+        group:
+          id: spire-orchestrator-integration
+        value:
+          deserializer: dev.codespire.orchestrator.pipeline.IntegrationEventDeserializer
+        # work queue: a NEW consumer group must not replay history (M6);
+        # processing failures go to cs.dlq, never silently dropped (ADR-013)
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+      results-in:
+        connector: smallrye-kafka
+        topic: cs.results
+        group:
+          id: spire-orchestrator-results
+        value:
+          deserializer: dev.codespire.orchestrator.pipeline.IntegrationEventDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+      events-in:
+        connector: smallrye-kafka
+        topic: cs.events
+        group:
+          id: spire-orchestrator-view
+        value:
+          deserializer: dev.codespire.orchestrator.eventstore.EnvelopeDeserializer
+        # projector: rebuildable read model — earliest + ignore is correct here
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: ignore
 
-# Dev: docker-compose Postgres + stub providers so the dashboard demo runs
-# with zero external dependencies. Credentials come from .env (Quarkus loads
-# it from the project root) — NO defaults for credentials, fail fast if unset.
+# Dev: docker-compose Postgres + Redpanda. Credentials come from .env (Quarkus
+# loads it from the project root) — NO defaults for credentials, fail fast.
 "%dev":
+  kafka:
+    bootstrap:
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
   quarkus:
     datasource:
       username: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
       jdbc:
         url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
-  spire:
-    scm:
-      provider: ${SPIRE_SCM_PROVIDER:stub}
-    llm:
-      provider: ${SPIRE_LLM_PROVIDER:stub}
 
-# Test: no URL configured -> Quarkus DevServices boots a Testcontainers Postgres.
+# Test: DevServices boot Postgres + a broker automatically.
 "%test":
   quarkus:
     http:
       port: 0
-  spire:
-    scm:
-      provider: stub
-    llm:
-      provider: stub
+      test-port: 0
+  mp:
+    messaging:
+      incoming:
+        integration-in:
+          auto:
+            offset:
+              reset: earliest
+        results-in:
+          auto:
+            offset:
+              reset: earliest

@@ -1,0 +1,42 @@
+quarkus:
+  application:
+    name: spire-gateway
+  http:
+    port: ${GATEWAY_HTTP_PORT:34081}   # host-exposed port in the 34xxx project range
+
+# SCM provider (ADR-001 fail-fast — no default outside dev/test). Credentials
+# map canonically from env (SPIRE_SCM_BITBUCKET_*, see .env.example).
+spire:
+  scm:
+    provider: ${SPIRE_SCM_PROVIDER}   # stub | bitbucket-cloud
+
+# cs.integration: keyed by reviewId, JSON-serialized IntegrationEvent
+# (CONTRACT §9). Broker address comes from KAFKA_BOOTSTRAP_SERVERS
+# (kafka.bootstrap.servers); Dev Services boots a broker in dev/test when unset.
+mp:
+  messaging:
+    outgoing:
+      integration-out:
+        connector: smallrye-kafka
+        topic: cs.integration
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.gateway.IntegrationEventSerializer
+
+"%dev":
+  kafka:
+    bootstrap:
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
+  spire:
+    scm:
+      provider: ${SPIRE_SCM_PROVIDER:stub}
+
+"%test":
+  quarkus:
+    http:
+      port: 0
+      test-port: 0
+  spire:
+    scm:
+      provider: stub

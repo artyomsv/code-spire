@@ -1,0 +1,87 @@
+quarkus:
+  application:
+    name: spire-review-worker
+  http:
+    port: ${WORKER_HTTP_PORT:34082}   # health endpoint only; 34xxx project range
+  datasource:
+    db-kind: postgresql
+    jdbc:
+      additional-jdbc-properties:
+        currentSchema: worker
+  flyway:
+    migrate-at-start: true
+    # schema-per-service (ADR-011/DATA-MODEL): the worker owns ONLY
+    # comment_idempotency, in its own schema.
+    default-schema: worker
+    create-schemas: true
+
+# Providers (ADR-001 fail-fast — no defaults outside dev/test). Credentials map
+# canonically from env (SPIRE_SCM_BITBUCKET_*, SPIRE_LLM_*, see .env.example).
+spire:
+  scm:
+    provider: ${SPIRE_SCM_PROVIDER}   # stub | bitbucket-cloud
+  llm:
+    provider: ${SPIRE_LLM_PROVIDER}   # stub | openai-compatible
+
+mp:
+  messaging:
+    incoming:
+      commands-in:
+        connector: smallrye-kafka
+        topic: cs.commands
+        group:
+          id: spire-review-worker
+        value:
+          deserializer: dev.codespire.worker.pipeline.ActionCommandDeserializer
+        # work queue: a NEW consumer group must not replay side effects (M6).
+        # Poison records: the deserializer maps them to null (skipped, logged);
+        # processing failures go to cs.dlq (ADR-013).
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+    outgoing:
+      results-out:
+        connector: smallrye-kafka
+        topic: cs.results
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.worker.pipeline.IntegrationEventSerializer
+
+"%dev":
+  kafka:
+    bootstrap:
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
+  quarkus:
+    datasource:
+      username: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      jdbc:
+        url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
+  spire:
+    scm:
+      provider: ${SPIRE_SCM_PROVIDER:stub}
+    llm:
+      provider: ${SPIRE_LLM_PROVIDER:stub}
+
+# Test: DevServices boot Postgres + a broker automatically.
+"%test":
+  quarkus:
+    http:
+      port: 0
+      test-port: 0
+  mp:
+    messaging:
+      incoming:
+        commands-in:
+          auto:
+            offset:
+              reset: earliest
+  spire:
+    scm:
+      provider: stub
+    llm:
+      provider: stub

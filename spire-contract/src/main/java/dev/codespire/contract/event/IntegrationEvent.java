@@ -1,5 +1,7 @@
 package dev.codespire.contract.event;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.ReviewResult;
@@ -15,7 +17,29 @@ import java.util.Set;
  * Integration events cross a system boundary: ingress from the SCM, worker
  * results, egress confirmations (CONTRACT §4, ADR-010). They are NOT appended
  * to aggregate streams — sagas translate them into Record commands.
+ *
+ * <p>The {@code type} discriminator is the Kafka wire format (cs.integration /
+ * cs.results, CONTRACT §9); renaming a subtype is a breaking wire change and
+ * follows the eventVersion/upcaster rule (CONTRACT §11).
  */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
+@JsonSubTypes({
+        // explicit names: nested records would otherwise get "Outer$Inner" ids
+        @JsonSubTypes.Type(value = IntegrationEvent.PullRequestEventReceived.class, name = "PullRequestEventReceived"),
+        @JsonSubTypes.Type(value = IntegrationEvent.PullRequestClosed.class, name = "PullRequestClosed"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ManualCommandReceived.class, name = "ManualCommandReceived"),
+        @JsonSubTypes.Type(value = IntegrationEvent.AuthorReplied.class, name = "AuthorReplied"),
+        @JsonSubTypes.Type(value = IntegrationEvent.PushReceived.class, name = "PushReceived"),
+        @JsonSubTypes.Type(value = IntegrationEvent.DiffFetched.class, name = "DiffFetched"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ContextRequested.class, name = "ContextRequested"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ContextContributed.class, name = "ContextContributed"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ContextAssembled.class, name = "ContextAssembled"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ReviewGenerated.class, name = "ReviewGenerated"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ReviewFailed.class, name = "ReviewFailed"),
+        @JsonSubTypes.Type(value = IntegrationEvent.CommentsPosted.class, name = "CommentsPosted"),
+        @JsonSubTypes.Type(value = IntegrationEvent.FollowUpGenerated.class, name = "FollowUpGenerated"),
+        @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted")
+})
 public sealed interface IntegrationEvent {
 
     enum PrAction { OPENED, UPDATED }

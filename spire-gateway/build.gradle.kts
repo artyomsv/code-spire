@@ -1,0 +1,40 @@
+// spire-gateway: the ONE synchronous edge. Verifies webhooks, translates them
+// into integration events, publishes to cs.integration, returns 202
+// (ARCHITECTURE §3, TECH-STACK §1). First deployable of the P1 service split.
+plugins {
+    java
+    id("io.quarkus")
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+val quarkusPlatformGroupId: String by project
+val quarkusPlatformArtifactId: String by project
+val quarkusPlatformVersion: String by project
+
+dependencies {
+    implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
+    implementation(project(":spire-contract"))
+    implementation(project(":spire-scm-bitbucket"))
+
+    implementation("io.quarkus:quarkus-rest-jackson")
+    implementation("io.quarkus:quarkus-messaging-kafka")
+    implementation("io.quarkus:quarkus-config-yaml")
+    implementation("io.quarkus:quarkus-smallrye-health")
+
+    testImplementation("io.quarkus:quarkus-junit5")
+    testImplementation("io.quarkus:quarkus-test-kafka-companion")
+    testImplementation("io.rest-assured:rest-assured")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
