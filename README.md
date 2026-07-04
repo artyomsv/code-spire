@@ -79,6 +79,7 @@ Bitbucket/LLM credentials in `.env` (`SPIRE_SCM_PROVIDER=bitbucket-cloud`,
 | [docs/CONTRACT.md](docs/CONTRACT.md) | The shared kernel: event/command catalog, decider, SPI ports, topics, Bitbucket mapping |
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Value types, event store, blob store, read models, relationships, encryption |
 | [docs/SCM-MAPPING.md](docs/SCM-MAPPING.md) | Provider-neutral SCM model mapped to Bitbucket/GitHub/GitLab APIs (verified) |
+| [docs/SMOKE-TEST.md](docs/SMOKE-TEST.md) | Runbook: local stub demo + real Bitbucket PR smoke test |
 | [docs/SECURITY.md](docs/SECURITY.md) | Trust boundaries, OIDC/RBAC, Tink encryption, secrets |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Why build (not buy), why greenfield (not fork), why event-driven |
 | [docs/RESEARCH.md](docs/RESEARCH.md) | Market alternatives + the PR-Agent code evaluation |

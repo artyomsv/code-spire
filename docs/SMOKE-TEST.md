@@ -1,0 +1,128 @@
+# Smoke Test Runbook
+
+Two modes: **A** proves the pipeline with zero external accounts (stubs); **B** reviews a real
+Bitbucket Cloud PR with a real LLM. Do A first — it validates your local stack in ~2 minutes.
+
+Prerequisites for both: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
+
+---
+
+## Mode A — local demo (stub SCM + stub LLM)
+
+```bash
+cp .env.example .env            # set POSTGRES_PASSWORD to any dev-only value
+docker compose up -d            # Postgres 18.4 :34432 + Redpanda v26.1.12 :34092
+# wait for health:
+docker ps --filter name=spire   # both should show (healthy)
+
+# terminal 1 — the brain + dashboard
+./gradlew :spire-orchestrator:quarkusDev
+# terminal 2 — the worker
+./gradlew :spire-review-worker:quarkusDev
+```
+
+Open **http://localhost:34080** and press **Simulate PR**.
+
+**Expected:** the timeline animates through
+`PullRequestEventReceived -> ReviewRequested -> FetchDiff -> DiffFetched -> GatherContext ->
+ContextAssembled -> GenerateReview -> ReviewGenerated -> PostComments -> CommentsPosted ->
+ReviewCompleted` (green). The worker log shows `STUB summary comment ...` / `STUB inline comment ...`.
+
+That's the whole choreography over real Kafka — only the SCM and LLM are stubbed.
+
+---
+
+## Mode B — real Bitbucket Cloud PR + real LLM
+
+### 1. Bitbucket bot account (one-time)
+
+1. Create (or pick) the **bot account** — the identity that posts all reviews.
+2. As the bot: *Personal settings -> App passwords -> Create* with scopes
+   **Pull requests: Write** and **Repositories: Read**.
+3. Get the bot's stable `account_id`:
+   ```bash
+   curl -s -u "<bot-username>:<app-password>" https://api.bitbucket.org/2.0/user | python3 -m json.tool | grep account_id
+   ```
+4. Give the bot access to a **sandbox test repository** (read + comment is enough).
+
+### 2. LLM
+
+Any OpenAI-compatible endpoint works. Two easy options:
+- **OpenAI:** base url `https://api.openai.com/v1`, your API key, a model name.
+- **Local Ollama (zero cost):** `ollama serve` + `ollama pull <model>`, base url
+  `http://localhost:11434/v1`, api key `ollama` (any non-blank value), model = the pulled model.
+
+### 3. Tunnel (webhooks must reach the gateway)
+
+```bash
+cloudflared tunnel --url http://localhost:34081     # or: ngrok http 34081
+```
+Note the public https URL it prints.
+
+### 4. Repo webhook
+
+On the TEST repo: *Settings -> Webhooks -> Add*:
+- URL: `https://<tunnel-host>/webhooks/bitbucket`
+- Secret: generate one (e.g. `openssl rand -hex 24`) — you'll put the same value in `.env`
+- Triggers: Pull request **Created**, **Updated**, **Comment created**, **Merged**, **Declined**
+
+### 5. `.env`
+
+Append to your Mode-A `.env`:
+```bash
+SPIRE_SCM_PROVIDER=bitbucket-cloud
+SPIRE_LLM_PROVIDER=openai-compatible
+
+SPIRE_SCM_BITBUCKET_BOT_USERNAME=<bot-username>         # worker
+SPIRE_SCM_BITBUCKET_BOT_APP_PASSWORD=<app-password>     # worker
+SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET=<webhook-secret>     # gateway
+SPIRE_SCM_BITBUCKET_BOT_ACCOUNT_ID=<account_id>         # gateway + worker
+
+SPIRE_LLM_BASE_URL=<endpoint>/v1
+SPIRE_LLM_API_KEY=<key>
+SPIRE_LLM_MODEL=<model>
+```
+Missing keys fail the affected service at startup naming the exact key — that's intended.
+
+### 6. Run all three services
+
+```bash
+./gradlew :spire-orchestrator:quarkusDev    # :34080 dashboard
+./gradlew :spire-gateway:quarkusDev         # :34081 webhook edge
+./gradlew :spire-review-worker:quarkusDev   # :34082
+```
+(The dev simulator returns 404 in this mode by design — synthetic events never enter a real pipeline.)
+
+### 7. The test
+
+1. In the sandbox repo, push a branch with a small code change and **open a PR**.
+2. Watch the dashboard timeline; within ~LLM-latency the PR gets **inline comments on changed
+   lines + one summary comment**, posted by the bot account.
+3. **Update the PR** (push another commit) — a new review runs for the new commit; the old run is
+   superseded (no stale comments).
+4. **Bitbucket redelivery test:** repo *Settings -> Webhooks -> View requests -> Resend* on the
+   `pullrequest:created` delivery — no duplicate comments may appear (idempotency).
+5. **Merge or decline the PR** — an in-flight review (if any) cancels; timeline shows `ReviewCancelled`.
+
+### Known v1 limits (expected, not bugs)
+
+- No Jira/Confluence context yet; replies to bot comments are ingested but not answered; `/review`
+  re-trigger is parsed but inactive (all P2).
+- A transient SCM/LLM failure shows `stalled:` on the timeline — restart by pushing a new commit.
+- The dashboard is unauthenticated (OIDC lands in P2) — don't expose :34080 through the tunnel.
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Webhook shows 401 in Bitbucket's request log | secret in `.env` != secret in the webhook config |
+| 202 in gateway log but nothing on the dashboard | broker: `docker exec spire-redpanda rpk topic list` should show `cs.*`; orchestrator/worker logs |
+| Run stuck at `GenerateReview` | worker log — LLM endpoint/key/model; Ollama: is the model pulled? |
+| `stalled:<phase>` on timeline | transient failure, no retry budget yet — push a new commit |
+| Dead letters | `docker exec spire-redpanda rpk topic consume cs.dlq --num 5` |
+| Service refuses to start | it names the missing config key — set it in `.env` |
+
+### Cleanup
+
+Delete the webhook + tunnel; bot comments can stay or be deleted in the PR UI. Local state:
+`docker compose down -v` wipes the event store and topics.
