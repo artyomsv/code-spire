@@ -37,7 +37,7 @@ dependencies {
 
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
-    testImplementation("org.wiremock:wiremock:3.9.1")
+    testImplementation("org.wiremock:wiremock:3.13.2")
 }
 
 tasks.test {

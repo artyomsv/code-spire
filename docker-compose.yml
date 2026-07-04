@@ -3,7 +3,7 @@
 # Host ports live in the 34xxx project range.
 services:
   redpanda:
-    image: redpandadata/redpanda:v24.2.4
+    image: redpandadata/redpanda:v26.1.12
     container_name: spire-redpanda
     command:
       - redpanda
@@ -33,7 +33,7 @@ services:
         max-file: "3"
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18.4-alpine
     container_name: spire-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set in .env}
@@ -42,7 +42,9 @@ services:
     ports:
       - "${POSTGRES_PORT:-34432}:5432"
     volumes:
-      - spire-pgdata:/var/lib/postgresql/data
+      # postgres:18+ convention: mount the PARENT dir (data lives in a
+      # versioned subdirectory, enabling in-place pg_upgrade --link)
+      - spire-pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s

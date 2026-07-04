@@ -18,9 +18,9 @@ repositories {
 dependencies {
     // Annotations only (no databind): the sealed event/command hierarchies ARE
     // the wire contract, so the polymorphic type ids live with them.
-    api("com.fasterxml.jackson.core:jackson-annotations:2.18.2")
+    api("com.fasterxml.jackson.core:jackson-annotations:2.22")
 
-    testImplementation(platform("org.junit:junit-bom:5.12.2"))
+    testImplementation(platform("org.junit:junit-bom:6.1.1"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
