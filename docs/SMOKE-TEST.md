@@ -34,6 +34,37 @@ That's the whole choreography over real Kafka — only the SCM and LLM are stubb
 
 ## Mode B — real Bitbucket Cloud PR + real LLM
 
+### Stage 0 — observe-only first contact (no interaction)
+
+Before the bot posts anything, verify the integration in a safe posture: receive
+the PR webhook, register the review, and do **nothing** else — no diff fetch, no
+LLM call, no comments. In `.env`:
+
+```bash
+SPIRE_REVIEW_MODE=observe
+SPIRE_REVIEW_AUTHOR_ALLOWLIST=<your account id or username>   # comma-separated
+```
+
+- `observe` registers each PR event — visible on the dashboard as
+  `PullRequestEventReceived → ReviewRequested → ReviewObserved` — but emits no work.
+- The allowlist means only listed authors are registered; everyone else is
+  skipped with a `PullRequestSkipped` note, so colleagues unaware of the
+  prototype are never touched. Matches account id OR username; empty = everyone.
+
+In observe mode the **worker never runs and no app password / LLM key is needed** —
+only the gateway + orchestrator. The orchestrator logs the posture at boot:
+`Review policy: mode=OBSERVE (register only, no diff/LLM/comments), author-allowlist=N author(s)`.
+
+```bash
+./gradlew :spire-orchestrator:quarkusDev
+./gradlew :spire-gateway:quarkusDev
+```
+
+Register the webhook (step 4 below), open a PR as an allowlisted author, and
+confirm it lands on the dashboard at `:34080` with **no** Bitbucket comment
+posted. Once that works, set `SPIRE_REVIEW_MODE=active`, add the app password +
+LLM key, start the worker, and continue with the full review below.
+
 ### 1. Bitbucket bot account (one-time)
 
 1. Create (or pick) the **bot account** — the identity that posts all reviews.

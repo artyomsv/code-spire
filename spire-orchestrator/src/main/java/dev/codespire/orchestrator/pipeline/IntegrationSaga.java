@@ -9,6 +9,7 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
+import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -34,6 +35,9 @@ public class IntegrationSaga {
     @Inject
     CommandsEmitter commands;
 
+    @Inject
+    ReviewPolicy policy;
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -54,13 +58,35 @@ public class IntegrationSaga {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
         String commit = e.diffRefs().headSha();
 
+        // Allowlist gate: colleagues unaware of the prototype never get touched.
+        if (!policy.allows(e.author())) {
+            timeline.record("integration", "PullRequestSkipped", reviewId,
+                    "author not in allowlist: @" + username(e));
+            LOG.infof("Skipping %s — author @%s not in allowlist", reviewId, username(e));
+            return;
+        }
+
         var emitted = lifecycle.handle(reviewId,
                 new RecordCommand.RequestReview(commit, e.action().name(), false));
 
         boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
-        if (started) {
-            commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit));
+        if (!started) {
+            return;
         }
+
+        // Observe-only gate: registered above, but emit no work (no diff/LLM/comments).
+        if (policy.observeOnly()) {
+            timeline.record("domain", "ReviewObserved", reviewId,
+                    "observe-only: registered, no review run");
+            LOG.infof("Observe-only: registered %s, emitting no commands", reviewId);
+            return;
+        }
+
+        commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit));
+    }
+
+    private static String username(PullRequestEventReceived e) {
+        return e.author() == null ? "unknown" : e.author().username();
     }
 
     private String reviewIdOf(IntegrationEvent event) {
