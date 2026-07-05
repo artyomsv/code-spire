@@ -3,6 +3,7 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
+import SettingsProviders from './components/SettingsProviders';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -16,7 +17,12 @@ function toggleTheme() {
 export default function App() {
   const { reviews, loading, error } = useLiveReviews();
   const location = useLocation();
-  const title = location.pathname.startsWith('/r/') ? 'Review detail' : 'Reviews';
+  const onProviders = location.pathname.startsWith('/settings/providers');
+  const title = location.pathname.startsWith('/r/')
+    ? 'Review detail'
+    : onProviders
+      ? 'Providers'
+      : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -33,7 +39,7 @@ export default function App() {
         </div>
         <nav className="nav">
           <div className="label">Operate</div>
-          <a className="active">
+          <a className={onProviders ? '' : 'active'} href="#/">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <rect x="1.5" y="2.5" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="1.5" y="7" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
@@ -61,11 +67,11 @@ export default function App() {
             </svg>
             Rules &amp; context<span className="tag">P2</span>
           </a>
-          <a className="disabled">
+          <a className={onProviders ? 'active' : ''} href="#/settings/providers">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <path d="M4 8l3 3 5-6" stroke="currentColor" strokeWidth="1.4" fill="none" />
             </svg>
-            Providers<span className="tag">P2</span>
+            Providers
           </a>
         </nav>
         <div className="spacer"></div>
@@ -104,6 +110,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ReviewsList reviews={reviews} loading={loading} error={error} />} />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
+          <Route path="/settings/providers" element={<SettingsProviders />} />
         </Routes>
       </main>
 

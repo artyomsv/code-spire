@@ -106,3 +106,78 @@ export async function registerPr(body: {
   }
   return res.json();
 }
+
+// ---- SCM providers ----
+
+export type AuthKind = 'bearer' | 'basic';
+
+export interface ProviderView {
+  id: string;
+  name: string;
+  type: string; // 'bitbucket-cloud'
+  baseUrl: string;
+  workspace: string;
+  authKind: AuthKind;
+  authUsername: string | null;
+  hasSecret: boolean; // whether a token is stored (the token itself is never returned)
+  botAccountId: string;
+  enabled: boolean;
+  authors: string[];
+  createdAt: string;
+}
+
+export interface ProviderInput {
+  name: string;
+  type: string;
+  baseUrl: string;
+  workspace: string;
+  authKind: AuthKind;
+  authUsername?: string | null;
+  secret?: string; // omit/empty on edit = keep the stored token
+  botAccountId: string;
+  enabled: boolean;
+  authors: string[];
+}
+
+/** Read the response body as text and throw it as an error (falls back to status). */
+async function throwResponse(res: Response, fallback: string): Promise<never> {
+  let msg = `${fallback} (${res.status})`;
+  try {
+    const text = await res.text();
+    if (text) msg = text;
+  } catch {
+    /* keep default */
+  }
+  throw new Error(msg);
+}
+
+export async function fetchProviders(): Promise<ProviderView[]> {
+  const res = await fetch('/api/providers');
+  if (!res.ok) return throwResponse(res, 'Failed to load providers');
+  return res.json();
+}
+
+export async function createProvider(input: ProviderInput): Promise<ProviderView> {
+  const res = await fetch('/api/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to create provider');
+  return res.json();
+}
+
+export async function updateProvider(id: string, input: ProviderInput): Promise<ProviderView> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update provider');
+  return res.json();
+}
+
+export async function deleteProvider(id: string): Promise<void> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to delete provider');
+}
