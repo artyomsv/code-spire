@@ -107,6 +107,10 @@ spire:
 
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
+  spire:
+    encryption:
+      # Test-only AES-GCM keyset (not a secret). Prod/dev read SPIRE_ENCRYPTION_KEYSET.
+      keyset: eyJwcmltYXJ5S2V5SWQiOjM4NjczMjQwMjIsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaURROXlLT0R1Y25mcFM1b0JyMlpaT3RYSkV0QmRwcmFwZkFzdUtpQUh5R1lBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjozODY3MzI0MDIyLCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K
   quarkus:
     http:
       port: 0

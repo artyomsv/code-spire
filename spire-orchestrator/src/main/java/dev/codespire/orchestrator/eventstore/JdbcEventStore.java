@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.port.EventStore;
+import dev.codespire.orchestrator.crypto.CryptoService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -24,15 +25,17 @@ import java.util.UUID;
  * Postgres append-only event store (DATA-MODEL §3). UNIQUE(stream_id, sequence)
  * enforces single-writer optimistic concurrency.
  *
- * <p>TODO(P1/SECURITY): payloads are stored as plaintext JSON bytes in this
- * Phase 0 skeleton (dev harness, synthetic data only). The Tink AES-GCM
- * envelope converter replaces this before any real code flows through —
- * the key_id column is already in place.
+ * <p>Payloads are encrypted at rest with Tink AES-GCM ({@link CryptoService},
+ * ADR-009); {@code key_id='tink'} marks encrypted rows, {@code 'none'} legacy
+ * plaintext. The stream id is the associated data, binding each ciphertext to
+ * its stream.
  */
 @ApplicationScoped
 public class JdbcEventStore implements EventStore {
 
     private static final String UNIQUE_VIOLATION = "23505";
+
+    private static final String KEY_ID = "tink"; // marks a Tink-encrypted payload ('none' = legacy plaintext)
 
     @Inject
     DataSource dataSource;
@@ -40,11 +43,14 @@ public class JdbcEventStore implements EventStore {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    CryptoService crypto;
+
     @Override
     public List<EventEnvelope> load(String streamId) {
         String sql = """
                 SELECT event_id, event_type, event_version, sequence, occurred_at,
-                       correlation_id, causation_id, actor, payload
+                       correlation_id, causation_id, actor, payload, key_id
                 FROM event_log WHERE stream_id = ? ORDER BY sequence
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -66,7 +72,7 @@ public class JdbcEventStore implements EventStore {
         String sql = """
                 INSERT INTO event_log (event_id, stream_id, sequence, event_type, event_version,
                                        payload, key_id, correlation_id, causation_id, actor, occurred_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             long sequence = expectedNextSequence;
@@ -76,11 +82,13 @@ public class JdbcEventStore implements EventStore {
                 ps.setLong(3, sequence++);
                 ps.setString(4, e.eventType());
                 ps.setInt(5, e.eventVersion());
-                ps.setBytes(6, mapper.writeValueAsBytes(e.payload()));
-                ps.setString(7, e.correlationId());
-                ps.setObject(8, e.causationId());
-                ps.setString(9, e.actor());
-                ps.setTimestamp(10, Timestamp.from(e.occurredAt()));
+                // Encrypt at rest; the stream id as AAD binds ciphertext to its stream.
+                ps.setBytes(6, crypto.encrypt(mapper.writeValueAsBytes(e.payload()), streamId));
+                ps.setString(7, KEY_ID);
+                ps.setString(8, e.correlationId());
+                ps.setObject(9, e.causationId());
+                ps.setString(10, e.actor());
+                ps.setTimestamp(11, Timestamp.from(e.occurredAt()));
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -97,9 +105,12 @@ public class JdbcEventStore implements EventStore {
 
     private EventEnvelope map(String streamId, ResultSet rs) throws SQLException {
         String eventType = rs.getString("event_type");
+        byte[] stored = rs.getBytes("payload");
+        // Decrypt Tink-encrypted payloads; 'none' rows are legacy plaintext.
+        byte[] plaintext = KEY_ID.equals(rs.getString("key_id")) ? crypto.decrypt(stored, streamId) : stored;
         Object payload;
         try {
-            payload = mapper.readValue(rs.getBytes("payload"), EventTypes.domainType(eventType));
+            payload = mapper.readValue(plaintext, EventTypes.domainType(eventType));
         } catch (IOException e) {
             throw new UncheckedIOException("Corrupt payload for " + eventType + " in " + streamId, e);
         }

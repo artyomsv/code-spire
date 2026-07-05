@@ -7,6 +7,7 @@ import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.orchestrator.crypto.CryptoService;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -51,6 +52,9 @@ public class ReviewProjection {
 
     @Inject
     OpenConnections connections;
+
+    @Inject
+    CryptoService crypto;
 
     // ---- writes (called by the sagas) --------------------------------------
 
@@ -121,7 +125,8 @@ public class ReviewProjection {
 
     /** Record the generated review's findings + usage against the row. */
     public void recordOutcome(String reviewId, ReviewResult result, int stage) {
-        String findingsJson = toFindingsJson(result.findings());
+        // Findings quote the source under review — encrypt at rest (AAD = reviewId).
+        String findingsJson = crypto.encryptString(toFindingsJson(result.findings()), reviewId);
         var usage = result.usage();
         update("""
                 UPDATE review_status SET findings_count = ?, findings_json = ?, model = ?, tokens_in = ?,
@@ -260,7 +265,7 @@ public class ReviewProjection {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.status, r.stage, r.findings, r.updatedAt,
                 computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                parseFindings(r.findingsJson), usageView(r), r.note, events);
+                parseFindings(r.findingsJson, r.id), usageView(r), r.note, events);
     }
 
     private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0) throws SQLException {
@@ -346,9 +351,15 @@ public class ReviewProjection {
         }
     }
 
-    private List<ReviewDetail.FindingView> parseFindings(String json) {
-        if (json == null || json.isBlank()) {
+    private List<ReviewDetail.FindingView> parseFindings(String stored, String reviewId) {
+        if (stored == null || stored.isBlank()) {
             return List.of();
+        }
+        String json;
+        try {
+            json = crypto.decryptString(stored, reviewId);
+        } catch (RuntimeException notEncrypted) {
+            json = stored; // legacy plaintext row
         }
         try {
             return mapper.readerForListOf(ReviewDetail.FindingView.class).readValue(json);

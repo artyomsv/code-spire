@@ -11,9 +11,14 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,6 +32,9 @@ class ReviewProjectionTest {
 
     @Inject
     ReviewProjection projection;
+
+    @Inject
+    DataSource dataSource;
 
     private static final RepoRef REPO = new RepoRef("acme", "web");
 
@@ -77,5 +85,33 @@ class ReviewProjectionTest {
     @Test
     void missingReviewIsEmpty() {
         assertTrue(projection.loadDetail("acme", "web", 999999L).isEmpty());
+    }
+
+    @Test
+    void findingsAreEncryptedAtRest() throws Exception {
+        long pr = 4103L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "reviewing", ReviewProjection.STAGE_DIFF);
+        var result = new ReviewResult(
+                List.of(new Finding("src/X.java", new LineRange(1, 1), Severity.MAJOR, "SECRET-MARKER-XYZ", null)),
+                "summary", null);
+        projection.recordOutcome(id, result, ReviewProjection.STAGE_COMMENTS);
+
+        String stored;
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT findings_json FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                stored = rs.getString("findings_json");
+            }
+        }
+        assertNotNull(stored);
+        assertFalse(stored.contains("SECRET-MARKER-XYZ"), "findings must be encrypted at rest");
+
+        // and it decrypts back through the read API
+        assertEquals("SECRET-MARKER-XYZ",
+                projection.loadDetail("acme", "web", pr).orElseThrow().findingsList().get(0).msg());
     }
 }

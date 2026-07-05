@@ -24,6 +24,7 @@ dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
     implementation(project(":spire-scm-bitbucket")) // read-only: fetch PR metadata for manual register
+    implementation("com.google.crypto.tink:tink:1.22.0") // AES-GCM encryption at rest (ADR-009)
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-websockets-next")
