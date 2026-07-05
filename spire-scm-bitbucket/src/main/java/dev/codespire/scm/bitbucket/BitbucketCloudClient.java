@@ -37,8 +37,10 @@ public class BitbucketCloudClient {
                 .build();
         this.mapper = mapper;
         this.baseUri = URI.create(config.baseUrl().replaceAll("/$", ""));
-        this.authorization = "Basic " + Base64.getEncoder().encodeToString(
-                (config.botUsername() + ":" + config.botAppPassword()).getBytes(StandardCharsets.UTF_8));
+        this.authorization = config.usesBearerToken()
+                ? "Bearer " + config.apiToken()
+                : "Basic " + Base64.getEncoder().encodeToString(
+                        (config.botUsername() + ":" + config.botAppPassword()).getBytes(StandardCharsets.UTF_8));
     }
 
     public JsonNode getJson(String path) {

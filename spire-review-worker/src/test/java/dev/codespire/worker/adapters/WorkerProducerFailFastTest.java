@@ -19,6 +19,7 @@ class WorkerProducerFailFastTest {
         producer.botUsername = Optional.of("bot");
         producer.botAppPassword = appPassword;
         producer.botAccountId = Optional.of("acc-1");
+        producer.apiToken = Optional.empty();
         producer.mapper = new ObjectMapper();
         return producer;
     }

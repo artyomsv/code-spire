@@ -39,6 +39,9 @@ public class WorkerScmProducer {
     @ConfigProperty(name = "spire.scm.bitbucket.bot-account-id")
     Optional<String> botAccountId;
 
+    @ConfigProperty(name = "spire.scm.bitbucket.api-token")
+    Optional<String> apiToken;
+
     @Inject
     ObjectMapper mapper;
 
@@ -63,15 +66,18 @@ public class WorkerScmProducer {
     }
 
     private BitbucketCloudClient client() {
-        // BitbucketCloudConfig validates all fields; the worker has no webhook
-        // secret, so a placeholder satisfies the invariant without granting one.
-        return new BitbucketCloudClient(new BitbucketCloudConfig(
-                baseUrl,
-                required(botUsername, "spire.scm.bitbucket.bot-username"),
-                required(botAppPassword, "spire.scm.bitbucket.bot-app-password"),
-                "unused-by-worker",
-                required(botAccountId, "spire.scm.bitbucket.bot-account-id")),
-                mapper);
+        // The worker has no webhook secret, so a placeholder satisfies the config
+        // invariant without granting one. Auth is a Bearer access token when set,
+        // else Basic (username + app password / Atlassian API token).
+        String accountId = required(botAccountId, "spire.scm.bitbucket.bot-account-id");
+        BitbucketCloudConfig config = apiToken.filter(t -> !t.isBlank()).isPresent()
+                ? new BitbucketCloudConfig(baseUrl, botUsername.orElse(null), botAppPassword.orElse(null),
+                        apiToken.get(), "unused-by-worker", accountId)
+                : new BitbucketCloudConfig(baseUrl,
+                        required(botUsername, "spire.scm.bitbucket.bot-username"),
+                        required(botAppPassword, "spire.scm.bitbucket.bot-app-password"),
+                        "unused-by-worker", accountId);
+        return new BitbucketCloudClient(config, mapper);
     }
 
     private static String required(Optional<String> value, String key) {

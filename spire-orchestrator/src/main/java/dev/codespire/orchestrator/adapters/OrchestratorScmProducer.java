@@ -40,6 +40,9 @@ public class OrchestratorScmProducer {
     @ConfigProperty(name = "spire.scm.bitbucket.bot-account-id")
     Optional<String> botAccountId;
 
+    @ConfigProperty(name = "spire.scm.bitbucket.api-token")
+    Optional<String> apiToken;
+
     @Inject
     ObjectMapper mapper;
 
@@ -47,16 +50,23 @@ public class OrchestratorScmProducer {
     @Singleton
     DiffSource diffSource() {
         return switch (provider) {
-            case "bitbucket-cloud" -> new BitbucketCloudDiffSource(new BitbucketCloudClient(new BitbucketCloudConfig(
-                    baseUrl,
-                    required(botUsername, "spire.scm.bitbucket.bot-username"),
-                    required(botAppPassword, "spire.scm.bitbucket.bot-app-password"),
-                    "unused-by-orchestrator",
-                    required(botAccountId, "spire.scm.bitbucket.bot-account-id")), mapper));
+            case "bitbucket-cloud" -> new BitbucketCloudDiffSource(new BitbucketCloudClient(bitbucketConfig(), mapper));
             case "stub" -> new StubDiffSource();
             default -> throw new IllegalStateException("Unknown spire.scm.provider '" + provider
                     + "' — expected stub | bitbucket-cloud");
         };
+    }
+
+    private BitbucketCloudConfig bitbucketConfig() {
+        String accountId = required(botAccountId, "spire.scm.bitbucket.bot-account-id");
+        if (apiToken.filter(t -> !t.isBlank()).isPresent()) {
+            return new BitbucketCloudConfig(baseUrl, botUsername.orElse(null), botAppPassword.orElse(null),
+                    apiToken.get(), "unused-by-orchestrator", accountId);
+        }
+        return new BitbucketCloudConfig(baseUrl,
+                required(botUsername, "spire.scm.bitbucket.bot-username"),
+                required(botAppPassword, "spire.scm.bitbucket.bot-app-password"),
+                "unused-by-orchestrator", accountId);
     }
 
     private static String required(Optional<String> value, String key) {
