@@ -10,6 +10,7 @@ import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
 
@@ -51,6 +52,21 @@ class IntegrationSagaPolicyTest {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
                 notes.add(type);
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void registerHeader(String reviewId, dev.codespire.contract.scm.RepoRef repo, long prId,
+                                       String title, String author, String authorId, String sourceBranch,
+                                       String destBranch, String sha, String htmlUrl, String status, int stage) {
+            }
+
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail) {
+            }
+
+            @Override
+            public void setNote(String reviewId, String note) {
             }
         };
         saga.policy = policy;

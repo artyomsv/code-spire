@@ -42,6 +42,7 @@ reviewer you can extend without touching the core.**
 | `spire-gateway` | 34081 | webhook verify -> translate -> `cs.integration`, returns 202 |
 | `spire-orchestrator` | 34080 | `ReviewLifecycle` decider + sagas, owns the event store, emits `cs.commands`, serves the live dashboard |
 | `spire-review-worker` | 34082 | consumes `cs.commands`: diff fetch, LLM review, idempotent comment posting -> `cs.results` |
+| `spire-ui` | 34000 | React operator UI: live reviews list + per-PR detail (reads `/api/reviews`, `/ws/reviews`) |
 
 Shared libraries: `spire-contract` (domain + wire format), `spire-diff`, `spire-scm-bitbucket`,
 `spire-llm`.
@@ -55,17 +56,23 @@ cp .env.example .env          # fill in POSTGRES_PASSWORD (dev-only value)
 docker compose up -d          # Postgres :34432 + Redpanda :34092
 ./gradlew build               # unit + per-service split tests (Testcontainers: Kafka + Postgres)
 
-# three terminals (or run only the orchestrator for the dashboard demo):
+# backend services (three terminals):
 ./gradlew :spire-orchestrator:quarkusDev
 ./gradlew :spire-gateway:quarkusDev
 ./gradlew :spire-review-worker:quarkusDev
+
+# operator UI (fourth terminal):
+cd spire-ui && npm install && npm run dev   # http://localhost:34000
 ```
 
-Open http://localhost:34080 — press **Simulate PR** and watch the review flow across the live
-event timeline (integration -> command -> domain -> result) to `ReviewCompleted`. With real
-Bitbucket/LLM credentials in `.env` (`SPIRE_SCM_PROVIDER=bitbucket-cloud`,
+Open **http://localhost:34000** for the operator UI — a live reviews list; click any review for
+its pipeline, findings, model usage, and event stream. (The orchestrator on `:34080` also serves a
+raw event-timeline dashboard and the `/api` + `/ws` endpoints the UI proxies to.)
+
+With real Bitbucket/LLM credentials in `.env` (`SPIRE_SCM_PROVIDER=bitbucket-cloud`,
 `SPIRE_LLM_PROVIDER=openai-compatible`), point a Bitbucket webhook at
-`http://<gateway>/webhooks/bitbucket` and the bot reviews real PRs.
+`http://<gateway>/webhooks/bitbucket` and the bot reviews real PRs. See
+[docs/SMOKE-TEST.md](docs/SMOKE-TEST.md) for the safe observe-only first-contact flow.
 
 ## Docs
 

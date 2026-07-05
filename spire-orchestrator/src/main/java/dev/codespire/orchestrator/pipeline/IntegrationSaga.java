@@ -10,7 +10,10 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
+
+import java.util.Locale;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -37,6 +40,9 @@ public class IntegrationSaga {
 
     @Inject
     ReviewPolicy policy;
+
+    @Inject
+    ReviewProjection projection;
 
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
@@ -66,6 +72,16 @@ public class IntegrationSaga {
             return;
         }
 
+        boolean observe = policy.observeOnly();
+        // Register in the read model (header + first event) so the review is
+        // visible on the dashboard whether or not any work runs.
+        projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(),
+                observe ? "observed" : "reviewing",
+                observe ? ReviewProjection.STAGE_RECEIVED : ReviewProjection.STAGE_DIFF);
+        projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
+                e.action().name().toLowerCase(Locale.ROOT) + " · head " + commit);
+
         var emitted = lifecycle.handle(reviewId,
                 new RecordCommand.RequestReview(commit, e.action().name(), false));
 
@@ -75,9 +91,11 @@ public class IntegrationSaga {
         }
 
         // Observe-only gate: registered above, but emit no work (no diff/LLM/comments).
-        if (policy.observeOnly()) {
+        if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,
                     "observe-only: registered, no review run");
+            projection.appendEvent(reviewId, "domain", "ReviewObserved", "observe-only: registered, no review run");
+            projection.setNote(reviewId, "Observe-only mode — registered, no review run.");
             LOG.infof("Observe-only: registered %s, emitting no commands", reviewId);
             return;
         }
@@ -87,6 +105,10 @@ public class IntegrationSaga {
 
     private static String username(PullRequestEventReceived e) {
         return e.author() == null ? "unknown" : e.author().username();
+    }
+
+    private static String authorId(PullRequestEventReceived e) {
+        return e.author() == null ? "" : e.author().providerUserId();
     }
 
     private String reviewIdOf(IntegrationEvent event) {
