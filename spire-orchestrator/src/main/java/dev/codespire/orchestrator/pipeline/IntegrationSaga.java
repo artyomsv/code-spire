@@ -8,12 +8,17 @@ import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
+import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 
+import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -44,6 +49,11 @@ public class IntegrationSaga {
     @Inject
     ReviewProjection projection;
 
+    @Inject
+    ProviderRegistry providers;
+
+    private static final String PROVIDER_TYPE = "bitbucket-cloud";
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -64,11 +74,20 @@ public class IntegrationSaga {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
         String commit = e.diffRefs().headSha();
 
-        // Allowlist gate: colleagues unaware of the prototype never get touched.
-        if (!policy.allows(e.author())) {
+        // Only PRs from a registered provider are reviewed.
+        Optional<ScmProvider> provider = providers.resolve(PROVIDER_TYPE, e.repo().workspace());
+        if (provider.isEmpty()) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
-                    "author not in allowlist: @" + username(e));
-            LOG.infof("Skipping %s — author @%s not in allowlist", reviewId, username(e));
+                    "no provider registered for workspace " + e.repo().workspace());
+            LOG.infof("Skipping %s — no provider registered for workspace %s", reviewId, e.repo().workspace());
+            return;
+        }
+
+        // Allowlist gate (per-provider): unlisted authors never get touched.
+        if (!authorAllowed(provider.get().authors(), e.author())) {
+            timeline.record("integration", "PullRequestSkipped", reviewId,
+                    "author not in the provider's allowlist: @" + username(e));
+            LOG.infof("Skipping %s — author @%s not in the provider allowlist", reviewId, username(e));
             return;
         }
 
@@ -101,6 +120,18 @@ public class IntegrationSaga {
         }
 
         commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit));
+    }
+
+    /** An empty provider allowlist reviews everyone; else match by account id or username. */
+    private static boolean authorAllowed(List<String> allowlist, Author author) {
+        if (allowlist == null || allowlist.isEmpty()) {
+            return true;
+        }
+        if (author == null) {
+            return false;
+        }
+        return allowlist.stream().anyMatch(a ->
+                a.equalsIgnoreCase(author.providerUserId()) || a.equalsIgnoreCase(author.username()));
     }
 
     private static String username(PullRequestEventReceived e) {

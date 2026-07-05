@@ -7,6 +7,9 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.orchestrator.provider.ProviderClients;
+import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.scm.bitbucket.BitbucketApiException;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
@@ -42,8 +45,13 @@ public class ManualRegisterResource {
     private static final Pattern PR_URL =
             Pattern.compile("([^/\\s?#]+)/([^/\\s?#]+)/(?:pull-requests|pullrequests)/(\\d+)");
 
+    private static final String PROVIDER_TYPE = "bitbucket-cloud";
+
     @Inject
-    DiffSource diffSource;
+    ProviderRegistry providers;
+
+    @Inject
+    ProviderClients clients;
 
     @Inject
     IntegrationEmitter integration;
@@ -58,6 +66,13 @@ public class ManualRegisterResource {
     public Map<String, Object> register(RegisterRequest req) {
         Target target = resolve(req);
         RepoRef repo = new RepoRef(target.workspace, target.slug);
+
+        // Resolve the registered provider for this workspace and use ITS
+        // (decrypted) credentials — no .env token needed.
+        ScmProvider provider = providers.resolve(PROVIDER_TYPE, target.workspace)
+                .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
+                        + target.workspace + "'. Add one under Settings -> Providers."));
+        DiffSource diffSource = clients.diffSource(provider);
 
         PullRequest pr;
         try {

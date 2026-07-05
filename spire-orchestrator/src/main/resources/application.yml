@@ -82,15 +82,12 @@ mp:
             reset: earliest
         failure-strategy: ignore
 
-# First-contact safety gates (see ReviewPolicy). Defaults = full product
-# behaviour; the .env test run overrides both.
-#   mode=observe  -> register PR events, emit no work (no diff/LLM/comments)
-#   author-allowlist -> only these authors are reviewed (empty = everyone;
-#                       matches account id OR username, comma-separated)
+# Global review mode (see ReviewPolicy). observe = register PR events, emit no
+# work (no diff/LLM/comments). The per-provider author allowlist lives in the
+# provider registry, not here.
 spire:
   review:
     mode: ${SPIRE_REVIEW_MODE:active}
-    author-allowlist: ${SPIRE_REVIEW_AUTHOR_ALLOWLIST:}
 
 # Dev: docker-compose Postgres + Redpanda. Credentials come from .env (Quarkus
 # loads it from the project root) — NO defaults for credentials, fail fast.

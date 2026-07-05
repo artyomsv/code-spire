@@ -55,7 +55,22 @@ class OrchestratorChoreographyTest {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    dev.codespire.orchestrator.provider.ProviderRegistry providers;
+
     private KafkaProducer<String, String> producer;
+
+    @org.junit.jupiter.api.BeforeEach
+    void registerProvider() {
+        // A PR is only reviewed if its workspace has a registered provider.
+        try {
+            providers.create(new dev.codespire.orchestrator.provider.ProviderInput(
+                    "test", "bitbucket-cloud", "http://localhost", "sandbox",
+                    "bearer", null, "tok", "acct", true, List.of()));
+        } catch (RuntimeException alreadyRegistered) {
+            // fine — one provider per (type, workspace)
+        }
+    }
 
     @AfterEach
     void closeProducer() {
