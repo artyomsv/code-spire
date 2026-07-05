@@ -23,6 +23,7 @@ val quarkusPlatformVersion: String by project
 dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
+    implementation(project(":spire-scm-bitbucket")) // read-only: fetch PR metadata for manual register
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-websockets-next")

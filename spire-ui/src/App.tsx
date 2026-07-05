@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
+import RegisterPrDialog from './components/RegisterPrDialog';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -15,6 +17,7 @@ export default function App() {
   const { reviews, loading, error } = useLiveReviews();
   const location = useLocation();
   const title = location.pathname.startsWith('/r/') ? 'Review detail' : 'Reviews';
+  const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
     <div className="app">
@@ -80,6 +83,12 @@ export default function App() {
             <span className="dot"></span>LIVE
           </span>
           <div className="grow"></div>
+          <button className="btn" onClick={() => setRegisterOpen(true)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            Register PR
+          </button>
           <button className="iconbtn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme" onClick={toggleTheme}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path
@@ -97,6 +106,8 @@ export default function App() {
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
         </Routes>
       </main>
+
+      {registerOpen && <RegisterPrDialog onClose={() => setRegisterOpen(false)} />}
     </div>
   );
 }

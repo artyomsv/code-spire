@@ -74,3 +74,35 @@ export async function fetchReviewDetail(
   if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
   return res.json();
 }
+
+export interface RegisterResult {
+  reviewId: string;
+  workspace: string;
+  slug: string;
+  pr: number;
+}
+
+/** Manually register a PR for review (no webhook). Body is a URL or ws+slug+pr. */
+export async function registerPr(body: {
+  url?: string;
+  workspace?: string;
+  slug?: string;
+  pr?: number;
+}): Promise<RegisterResult> {
+  const res = await fetch('/api/reviews/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = `Register failed (${res.status})`;
+    try {
+      const text = await res.text();
+      if (text) msg = text;
+    } catch {
+      /* keep default */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}

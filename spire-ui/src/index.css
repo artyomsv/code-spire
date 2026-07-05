@@ -374,3 +374,42 @@
 
   /* ---- extension: observed status (registered, idle — iris like reviewing, no pulsing glyph) ---- */
   .pill.observed { --st: var(--iris); --st-soft: var(--iris-soft); }
+
+  /* ---- extension: register-PR modal ---- */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(10, 12, 18, 0.5);
+    display: grid; place-items: center; padding: 20px;
+  }
+  .modal {
+    width: 100%; max-width: 520px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 15px 18px; border-bottom: 1px solid var(--border);
+  }
+  .modal-head h3 { margin: 0; font-size: 15px; font-weight: 650; flex: 1; }
+  .modal-body { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field > span {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--text-3);
+  }
+  .field input {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 11px; color: var(--text); font-size: 13px; outline: none; width: 100%;
+  }
+  .field input:focus { border-color: var(--iris); }
+  .field input:disabled { opacity: 0.5; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr 80px; gap: 10px; }
+  .modal-or {
+    text-align: center; font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-3); letter-spacing: 0.03em;
+  }
+  .modal-msg { font-size: 12.5px; padding: 9px 11px; border-radius: 8px; }
+  .modal-error { color: var(--crit); background: var(--crit-soft); }
+  .modal-ok { color: var(--good); background: var(--good-soft); font-family: var(--font-mono); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 2px; }
+  @media (max-width: 560px) { .field-row { grid-template-columns: 1fr; } }
