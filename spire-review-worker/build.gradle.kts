@@ -27,6 +27,7 @@ dependencies {
     implementation(project(":spire-encryption")) // decrypt the per-command SCM credential (ADR-015)
     implementation(project(":spire-diff"))
     implementation(project(":spire-scm-bitbucket"))
+    implementation(project(":spire-scm-github"))
     implementation(project(":spire-llm"))
 
     implementation("io.quarkus:quarkus-jackson")

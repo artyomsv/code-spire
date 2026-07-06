@@ -114,7 +114,7 @@ export type AuthKind = 'bearer' | 'basic';
 export interface ProviderView {
   id: string;
   name: string;
-  type: string; // 'bitbucket-cloud'
+  type: string; // 'bitbucket-cloud' | 'github'
   baseUrl: string;
   workspace: string;
   authKind: AuthKind;

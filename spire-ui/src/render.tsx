@@ -8,6 +8,15 @@ import type {
 
 export const STAGES = ['Received', 'Diff', 'Context', 'Review', 'Comments', 'Done'];
 
+/** Derive the SCM provider from the real PR URL host — no guessing, no hardcoding. */
+export function providerLabel(htmlUrl: string | undefined): string {
+  const u = (htmlUrl ?? '').toLowerCase();
+  if (u.includes('github')) return 'github';
+  if (u.includes('gitlab')) return 'gitlab';
+  if (u.includes('bitbucket')) return 'bitbucket-cloud';
+  return '—';
+}
+
 export const STATUS_LABEL: Record<ReviewStatus, string> = {
   reviewing: 'Reviewing',
   completed: 'Completed',
@@ -248,7 +257,7 @@ export function metaCard(r: ReviewDetail) {
           <dt>Review ID</dt>
           <dd style={{ fontSize: 11 }}>{r.id}</dd>
           <dt>Provider</dt>
-          <dd>bitbucket-cloud</dd>
+          <dd>{providerLabel(r.htmlUrl)}</dd>
           <dt>Target</dt>
           <dd>{r.base}</dd>
           <dt>Head</dt>

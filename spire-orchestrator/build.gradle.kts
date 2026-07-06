@@ -25,6 +25,7 @@ dependencies {
     implementation(project(":spire-contract"))
     implementation(project(":spire-encryption")) // AES-GCM encryption at rest (ADR-009 / ADR-015)
     implementation(project(":spire-scm-bitbucket")) // read-only: fetch PR metadata for manual register
+    implementation(project(":spire-scm-github")) // read-only: fetch PR metadata for manual register
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-websockets-next")

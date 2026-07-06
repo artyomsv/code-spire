@@ -40,12 +40,11 @@ public class ManualRegisterResource {
 
     // workspace / repo slug charset (same as the webhook ingress guard).
     private static final Pattern SLUG = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
-    // {workspace}/{slug}/pull-requests/{id} anywhere in the URL — host-agnostic so
+    // {workspace}/{slug}/<pr-segment>/{id} anywhere in the URL — host-agnostic so
     // proxied hosts (company MCAS: bitbucket.org.mcas.ms) and trailing path/query parse.
+    // pr-segment: Bitbucket "pull-requests"/"pullrequests" or GitHub "pull".
     private static final Pattern PR_URL =
-            Pattern.compile("([^/\\s?#]+)/([^/\\s?#]+)/(?:pull-requests|pullrequests)/(\\d+)");
-
-    private static final String PROVIDER_TYPE = "bitbucket-cloud";
+            Pattern.compile("([^/\\s?#]+)/([^/\\s?#]+)/(?:pull-requests|pullrequests|pull)/(\\d+)");
 
     @Inject
     ProviderRegistry providers;
@@ -68,8 +67,9 @@ public class ManualRegisterResource {
         RepoRef repo = new RepoRef(target.workspace, target.slug);
 
         // Resolve the registered provider for this workspace and use ITS
-        // (decrypted) credentials — no .env token needed.
-        ScmProvider provider = providers.resolve(PROVIDER_TYPE, target.workspace)
+        // (decrypted) credentials — no .env token needed. The provider's own type
+        // (bitbucket-cloud | github | …) selects the adapter.
+        ScmProvider provider = providers.resolveByWorkspace(target.workspace)
                 .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
                         + target.workspace + "'. Add one under Settings -> Providers."));
         DiffSource diffSource = clients.diffSource(provider);

@@ -26,6 +26,9 @@ import java.util.UUID;
 @ApplicationScoped
 public class ProviderRegistry {
 
+    private static final org.jboss.logging.Logger LOG =
+            org.jboss.logging.Logger.getLogger(ProviderRegistry.class);
+
     @Inject
     DataSource dataSource;
 
@@ -143,19 +146,48 @@ public class ProviderRegistry {
             ps.setString(1, type);
             ps.setString(2, workspace);
             try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                UUID id = rs.getObject("id", UUID.class);
-                return Optional.of(new ScmProvider(id, rs.getString("name"), rs.getString("type"),
-                        rs.getString("base_url"), rs.getString("workspace"), rs.getString("auth_kind"),
-                        rs.getString("auth_username"),
-                        encryption.decryptString(rs.getString("auth_secret"), aad(id)),
-                        rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id)));
+                return rs.next() ? Optional.of(decryptedProvider(c, rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve provider for " + type + "/" + workspace, e);
         }
+    }
+
+    /**
+     * The enabled provider for a workspace REGARDLESS of SCM type, with its secret
+     * decrypted — the resolution used by the manual-register and saga paths, which
+     * know a PR's workspace but not (without threading it through the event) its
+     * provider type. Assumes one enabled provider per workspace name; if a workspace
+     * is registered on more than one SCM, the oldest wins and a warning is logged.
+     */
+    public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT * FROM scm_provider WHERE workspace = ? AND enabled = TRUE ORDER BY created_at")) {
+            ps.setString(1, workspace);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                ScmProvider provider = decryptedProvider(c, rs);
+                if (rs.next()) {
+                    LOG.warnf("Workspace '%s' has providers on multiple SCM types; using the oldest (%s). "
+                            + "Register distinct workspace names per SCM to disambiguate.", workspace, provider.type());
+                }
+                return Optional.of(provider);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve provider for workspace " + workspace, e);
+        }
+    }
+
+    private ScmProvider decryptedProvider(Connection c, ResultSet rs) throws SQLException {
+        UUID id = rs.getObject("id", UUID.class);
+        return new ScmProvider(id, rs.getString("name"), rs.getString("type"),
+                rs.getString("base_url"), rs.getString("workspace"), rs.getString("auth_kind"),
+                rs.getString("auth_username"),
+                encryption.decryptString(rs.getString("auth_secret"), aad(id)),
+                rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id));
     }
 
     // ---- helpers -----------------------------------------------------------

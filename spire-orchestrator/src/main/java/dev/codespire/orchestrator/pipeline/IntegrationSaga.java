@@ -56,8 +56,6 @@ public class IntegrationSaga {
     @Inject
     WorkerCredentials workerCredentials;
 
-    private static final String PROVIDER_TYPE = "bitbucket-cloud";
-
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -79,7 +77,7 @@ public class IntegrationSaga {
         String commit = e.diffRefs().headSha();
 
         // Only PRs from a registered provider are reviewed.
-        Optional<ScmProvider> provider = providers.resolve(PROVIDER_TYPE, e.repo().workspace());
+        Optional<ScmProvider> provider = providers.resolveByWorkspace(e.repo().workspace());
         if (provider.isEmpty()) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
                     "no provider registered for workspace " + e.repo().workspace());

@@ -9,7 +9,15 @@ import {
   type ProviderView,
 } from '../api';
 
-const DEFAULT_BASE_URL = 'https://api.bitbucket.org/2.0';
+// Provider types and their default API base URLs. When a user switches type
+// without having customised the base URL, we swap in the matching default.
+const PROVIDER_TYPES = ['bitbucket-cloud', 'github'] as const;
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  'bitbucket-cloud': 'https://api.bitbucket.org/2.0',
+  github: 'https://api.github.com',
+};
+const KNOWN_DEFAULTS = new Set(Object.values(DEFAULT_BASE_URLS));
+const DEFAULT_BASE_URL = DEFAULT_BASE_URLS['bitbucket-cloud'];
 
 export default function SettingsProviders() {
   const [providers, setProviders] = useState<ProviderView[]>([]);
@@ -173,6 +181,18 @@ function ProviderFormModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function changeType(next: string) {
+    setType(next);
+    // Swap the base URL to the new type's default unless the user has customised it.
+    if (!baseUrl.trim() || KNOWN_DEFAULTS.has(baseUrl.trim())) {
+      setBaseUrl(DEFAULT_BASE_URLS[next] ?? baseUrl);
+    }
+    // GitHub authenticates with a Bearer token only.
+    if (next === 'github') {
+      setAuthKind('bearer');
+    }
+  }
+
   function addAuthor() {
     const v = authorDraft.trim();
     if (!v || authors.includes(v)) {
@@ -253,8 +273,12 @@ function ProviderFormModal({
           <div className="field-row-2">
             <label className="field">
               <span>Type</span>
-              <select value={type} onChange={(e) => setType(e.target.value)}>
-                <option value="bitbucket-cloud">bitbucket-cloud</option>
+              <select value={type} onChange={(e) => changeType(e.target.value)}>
+                {PROVIDER_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="field">
@@ -281,9 +305,13 @@ function ProviderFormModal({
           <div className="field-row-2">
             <label className="field">
               <span>Auth kind</span>
-              <select value={authKind} onChange={(e) => setAuthKind(e.target.value as AuthKind)}>
+              <select
+                value={authKind}
+                disabled={type === 'github'}
+                onChange={(e) => setAuthKind(e.target.value as AuthKind)}
+              >
                 <option value="bearer">bearer</option>
-                <option value="basic">basic</option>
+                {type !== 'github' && <option value="basic">basic</option>}
               </select>
             </label>
             {authKind === 'basic' && (

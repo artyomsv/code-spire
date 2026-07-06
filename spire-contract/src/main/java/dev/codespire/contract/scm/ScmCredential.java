@@ -7,10 +7,12 @@ package dev.codespire.contract.scm;
  * never logged. The orchestrator packs it from the provider registry; the
  * worker unpacks it after decrypting with the master keyset.
  *
- * <p>{@code authKind} is {@code "bearer"} (secret is an access token) or
- * {@code "basic"} (secret is a password/app-password paired with {@code username}).
+ * <p>{@code type} is the provider type ({@code "bitbucket-cloud"} | {@code "github"} |
+ * {@code "gitlab"}) — the worker uses it to pick the SCM adapter. {@code authKind} is
+ * {@code "bearer"} (secret is an access token) or {@code "basic"} (secret is a
+ * password/app-password paired with {@code username}).
  */
-public record ScmCredential(String baseUrl, String authKind, String username,
+public record ScmCredential(String type, String baseUrl, String authKind, String username,
                             String secret, String botAccountId) {
 
     /**

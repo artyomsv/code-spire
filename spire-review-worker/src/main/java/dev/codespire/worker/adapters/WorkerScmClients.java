@@ -12,6 +12,10 @@ import dev.codespire.scm.bitbucket.BitbucketCloudClient;
 import dev.codespire.scm.bitbucket.BitbucketCloudCommentSink;
 import dev.codespire.scm.bitbucket.BitbucketCloudConfig;
 import dev.codespire.scm.bitbucket.BitbucketCloudDiffSource;
+import dev.codespire.scm.github.GitHubClient;
+import dev.codespire.scm.github.GitHubCommentSink;
+import dev.codespire.scm.github.GitHubConfig;
+import dev.codespire.scm.github.GitHubDiffSource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -36,7 +40,7 @@ public class WorkerScmClients {
     }
 
     @ConfigProperty(name = "spire.scm.provider")
-    String providerMode; // stub | bitbucket-cloud
+    String providerMode; // "stub" forces the stub SCM; any other value = active (route per-command credential)
 
     @Inject
     EncryptionService encryption;
@@ -54,8 +58,17 @@ public class WorkerScmClients {
         if (cred == null) {
             return stub; // no credential — active mode never emits these; safe fallback
         }
-        BitbucketCloudClient client = new BitbucketCloudClient(configOf(cred), mapper);
-        return new Clients(new BitbucketCloudDiffSource(client), new BitbucketCloudCommentSink(client));
+        return switch (cred.type()) {
+            case "bitbucket-cloud" -> {
+                BitbucketCloudClient c = new BitbucketCloudClient(bitbucketConfig(cred), mapper);
+                yield new Clients(new BitbucketCloudDiffSource(c), new BitbucketCloudCommentSink(c));
+            }
+            case "github" -> {
+                GitHubClient c = new GitHubClient(githubConfig(cred), mapper);
+                yield new Clients(new GitHubDiffSource(c), new GitHubCommentSink(c));
+            }
+            default -> throw new IllegalStateException("Unsupported provider type: " + cred.type());
+        };
     }
 
     private ScmCredential unpack(ActionCommand command) {
@@ -71,13 +84,20 @@ public class WorkerScmClients {
         }
     }
 
-    private static BitbucketCloudConfig configOf(ScmCredential cred) {
+    private static String botAccountId(ScmCredential cred) {
+        return cred.botAccountId() == null || cred.botAccountId().isBlank() ? "unset" : cred.botAccountId();
+    }
+
+    private static BitbucketCloudConfig bitbucketConfig(ScmCredential cred) {
         // The worker holds no webhook secret — a placeholder satisfies the config
         // invariant (least privilege). Bearer when authKind=bearer, else Basic.
-        String botAccountId = cred.botAccountId() == null || cred.botAccountId().isBlank()
-                ? "unset" : cred.botAccountId();
         return "bearer".equalsIgnoreCase(cred.authKind())
-                ? new BitbucketCloudConfig(cred.baseUrl(), null, null, cred.secret(), "unused-by-worker", botAccountId)
-                : new BitbucketCloudConfig(cred.baseUrl(), cred.username(), cred.secret(), "unused-by-worker", botAccountId);
+                ? new BitbucketCloudConfig(cred.baseUrl(), null, null, cred.secret(), "unused-by-worker", botAccountId(cred))
+                : new BitbucketCloudConfig(cred.baseUrl(), cred.username(), cred.secret(), "unused-by-worker", botAccountId(cred));
+    }
+
+    private static GitHubConfig githubConfig(ScmCredential cred) {
+        // GitHub is always Bearer; the webhook secret is a worker-side placeholder.
+        return new GitHubConfig(cred.baseUrl(), cred.secret(), "unused-by-worker", botAccountId(cred));
     }
 }

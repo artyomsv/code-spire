@@ -19,8 +19,6 @@ import java.util.Optional;
 @ApplicationScoped
 public class WorkerCredentials {
 
-    private static final String PROVIDER_TYPE = "bitbucket-cloud";
-
     @Inject
     ProviderRegistry providers;
 
@@ -32,7 +30,7 @@ public class WorkerCredentials {
 
     /** Encrypt an already-resolved provider's credential (IntegrationSaga path). */
     public String pack(ScmProvider provider) {
-        ScmCredential cred = new ScmCredential(provider.baseUrl(), provider.authKind(),
+        ScmCredential cred = new ScmCredential(provider.type(), provider.baseUrl(), provider.authKind(),
                 provider.authUsername(), provider.secret(), provider.botAccountId());
         try {
             return encryption.encryptString(mapper.writeValueAsString(cred), ScmCredential.aad(provider.workspace()));
@@ -47,6 +45,6 @@ public class WorkerCredentials {
      * the caller then skips the command rather than emit an uncredentialed one.
      */
     public Optional<String> packForWorkspace(String workspace) {
-        return providers.resolve(PROVIDER_TYPE, workspace).map(this::pack);
+        return providers.resolveByWorkspace(workspace).map(this::pack);
     }
 }

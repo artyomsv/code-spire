@@ -64,7 +64,7 @@ class WorkerPipelineTest {
      * bound (AAD) to this PR's workspace — exactly as the orchestrator would.
      */
     private String cred() throws Exception {
-        ScmCredential c = new ScmCredential("http://localhost:" + BitbucketWireMockResource.server.port(),
+        ScmCredential c = new ScmCredential("bitbucket-cloud", "http://localhost:" + BitbucketWireMockResource.server.port(),
                 "basic", "e2e-bot", "e2e-app-password", "bot-account-e2e");
         return encryption.encryptString(mapper.writeValueAsString(c), ScmCredential.aad("sandbox"));
     }

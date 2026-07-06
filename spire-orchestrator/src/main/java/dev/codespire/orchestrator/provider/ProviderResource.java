@@ -25,7 +25,7 @@ import java.util.UUID;
 public class ProviderResource {
 
     private static final Set<String> AUTH_KINDS = Set.of("bearer", "basic");
-    private static final Set<String> TYPES = Set.of("bitbucket-cloud");
+    private static final Set<String> TYPES = Set.of("bitbucket-cloud", "github");
 
     @Inject
     ProviderRegistry registry;

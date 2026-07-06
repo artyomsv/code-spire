@@ -76,7 +76,7 @@ class IntegrationSagaPolicyTest {
         };
         saga.providers = new ProviderRegistry() {
             @Override
-            public Optional<ScmProvider> resolve(String type, String workspace) {
+            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
                 return provider;
             }
         };
