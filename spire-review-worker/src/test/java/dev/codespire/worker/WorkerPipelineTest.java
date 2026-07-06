@@ -8,6 +8,8 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ScmCredential;
+import dev.codespire.crypto.CryptoService;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.kafka.InjectKafkaCompanion;
@@ -53,6 +55,20 @@ class WorkerPipelineTest {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    CryptoService crypto;
+
+    /**
+     * ADR-015: the worker builds its SCM client from the command's KEK-encrypted
+     * credential, not from .env. Pack one pointing at the WireMock Bitbucket,
+     * bound (AAD) to this PR's workspace — exactly as the orchestrator would.
+     */
+    private String cred() throws Exception {
+        ScmCredential c = new ScmCredential("http://localhost:" + BitbucketWireMockResource.server.port(),
+                "basic", "e2e-bot", "e2e-app-password", "bot-account-e2e");
+        return crypto.encryptString(mapper.writeValueAsString(c), ScmCredential.aad("sandbox"));
+    }
+
     private void sendCommand(ActionCommand command) throws Exception {
         // writerFor: root-level polymorphism (the type discriminator)
         companion.produceStrings().fromRecords(new ProducerRecord<>("cs.commands", command.reviewId(),
@@ -68,7 +84,7 @@ class WorkerPipelineTest {
     @Test
     @Order(1)
     void fetchDiffEmitsMetadataOnly() throws Exception {
-        sendCommand(new ActionCommand.FetchDiff(REVIEW_ID, REPO, 42, COMMIT));
+        sendCommand(new ActionCommand.FetchDiff(REVIEW_ID, REPO, 42, COMMIT, cred()));
         List<String> results = consumeResults(1);
         assertTrue(results.getFirst().contains("\"type\":\"DiffFetched\""));
         assertTrue(results.getFirst().contains("\"changedFiles\":1"));
@@ -89,7 +105,7 @@ class WorkerPipelineTest {
     @Test
     @Order(3)
     void generateReviewUsesRealDiffAndStubLlm() throws Exception {
-        sendCommand(new ActionCommand.GenerateReview(REVIEW_ID, REPO, 42, COMMIT, null, 1, null));
+        sendCommand(new ActionCommand.GenerateReview(REVIEW_ID, REPO, 42, COMMIT, null, 1, null, cred()));
         List<String> results = consumeResults(5);
         String generated = results.stream()
                 .filter(v -> v.contains("\"type\":\"ReviewGenerated\"")).findFirst().orElseThrow();
@@ -105,7 +121,7 @@ class WorkerPipelineTest {
                         "STUB finding: split test.", null)),
                 "STUB summary", new ModelUsage("stub-model", 0, 0, 0));
 
-        sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings));
+        sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings, cred()));
         List<String> results = consumeResults(6);
         String posted = results.stream()
                 .filter(v -> v.contains("\"type\":\"CommentsPosted\"")).findFirst().orElseThrow();
@@ -113,7 +129,7 @@ class WorkerPipelineTest {
         BitbucketWireMockResource.server.verify(2, postRequestedFor(urlEqualTo(COMMENTS)));
 
         // redelivery: same command again -> reconstructed CommentsPosted, NO new posts
-        sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings));
+        sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings, cred()));
         List<String> after = consumeResults(7);
         long postedCount = after.stream().filter(v -> v.contains("\"type\":\"CommentsPosted\"")).count();
         assertEquals(2, postedCount);

@@ -1,6 +1,6 @@
 package dev.codespire.orchestrator.provider;
 
-import dev.codespire.orchestrator.crypto.CryptoService;
+import dev.codespire.crypto.CryptoService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;

@@ -13,6 +13,7 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 
@@ -51,6 +52,9 @@ public class IntegrationSaga {
 
     @Inject
     ProviderRegistry providers;
+
+    @Inject
+    WorkerCredentials workerCredentials;
 
     private static final String PROVIDER_TYPE = "bitbucket-cloud";
 
@@ -119,7 +123,8 @@ public class IntegrationSaga {
             return;
         }
 
-        commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit));
+        commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
+                workerCredentials.pack(provider.get())));
     }
 
     /** An empty provider allowlist reviews everyone; else match by account id or username. */

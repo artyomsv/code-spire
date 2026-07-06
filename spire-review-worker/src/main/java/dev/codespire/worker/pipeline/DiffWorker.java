@@ -4,6 +4,7 @@ import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.port.DiffSource;
+import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffLine;
 import dev.codespire.contract.scm.FilePatch;
@@ -26,13 +27,14 @@ public class DiffWorker {
     private static final Logger LOG = Logger.getLogger(DiffWorker.class);
 
     @Inject
-    DiffSource diffSource;
+    WorkerScmClients scm;
 
     @Inject
     ResultsEmitter results;
 
     public void fetchDiff(FetchDiff command) {
         try {
+            DiffSource diffSource = scm.forCommand(command).diff();
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
             results.emit(new DiffFetched(
                     command.reviewId(), command.prId(), command.commit(),

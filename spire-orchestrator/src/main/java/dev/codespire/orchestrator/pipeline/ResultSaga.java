@@ -49,6 +49,9 @@ public class ResultSaga {
     @Inject
     ReviewProjection projection;
 
+    @Inject
+    dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
+
     @Incoming("results-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -69,9 +72,9 @@ public class ResultSaga {
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
-                commands.emit(new ActionCommand.GenerateReview(
+                emitWithCredential(e.reviewId(), "GenerateReview", cred -> new ActionCommand.GenerateReview(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.contextRef(), 1, null));
+                        e.contextRef(), 1, null, cred));
             });
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
@@ -80,8 +83,8 @@ public class ResultSaga {
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                         e.commit(), e.result().findings().size(),
                         Integer.toHexString(e.result().summary().hashCode())));
-                commands.emit(new ActionCommand.PostComments(
-                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result()));
+                emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
+                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred));
             });
             case CommentsPosted e -> {
                 projection.appendEvent(e.reviewId(), "result", "CommentsPosted", e.inline().size() + " inline comments");
@@ -106,6 +109,27 @@ public class ResultSaga {
             }
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Resolve the workspace's provider credential (ADR-015) and emit the built
+     * command. If the provider was disabled/removed mid-review the credential is
+     * absent, so the command is skipped with a visible note rather than emitted
+     * uncredentialed.
+     */
+    private void emitWithCredential(String reviewId, String phase,
+                                    java.util.function.Function<String, ActionCommand> build) {
+        String workspace = ReviewIds.parse(reviewId).repo().workspace();
+        java.util.Optional<String> cred = workerCredentials.packForWorkspace(workspace);
+        if (cred.isEmpty()) {
+            timeline.record("result", "skipped:" + phase, reviewId,
+                    "provider unavailable for workspace " + workspace + " — cannot issue " + phase);
+            projection.setNote(reviewId,
+                    "Provider for " + workspace + " is disabled or removed — " + phase + " not issued.");
+            LOG.warnf("Skipping %s for %s — no enabled provider for workspace %s", phase, reviewId, workspace);
+            return;
+        }
+        commands.emit(build.apply(cred.get()));
     }
 
     /** ADR-013: a superseded/cancelled run's results never trigger the next command. */

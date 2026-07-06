@@ -1,53 +1,20 @@
 package dev.codespire.worker.adapters;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** ADR-001 fail-fast: a selected provider with missing credentials refuses to start, naming the key. */
+/**
+ * ADR-001 fail-fast for the LLM producer: a selected provider with missing
+ * config refuses to start, naming the key. (SCM credentials are no longer read
+ * from config — ADR-015 delivers them per command via the encrypted registry —
+ * so there is no worker-side SCM producer to fail-fast; the KEK fail-fast lives
+ * in spire-crypto's CryptoServiceTest.)
+ */
 class WorkerProducerFailFastTest {
-
-    private WorkerScmProducer scm(String provider, Optional<String> appPassword) {
-        WorkerScmProducer producer = new WorkerScmProducer();
-        producer.provider = provider;
-        producer.baseUrl = "https://api.bitbucket.org/2.0";
-        producer.botUsername = Optional.of("bot");
-        producer.botAppPassword = appPassword;
-        producer.botAccountId = Optional.of("acc-1");
-        producer.apiToken = Optional.empty();
-        producer.mapper = new ObjectMapper();
-        return producer;
-    }
-
-    @Test
-    void bitbucketProviderWithoutAppPasswordFailsNamingTheKey() {
-        var thrown = assertThrows(IllegalStateException.class,
-                () -> scm("bitbucket-cloud", Optional.empty()).diffSource());
-        assertTrue(thrown.getMessage().contains("spire.scm.bitbucket.bot-app-password"));
-    }
-
-    @Test
-    void unknownScmProviderFails() {
-        var thrown = assertThrows(IllegalStateException.class,
-                () -> scm("github", Optional.of("x")).commentSink());
-        assertTrue(thrown.getMessage().contains("Unknown spire.scm.provider"));
-    }
-
-    @Test
-    void stubScmNeedsNoCredentials() {
-        WorkerScmProducer producer = new WorkerScmProducer();
-        producer.provider = "stub";
-        producer.botUsername = Optional.empty();
-        producer.botAppPassword = Optional.empty();
-        producer.botAccountId = Optional.empty();
-        assertNotNull(producer.diffSource());
-        assertNotNull(producer.commentSink());
-    }
 
     @Test
     void openAiCompatibleWithoutModelFailsNamingTheKey() {

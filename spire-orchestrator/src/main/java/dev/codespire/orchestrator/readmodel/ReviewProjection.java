@@ -7,7 +7,7 @@ import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
-import dev.codespire.orchestrator.crypto.CryptoService;
+import dev.codespire.crypto.CryptoService;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

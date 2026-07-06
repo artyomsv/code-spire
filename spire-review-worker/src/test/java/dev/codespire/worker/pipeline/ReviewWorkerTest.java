@@ -7,8 +7,10 @@ import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
+import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
@@ -84,9 +86,8 @@ class ReviewWorkerTest {
                 emitted.add(event);
             }
         };
-        worker.commentSink = sink;
         worker.idempotency = idempotency;
-        worker.diffSource = new DiffSource() {
+        DiffSource fakeDiff = new DiffSource() {
             @Override
             public ScmType type() {
                 return ScmType.BITBUCKET_CLOUD;
@@ -101,6 +102,13 @@ class ReviewWorkerTest {
             @Override
             public Diff fetchDiff(RepoRef repo, long prId, String commit) {
                 return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(DIFF), false);
+            }
+        };
+        // ADR-015: the worker builds SCM clients per command; supply the fakes directly.
+        worker.scm = new WorkerScmClients() {
+            @Override
+            public Clients forCommand(ActionCommand command) {
+                return new Clients(fakeDiff, sink);
             }
         };
         worker.llm = new LlmProvider() {
@@ -124,7 +132,7 @@ class ReviewWorkerTest {
 
     private PostComments postCommand(List<Finding> findings) {
         return new PostComments(REVIEW_ID, REPO, 9, COMMIT,
-                new ReviewResult(findings, "summary", new ModelUsage("m", 0, 0, 0)));
+                new ReviewResult(findings, "summary", new ModelUsage("m", 0, 0, 0)), null);
     }
 
     @Test
@@ -161,7 +169,7 @@ class ReviewWorkerTest {
 
     @Test
     void redeliveredGenerateReviewNeverPaysTwice() {
-        GenerateReview command = new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null);
+        GenerateReview command = new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null);
         worker.generateReview(command);
         assertEquals(1, llmCalls.get());
         assertInstanceOf(ReviewGenerated.class, emitted.getLast());
@@ -175,7 +183,7 @@ class ReviewWorkerTest {
     void crashedGenerateClaimIsReclaimable() {
         // claim exists but was never marked (crash between LLM call and emit)
         idempotency.claim(REVIEW_ID, COMMIT, "LLM");
-        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null));
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
         assertEquals(1, llmCalls.get(), "reclaimable NULL claim re-runs the call");
         assertInstanceOf(ReviewGenerated.class, emitted.getLast());
     }

@@ -24,12 +24,10 @@ public class BitbucketWireMockResource implements QuarkusTestResourceLifecycleMa
         server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();
         stubBitbucket();
-        return Map.of(
-                "spire.scm.provider", "bitbucket-cloud",
-                "spire.scm.bitbucket.base-url", "http://localhost:" + server.port(),
-                "spire.scm.bitbucket.bot-username", "e2e-bot",
-                "spire.scm.bitbucket.bot-app-password", "e2e-app-password",
-                "spire.scm.bitbucket.bot-account-id", "bot-account-e2e");
+        // ADR-015: the worker no longer reads spire.scm.bitbucket.* — it builds the
+        // client from each command's encrypted credential (the test packs one via
+        // CryptoService pointing at this WireMock). Only the provider MODE stays here.
+        return Map.of("spire.scm.provider", "bitbucket-cloud");
     }
 
     private void stubBitbucket() {

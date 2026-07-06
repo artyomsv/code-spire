@@ -1,4 +1,4 @@
-package dev.codespire.orchestrator.crypto;
+package dev.codespire.crypto;
 
 import com.google.crypto.tink.Aead;
 import com.google.crypto.tink.InsecureSecretKeyAccess;
@@ -7,9 +7,6 @@ import com.google.crypto.tink.RegistryConfiguration;
 import com.google.crypto.tink.TinkJsonProtoKeysetFormat;
 import com.google.crypto.tink.aead.AeadConfig;
 import com.google.crypto.tink.aead.PredefinedAeadParameters;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -21,11 +18,15 @@ import java.util.Optional;
  * master keyset is the ONE bootstrap secret (env {@code SPIRE_ENCRYPTION_KEYSET},
  * base64 of a Tink JSON keyset); everything sensitive in the DB is encrypted with
  * it. Associated data (a stable row identifier) binds a ciphertext to its row, so
- * it cannot be swapped to another. The orchestrator is the only KEK holder.
+ * it cannot be swapped to another.
+ *
+ * <p>Framework-free (ADR-015): this library owns only the cipher; each host
+ * service (orchestrator, worker) produces the CDI bean from config via
+ * {@link #fromConfig(Optional)}. KEK holders: orchestrator, UI-side, and — since
+ * ADR-015 — the review worker in active mode.
  *
  * <p>Generate a keyset with {@link #generateKeysetBase64()}.
  */
-@ApplicationScoped
 public class CryptoService {
 
     static {
@@ -38,16 +39,19 @@ public class CryptoService {
 
     private final Aead aead;
 
-    @Inject
-    public CryptoService(@ConfigProperty(name = "spire.encryption.keyset") Optional<String> keyset) {
-        this(keyset.filter(s -> !s.isBlank()).orElseThrow(() -> new IllegalStateException(
-                "spire.encryption.keyset is required (base64 Tink keyset) — generate one with "
-                        + "CryptoService.generateKeysetBase64() and set SPIRE_ENCRYPTION_KEYSET")));
-    }
-
-    /** Direct construction from a base64 keyset (also used by tests). */
+    /** Construct from a base64 Tink keyset. */
     public CryptoService(String keysetBase64) {
         this.aead = loadAead(keysetBase64);
+    }
+
+    /**
+     * Fail-fast factory for CDI producers: the configured keyset is required —
+     * a missing/blank value is a startup error naming the exact env var.
+     */
+    public static CryptoService fromConfig(Optional<String> keyset) {
+        return new CryptoService(keyset.filter(s -> !s.isBlank()).orElseThrow(() -> new IllegalStateException(
+                "spire.encryption.keyset is required (base64 Tink keyset) — generate one with "
+                        + "CryptoService.generateKeysetBase64() and set SPIRE_ENCRYPTION_KEYSET")));
     }
 
     /** Encrypt bytes (e.g. an event payload). {@code aad} binds it to its row. */

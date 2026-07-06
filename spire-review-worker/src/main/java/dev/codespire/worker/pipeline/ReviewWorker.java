@@ -11,6 +11,7 @@ import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
+import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.CommentRef;
@@ -56,10 +57,7 @@ public class ReviewWorker {
     private static final String SUMMARY_KEY = "SUMMARY";
 
     @Inject
-    DiffSource diffSource;
-
-    @Inject
-    CommentSink commentSink;
+    WorkerScmClients scm;
 
     @Inject
     LlmProvider llm;
@@ -75,6 +73,7 @@ public class ReviewWorker {
 
     public void generateReview(GenerateReview command) {
         try {
+            DiffSource diffSource = scm.forCommand(command).diff();
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
             if (!Commits.matches(pr.diffRefs().headSha(), command.commit())) {
                 LOG.infof("Abandoning GenerateReview for %s: PR head moved past %s",
@@ -114,6 +113,9 @@ public class ReviewWorker {
 
     public void postComments(PostComments command) {
         try {
+            WorkerScmClients.Clients clients = scm.forCommand(command);
+            DiffSource diffSource = clients.diff();
+            CommentSink commentSink = clients.comments();
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
             if (!Commits.matches(pr.diffRefs().headSha(), command.commit())) {
                 LOG.infof("Abandoning PostComments for %s: PR head moved past %s",
@@ -130,10 +132,10 @@ public class ReviewWorker {
             List<Finding> failed = new ArrayList<>();
 
             for (Finding finding : review.findings()) {
-                postOneInline(command, diff, finding, posted, unanchored, failed);
+                postOneInline(commentSink, command, diff, finding, posted, unanchored, failed);
             }
 
-            String summaryCommentId = postSummary(command, review, unanchored, failed);
+            String summaryCommentId = postSummary(commentSink, command, review, unanchored, failed);
             if (summaryCommentId == null) {
                 return; // summary failure already emitted ReviewFailed
             }
@@ -153,7 +155,7 @@ public class ReviewWorker {
         }
     }
 
-    private void postOneInline(PostComments command, Diff diff, Finding finding,
+    private void postOneInline(CommentSink commentSink, PostComments command, Diff diff, Finding finding,
                                List<CommentsPosted.PostedInline> posted,
                                List<Finding> unanchored, List<Finding> failed) {
         Optional<InlineAnchor> anchor = Anchors.resolveNewLine(
@@ -187,7 +189,7 @@ public class ReviewWorker {
     }
 
     /** @return the summary comment id, or null when posting it failed (ReviewFailed emitted). */
-    private String postSummary(PostComments command, ReviewResult review,
+    private String postSummary(CommentSink commentSink, PostComments command, ReviewResult review,
                                List<Finding> unanchored, List<Finding> failed) {
         return switch (idempotency.claim(command.reviewId(), command.commit(), SUMMARY_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {

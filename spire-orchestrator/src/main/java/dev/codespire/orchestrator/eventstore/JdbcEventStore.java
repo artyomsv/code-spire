@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.port.EventStore;
-import dev.codespire.orchestrator.crypto.CryptoService;
+import dev.codespire.crypto.CryptoService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 

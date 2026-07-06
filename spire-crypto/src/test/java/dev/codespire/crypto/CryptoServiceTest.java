@@ -1,6 +1,8 @@
-package dev.codespire.orchestrator.crypto;
+package dev.codespire.crypto;
 
 import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,6 +48,6 @@ class CryptoServiceTest {
 
     @Test
     void missingKeysetFailsFast() {
-        assertThrows(IllegalStateException.class, () -> new CryptoService(java.util.Optional.<String>empty()));
+        assertThrows(IllegalStateException.class, () -> CryptoService.fromConfig(Optional.empty()));
     }
 }

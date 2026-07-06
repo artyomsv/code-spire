@@ -50,14 +50,20 @@ Trust boundaries, authn/authz, encryption, and secrets.
   sit in the DB in cleartext. Randomized (AES-GCM) by default; where an encrypted value must
   be looked up, add a separate **blind index** (HMAC) rather than weakening to deterministic encryption.
 - Keys never live in the image or git; sourced from KMS / a mounted keystore / Vault.
-- **KEK blast radius:** only services that read/write encrypted payloads hold the KEK —
-  `spire-orchestrator` (event log) and `spire-ui` (projects encrypted finding fields). Workers handle
-  plaintext only in flight; `spire-gateway` never holds the KEK. Keep the holder list this short as
-  services are added.
+- **KEK blast radius (ADR-015):** the KEK is held by `spire-orchestrator` (event log + provider
+  registry), `spire-ui` (encrypted finding fields), and — in **active mode** — `spire-review-worker`,
+  which decrypts the per-command SCM credential the orchestrator brokers to it. `spire-gateway` never
+  holds the KEK (only the webhook secret + bot account id). A compromised worker therefore exposes the
+  master key; this was an explicit operator trade-off (one keyset, no cross-schema DB read) over a
+  dedicated worker-only key. The narrowing path — a separate envelope key for worker credentials — is
+  recorded in ADR-015. Keep the holder list this short as services are added.
 - **Scope honesty — the message bus (ADR-014):** the "never rests in cleartext" guarantee applies to
   **application-managed stores** (Postgres, MinIO). Source-quoting payloads on `cs.results` DO rest on
-  the broker's disk for the retention window without app-layer Tink (workers hold no KEK). Mitigation
-  is infrastructural: **short retention on `cs.results`** + **broker disk/volume encryption** (a
+  the broker's disk for the retention window without app-layer Tink (findings stay inline + plaintext
+  per ADR-011/-014). Note (ADR-015): the SCM **credential** on `cs.commands` IS app-encrypted with the
+  KEK — the worker holds it in active mode — so credentials never rest in cleartext on the bus, even
+  though findings do. Mitigation for the latter is infrastructural: **short retention on `cs.results`**
+  + **broker disk/volume encryption** (a
   documented deployment requirement) + SASL/mTLS transport. Escalation path if ever needed: findings
   behind an encrypted blob ref instead of inline.
 

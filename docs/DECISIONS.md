@@ -4,6 +4,56 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-015 — Active-mode worker credentials: KEK to the worker, credentials brokered on the bus
+
+**Context.** In active mode the review worker performs the credential-bearing work — `FetchDiff`,
+`GenerateReview` (re-fetch PR + diff), `PostComments` (fetch + post). Until now it read ONE global
+SCM credential from `.env` (`WorkerScmProducer`, a startup singleton keyed to nothing). Phase 2 moved
+credentials into the encrypted `scm_provider` registry, but only the **orchestrator** (which holds the
+Tink KEK, `SPIRE_ENCRYPTION_KEYSET`) can decrypt it. `SECURITY.md`/ADR-013 deliberately kept the KEK
+to exactly two holders (orchestrator + UI), with workers "plaintext-only, no KEK". So there was no path
+for the worker to obtain a per-workspace credential from the DB registry. Every `ActionCommand` already
+carries `RepoRef repo` (hence `workspace`), but no provider identity or secret.
+
+**Decision.** (1) **The worker joins the KEK holder set.** It reads `SPIRE_ENCRYPTION_KEYSET` and gains
+a `CryptoService`. (2) **Credentials are brokered by the orchestrator over the bus, not resolved by the
+worker from the DB.** The orchestrator (sole owner of the provider registry) resolves the provider for a
+command's workspace, packs a minimal `ScmCredential` (base URL, auth kind, username, secret, bot account
+id), encrypts it with the **master KEK** (AAD bound to the workspace), and stamps the opaque base64
+ciphertext onto the three credential-bearing commands. The worker decrypts it and builds a per-command
+`DiffSource`/`CommentSink`. A command with no credential (stub/observe/dev) falls back to the stub SCM.
+
+To share the cipher, `CryptoService` moves into a new **`spire-crypto`** module depended on by
+orchestrator + worker (Tink stays encapsulated there).
+
+**Why this mechanic (bus-brokered) over the two alternatives the worker-holds-KEK choice allowed:**
+- **vs. worker reads `orchestrator.scm_provider` directly:** rejected — a cross-schema read violates
+  ADR-011 (schema-per-service) and ADR-008 (microservices), couples the worker to the orchestrator's
+  DB, and duplicates the AAD scheme. Bus-brokering keeps the registry single-owned and the worker
+  deployment-independent (works if the two ever split to separate databases).
+- **vs. plaintext credential on the bus (ADR-014 infra mitigation):** rejected — a live, directly-
+  abusable SCM token is materially more dangerous than the source-quote findings ADR-014 accepted on
+  disk. Encrypting with the KEK (which the worker now holds anyway) removes cleartext-at-rest for
+  credentials at no extra bootstrap secret.
+- **vs. a dedicated worker-only key (envelope distinct from the master KEK):** rejected for v1 as
+  over-engineering — it would have kept the master-KEK blast radius unchanged, but the operator chose
+  to accept the wider radius in exchange for one keyset and simpler key management. Noted as the
+  escalation path if the worker's blast radius ever needs narrowing.
+
+**Consequence.**
+- **KEK blast radius widens** from two holders to three (orchestrator, UI, worker). A compromised worker
+  now holds the master key that also protects the event log + findings at rest. Accepted by the operator
+  for v1; `SECURITY.md` updated to state the worker holds the KEK in active mode and why. The narrowing
+  path (dedicated worker key) is recorded above.
+- The wire contract gains an opaque `scmCredential` field on `FetchDiff`, `GenerateReview`,
+  `PostComments`. `ResultSaga` (which emits the latter two) gains provider resolution; if the provider is
+  disabled/removed mid-review the command is skipped with a logged note.
+- `.env` SCM credentials are retired for the worker's active path; the worker now needs
+  `SPIRE_ENCRYPTION_KEYSET` (the gateway still holds only the webhook secret + bot account id).
+- The credential rides `cs.commands` encrypted; short retention (ADR-014) still applies.
+
+---
+
 ## ADR-014 — Kafka at-rest posture: no app-layer Tink on the bus (v1)
 
 **Context.** Source-quoting review output (`ReviewGenerated.findings[].message/suggestion`,

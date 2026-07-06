@@ -85,3 +85,8 @@ mp:
       provider: stub
     llm:
       provider: stub
+    encryption:
+      # Test-only AES-GCM keyset (not a secret) — matches the orchestrator's, so
+      # a worker test could decrypt a credential the orchestrator packed. Prod/dev
+      # read SPIRE_ENCRYPTION_KEYSET (ADR-015).
+      keyset: eyJwcmltYXJ5S2V5SWQiOjM4NjczMjQwMjIsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaURROXlLT0R1Y25mcFM1b0JyMlpaT3RYSkV0QmRwcmFwZkFzdUtpQUh5R1lBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjozODY3MzI0MDIyLCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K

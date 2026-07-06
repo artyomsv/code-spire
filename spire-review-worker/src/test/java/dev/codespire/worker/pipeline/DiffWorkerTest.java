@@ -3,9 +3,11 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.PullRequest;
@@ -27,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DiffWorkerTest {
 
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
-    private static final FetchDiff COMMAND = new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "abc123");
+    private static final FetchDiff COMMAND = new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "abc123", null);
 
     private DiffWorker worker;
     private List<IntegrationEvent> emitted;
@@ -43,7 +45,7 @@ class DiffWorkerTest {
                 emitted.add(event);
             }
         };
-        worker.diffSource = new DiffSource() {
+        DiffSource fakeDiff = new DiffSource() {
             @Override
             public ScmType type() {
                 return ScmType.BITBUCKET_CLOUD;
@@ -67,6 +69,13 @@ class DiffWorkerTest {
                         -a
                         +b
                         """), false);
+            }
+        };
+        // ADR-015: the worker builds SCM clients per command; supply the fake directly.
+        worker.scm = new WorkerScmClients() {
+            @Override
+            public Clients forCommand(ActionCommand command) {
+                return new Clients(fakeDiff, null);
             }
         };
     }

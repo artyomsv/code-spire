@@ -31,7 +31,19 @@ public sealed interface ActionCommand {
 
     String reviewId();
 
-    record FetchDiff(String reviewId, RepoRef repo, long prId, String commit) implements ActionCommand {
+    /**
+     * Opaque, KEK-encrypted SCM credential the worker needs to execute this
+     * command (ADR-015) — base64 Tink ciphertext of an {@link dev.codespire.contract.scm.ScmCredential},
+     * resolved and packed by the orchestrator from the provider registry. Only
+     * the credential-bearing commands carry it; {@code null} means "use the stub
+     * SCM" (dev/observe). Never logged.
+     */
+    default String scmCredential() {
+        return null;
+    }
+
+    record FetchDiff(String reviewId, RepoRef repo, long prId, String commit,
+                     String scmCredential) implements ActionCommand {
     }
 
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
@@ -40,12 +52,12 @@ public sealed interface ActionCommand {
 
     /** providerOverride is set by the fallback saga on retry; worker re-fetches the diff by commit. */
     record GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
-                          int attempt, String providerOverride) implements ActionCommand {
+                          int attempt, String providerOverride, String scmCredential) implements ActionCommand {
     }
 
     /** Findings inline — same ReviewResult as ReviewGenerated (ADR-011). */
     record PostComments(String reviewId, RepoRef repo, long prId, String commit,
-                        ReviewResult findings) implements ActionCommand {
+                        ReviewResult findings, String scmCredential) implements ActionCommand {
     }
 
     /** Worker fetches thread history from the SCM on demand — no blob (CONTRACT §5). */

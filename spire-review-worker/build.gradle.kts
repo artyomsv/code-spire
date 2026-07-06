@@ -24,6 +24,7 @@ val quarkusPlatformVersion: String by project
 dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
+    implementation(project(":spire-crypto")) // decrypt the per-command SCM credential (ADR-015)
     implementation(project(":spire-diff"))
     implementation(project(":spire-scm-bitbucket"))
     implementation(project(":spire-llm"))

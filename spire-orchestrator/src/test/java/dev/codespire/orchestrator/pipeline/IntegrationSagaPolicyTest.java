@@ -12,6 +12,7 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,12 @@ class IntegrationSagaPolicyTest {
             @Override
             public Optional<ScmProvider> resolve(String type, String workspace) {
                 return provider;
+            }
+        };
+        saga.workerCredentials = new WorkerCredentials() {
+            @Override
+            public String pack(ScmProvider p) {
+                return "packed-cred:" + p.workspace();
             }
         };
         saga.policy = policy;

@@ -60,7 +60,7 @@ class WireFormatRoundTripTest {
     void actionCommandRoundTripsWithTypeDiscriminator() throws Exception {
         ActionCommand original = new ActionCommand.GenerateReview(
                 "review::sandbox/demo-repo#42", new RepoRef("sandbox", "demo-repo"),
-                42, "abc123", null, 1, null);
+                42, "abc123", null, 1, null, "cred-ciphertext");
 
         String json = mapper.writerFor(ActionCommand.class).writeValueAsString(original);
         assertTrue(json.contains("\"type\":\"GenerateReview\""), json);
