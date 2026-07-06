@@ -9,7 +9,7 @@ import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmCredential;
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.kafka.InjectKafkaCompanion;
@@ -56,7 +56,7 @@ class WorkerPipelineTest {
     ObjectMapper mapper;
 
     @Inject
-    CryptoService crypto;
+    EncryptionService encryption;
 
     /**
      * ADR-015: the worker builds its SCM client from the command's KEK-encrypted
@@ -66,7 +66,7 @@ class WorkerPipelineTest {
     private String cred() throws Exception {
         ScmCredential c = new ScmCredential("http://localhost:" + BitbucketWireMockResource.server.port(),
                 "basic", "e2e-bot", "e2e-app-password", "bot-account-e2e");
-        return crypto.encryptString(mapper.writeValueAsString(c), ScmCredential.aad("sandbox"));
+        return encryption.encryptString(mapper.writeValueAsString(c), ScmCredential.aad("sandbox"));
     }
 
     private void sendCommand(ActionCommand command) throws Exception {

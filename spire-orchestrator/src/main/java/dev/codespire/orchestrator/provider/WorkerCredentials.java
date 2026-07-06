@@ -3,7 +3,7 @@ package dev.codespire.orchestrator.provider;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.scm.ScmCredential;
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -25,7 +25,7 @@ public class WorkerCredentials {
     ProviderRegistry providers;
 
     @Inject
-    CryptoService crypto;
+    EncryptionService encryption;
 
     @Inject
     ObjectMapper mapper;
@@ -35,7 +35,7 @@ public class WorkerCredentials {
         ScmCredential cred = new ScmCredential(provider.baseUrl(), provider.authKind(),
                 provider.authUsername(), provider.secret(), provider.botAccountId());
         try {
-            return crypto.encryptString(mapper.writeValueAsString(cred), ScmCredential.aad(provider.workspace()));
+            return encryption.encryptString(mapper.writeValueAsString(cred), ScmCredential.aad(provider.workspace()));
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to pack worker credential for " + provider.workspace(), e);
         }

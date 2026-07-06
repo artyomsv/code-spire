@@ -2,7 +2,7 @@ package dev.codespire.orchestrator.provider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.scm.ScmCredential;
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,11 +19,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  */
 class WorkerCredentialsTest {
 
-    private final CryptoService crypto = new CryptoService(CryptoService.generateKeysetBase64());
+    private final EncryptionService encryption = new EncryptionService(EncryptionService.generateKeysetBase64());
 
     private WorkerCredentials packer() {
         WorkerCredentials wc = new WorkerCredentials();
-        wc.crypto = crypto;
+        wc.encryption = encryption;
         wc.mapper = new ObjectMapper();
         return wc;
     }
@@ -40,7 +40,7 @@ class WorkerCredentialsTest {
         assertFalse(cipher.contains("sk-secret-token"), "the secret must not appear in cleartext");
 
         // worker side: same keyset, workspace-bound AAD
-        String json = crypto.decryptString(cipher, ScmCredential.aad("acme"));
+        String json = encryption.decryptString(cipher, ScmCredential.aad("acme"));
         ScmCredential back = new ObjectMapper().readValue(json, ScmCredential.class);
         assertEquals("https://api.bitbucket.org/2.0", back.baseUrl());
         assertEquals("bearer", back.authKind());
@@ -51,6 +51,6 @@ class WorkerCredentialsTest {
     @Test
     void aCredentialForOneWorkspaceCannotBeReplayedAgainstAnother() {
         String cipher = packer().pack(provider());
-        assertThrows(IllegalStateException.class, () -> crypto.decryptString(cipher, ScmCredential.aad("other-ws")));
+        assertThrows(IllegalStateException.class, () -> encryption.decryptString(cipher, ScmCredential.aad("other-ws")));
     }
 }

@@ -7,7 +7,7 @@ import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -54,7 +54,7 @@ public class ReviewProjection {
     OpenConnections connections;
 
     @Inject
-    CryptoService crypto;
+    EncryptionService encryption;
 
     // ---- writes (called by the sagas) --------------------------------------
 
@@ -126,7 +126,7 @@ public class ReviewProjection {
     /** Record the generated review's findings + usage against the row. */
     public void recordOutcome(String reviewId, ReviewResult result, int stage) {
         // Findings quote the source under review — encrypt at rest (AAD = reviewId).
-        String findingsJson = crypto.encryptString(toFindingsJson(result.findings()), reviewId);
+        String findingsJson = encryption.encryptString(toFindingsJson(result.findings()), reviewId);
         var usage = result.usage();
         update("""
                 UPDATE review_status SET findings_count = ?, findings_json = ?, model = ?, tokens_in = ?,
@@ -357,7 +357,7 @@ public class ReviewProjection {
         }
         String json;
         try {
-            json = crypto.decryptString(stored, reviewId);
+            json = encryption.decryptString(stored, reviewId);
         } catch (RuntimeException notEncrypted) {
             json = stored; // legacy plaintext row
         }

@@ -1,4 +1,4 @@
-package dev.codespire.crypto;
+package dev.codespire.encryption;
 
 import com.google.crypto.tink.Aead;
 import com.google.crypto.tink.InsecureSecretKeyAccess;
@@ -27,7 +27,7 @@ import java.util.Optional;
  *
  * <p>Generate a keyset with {@link #generateKeysetBase64()}.
  */
-public class CryptoService {
+public class EncryptionService {
 
     static {
         try {
@@ -40,7 +40,7 @@ public class CryptoService {
     private final Aead aead;
 
     /** Construct from a base64 Tink keyset. */
-    public CryptoService(String keysetBase64) {
+    public EncryptionService(String keysetBase64) {
         this.aead = loadAead(keysetBase64);
     }
 
@@ -48,10 +48,10 @@ public class CryptoService {
      * Fail-fast factory for CDI producers: the configured keyset is required —
      * a missing/blank value is a startup error naming the exact env var.
      */
-    public static CryptoService fromConfig(Optional<String> keyset) {
-        return new CryptoService(keyset.filter(s -> !s.isBlank()).orElseThrow(() -> new IllegalStateException(
+    public static EncryptionService fromConfig(Optional<String> keyset) {
+        return new EncryptionService(keyset.filter(s -> !s.isBlank()).orElseThrow(() -> new IllegalStateException(
                 "spire.encryption.keyset is required (base64 Tink keyset) — generate one with "
-                        + "CryptoService.generateKeysetBase64() and set SPIRE_ENCRYPTION_KEYSET")));
+                        + "EncryptionService.generateKeysetBase64() and set SPIRE_ENCRYPTION_KEYSET")));
     }
 
     /** Encrypt bytes (e.g. an event payload). {@code aad} binds it to its row. */

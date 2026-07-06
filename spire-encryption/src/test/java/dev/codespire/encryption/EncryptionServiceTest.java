@@ -1,4 +1,4 @@
-package dev.codespire.crypto;
+package dev.codespire.encryption;
 
 import org.junit.jupiter.api.Test;
 
@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Tink AES-GCM round-trip, associated-data binding, and key handling (pure). */
-class CryptoServiceTest {
+class EncryptionServiceTest {
 
-    private final CryptoService crypto = new CryptoService(CryptoService.generateKeysetBase64());
+    private final EncryptionService crypto = new EncryptionService(EncryptionService.generateKeysetBase64());
 
     @Test
     void roundTripsStringWithAad() {
@@ -42,12 +42,12 @@ class CryptoServiceTest {
     @Test
     void aDifferentKeyCannotDecrypt() {
         String cipher = crypto.encryptString("secret", "aad");
-        CryptoService other = new CryptoService(CryptoService.generateKeysetBase64());
+        EncryptionService other = new EncryptionService(EncryptionService.generateKeysetBase64());
         assertThrows(IllegalStateException.class, () -> other.decryptString(cipher, "aad"));
     }
 
     @Test
     void missingKeysetFailsFast() {
-        assertThrows(IllegalStateException.class, () -> CryptoService.fromConfig(Optional.empty()));
+        assertThrows(IllegalStateException.class, () -> EncryptionService.fromConfig(Optional.empty()));
     }
 }

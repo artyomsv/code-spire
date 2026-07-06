@@ -26,7 +26,7 @@ public class BitbucketWireMockResource implements QuarkusTestResourceLifecycleMa
         stubBitbucket();
         // ADR-015: the worker no longer reads spire.scm.bitbucket.* — it builds the
         // client from each command's encrypted credential (the test packs one via
-        // CryptoService pointing at this WireMock). Only the provider MODE stays here.
+        // EncryptionService pointing at this WireMock). Only the provider MODE stays here.
         return Map.of("spire.scm.provider", "bitbucket-cloud");
     }
 

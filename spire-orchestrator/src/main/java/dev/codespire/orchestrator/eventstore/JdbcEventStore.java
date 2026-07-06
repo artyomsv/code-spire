@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.port.EventStore;
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -25,7 +25,7 @@ import java.util.UUID;
  * Postgres append-only event store (DATA-MODEL §3). UNIQUE(stream_id, sequence)
  * enforces single-writer optimistic concurrency.
  *
- * <p>Payloads are encrypted at rest with Tink AES-GCM ({@link CryptoService},
+ * <p>Payloads are encrypted at rest with Tink AES-GCM ({@link EncryptionService},
  * ADR-009); {@code key_id='tink'} marks encrypted rows, {@code 'none'} legacy
  * plaintext. The stream id is the associated data, binding each ciphertext to
  * its stream.
@@ -44,7 +44,7 @@ public class JdbcEventStore implements EventStore {
     ObjectMapper mapper;
 
     @Inject
-    CryptoService crypto;
+    EncryptionService encryption;
 
     @Override
     public List<EventEnvelope> load(String streamId) {
@@ -83,7 +83,7 @@ public class JdbcEventStore implements EventStore {
                 ps.setString(4, e.eventType());
                 ps.setInt(5, e.eventVersion());
                 // Encrypt at rest; the stream id as AAD binds ciphertext to its stream.
-                ps.setBytes(6, crypto.encrypt(mapper.writeValueAsBytes(e.payload()), streamId));
+                ps.setBytes(6, encryption.encrypt(mapper.writeValueAsBytes(e.payload()), streamId));
                 ps.setString(7, KEY_ID);
                 ps.setString(8, e.correlationId());
                 ps.setObject(9, e.causationId());
@@ -107,7 +107,7 @@ public class JdbcEventStore implements EventStore {
         String eventType = rs.getString("event_type");
         byte[] stored = rs.getBytes("payload");
         // Decrypt Tink-encrypted payloads; 'none' rows are legacy plaintext.
-        byte[] plaintext = KEY_ID.equals(rs.getString("key_id")) ? crypto.decrypt(stored, streamId) : stored;
+        byte[] plaintext = KEY_ID.equals(rs.getString("key_id")) ? encryption.decrypt(stored, streamId) : stored;
         Object payload;
         try {
             payload = mapper.readValue(plaintext, EventTypes.domainType(eventType));

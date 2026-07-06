@@ -1,6 +1,6 @@
 // Encryption at rest (ADR-009 / ADR-015): a framework-free Tink AES-256-GCM
 // wrapper shared by every KEK holder (orchestrator, UI-side, worker). CDI
-// wiring (producing the CryptoService bean from config) happens in each host
+// wiring (producing the EncryptionService bean from config) happens in each host
 // service — this module only owns the cipher and keyset handling.
 plugins {
     `java-library`

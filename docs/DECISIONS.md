@@ -16,14 +16,14 @@ for the worker to obtain a per-workspace credential from the DB registry. Every 
 carries `RepoRef repo` (hence `workspace`), but no provider identity or secret.
 
 **Decision.** (1) **The worker joins the KEK holder set.** It reads `SPIRE_ENCRYPTION_KEYSET` and gains
-a `CryptoService`. (2) **Credentials are brokered by the orchestrator over the bus, not resolved by the
+an `EncryptionService`. (2) **Credentials are brokered by the orchestrator over the bus, not resolved by the
 worker from the DB.** The orchestrator (sole owner of the provider registry) resolves the provider for a
 command's workspace, packs a minimal `ScmCredential` (base URL, auth kind, username, secret, bot account
 id), encrypts it with the **master KEK** (AAD bound to the workspace), and stamps the opaque base64
 ciphertext onto the three credential-bearing commands. The worker decrypts it and builds a per-command
 `DiffSource`/`CommentSink`. A command with no credential (stub/observe/dev) falls back to the stub SCM.
 
-To share the cipher, `CryptoService` moves into a new **`spire-crypto`** module depended on by
+To share the cipher, `EncryptionService` moves into a new **`spire-encryption`** module depended on by
 orchestrator + worker (Tink stays encapsulated there).
 
 **Why this mechanic (bus-brokered) over the two alternatives the worker-holds-KEK choice allowed:**

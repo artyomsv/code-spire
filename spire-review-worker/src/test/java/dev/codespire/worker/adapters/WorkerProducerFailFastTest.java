@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * config refuses to start, naming the key. (SCM credentials are no longer read
  * from config — ADR-015 delivers them per command via the encrypted registry —
  * so there is no worker-side SCM producer to fail-fast; the KEK fail-fast lives
- * in spire-crypto's CryptoServiceTest.)
+ * in spire-encryption's EncryptionServiceTest.)
  */
 class WorkerProducerFailFastTest {
 

@@ -1,6 +1,6 @@
 package dev.codespire.orchestrator.provider;
 
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -20,7 +20,7 @@ import java.util.UUID;
 /**
  * The SCM provider registry (DATA-MODEL / ADR-009) — CRUD over {@code scm_provider}
  * + {@code provider_author}, the single owner of provider credentials. Secrets are
- * Tink-encrypted at rest ({@link CryptoService}, AAD bound to the provider id) and
+ * Tink-encrypted at rest ({@link EncryptionService}, AAD bound to the provider id) and
  * are NEVER returned by the API — only resolved internally to build an SCM client.
  */
 @ApplicationScoped
@@ -30,7 +30,7 @@ public class ProviderRegistry {
     DataSource dataSource;
 
     @Inject
-    CryptoService crypto;
+    EncryptionService encryption;
 
     // ---- reads (API) -------------------------------------------------------
 
@@ -77,7 +77,7 @@ public class ProviderRegistry {
                 ps.setString(5, in.workspace());
                 ps.setString(6, in.authKind());
                 ps.setString(7, blankToNull(in.authUsername()));
-                ps.setString(8, crypto.encryptString(secret, aad(id)));
+                ps.setString(8, encryption.encryptString(secret, aad(id)));
                 ps.setString(9, in.botAccountId() == null ? "" : in.botAccountId());
                 ps.setBoolean(10, in.enabled() == null || in.enabled());
                 ps.executeUpdate();
@@ -110,7 +110,7 @@ public class ProviderRegistry {
                 ps.setBoolean(8, in.enabled() == null || in.enabled());
                 int idx = 9;
                 if (rotateSecret) {
-                    ps.setString(idx++, crypto.encryptString(in.secret(), aad(id)));
+                    ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));
                 }
                 ps.setObject(idx, id);
                 ps.executeUpdate();
@@ -150,7 +150,7 @@ public class ProviderRegistry {
                 return Optional.of(new ScmProvider(id, rs.getString("name"), rs.getString("type"),
                         rs.getString("base_url"), rs.getString("workspace"), rs.getString("auth_kind"),
                         rs.getString("auth_username"),
-                        crypto.decryptString(rs.getString("auth_secret"), aad(id)),
+                        encryption.decryptString(rs.getString("auth_secret"), aad(id)),
                         rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id)));
             }
         } catch (SQLException e) {

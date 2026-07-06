@@ -7,7 +7,7 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.scm.ScmCredential;
-import dev.codespire.crypto.CryptoService;
+import dev.codespire.encryption.EncryptionService;
 import dev.codespire.scm.bitbucket.BitbucketCloudClient;
 import dev.codespire.scm.bitbucket.BitbucketCloudCommentSink;
 import dev.codespire.scm.bitbucket.BitbucketCloudConfig;
@@ -39,7 +39,7 @@ public class WorkerScmClients {
     String providerMode; // stub | bitbucket-cloud
 
     @Inject
-    CryptoService crypto;
+    EncryptionService encryption;
 
     @Inject
     ObjectMapper mapper;
@@ -65,7 +65,7 @@ public class WorkerScmClients {
         }
         String workspace = ReviewIds.parse(command.reviewId()).repo().workspace();
         try {
-            return mapper.readValue(crypto.decryptString(cipher, ScmCredential.aad(workspace)), ScmCredential.class);
+            return mapper.readValue(encryption.decryptString(cipher, ScmCredential.aad(workspace)), ScmCredential.class);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to unpack worker credential for " + workspace, e);
         }
