@@ -202,6 +202,10 @@ function ProviderFormModal({
       return;
     }
 
+    // Flush a typed-but-not-yet-added author so it isn't silently dropped on submit.
+    const draft = authorDraft.trim();
+    const finalAuthors = draft && !authors.includes(draft) ? [...authors, draft] : authors;
+
     const input: ProviderInput = {
       name: name.trim(),
       type,
@@ -211,7 +215,7 @@ function ProviderFormModal({
       authUsername: authKind === 'basic' ? authUsername.trim() : null,
       botAccountId: botAccountId.trim(),
       enabled,
-      authors,
+      authors: finalAuthors,
     };
     if (secret.trim()) input.secret = secret;
 
