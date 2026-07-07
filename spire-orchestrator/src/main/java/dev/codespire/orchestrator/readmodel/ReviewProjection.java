@@ -34,6 +34,10 @@ public class ReviewProjection {
 
     private static final Logger LOG = Logger.getLogger(ReviewProjection.class);
     private static final List<String> STEPS = List.of("Received", "Diff", "Context", "Review", "Comments", "Done");
+    private static final String UNIQUE_VIOLATION = "23505";
+    // Generous: each lost race costs one DB round trip, and N concurrent writers
+    // can make one writer lose up to N-1 rounds in a row.
+    private static final int SEQ_RETRY_LIMIT = 50;
 
     // Active-step index for the pipeline stepper (6 = every step done).
     public static final int STAGE_RECEIVED = 0;
@@ -135,7 +139,7 @@ public class ReviewProjection {
                 return rs.next() ? rs.getInt("attempt") : 1;
             }
         } catch (SQLException e) {
-            LOG.warnf("currentAttempt read failed for %s: %s", reviewId, e.getMessage());
+            LOG.warnf(e, "currentAttempt read failed for %s", reviewId);
             return 1;
         }
     }
@@ -183,18 +187,34 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
-    /** Append one line to the review's scoped event stream. */
+    /**
+     * Append one line to the review's scoped event stream. seq is allocated
+     * atomically (MAX+1 inside the INSERT) and guarded by UNIQUE(review_id, seq)
+     * (V6): three independently-threaded consumers append to the same review, so
+     * a writer that loses the allocation race gets 23505 and simply retries with
+     * a fresh MAX — timeline order stays deterministic.
+     */
     public void appendEvent(String reviewId, String lane, String type, String detail) {
-        update("""
+        String sql = """
                 INSERT INTO review_event (review_id, seq, lane, type, detail)
-                VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM review_event WHERE review_id = ?), ?, ?, ?)
-                """, ps -> {
-            ps.setString(1, reviewId);
-            ps.setString(2, reviewId);
-            ps.setString(3, lane);
-            ps.setString(4, type);
-            ps.setString(5, detail == null ? "" : detail);
-        });
+                SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM review_event WHERE review_id = ?
+                """;
+        for (int attempt = 1; attempt <= SEQ_RETRY_LIMIT; attempt++) {
+            try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, reviewId);
+                ps.setString(2, lane);
+                ps.setString(3, type);
+                ps.setString(4, detail == null ? "" : detail);
+                ps.setString(5, reviewId);
+                ps.executeUpdate();
+                return;
+            } catch (SQLException e) {
+                if (!UNIQUE_VIOLATION.equals(e.getSQLState()) || attempt == SEQ_RETRY_LIMIT) {
+                    throw new IllegalStateException("review_event write failed for " + reviewId, e);
+                }
+                // lost the seq race to a concurrent consumer — recompute MAX and retry
+            }
+        }
     }
 
     // ---- reads (REST + WS) -------------------------------------------------

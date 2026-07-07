@@ -8,4 +8,10 @@ public record AssembledContext(String contextId,
                                List<ContextItem> items,
                                Set<String> contributingSources,
                                Set<String> missingSources) {
+
+    public AssembledContext {
+        items = items == null ? null : List.copyOf(items);
+        contributingSources = contributingSources == null ? null : Set.copyOf(contributingSources);
+        missingSources = missingSources == null ? null : Set.copyOf(missingSources);
+    }
 }

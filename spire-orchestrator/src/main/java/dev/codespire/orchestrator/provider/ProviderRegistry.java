@@ -55,7 +55,7 @@ public class ProviderRegistry {
 
     public Optional<ProviderView> get(UUID id) {
         try (Connection c = dataSource.getConnection()) {
-            return row(c, id).map(rs -> viewOf(c, id, rs));
+            return findView(c, id);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load provider " + id, e);
         }
@@ -95,7 +95,7 @@ public class ProviderRegistry {
     @Transactional
     public Optional<ProviderView> update(UUID id, ProviderInput in) {
         try (Connection c = dataSource.getConnection()) {
-            if (row(c, id).isEmpty()) {
+            if (!exists(c, id)) {
                 return Optional.empty();
             }
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
@@ -192,19 +192,23 @@ public class ProviderRegistry {
 
     // ---- helpers -----------------------------------------------------------
 
-    private ProviderView viewOf(Connection c, UUID id, ResultSet rs) {
-        try {
-            return toView(rs, authorsOf(c, id));
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to map provider " + id, e);
+    /** Map the row inside try-with-resources — never hand out a live ResultSet. */
+    private Optional<ProviderView> findView(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(toView(rs, authorsOf(c, id))) : Optional.empty();
+            }
         }
     }
 
-    private Optional<ResultSet> row(Connection c, UUID id) throws SQLException {
-        PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider WHERE id = ?");
-        ps.setObject(1, id);
-        ResultSet rs = ps.executeQuery();
-        return rs.next() ? Optional.of(rs) : Optional.empty();
+    private boolean exists(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM scm_provider WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     private ProviderView toView(ResultSet rs, List<String> authors) throws SQLException {

@@ -32,8 +32,15 @@ public final class TokenBudget {
         if (estimateTokens(text) <= maxTokens) {
             return text;
         }
-        int maxChars = (int) (maxTokens * CHARS_PER_TOKEN * SAFETY_FACTOR);
+        // The marker counts against the budget too, so small limits don't overshoot.
+        int contentTokens = Math.max(0, maxTokens - estimateTokens(TRUNCATION_MARKER));
+        int maxChars = (int) (contentTokens * CHARS_PER_TOKEN * SAFETY_FACTOR);
         maxChars = Math.max(0, Math.min(maxChars, text.length()));
-        return text.substring(0, maxChars) + TRUNCATION_MARKER;
+        // Back off to the last line boundary — the LLM cites anchors from the
+        // clipped text, and a dangling line fragment invites mis-cited anchors.
+        // Raw cut only when there is no usable newline before the limit.
+        int lastNewline = text.lastIndexOf('\n', maxChars);
+        int cut = lastNewline > 0 ? lastNewline : maxChars;
+        return text.substring(0, cut) + TRUNCATION_MARKER;
     }
 }

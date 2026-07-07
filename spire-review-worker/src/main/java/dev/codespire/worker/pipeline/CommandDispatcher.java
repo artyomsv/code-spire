@@ -10,6 +10,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 /**
  * Routes cs.commands to workers. The aggregate-based stale-run guard lives in
@@ -41,12 +42,19 @@ public class CommandDispatcher {
         if (command == null) {
             return; // poison record already logged by the deserializer
         }
-        switch (command) {
-            case FetchDiff c -> diffWorker.fetchDiff(c);
-            case GatherContext c -> contextWorker.gatherContext(c);
-            case GenerateReview c -> reviewWorker.generateReview(c);
-            case PostComments c -> reviewWorker.postComments(c);
-            default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
+        // MDC (observability rule): the handler is @Blocking-synchronous, so
+        // put/remove happen on the same worker thread.
+        MDC.put("reviewId", command.reviewId());
+        try {
+            switch (command) {
+                case FetchDiff c -> diffWorker.fetchDiff(c);
+                case GatherContext c -> contextWorker.gatherContext(c);
+                case GenerateReview c -> reviewWorker.generateReview(c);
+                case PostComments c -> reviewWorker.postComments(c);
+                default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
+            }
+        } finally {
+            MDC.remove("reviewId");
         }
     }
 }

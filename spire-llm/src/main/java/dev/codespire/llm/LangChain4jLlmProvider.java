@@ -8,6 +8,7 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.output.TokenUsage;
@@ -24,6 +25,12 @@ import java.util.concurrent.CompletionStage;
  * contract, not a promise of internal async I/O.
  */
 public class LangChain4jLlmProvider implements LlmProvider {
+
+    /**
+     * Output cap applied when the caller leaves {@link ModelParams#maxTokens()}
+     * unset — the paid call must never run without a bound (cost control).
+     */
+    static final int DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 
     private final ChatModel model;
     private final String id;
@@ -53,9 +60,16 @@ public class LangChain4jLlmProvider implements LlmProvider {
     @Override
     public CompletionStage<Completion> complete(Prompt prompt, ModelParams params) {
         try {
-            ChatResponse response = model.chat(List.of(
-                    SystemMessage.from(prompt.system()),
-                    UserMessage.from(prompt.user())));
+            // Per-call params override the model's construction-time defaults;
+            // maxOutputTokens is always set so the paid call has a hard cap.
+            ChatRequest request = ChatRequest.builder()
+                    .messages(List.of(
+                            SystemMessage.from(prompt.system()),
+                            UserMessage.from(prompt.user())))
+                    .temperature(params.temperature())
+                    .maxOutputTokens(params.maxTokens() != null ? params.maxTokens() : DEFAULT_MAX_OUTPUT_TOKENS)
+                    .build();
+            ChatResponse response = model.chat(request);
             TokenUsage usage = response.tokenUsage();
             return CompletableFuture.completedFuture(new Completion(
                     response.aiMessage().text(),

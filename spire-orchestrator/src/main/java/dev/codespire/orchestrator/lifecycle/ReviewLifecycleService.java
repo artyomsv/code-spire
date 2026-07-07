@@ -6,17 +6,14 @@ import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewLifecycle;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.port.EventStore;
-import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata;
+import dev.codespire.orchestrator.pipeline.KafkaSends;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
-import org.eclipse.microprofile.reactive.messaging.Message;
-import org.eclipse.microprofile.reactive.messaging.Metadata;
 import org.jboss.logging.Logger;
 
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Command side of the ReviewLifecycle aggregate: load -> fold -> decide ->
@@ -68,15 +65,12 @@ public class ReviewLifecycleService {
         eventStore.append(reviewId, nextSequence, envelopes);
 
         for (EventEnvelope envelope : envelopes) {
-            // keyed by streamId (= reviewId) for per-PR ordering on cs.events
-            events.send(Message.of(envelope,
-                    Metadata.of(OutgoingKafkaRecordMetadata.<String>builder()
-                            .withKey(envelope.streamId()).build()),
-                    () -> CompletableFuture.<Void>completedFuture(null),
-                    failure -> {
-                        LOG.warnf(failure, "Failed to publish %s", envelope.eventType());
-                        return CompletableFuture.<Void>completedFuture(null);
-                    }));
+            // keyed by streamId (= reviewId) for per-PR ordering on cs.events.
+            // Awaits the broker ack: a failed publish throws so the caller sees it
+            // (saga -> cs.dlq, REST -> 5xx) instead of the read model silently
+            // diverging from the appended event log.
+            KafkaSends.sendAndAwait(events, envelope.streamId(), envelope,
+                    envelope.eventType() + " for " + envelope.streamId());
         }
         return newEvents;
     }

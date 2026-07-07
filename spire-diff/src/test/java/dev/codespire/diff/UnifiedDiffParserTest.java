@@ -161,4 +161,99 @@ class UnifiedDiffParserTest {
         assertTrue(UnifiedDiffParser.parse("  ").isEmpty());
         assertTrue(UnifiedDiffParser.parse("not a diff at all").isEmpty());
     }
+
+    @Test
+    void bareEmptyLineIsContextWhileBothSidesExpectContent() {
+        String diff = """
+                diff --git a/x.txt b/x.txt
+                --- a/x.txt
+                +++ b/x.txt
+                @@ -1,3 +1,3 @@
+                 a
+
+                 c
+                """;
+        List<DiffLine> lines = UnifiedDiffParser.parse(diff).getFirst().hunks().getFirst().lines();
+        assertEquals(3, lines.size());
+        assertEquals(new DiffLine(LineType.CONTEXT, 2, 2, ""), lines.get(1));
+        assertEquals(new DiffLine(LineType.CONTEXT, 3, 3, "c"), lines.get(2));
+    }
+
+    @Test
+    void bareEmptyLineEndsHunkWhenOneSideIsExhausted() {
+        // A context line consumes one line on BOTH sides; when the old side is
+        // spent, a bare empty line is noise — consuming it would drift every
+        // later anchor in the hunk.
+        String diff = """
+                diff --git a/x.txt b/x.txt
+                --- a/x.txt
+                +++ b/x.txt
+                @@ -1,1 +1,3 @@
+                 ctx
+
+                +a
+                +b
+                """;
+        List<DiffLine> lines = UnifiedDiffParser.parse(diff).getFirst().hunks().getFirst().lines();
+        assertEquals(1, lines.size());
+        assertEquals(new DiffLine(LineType.CONTEXT, 1, 1, "ctx"), lines.getFirst());
+    }
+
+    @Test
+    void absurdHunkCountsDoNotAbortTheParse() {
+        // counts beyond even a long must clamp, not throw away the whole PR
+        String diff = """
+                diff --git a/big.txt b/big.txt
+                --- a/big.txt
+                +++ b/big.txt
+                @@ -1,99999999999999999999999 +1,2 @@
+                +a
+                +b
+                diff --git a/other.txt b/other.txt
+                --- a/other.txt
+                +++ b/other.txt
+                @@ -1 +1 @@
+                -x
+                +y
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+        assertEquals(2, patches.size());
+        assertEquals("other.txt", patches.get(1).newPath());
+        assertEquals(2, patches.getFirst().hunks().getFirst().lines().size());
+    }
+
+    @Test
+    void malformedHunkHeaderDropsRemainingHunksButKeepsOtherFiles() {
+        String diff = """
+                diff --git a/x.txt b/x.txt
+                --- a/x.txt
+                +++ b/x.txt
+                @@ not a real header @@
+                +orphan
+                diff --git a/y.txt b/y.txt
+                --- a/y.txt
+                +++ b/y.txt
+                @@ -1 +1 @@
+                -x
+                +y
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+        assertEquals(2, patches.size());
+        assertTrue(patches.getFirst().hunks().isEmpty());
+        assertEquals(2, patches.get(1).hunks().getFirst().lines().size());
+    }
+
+    @Test
+    void binaryFilePathContainingSpaceBSlashParsesCorrectly() {
+        // no ---/+++ lines for binary files, so the header split must not be
+        // fooled by " b/" inside the path itself
+        String diff = """
+                diff --git a/assets/img b/logo.png b/assets/img b/logo.png
+                Binary files a/assets/img b/logo.png and b/assets/img b/logo.png differ
+                """;
+        FilePatch p = UnifiedDiffParser.parse(diff).getFirst();
+        assertTrue(p.binary());
+        assertEquals("assets/img b/logo.png", p.oldPath());
+        assertEquals("assets/img b/logo.png", p.newPath());
+    }
 }

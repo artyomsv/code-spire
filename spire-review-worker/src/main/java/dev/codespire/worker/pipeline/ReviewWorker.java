@@ -1,5 +1,7 @@
 package dev.codespire.worker.pipeline;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
@@ -18,10 +20,10 @@ import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
+import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.diff.Anchors;
 import dev.codespire.llm.FindingsParser;
 import dev.codespire.llm.ReviewPromptBuilder;
-import dev.codespire.scm.bitbucket.BitbucketApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -68,6 +70,9 @@ public class ReviewWorker {
     @Inject
     ResultsEmitter results;
 
+    @Inject
+    ObjectMapper mapper;
+
     /** Idempotency slot for the paid LLM call itself (finding H4). */
     private static final String LLM_KEY = "LLM";
 
@@ -84,9 +89,8 @@ public class ReviewWorker {
             // commit whose LLM call already completed must not pay twice. A
             // crashed claim (NULL) stays reclaimable — same semantics as comments.
             if (idempotency.claim(command.reviewId(), command.commit(), LLM_KEY)
-                    instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-                LOG.infof("Skipping GenerateReview for %s: LLM call already completed for %s",
-                        command.reviewId(), command.commit());
+                    instanceof CommentIdempotencyStore.Claim.AlreadyPosted already) {
+                reEmitPersistedResult(command, already.commentId());
                 return;
             }
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
@@ -96,8 +100,11 @@ public class ReviewWorker {
                     new ModelParams(llm.id(), 0.2, null)).toCompletableFuture().join();
 
             ReviewResult result = FindingsParser.parse(completion.text(), completion.usage());
+            // Persist-then-emit (finding M2): marking first makes the paid call
+            // unrepeatable; the serialized result keeps redelivery re-emittable
+            // when a crash lands between the mark and the emit.
+            idempotency.markPosted(command.reviewId(), command.commit(), LLM_KEY, writeResult(result));
             results.emit(new ReviewGenerated(command.reviewId(), command.prId(), command.commit(), result));
-            idempotency.markPosted(command.reviewId(), command.commit(), LLM_KEY, "generated");
         } catch (RuntimeException e) {
             Throwable cause = unwrap(e);
             if (isCommitGone(cause)) {
@@ -108,6 +115,41 @@ public class ReviewWorker {
             LOG.warnf(cause, "GenerateReview failed for %s", command.reviewId());
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "generate",
                     cause.getMessage(), isRetryable(cause), command.attempt()));
+        }
+    }
+
+    /**
+     * Redelivery of a completed LLM call: never pay twice, but always converge —
+     * the original emit may not have reached the broker, so ReviewGenerated is
+     * re-emitted from the result persisted at markPosted time (downstream is
+     * idempotent by reviewId/commit). Legacy rows predating the persisted
+     * payload were only marked after a successful emit, so skipping is safe.
+     */
+    private void reEmitPersistedResult(GenerateReview command, String payload) {
+        ReviewResult persisted = readResult(payload);
+        if (persisted == null) {
+            LOG.infof("Skipping GenerateReview for %s: LLM call already completed for %s",
+                    command.reviewId(), command.commit());
+            return;
+        }
+        LOG.infof("Re-emitting ReviewGenerated for %s from the persisted LLM result", command.reviewId());
+        results.emit(new ReviewGenerated(command.reviewId(), command.prId(), command.commit(), persisted));
+    }
+
+    private String writeResult(ReviewResult result) {
+        try {
+            return mapper.writeValueAsString(result);
+        } catch (JsonProcessingException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    /** @return the persisted result, or null when the row predates payload persistence. */
+    private ReviewResult readResult(String payload) {
+        try {
+            return mapper.readValue(payload, ReviewResult.class);
+        } catch (JsonProcessingException e) {
+            return null;
         }
     }
 
@@ -260,14 +302,38 @@ public class ReviewWorker {
     }
 
     private static boolean isCommitGone(Throwable cause) {
-        return cause instanceof BitbucketApiException api && api.isNotFound();
+        return cause instanceof ScmApiException api && api.isNotFound();
     }
 
-    /** Transient (5xx, I/O, timeout) -> retryable; client errors -> terminal. */
+    /** Transient (SCM 5xx/429, LLM retriable, I/O, timeout) -> retryable; client errors -> terminal. */
     private static boolean isRetryable(Throwable cause) {
-        if (cause instanceof BitbucketApiException api) {
-            return api.status() >= 500;
+        for (Throwable t = cause; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof ScmApiException api && (api.status() >= 500 || api.isRateLimited())) {
+                return true;
+            }
+            if (t instanceof UncheckedIOException || t instanceof java.io.IOException
+                    || t instanceof java.util.concurrent.TimeoutException
+                    || isLangChain4jRetriable(t)) {
+                return true;
+            }
         }
-        return cause instanceof UncheckedIOException || cause instanceof java.util.concurrent.TimeoutException;
+        return false;
+    }
+
+    /**
+     * The worker never compiles against LangChain4j (it stays an implementation
+     * detail of spire-llm), so its transient provider failures — RateLimitException,
+     * InternalServerException and TimeoutException all extend RetriableException —
+     * are recognized by hierarchy name.
+     */
+    private static final String LANGCHAIN4J_RETRIABLE = "dev.langchain4j.exception.RetriableException";
+
+    private static boolean isLangChain4jRetriable(Throwable t) {
+        for (Class<?> c = t.getClass(); c != null; c = c.getSuperclass()) {
+            if (LANGCHAIN4J_RETRIABLE.equals(c.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

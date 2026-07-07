@@ -8,6 +8,7 @@ import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.jboss.logging.MDC;
 
 /**
  * Projector consuming cs.events: folds published domain events into the
@@ -29,6 +30,17 @@ public class DomainEventSink {
         if (envelope == null) {
             return; // undeserializable envelope already logged by the deserializer
         }
+        // MDC (observability rule): the handler is @Blocking-synchronous, so
+        // put/remove happen on the same worker thread.
+        MDC.put("reviewId", envelope.streamId());
+        try {
+            project(envelope);
+        } finally {
+            MDC.remove("reviewId");
+        }
+    }
+
+    private void project(EventEnvelope envelope) {
         String reviewId = envelope.streamId();
         String detail = describe(envelope.payload());
         timeline.record("domain", envelope.eventType(), reviewId, detail);

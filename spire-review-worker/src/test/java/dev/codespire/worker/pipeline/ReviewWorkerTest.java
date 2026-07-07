@@ -1,5 +1,6 @@
 package dev.codespire.worker.pipeline;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
@@ -31,6 +32,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.diff.UnifiedDiffParser;
 import dev.codespire.scm.bitbucket.BitbucketApiException;
+import dev.codespire.scm.github.GitHubApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -43,6 +45,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,6 +74,7 @@ class ReviewWorkerTest {
     private RecordingSink sink;
     private InMemoryIdempotency idempotency;
     private AtomicInteger llmCalls;
+    private RuntimeException diffFailure;
 
     @BeforeEach
     void setUp() {
@@ -78,8 +82,10 @@ class ReviewWorkerTest {
         sink = new RecordingSink();
         idempotency = new InMemoryIdempotency();
         llmCalls = new AtomicInteger();
+        diffFailure = null;
 
         worker = new ReviewWorker();
+        worker.mapper = new ObjectMapper();
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
@@ -101,6 +107,9 @@ class ReviewWorkerTest {
 
             @Override
             public Diff fetchDiff(RepoRef repo, long prId, String commit) {
+                if (diffFailure != null) {
+                    throw diffFailure;
+                }
                 return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(DIFF), false);
             }
         };
@@ -168,24 +177,113 @@ class ReviewWorkerTest {
     }
 
     @Test
-    void redeliveredGenerateReviewNeverPaysTwice() {
+    void redeliveredGenerateReviewNeverPaysTwiceButReEmits() {
         GenerateReview command = new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null);
         worker.generateReview(command);
         assertEquals(1, llmCalls.get());
-        assertInstanceOf(ReviewGenerated.class, emitted.getLast());
+        ReviewGenerated first = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
 
         worker.generateReview(command); // redelivery of the completed command (H4)
         assertEquals(1, llmCalls.get(), "no second paid LLM call");
-        assertEquals(1, emitted.stream().filter(ReviewGenerated.class::isInstance).count());
+        ReviewGenerated replayed = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
+        assertEquals(first.result(), replayed.result(), "redelivery converges on the persisted result");
     }
 
     @Test
     void crashedGenerateClaimIsReclaimable() {
-        // claim exists but was never marked (crash between LLM call and emit)
+        // claim exists but was never marked (crash between LLM call and mark)
         idempotency.claim(REVIEW_ID, COMMIT, "LLM");
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
         assertEquals(1, llmCalls.get(), "reclaimable NULL claim re-runs the call");
         assertInstanceOf(ReviewGenerated.class, emitted.getLast());
+    }
+
+    @Test
+    void crashBetweenMarkAndEmitStillConvergesOnRedelivery() throws Exception {
+        // simulate: LLM call completed and was marked, but the emit never happened (M2)
+        ReviewResult result = new ReviewResult(List.of(finding("src/A.java", 2)), "persisted summary",
+                new ModelUsage("m", 1, 1, 0));
+        idempotency.claim(REVIEW_ID, COMMIT, "LLM");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "LLM", new ObjectMapper().writeValueAsString(result));
+
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        assertEquals(0, llmCalls.get(), "no repeat spend — result comes from the idempotency row");
+        ReviewGenerated generated = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
+        assertEquals(result, generated.result());
+    }
+
+    @Test
+    void legacyMarkerRowSkipsWithoutReEmitOrSpend() {
+        // pre-payload rows carried the "generated" marker and were only marked after a successful emit
+        idempotency.claim(REVIEW_ID, COMMIT, "LLM");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "LLM", "generated");
+
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        assertEquals(0, llmCalls.get(), "completed call is never re-paid");
+        assertTrue(emitted.isEmpty(), "nothing replayable to emit");
+    }
+
+    // --- failure classification (H1: provider-neutral ScmApiException) ---
+
+    @Test
+    void gitHub404DuringGenerateAbandonsQuietly() {
+        diffFailure = new GitHubApiException(404, "GET", "/repos/sandbox/demo-repo/pulls/9");
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        assertTrue(emitted.isEmpty(), "GitHub 404-after-force-push is commit-gone, not a failure");
+    }
+
+    @Test
+    void gitHub500DuringGenerateIsRetryable() {
+        diffFailure = new GitHubApiException(500, "GET", "/repos/sandbox/demo-repo/pulls/9");
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getLast());
+        assertTrue(failed.retryable(), "GitHub 5xx is transient");
+    }
+
+    @Test
+    void scmRateLimit429IsRetryable() {
+        diffFailure = new GitHubApiException(429, "GET", "/repos/sandbox/demo-repo/pulls/9");
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getLast());
+        assertTrue(failed.retryable(), "429 clears on retry");
+    }
+
+    @Test
+    void langChain4jRetriableFailureIsRetryable() throws Exception {
+        // the worker never compiles against langchain4j — construct the provider
+        // exception reflectively, exactly as it arrives on the runtime classpath
+        RuntimeException rateLimit = (RuntimeException) Class
+                .forName("dev.langchain4j.exception.RateLimitException")
+                .getConstructor(String.class).newInstance("429 from the LLM provider");
+        worker.llm = failingLlm(rateLimit);
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getLast());
+        assertTrue(failed.retryable(), "LLM RateLimitException extends RetriableException");
+    }
+
+    @Test
+    void langChain4jNonRetriableFailureIsTerminal() throws Exception {
+        RuntimeException invalid = (RuntimeException) Class
+                .forName("dev.langchain4j.exception.InvalidRequestException")
+                .getConstructor(String.class).newInstance("400 from the LLM provider");
+        worker.llm = failingLlm(invalid);
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null));
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getLast());
+        assertFalse(failed.retryable(), "LLM 4xx will not succeed on retry");
+    }
+
+    private LlmProvider failingLlm(RuntimeException failure) {
+        return new LlmProvider() {
+            @Override
+            public String id() {
+                return "test-llm";
+            }
+
+            @Override
+            public CompletionStage<Completion> complete(Prompt prompt, ModelParams params) {
+                return CompletableFuture.failedFuture(failure);
+            }
+        };
     }
 
     // --- test doubles ---

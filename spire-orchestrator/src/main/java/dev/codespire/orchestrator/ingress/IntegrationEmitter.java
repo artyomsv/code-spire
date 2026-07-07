@@ -2,13 +2,11 @@ package dev.codespire.orchestrator.ingress;
 
 import dev.codespire.contract.event.EventKeys;
 import dev.codespire.contract.event.IntegrationEvent;
-import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata;
+import dev.codespire.orchestrator.pipeline.KafkaSends;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
-import org.eclipse.microprofile.reactive.messaging.Message;
-import org.eclipse.microprofile.reactive.messaging.Metadata;
 
 /**
  * Single owner of the {@code integration-out} emitter (cs.integration), keyed by
@@ -22,8 +20,13 @@ public class IntegrationEmitter {
     @Channel("integration-out")
     Emitter<IntegrationEvent> emitter;
 
+    /**
+     * Awaits the broker ack: on a publish failure the REST caller gets a 5xx
+     * instead of a fake success that registered nothing.
+     */
     public void send(IntegrationEvent event) {
-        emitter.send(Message.of(event, Metadata.of(
-                OutgoingKafkaRecordMetadata.<String>builder().withKey(EventKeys.of(event)).build())));
+        String key = EventKeys.of(event);
+        KafkaSends.sendAndAwait(emitter, key, event,
+                event.getClass().getSimpleName() + " for " + key);
     }
 }

@@ -176,6 +176,83 @@ class BitbucketCloudApiTest {
         assertEquals(401, e.status());
     }
 
+    // --- redirect + error handling (security review L5/L7) ---
+
+    @Test
+    void followsSameHostRedirectOnGet() {
+        server.stubFor(get(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/diff"))
+                .willReturn(aResponse().withStatus(302).withHeader("Location", "/moved-diff")));
+        server.stubFor(get(urlEqualTo("/moved-diff"))
+                .willReturn(aResponse().withHeader("Content-Type", "text/plain").withBody("""
+                        diff --git a/src/App.java b/src/App.java
+                        --- a/src/App.java
+                        +++ b/src/App.java
+                        @@ -1 +1 @@
+                        -old
+                        +new
+                        """)));
+        Diff diff = diffSource.fetchDiff(REPO, 42, "abc123def456");
+        assertEquals(1, diff.files().size());
+    }
+
+    @Test
+    void crossHostRedirectToLoopbackIsRefused() {
+        // 127.0.0.1 differs from the configured base host (localhost) -> SSRF guard applies
+        server.stubFor(get(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/diff"))
+                .willReturn(aResponse().withStatus(302)
+                        .withHeader("Location", "http://127.0.0.1:" + server.port() + "/loop")));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> diffSource.fetchDiff(REPO, 42, "abc123def456"));
+        assertTrue(e.getMessage().contains("non-public address refused"));
+    }
+
+    @Test
+    void redirectOnPostIsRefused() {
+        // replaying a POST against a Location could double-post the comment
+        server.stubFor(post(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/comments"))
+                .willReturn(aResponse().withStatus(302).withHeader("Location", "/elsewhere")));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> commentSink.postSummary(REPO, 42, "**Summary**"));
+        assertEquals(302, e.status());
+        assertTrue(e.getMessage().contains("redirect on POST refused"));
+    }
+
+    @Test
+    void errorResponsesCarryATruncatedBodySnippet() {
+        server.stubFor(get(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42"))
+                .willReturn(aResponse().withStatus(400)
+                        .withBody("{\"error\": {\"message\": \"bad anchor line\"}}")));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> diffSource.fetchPullRequest(REPO, 42));
+        assertEquals(400, e.status());
+        assertTrue(e.getMessage().contains("bad anchor line"));
+    }
+
+    @Test
+    void rateLimitSurfacesAs429() {
+        server.stubFor(get(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42"))
+                .willReturn(aResponse().withStatus(429)));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> diffSource.fetchPullRequest(REPO, 42));
+        assertTrue(e.isRateLimited());
+    }
+
+    @Test
+    void malformed2xxWithoutCommentIdIsRejected() {
+        server.stubFor(post(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/comments"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{}")));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> commentSink.postSummary(REPO, 42, "**Summary**"));
+        assertTrue(e.getMessage().contains("no comment id"));
+    }
+
+    @Test
+    void nonNumericThreadRefIsRejectedInsideTheAdapterContract() {
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> commentSink.replyInThread(REPO, 42, new ThreadRef("not-a-number"), "answer"));
+        assertTrue(e.getMessage().contains("not a numeric Bitbucket comment id"));
+    }
+
     private void stubCommentCreated() {
         server.stubFor(post(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/comments"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")

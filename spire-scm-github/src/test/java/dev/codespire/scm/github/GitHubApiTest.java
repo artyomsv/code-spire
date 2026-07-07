@@ -177,6 +177,76 @@ class GitHubApiTest {
         assertEquals(401, e.status());
     }
 
+    // --- redirect + error handling (security review L5/L7) ---
+
+    @Test
+    void followsSameHostRedirectOnGet() {
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(302).withHeader("Location", "/moved-diff")));
+        server.stubFor(get(urlEqualTo("/moved-diff"))
+                .willReturn(aResponse().withHeader("Content-Type", "text/plain").withBody("""
+                        diff --git a/src/App.java b/src/App.java
+                        --- a/src/App.java
+                        +++ b/src/App.java
+                        @@ -1 +1 @@
+                        -old
+                        +new
+                        """)));
+        Diff diff = diffSource.fetchDiff(REPO, 42, "abc123def456");
+        assertEquals(1, diff.files().size());
+    }
+
+    @Test
+    void crossHostRedirectToLoopbackIsRefused() {
+        // 127.0.0.1 differs from the configured base host (localhost) -> SSRF guard applies
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(302)
+                        .withHeader("Location", "http://127.0.0.1:" + server.port() + "/loop")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> diffSource.fetchDiff(REPO, 42, "abc123def456"));
+        assertTrue(e.getMessage().contains("non-public address refused"));
+    }
+
+    @Test
+    void redirectOnPostIsRefused() {
+        // replaying a POST against a Location could double-post the comment
+        server.stubFor(post(urlEqualTo("/repos/sandbox/demo-repo/issues/42/comments"))
+                .willReturn(aResponse().withStatus(302).withHeader("Location", "/elsewhere")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> commentSink.postSummary(REPO, 42, "**Summary**"));
+        assertEquals(302, e.status());
+        assertTrue(e.getMessage().contains("redirect on POST refused"));
+    }
+
+    @Test
+    void errorResponsesCarryATruncatedBodySnippet() {
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(422)
+                        .withBody("{\"message\": \"line must be part of the diff\"}")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> commentSink.getPullRequestAuthor(REPO, 42));
+        assertEquals(422, e.status());
+        assertTrue(e.getMessage().contains("line must be part of the diff"));
+    }
+
+    @Test
+    void rateLimitSurfacesAs429() {
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(429)));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> commentSink.getPullRequestAuthor(REPO, 42));
+        assertTrue(e.isRateLimited());
+    }
+
+    @Test
+    void malformed2xxWithoutCommentIdIsRejected() {
+        server.stubFor(post(urlEqualTo("/repos/sandbox/demo-repo/issues/42/comments"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{}")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> commentSink.postSummary(REPO, 42, "**Summary**"));
+        assertTrue(e.getMessage().contains("no comment id"));
+    }
+
     private void stubReviewCommentCreated() {
         server.stubFor(post(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{ \"id\": 992 }")));

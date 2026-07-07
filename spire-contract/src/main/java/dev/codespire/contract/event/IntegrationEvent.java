@@ -70,6 +70,10 @@ public sealed interface IntegrationEvent {
 
     /** P3: feeds the RAG indexer. */
     record PushReceived(RepoRef repo, String ref, List<String> commits) implements IntegrationEvent {
+
+        public PushReceived {
+            commits = commits == null ? null : List.copyOf(commits);
+        }
     }
 
     // --- worker results ---
@@ -77,6 +81,10 @@ public sealed interface IntegrationEvent {
     /** METADATA ONLY — no diff content (ADR-011); content is re-fetched by commit at generate time. */
     record DiffFetched(String reviewId, long prId, String commit, int changedFiles,
                        List<String> languages, long sizeBytes, boolean truncated) implements IntegrationEvent {
+
+        public DiffFetched {
+            languages = languages == null ? null : List.copyOf(languages);
+        }
     }
 
     /** Fan-out signal each ContextProvider subscribes to (CONTRACT §8). */
@@ -88,6 +96,11 @@ public sealed interface IntegrationEvent {
 
     record ContextAssembled(String reviewId, long prId, String commit, String contextRef,
                             Set<String> contributingSources, Set<String> missingSources) implements IntegrationEvent {
+
+        public ContextAssembled {
+            contributingSources = contributingSources == null ? null : Set.copyOf(contributingSources);
+            missingSources = missingSources == null ? null : Set.copyOf(missingSources);
+        }
     }
 
     /** Findings ride INLINE (ADR-011); may quote source — bus at-rest posture per ADR-014. */
@@ -101,6 +114,10 @@ public sealed interface IntegrationEvent {
 
     record CommentsPosted(String reviewId, long prId, String commit, String summaryCommentId,
                           List<PostedInline> inline) implements IntegrationEvent {
+
+        public CommentsPosted {
+            inline = inline == null ? null : List.copyOf(inline);
+        }
 
         public record PostedInline(String commentId, String path, int line) {
         }

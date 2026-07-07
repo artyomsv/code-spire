@@ -38,15 +38,14 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
   const [filter, setFilter] = useState<ChipFilter>('all');
   const [query, setQuery] = useState('');
 
-  // Gentle "live" feel: re-render each second so relative times keep ticking.
-  const [, setTick] = useState(0);
+  // Gentle "live" feel: tick `now` each second so relative times keep ticking.
+  // Kept as state (not Date.now() per render) so the memos below stay effective.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-
-  const now = Date.now();
 
   const summary = useMemo(() => {
     const inFlight = reviews.filter((r) => r.status === 'reviewing').length;
@@ -122,14 +121,16 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
         </div>
         <div className="chips" id="chips">
           {CHIPS.map((c) => (
-            <span
+            <button
               key={c.f}
+              type="button"
               className={`chip ${filter === c.f ? 'on' : ''}`}
               data-f={c.f}
+              aria-pressed={filter === c.f}
               onClick={() => setFilter(c.f)}
             >
               {c.label} <span className="n">{chipCounts[c.f]}</span>
-            </span>
+            </button>
           ))}
         </div>
       </div>

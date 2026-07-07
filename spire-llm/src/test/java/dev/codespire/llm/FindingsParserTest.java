@@ -71,6 +71,15 @@ class FindingsParserTest {
     }
 
     @Test
+    void degradedSummaryIsBounded() {
+        String ramble = "no json here, just endless prose. ".repeat(3_000); // ~100k chars
+        ReviewResult result = FindingsParser.parse(ramble, USAGE);
+        assertTrue(result.findings().isEmpty());
+        assertTrue(result.summary().length() <= 4_100, "degraded summary must be clipped");
+        assertTrue(result.summary().endsWith("...(truncated to fit the model context)"));
+    }
+
+    @Test
     void dropsUnanchorableFindings() {
         ReviewResult result = FindingsParser.parse("""
                 { "summary": "s", "findings": [

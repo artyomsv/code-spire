@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
-import { eventsCard, findingsCard, metaCard, openInLabel, pill, STAGES, STATUS_LABEL, stepper, usageCard } from '../render';
+import { eventsCard, findingsCard, metaCard, openInLabel, pill, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -13,15 +13,23 @@ export default function ReviewDetail({ reviews }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Monotonic request id: a response only applies while it is still the latest
+  // load for the current params — otherwise navigating A→B can let A's slower
+  // response clobber B (mirrors the `active` pattern in useLiveReviews).
+  const requestSeq = useRef(0);
+
   const load = useCallback(() => {
     if (!workspace || !slug || !pr) return;
+    const seq = ++requestSeq.current;
     fetchReviewDetail(workspace, slug, pr)
       .then((d) => {
+        if (seq !== requestSeq.current) return;
         setDetail(d);
         setError(null);
         setLoading(false);
       })
       .catch((e: unknown) => {
+        if (seq !== requestSeq.current) return;
         setError(e instanceof Error ? e.message : 'Failed to load review');
         setLoading(false);
       });
@@ -32,6 +40,10 @@ export default function ReviewDetail({ reviews }: Props) {
     setDetail(null);
     load();
     window.scrollTo(0, 0);
+    return () => {
+      // Invalidate in-flight responses on param change / unmount.
+      requestSeq.current++;
+    };
   }, [load]);
 
   // When a live summary update arrives for this review, refresh the detail.
@@ -71,6 +83,7 @@ export default function ReviewDetail({ reviews }: Props) {
   }
 
   const r = detail;
+  const prUrl = safeHttpUrl(r.htmlUrl);
 
   return (
     <section className="content" id="view-detail">
@@ -96,9 +109,11 @@ export default function ReviewDetail({ reviews }: Props) {
           </div>
         </div>
         <div className="actions">
-          <a className="btn-ghost" href={r.htmlUrl} target="_blank" rel="noreferrer">
-            {openInLabel(r)} ↗
-          </a>
+          {prUrl && (
+            <a className="btn-ghost" href={prUrl} target="_blank" rel="noreferrer">
+              {openInLabel(r)} ↗
+            </a>
+          )}
           {r.status === 'failed' && <button className="btn">Re-run review</button>}
         </div>
       </div>
@@ -108,7 +123,7 @@ export default function ReviewDetail({ reviews }: Props) {
           <span className="k">//</span>
           <h3>Pipeline</h3>
           <span className="badge">
-            {r.status === 'reviewing' ? 'running · ' + STAGES[r.stage] : STATUS_LABEL[r.status]}
+            {r.status === 'reviewing' ? 'running · ' + stageLabel(r.stage) : STATUS_LABEL[r.status]}
           </span>
         </div>
         {stepper(r)}

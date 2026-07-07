@@ -114,6 +114,52 @@ class ReviewProjectionTest {
     }
 
     @Test
+    void concurrentAppendsNeverDuplicateSeq() throws Exception {
+        long pr = 4105L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Race me", "cdev", "acc-4",
+                "feature", "main", "f00d", "https://x/pr/4105", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
+
+        // Three consumers (IntegrationSaga, ResultSaga, DomainEventSink) append to
+        // the same review concurrently — UNIQUE(review_id, seq) + retry (V6) must
+        // keep the timeline gap-free and duplicate-free.
+        int appends = 24;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+            List<java.util.concurrent.Future<?>> futures = new java.util.ArrayList<>();
+            for (int i = 0; i < appends; i++) {
+                int n = i;
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    projection.appendEvent(id, "result", "RaceEvent-" + n, "");
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (var f : futures) {
+                f.get();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT COUNT(*) AS total, COUNT(DISTINCT seq) AS distinct_seq, MAX(seq) AS max_seq "
+                             + "FROM review_event WHERE review_id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(appends, rs.getInt("total"));
+                assertEquals(appends, rs.getInt("distinct_seq"), "no duplicate seq under concurrency");
+                assertEquals(appends, rs.getInt("max_seq"), "seq is gap-free 1..n");
+            }
+        }
+    }
+
+    @Test
     void missingReviewIsEmpty() {
         assertTrue(projection.loadDetail("acme", "web", 999999L).isEmpty());
     }

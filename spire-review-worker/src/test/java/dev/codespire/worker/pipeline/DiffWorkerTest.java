@@ -14,6 +14,7 @@ import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.diff.UnifiedDiffParser;
 import dev.codespire.scm.bitbucket.BitbucketApiException;
+import dev.codespire.scm.github.GitHubApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -106,6 +107,39 @@ class DiffWorkerTest {
     @Test
     void clientErrorIsTerminal() {
         failure = new BitbucketApiException(403, "GET", "/diff");
+        worker.fetchDiff(COMMAND);
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertFalse(failed.retryable());
+    }
+
+    @Test
+    void rateLimit429IsRetryable() {
+        failure = new BitbucketApiException(429, "GET", "/diff");
+        worker.fetchDiff(COMMAND);
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.retryable(), "429 clears on retry");
+    }
+
+    // H1: GitHub failures classify identically through the shared ScmApiException shape
+
+    @Test
+    void gitHubNotFoundAbandonsQuietlyAsSuperseded() {
+        failure = new GitHubApiException(404, "GET", "/pulls/7");
+        worker.fetchDiff(COMMAND);
+        assertTrue(emitted.isEmpty(), "no event for a force-pushed-away commit");
+    }
+
+    @Test
+    void gitHubServerErrorIsRetryable() {
+        failure = new GitHubApiException(503, "GET", "/pulls/7");
+        worker.fetchDiff(COMMAND);
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.retryable());
+    }
+
+    @Test
+    void gitHubClientErrorIsTerminal() {
+        failure = new GitHubApiException(403, "GET", "/pulls/7");
         worker.fetchDiff(COMMAND);
         ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
         assertFalse(failed.retryable());

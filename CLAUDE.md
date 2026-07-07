@@ -60,8 +60,32 @@ The design is fully specified in `docs/` — **treat those files as the source o
   before the 202 (Bitbucket retries on failure) and holds only the webhook secret + bot account id
   (never the App Password); work queues use `latest` offsets (no side-effect replay for new groups);
   per-service HTTP port vars. Semgrep clean.
-- **Still pending from P1 scope:** Tink event-payload encryption; SmallRye Fault Tolerance retry
-  budgets; cost table for `ModelUsage.costMillicents`.
+- **Encryption at rest delivered:** event-store payloads and provider secrets are Tink
+  AES-256-GCM encrypted with AAD binding (stream id / provider id / workspace); the base64
+  Tink keyset (`SPIRE_ENCRYPTION_KEYSET`) is the single fail-fast bootstrap secret. Legacy
+  plaintext rows (`key_id='none'`) still read back.
+- **Provider registry + multi-SCM delivered:** encrypted provider registry with Settings ->
+  Providers CRUD (`ProviderResource`; secrets never returned — `hasSecret` only), bot identity
+  auto-resolved from the token on save (`IdentitySource` / `ProviderIdentityResolver`),
+  `spire-scm-github` adapter (client, diff source, comment sink — manual-register pull mode;
+  webhook ingress not built yet, tracked in `techdebt/spire-scm-github/`), review modes
+  `SPIRE_REVIEW_MODE=active|observe`, bounded auto-retry per review
+  (`SPIRE_REVIEW_MAX_ATTEMPTS`, ADR-016), per-provider PR-author allowlist in the DB.
+- **`spire-ui` delivered:** React/Vite dashboard (reviews list/detail with live WebSocket
+  updates, Register PR dialog, provider settings) against the orchestrator's REST + WS APIs;
+  vitest + `tsc --noEmit` in CI-shape, dev server on `:34000` (`UI_PORT`).
+- **Full-project review hardened (2026-07):** 4-agent audit, all findings fixed — SSRF guard
+  on provider base URLs (https + public host enforced; `spire.security.allow-insecure-provider-urls`
+  relaxes only in `%dev`/`%test`), provider-neutral `ScmApiException` so GitHub 404/5xx/429
+  classify like Bitbucket, outbound Kafka publishes await broker acks (failures DLQ or 5xx —
+  never silent), `events-in` DLQ'd instead of ignored, LLM idempotency marks-before-emit with
+  persisted-result re-emit on redelivery (no duplicate spend, no stall), per-call LLM
+  `maxTokens` cap, `review_event.seq` race closed (V6 unique constraint + atomic insert),
+  redirect hardening in SCM clients (GET-only, private-IP guard, port-normalized auth pinning),
+  structured JSON logging + reviewId MDC (prod profile), UI URL-scheme guard + fetch-race fixes,
+  npm audit 0 vulnerabilities.
+- **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
+  in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 
 ## Build & run
 
@@ -74,6 +98,7 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 ./gradlew :spire-orchestrator:quarkusDev  # dashboard at http://localhost:34080
 ./gradlew :spire-gateway:quarkusDev       # webhook edge :34081
 ./gradlew :spire-review-worker:quarkusDev # worker :34082
+cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
 ## Conventions (enforced by design docs — do not regress)

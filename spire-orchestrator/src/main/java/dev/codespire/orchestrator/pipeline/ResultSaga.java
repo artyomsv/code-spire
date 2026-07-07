@@ -19,6 +19,7 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import java.util.List;
 import java.util.Objects;
@@ -63,6 +64,17 @@ public class ResultSaga {
         if (event == null) {
             return; // poison record already logged by the deserializer
         }
+        // MDC (observability rule): the handler is @Blocking-synchronous, so
+        // put/remove happen on the same worker thread.
+        MDC.put("reviewId", reviewIdOf(event));
+        try {
+            handle(event);
+        } finally {
+            MDC.remove("reviewId");
+        }
+    }
+
+    private void handle(IntegrationEvent event) {
         timeline.record("result", event.getClass().getSimpleName(), reviewIdOf(event), "");
         switch (event) {
             // repo/prId are derived from the reviewId itself — no in-memory
@@ -118,6 +130,8 @@ public class ResultSaga {
             java.util.Optional<String> cred = workerCredentials.packForWorkspace(parsed.repo().workspace());
             if (cred.isPresent()) {
                 int next = attempt + 1;
+                LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d (error: %s)",
+                        e.reviewId(), e.phase(), next, maxAttempts, e.error());
                 projection.retryPipeline(e.reviewId(), next,
                         "Transient failure at " + e.phase() + " — retrying (attempt " + next + "/" + maxAttempts + ").");
                 timeline.record("result", "retry:" + e.phase(), e.reviewId(),
@@ -126,13 +140,14 @@ public class ResultSaga {
                         e.reviewId(), parsed.repo(), parsed.prId(), e.commit(), cred.get()));
                 return;
             }
-            LOG.warnf("Cannot retry %s — no enabled provider for workspace %s",
-                    e.reviewId(), parsed.repo().workspace());
         }
 
         // Terminal: budget exhausted, provider gone, or a permanent failure.
+        String note = terminalNote(e, attempt);
+        LOG.errorf("Review %s failed terminally at %s (attempt %d/%d, retryable=%s, error: %s) — %s",
+                e.reviewId(), e.phase(), attempt, maxAttempts, e.retryable(), e.error(), note);
         projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
-        projection.setNote(e.reviewId(), terminalNote(e, attempt));
+        projection.setNote(e.reviewId(), note);
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
     }

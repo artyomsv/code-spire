@@ -14,6 +14,17 @@ quarkus:
     # comment_idempotency, in its own schema.
     default-schema: worker
     create-schemas: true
+  # Structured JSON logs in prod (observability rule); %dev/%test flip back to
+  # plain console below. service/env ride on every line as static fields.
+  log:
+    console:
+      json:
+        enabled: true
+        additional-field:
+          service:
+            value: spire-review-worker
+          env:
+            value: ${quarkus.profile}
 
 # Providers (ADR-001 fail-fast — no defaults outside dev/test). Credentials map
 # canonically from env (SPIRE_SCM_BITBUCKET_*, SPIRE_LLM_*, see .env.example).
@@ -56,6 +67,10 @@ mp:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
   quarkus:
+    log:
+      console:
+        json:
+          enabled: false   # plain console for local readability
     datasource:
       username: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
@@ -73,6 +88,10 @@ mp:
     http:
       port: 0
       test-port: 0
+    log:
+      console:
+        json:
+          enabled: false   # plain console keeps test output readable
   mp:
     messaging:
       incoming:

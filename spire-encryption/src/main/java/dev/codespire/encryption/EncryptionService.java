@@ -54,7 +54,7 @@ public class EncryptionService {
                         + "EncryptionService.generateKeysetBase64() and set SPIRE_ENCRYPTION_KEYSET")));
     }
 
-    /** Encrypt bytes (e.g. an event payload). {@code aad} binds it to its row. */
+    /** Encrypt bytes (e.g. an event payload). {@code aad} is required — it binds the ciphertext to its row. */
     public byte[] encrypt(byte[] plaintext, String aad) {
         try {
             return aead.encrypt(plaintext, aadBytes(aad));
@@ -91,7 +91,14 @@ public class EncryptionService {
     }
 
     private static byte[] aadBytes(String aad) {
-        return aad == null ? new byte[0] : aad.getBytes(StandardCharsets.UTF_8);
+        // A silent empty-AAD fallback would drop the row binding entirely —
+        // ciphertexts could then be swapped between rows undetected.
+        if (aad == null || aad.isBlank()) {
+            throw new IllegalArgumentException(
+                    "aad is required — pass the stable row identifier (e.g. stream/review/provider id) "
+                            + "that binds this ciphertext to its row");
+        }
+        return aad.getBytes(StandardCharsets.UTF_8);
     }
 
     /** Generate a fresh AES-256-GCM keyset, base64-encoded — for SPIRE_ENCRYPTION_KEYSET. */

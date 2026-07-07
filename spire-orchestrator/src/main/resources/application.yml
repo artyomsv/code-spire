@@ -13,6 +13,17 @@ quarkus:
     # schema-per-service: the orchestrator owns the event log.
     default-schema: orchestrator
     create-schemas: true
+  # Structured JSON logs in prod (observability rule); %dev/%test flip back to
+  # plain console below. service/env ride on every line as static fields.
+  log:
+    console:
+      json:
+        enabled: true
+        additional-field:
+          service:
+            value: spire-orchestrator
+          env:
+            value: ${quarkus.profile}
 
 # cs.* topics (CONTRACT §9), all keyed by reviewId. Broker address from
 # KAFKA_BOOTSTRAP_SERVERS; Dev Services boots one in dev/test when unset.
@@ -76,11 +87,19 @@ mp:
           id: spire-orchestrator-view
         value:
           deserializer: dev.codespire.orchestrator.eventstore.EnvelopeDeserializer
-        # projector: rebuildable read model — earliest + ignore is correct here
+        # projector: rebuildable read model — earliest replay is correct; consumer
+        # failures still land on cs.dlq (never silently dropped, ADR-013), because
+        # an ignored failure here can lose a terminal status flip forever.
         auto:
           offset:
             reset: earliest
-        failure-strategy: ignore
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+          # the DLQ producer cannot mirror the custom EnvelopeDeserializer by
+          # name — reuse the envelope serializer events-out publishes with
+          value:
+            serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
 
 # Global review mode (see ReviewPolicy). observe = register PR events, emit no
 # work (no diff/LLM/comments). The per-provider author allowlist lives in the
@@ -91,14 +110,26 @@ spire:
     # Bounded auto-retry (C8/ADR-016): total pipeline runs before a transient
     # failure fails terminally. Tuning knob — a safe default is fine here.
     max-attempts: ${SPIRE_REVIEW_MAX_ATTEMPTS:3}
+  security:
+    # SSRF guard (CWE-918): provider baseUrl must be https and resolve to a
+    # public address, because create/update whoami()s it server-side. Fail-closed
+    # here; only %dev/%test relax it for http://localhost WireMock SCMs.
+    allow-insecure-provider-urls: false
 
 # Dev: docker-compose Postgres + Redpanda. Credentials come from .env (Quarkus
 # loads it from the project root) — NO defaults for credentials, fail fast.
 "%dev":
+  spire:
+    security:
+      allow-insecure-provider-urls: true   # local WireMock/simulator SCMs are http://localhost
   kafka:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
   quarkus:
+    log:
+      console:
+        json:
+          enabled: false   # plain console for local readability
     datasource:
       username: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
@@ -108,6 +139,8 @@ spire:
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
   spire:
+    security:
+      allow-insecure-provider-urls: true   # tests register providers against http://localhost WireMocks
     encryption:
       # Test-only AES-GCM keyset (not a secret). Prod/dev read SPIRE_ENCRYPTION_KEYSET.
       keyset: eyJwcmltYXJ5S2V5SWQiOjM4NjczMjQwMjIsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaURROXlLT0R1Y25mcFM1b0JyMlpaT3RYSkV0QmRwcmFwZkFzdUtpQUh5R1lBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjozODY3MzI0MDIyLCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K
@@ -115,6 +148,10 @@ spire:
     http:
       port: 0
       test-port: 0
+    log:
+      console:
+        json:
+          enabled: false   # plain console keeps test output readable
   mp:
     messaging:
       incoming:

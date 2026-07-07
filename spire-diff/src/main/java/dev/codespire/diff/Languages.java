@@ -1,5 +1,6 @@
 package dev.codespire.diff;
 
+import java.util.Locale;
 import java.util.Map;
 
 /** File-extension -> language tag, used for prompt hints and metadata. */
@@ -28,6 +29,7 @@ public final class Languages {
         if (dot < 0 || dot == path.length() - 1) {
             return "unknown";
         }
-        return BY_EXTENSION.getOrDefault(path.substring(dot + 1).toLowerCase(), "unknown");
+        // Locale.ROOT: the default locale must not change extension mapping (Turkish-I)
+        return BY_EXTENSION.getOrDefault(path.substring(dot + 1).toLowerCase(Locale.ROOT), "unknown");
     }
 }

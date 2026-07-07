@@ -9,7 +9,7 @@ import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffLine;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.Hunk;
-import dev.codespire.scm.bitbucket.BitbucketApiException;
+import dev.codespire.contract.scm.ScmApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -42,14 +42,13 @@ public class DiffWorker {
                     diff.files().stream().map(FilePatch::language).distinct().toList(),
                     approximateSize(diff.files()),
                     diff.truncated()));
-        } catch (BitbucketApiException e) {
-            if (e.isNotFound()) {
+        } catch (RuntimeException e) {
+            // ScmApiException is the provider-neutral shape both adapters implement.
+            if (e instanceof ScmApiException api && api.isNotFound()) {
                 // Commit force-pushed away: the run is superseded — abandon quietly (CONTRACT §4).
                 LOG.infof("Abandoning FetchDiff for %s: diff 404 — commit force-pushed away", command.reviewId());
                 return;
             }
-            fail(command, e);
-        } catch (RuntimeException e) {
             fail(command, e);
         }
     }
@@ -57,8 +56,9 @@ public class DiffWorker {
     private void fail(FetchDiff command, RuntimeException e) {
         LOG.warnf(e, "FetchDiff failed for %s", command.reviewId());
         // retryable=true lets the orchestrator's ResultSaga re-run the pipeline under its
-        // bounded retry budget (ADR-016); transient (5xx / I/O) -> retryable, else terminal.
-        boolean retryable = e instanceof BitbucketApiException api ? api.status() >= 500
+        // bounded retry budget (ADR-016); transient (5xx / 429 / I/O) -> retryable, else terminal.
+        boolean retryable = e instanceof ScmApiException api
+                ? api.status() >= 500 || api.isRateLimited()
                 : e instanceof java.io.UncheckedIOException;
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
                 e.getMessage(), retryable, 1));

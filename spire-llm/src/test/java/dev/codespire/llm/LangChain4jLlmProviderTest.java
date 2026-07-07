@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -30,6 +31,38 @@ class LangChain4jLlmProviderTest {
                 return response;
             }
         };
+    }
+
+    private static ChatModel capturing(AtomicReference<ChatRequest> captured) {
+        return new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                captured.set(request);
+                return ChatResponse.builder().aiMessage(AiMessage.from("ok")).build();
+            }
+        };
+    }
+
+    @Test
+    void appliesPerCallTemperatureAndMaxTokens() {
+        var captured = new AtomicReference<ChatRequest>();
+        var provider = new LangChain4jLlmProvider(capturing(captured), "test");
+
+        provider.complete(PROMPT, new ModelParams("test-model", 0.7, 512)).toCompletableFuture().join();
+
+        assertEquals(0.7, captured.get().temperature());
+        assertEquals(512, captured.get().maxOutputTokens());
+    }
+
+    @Test
+    void unsetMaxTokensStillEnforcesAnOutputCap() {
+        var captured = new AtomicReference<ChatRequest>();
+        var provider = new LangChain4jLlmProvider(capturing(captured), "test");
+
+        provider.complete(PROMPT, PARAMS).toCompletableFuture().join(); // PARAMS has maxTokens == null
+
+        assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, captured.get().maxOutputTokens());
+        assertEquals(0.2, captured.get().temperature());
     }
 
     @Test

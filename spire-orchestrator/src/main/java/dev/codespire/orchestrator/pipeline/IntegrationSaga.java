@@ -26,6 +26,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 /**
  * Reacts to ingress events (cs.integration): translates them into Record
@@ -63,6 +64,17 @@ public class IntegrationSaga {
         if (event == null) {
             return; // poison record already logged by the deserializer
         }
+        // MDC (observability rule): the handler is @Blocking-synchronous, so
+        // put/remove happen on the same worker thread.
+        MDC.put("reviewId", reviewIdOf(event));
+        try {
+            handle(event);
+        } finally {
+            MDC.remove("reviewId");
+        }
+    }
+
+    private void handle(IntegrationEvent event) {
         timeline.record("integration", event.getClass().getSimpleName(), reviewIdOf(event), "");
         switch (event) {
             case PullRequestEventReceived e -> onPullRequestEvent(e);

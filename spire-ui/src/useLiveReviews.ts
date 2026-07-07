@@ -1,8 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchReviews, type ReviewSummary } from './api';
 
 function sortReviews(list: ReviewSummary[]): ReviewSummary[] {
   return [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+/**
+ * Minimal wire validation: a summary without a string `id` would produce
+ * undefined/duplicate React keys and unmergeable rows — drop it instead of
+ * trusting the payload blindly.
+ */
+function isReviewSummary(d: unknown): d is ReviewSummary {
+  return typeof d === 'object' && d !== null && typeof (d as { id?: unknown }).id === 'string';
 }
 
 function upsert(prev: ReviewSummary[], next: ReviewSummary): ReviewSummary[] {
@@ -22,17 +31,21 @@ export function useLiveReviews(): LiveReviews {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Once the WebSocket has delivered data, the (possibly slower) REST snapshot
+  // is stale — applying it would overwrite fresher live state.
+  const wsDelivered = useRef(false);
+
   // Initial snapshot via REST — drives loading / empty / error states.
   useEffect(() => {
     let active = true;
     fetchReviews()
       .then((list) => {
-        if (!active) return;
-        setReviews(sortReviews(list));
+        if (!active || wsDelivered.current) return;
+        setReviews(sortReviews(list.filter(isReviewSummary)));
         setLoading(false);
       })
       .catch((e: unknown) => {
-        if (!active) return;
+        if (!active || wsDelivered.current) return;
         setError(e instanceof Error ? e.message : 'Failed to load reviews');
         setLoading(false);
       });
@@ -58,10 +71,13 @@ export function useLiveReviews(): LiveReviews {
           return;
         }
         if (Array.isArray(data)) {
-          setReviews(sortReviews(data as ReviewSummary[]));
+          wsDelivered.current = true;
+          setReviews(sortReviews(data.filter(isReviewSummary)));
           setLoading(false);
-        } else if (data && typeof data === 'object') {
-          setReviews((prev) => upsert(prev, data as ReviewSummary));
+        } else if (isReviewSummary(data)) {
+          wsDelivered.current = true;
+          setReviews((prev) => upsert(prev, data));
+          setLoading(false);
         }
       };
       ws.onclose = () => {

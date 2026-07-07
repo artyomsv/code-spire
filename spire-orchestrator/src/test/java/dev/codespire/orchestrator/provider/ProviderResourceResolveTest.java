@@ -7,9 +7,9 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The auto-resolve/validate step in {@link ProviderResource}: with a token
@@ -63,9 +63,11 @@ class ProviderResourceResolveTest {
     }
 
     @Test
-    void invalidToken_isSurfacedAsBadRequest() {
-        var resource = resourceThatResolvesTo(null, new RuntimeException("HTTP 401"));
+    void invalidToken_isSurfacedAsGenericBadRequest() {
+        var resource = resourceThatResolvesTo(null, new RuntimeException("HTTP 401 from http://10.0.0.1/user"));
         var e = assertThrows(BadRequestException.class, () -> resource.resolveIdentity(input("bad", "")));
-        assertTrue(e.getMessage().contains("401"), "the SCM error is surfaced to the operator");
+        assertEquals("Could not validate the API token against the provider", e.getMessage(),
+                "generic client message — the operator learns the token failed, nothing more");
+        assertFalse(e.getMessage().contains("401"), "upstream/internal detail must not be reflected to the client");
     }
 }

@@ -82,10 +82,11 @@ public class ManualRegisterResource {
                 throw new NotFoundException("Pull request not found: "
                         + target.workspace + "/" + target.slug + "#" + target.pr);
             }
-            LOG.warnf("Bitbucket fetch failed for %s/%s#%d: status %d",
-                    target.workspace, target.slug, target.pr, e.status());
-            throw new WebApplicationException("Could not fetch the pull request from Bitbucket (status "
-                    + e.status() + "). Check the repo, PR number, and bot credentials.", Response.Status.BAD_GATEWAY);
+            // Generic message to the client — upstream status/detail stays server-side.
+            LOG.warnf(e, "SCM fetch failed for %s/%s#%d via provider %s: status %d",
+                    target.workspace, target.slug, target.pr, provider.id(), e.status());
+            throw new WebApplicationException("Could not fetch the pull request from the provider. "
+                    + "Check the repo, PR number, and bot credentials.", Response.Status.BAD_GATEWAY);
         }
 
         IntegrationEvent event = new PullRequestEventReceived(

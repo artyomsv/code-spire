@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   Finding,
   ReviewDetail,
@@ -8,6 +8,26 @@ import type {
 } from './api';
 
 export const STAGES = ['Received', 'Diff', 'Context', 'Review', 'Comments', 'Done'];
+
+/** Label for a stage index, clamped — the backend can report stage 6 ("past Done"). */
+export function stageLabel(stage: number): string {
+  return STAGES[Math.min(stage, STAGES.length - 1)];
+}
+
+/**
+ * Returns the URL only when it parses as http(s); undefined otherwise. Server-provided
+ * URLs (e.g. `htmlUrl`) must pass through this before landing in an <a href> — React
+ * does not block `javascript:`/`data:` schemes.
+ */
+export function safeHttpUrl(u: string | undefined): string | undefined {
+  if (!u) return undefined;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? u : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Anything carrying a stored SCM type + a PR URL — both ReviewSummary and ReviewDetail. */
 export type ProviderSource = { providerType?: string; htmlUrl?: string };
@@ -57,6 +77,13 @@ const CHECK_ICON = (
 /** Copy-to-clipboard icon button; stops row-click propagation and flashes a check. */
 export function CopyButton({ text, title }: { text: string; title: string }) {
   const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
   return (
     <button
       type="button"
@@ -67,7 +94,8 @@ export function CopyButton({ text, title }: { text: string; title: string }) {
         e.stopPropagation();
         void navigator.clipboard?.writeText(text);
         setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
+        if (resetTimer.current) clearTimeout(resetTimer.current);
+        resetTimer.current = setTimeout(() => setCopied(false), 1200);
       }}
     >
       {copied ? CHECK_ICON : COPY_ICON}
@@ -148,7 +176,7 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
     return (
       <div className="mini">
         {segs}
-        <span className="lbl">{STAGES[stage]}</span>
+        <span className="lbl">{stageLabel(stage)}</span>
       </div>
     );
   }

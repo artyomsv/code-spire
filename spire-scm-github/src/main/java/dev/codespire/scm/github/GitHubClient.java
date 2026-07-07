@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -65,17 +67,68 @@ public class GitHubClient {
             HttpResponse<String> response = execute(method, path, target, accept, jsonBody);
             int status = response.statusCode();
             if (status / 100 == 3) {
+                // Only safe reads follow redirects: replaying a POST against a
+                // Location target could double-post a comment.
+                if (!"GET".equals(method) && !"HEAD".equals(method)) {
+                    throw new GitHubApiException(status, method, path, "redirect on " + method + " refused");
+                }
                 String location = response.headers().firstValue("Location")
                         .orElseThrow(() -> new GitHubApiException(status, method, path));
                 target = target.resolve(location);
+                requireSafeRedirectTarget(target, status, method, path);
                 continue;
             }
             if (status / 100 != 2) {
-                throw new GitHubApiException(status, method, path);
+                throw new GitHubApiException(status, method, path, bodySnippet(response.body()));
             }
             return response.body();
         }
         throw new GitHubApiException(310, method, path); // too many redirects
+    }
+
+    /**
+     * SSRF guard on redirect hops (security review): a cross-host Location must
+     * not point into loopback/link-local/private/unique-local address space.
+     * Same-host targets skip the check — the base host is operator config, not
+     * attacker data, and dev/test legitimately run against WireMock on localhost.
+     */
+    private void requireSafeRedirectTarget(URI target, int status, String method, String path) {
+        String host = target.getHost();
+        if (host == null) {
+            throw new GitHubApiException(status, method, path, "redirect without a host refused");
+        }
+        if (host.equalsIgnoreCase(baseUri.getHost())) {
+            return;
+        }
+        try {
+            for (InetAddress address : InetAddress.getAllByName(host)) {
+                if (isPrivateAddress(address)) {
+                    throw new GitHubApiException(status, method, path,
+                            "redirect to non-public address refused: " + host);
+                }
+            }
+        } catch (UnknownHostException e) {
+            throw new UncheckedIOException("GitHub API " + method + " " + path
+                    + " redirect target did not resolve", e);
+        }
+    }
+
+    private static boolean isPrivateAddress(InetAddress address) {
+        if (address.isLoopbackAddress() || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress() || address.isAnyLocalAddress()) {
+            return true;
+        }
+        byte[] raw = address.getAddress();
+        return raw.length == 16 && (raw[0] & 0xFE) == 0xFC; // IPv6 unique-local fc00::/7
+    }
+
+    /** Truncated response-body excerpt for error messages — no headers, so no secrets. */
+    private static String bodySnippet(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+        String cleaned = body.replaceAll("\\s+", " ").trim();
+        return cleaned.length() <= 500 ? cleaned : cleaned.substring(0, 500) + "...";
     }
 
     private HttpResponse<String> execute(String method, String path, URI target, String accept, String jsonBody) {
@@ -105,7 +158,15 @@ public class GitHubClient {
     private boolean sameOrigin(URI target) {
         return baseUri.getScheme().equalsIgnoreCase(target.getScheme())
                 && baseUri.getHost().equalsIgnoreCase(target.getHost())
-                && baseUri.getPort() == target.getPort();
+                && effectivePort(baseUri) == effectivePort(target);
+    }
+
+    /** -1 (no explicit port) normalizes to the scheme default, so ":443" still matches. */
+    private static int effectivePort(URI uri) {
+        if (uri.getPort() != -1) {
+            return uri.getPort();
+        }
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
     }
 
     private JsonNode parse(String body) {

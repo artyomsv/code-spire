@@ -9,4 +9,8 @@ public record FilePatch(String oldPath,
                         boolean binary,
                         boolean tooLarge,
                         List<Hunk> hunks) {
+
+    public FilePatch {
+        hunks = hunks == null ? null : List.copyOf(hunks);
+    }
 }

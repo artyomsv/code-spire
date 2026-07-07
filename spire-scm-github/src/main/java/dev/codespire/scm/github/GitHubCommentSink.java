@@ -37,7 +37,7 @@ public class GitHubCommentSink implements CommentSink {
     @Override
     public CommentRef postSummary(RepoRef repo, long prId, String bodyMd) {
         JsonNode created = client.postJson(issueCommentsPath(repo, prId), Map.of("body", bodyMd));
-        String id = created.path("id").asText();
+        String id = requireCommentId(created, issueCommentsPath(repo, prId));
         return new CommentRef(id, new ThreadRef(id), CommentKind.SUMMARY);
     }
 
@@ -51,16 +51,24 @@ public class GitHubCommentSink implements CommentSink {
                 "path", anchor.path(),
                 "line", line,
                 "side", old ? "LEFT" : "RIGHT"));
-        String id = created.path("id").asText();
+        String id = requireCommentId(created, reviewCommentsPath(repo, prId));
         return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
     }
 
     @Override
     public CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
-        JsonNode created = client.postJson(
-                reviewCommentsPath(repo, prId) + "/" + thread.value() + "/replies",
-                Map.of("body", bodyMd));
-        return new CommentRef(created.path("id").asText(), thread, CommentKind.REPLY);
+        String path = reviewCommentsPath(repo, prId) + "/" + thread.value() + "/replies";
+        JsonNode created = client.postJson(path, Map.of("body", bodyMd));
+        return new CommentRef(requireCommentId(created, path), thread, CommentKind.REPLY);
+    }
+
+    /** A 2xx without an id must not flow an empty key into the idempotency store. */
+    private static String requireCommentId(JsonNode created, String path) {
+        String id = created.hasNonNull("id") ? created.get("id").asText() : "";
+        if (id.isBlank()) {
+            throw new GitHubApiException(200, "POST", path, "2xx response carried no comment id");
+        }
+        return id;
     }
 
     @Override

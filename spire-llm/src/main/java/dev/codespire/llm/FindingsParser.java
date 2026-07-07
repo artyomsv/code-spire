@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.diff.TokenBudget;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
@@ -21,6 +22,9 @@ import java.util.Locale;
  * (raw text becomes the summary, zero findings) instead of failing a review.
  */
 public final class FindingsParser {
+
+    /** Bound on the degraded-mode summary (~4000 chars) — raw model ramble is otherwise unbounded. */
+    private static final int DEGRADED_SUMMARY_MAX_TOKENS = 1250;
 
     private static final ObjectMapper LENIENT = JsonMapper.builder()
             .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_TRAILING_COMMA)
@@ -42,9 +46,11 @@ public final class FindingsParser {
                 // fall through to the degraded result
             }
         }
-        // Degraded mode: never fail the review because the model rambled.
+        // Degraded mode: never fail the review because the model rambled —
+        // but the ramble becomes the summary, so bound it.
         return new ReviewResult(List.of(),
-                modelOutput == null ? "" : modelOutput.strip(), usage);
+                modelOutput == null ? "" : TokenBudget.clip(modelOutput.strip(), DEGRADED_SUMMARY_MAX_TOKENS),
+                usage);
     }
 
     private static List<Finding> findings(JsonNode array) {

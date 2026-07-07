@@ -38,7 +38,7 @@ public class BitbucketCloudCommentSink implements CommentSink {
     public CommentRef postSummary(RepoRef repo, long prId, String bodyMd) {
         JsonNode created = client.postJson(commentsPath(repo, prId),
                 Map.of("content", Map.of("raw", bodyMd)));
-        String id = created.path("id").asText();
+        String id = requireCommentId(created, commentsPath(repo, prId));
         return new CommentRef(id, new ThreadRef(id), CommentKind.SUMMARY);
     }
 
@@ -50,7 +50,7 @@ public class BitbucketCloudCommentSink implements CommentSink {
                 : Map.of("path", anchor.path(), "to", anchor.newLine());
         JsonNode created = client.postJson(commentsPath(repo, prId),
                 Map.of("content", Map.of("raw", bodyMd), "inline", inline));
-        String id = created.path("id").asText();
+        String id = requireCommentId(created, commentsPath(repo, prId));
         return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
     }
 
@@ -58,8 +58,28 @@ public class BitbucketCloudCommentSink implements CommentSink {
     public CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
         JsonNode created = client.postJson(commentsPath(repo, prId),
                 Map.of("content", Map.of("raw", bodyMd),
-                        "parent", Map.of("id", Long.parseLong(thread.value()))));
-        return new CommentRef(created.path("id").asText(), thread, CommentKind.REPLY);
+                        "parent", Map.of("id", parseCommentId(thread, repo, prId))));
+        return new CommentRef(requireCommentId(created, commentsPath(repo, prId)), thread, CommentKind.REPLY);
+    }
+
+    /** A 2xx without an id must not flow an empty key into the idempotency store. */
+    private static String requireCommentId(JsonNode created, String path) {
+        String id = created.hasNonNull("id") ? created.get("id").asText() : "";
+        if (id.isBlank()) {
+            throw new BitbucketApiException(200, "POST", path, "2xx response carried no comment id");
+        }
+        return id;
+    }
+
+    /** Bitbucket parent ids are numeric; a non-numeric ThreadRef stays inside the adapter contract. */
+    private static long parseCommentId(ThreadRef thread, RepoRef repo, long prId) {
+        try {
+            return Long.parseLong(thread.value());
+        } catch (NumberFormatException e) {
+            throw new BitbucketApiException(400, "POST", "/repositories/" + repo.workspace() + "/"
+                    + repo.slug() + "/pullrequests/" + prId + "/comments",
+                    "thread ref is not a numeric Bitbucket comment id");
+        }
     }
 
     @Override

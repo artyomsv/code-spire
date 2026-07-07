@@ -50,4 +50,20 @@ class EncryptionServiceTest {
     void missingKeysetFailsFast() {
         assertThrows(IllegalStateException.class, () -> EncryptionService.fromConfig(Optional.empty()));
     }
+
+    @Test
+    void nullOrBlankAadIsRejected() {
+        // a null/blank AAD would silently drop the row binding — reject loudly
+        byte[] bytes = "payload".getBytes();
+        assertThrows(IllegalArgumentException.class, () -> crypto.encrypt(bytes, null));
+        assertThrows(IllegalArgumentException.class, () -> crypto.encrypt(bytes, "  "));
+        assertThrows(IllegalArgumentException.class, () -> crypto.encryptString("payload", null));
+        assertThrows(IllegalArgumentException.class, () -> crypto.encryptString("payload", ""));
+
+        String cipher = crypto.encryptString("payload", "row:1");
+        assertThrows(IllegalArgumentException.class, () -> crypto.decryptString(cipher, null));
+        assertThrows(IllegalArgumentException.class, () -> crypto.decryptString(cipher, " "));
+        assertThrows(IllegalArgumentException.class,
+                () -> crypto.decrypt(java.util.Base64.getDecoder().decode(cipher), ""));
+    }
 }

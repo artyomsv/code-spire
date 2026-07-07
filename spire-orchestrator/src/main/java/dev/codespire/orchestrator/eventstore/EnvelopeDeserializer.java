@@ -58,7 +58,9 @@ public class EnvelopeDeserializer implements Deserializer<EventEnvelope> {
                     root.path("actor").asText("system"),
                     payload);
         } catch (Exception e) {
-            LOG.warnf(e, "Skipping undeserializable envelope on %s", topic);
+            // ERROR (observability rule): the envelope is dropped for good — the
+            // read model may miss a terminal status flip, so surface loudly.
+            LOG.errorf(e, "Skipping undeserializable envelope on %s", topic);
             return null;
         }
     }

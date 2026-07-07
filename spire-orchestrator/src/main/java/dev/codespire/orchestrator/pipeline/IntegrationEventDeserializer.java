@@ -23,7 +23,9 @@ public class IntegrationEventDeserializer extends ObjectMapperDeserializer<Integ
         try {
             return super.deserialize(topic, data);
         } catch (RuntimeException e) {
-            LOG.warnf(e, "Dropping undeserializable record on %s", topic);
+            // ERROR (observability rule): the message is dropped for good — a
+            // review that depended on it stalls, so this must surface loudly.
+            LOG.errorf(e, "Dropping undeserializable record on %s", topic);
             return null;
         }
     }

@@ -3,6 +3,17 @@ quarkus:
     name: spire-gateway
   http:
     port: ${GATEWAY_HTTP_PORT:34081}   # host-exposed port in the 34xxx project range
+  # Structured JSON logs in prod (observability rule); %dev/%test flip back to
+  # plain console below. service/env ride on every line as static fields.
+  log:
+    console:
+      json:
+        enabled: true
+        additional-field:
+          service:
+            value: spire-gateway
+          env:
+            value: ${quarkus.profile}
 
 # SCM provider (ADR-001 fail-fast — no default outside dev/test). Credentials
 # map canonically from env (SPIRE_SCM_BITBUCKET_*, see .env.example).
@@ -25,6 +36,11 @@ mp:
           serializer: dev.codespire.gateway.IntegrationEventSerializer
 
 "%dev":
+  quarkus:
+    log:
+      console:
+        json:
+          enabled: false   # plain console for local readability
   kafka:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
@@ -37,6 +53,10 @@ mp:
     http:
       port: 0
       test-port: 0
+    log:
+      console:
+        json:
+          enabled: false   # plain console keeps test output readable
   spire:
     scm:
       provider: stub

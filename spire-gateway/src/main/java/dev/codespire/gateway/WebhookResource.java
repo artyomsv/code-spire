@@ -16,6 +16,7 @@ import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.Metadata;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import java.util.HashMap;
 import java.util.List;
@@ -40,6 +41,18 @@ public class WebhookResource {
 
     @POST
     public Response receive(@Context HttpHeaders headers, byte[] body) {
+        // MDC (observability rule): key identifiers ride on every log line of
+        // this request; cleared on the same thread — the handler is synchronous.
+        MDC.put("provider", "bitbucket");
+        try {
+            return handle(headers, body);
+        } finally {
+            MDC.remove("provider");
+            MDC.remove("reviewId");
+        }
+    }
+
+    private Response handle(HttpHeaders headers, byte[] body) {
         Map<String, String> headerMap = new HashMap<>();
         headers.getRequestHeaders().forEach((name, values) ->
                 headerMap.put(name, values.isEmpty() ? "" : values.getFirst()));
@@ -57,6 +70,9 @@ public class WebhookResource {
             // Authenticated but malformed/invalid payload — client error, not a 500.
             LOG.warnf(e, "Webhook payload rejected");
             return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        if (!events.isEmpty()) {
+            MDC.put("reviewId", EventKeys.of(events.getFirst()));
         }
 
         // Await broker acks before the 202 (finding M5): Bitbucket does not

@@ -34,4 +34,32 @@ class TokenBudgetTest {
     void zeroBudgetYieldsEmpty() {
         assertEquals("", TokenBudget.clip("anything", 0));
     }
+
+    @Test
+    void clipsAtLineBoundaryNotMidLine() {
+        String text = "142 +some particularly long line of code with content\n".repeat(100);
+        String clipped = TokenBudget.clip(text, 200);
+
+        String marker = "\n...(truncated to fit the model context)";
+        assertTrue(clipped.endsWith(marker));
+        String content = clipped.substring(0, clipped.length() - marker.length());
+        // the kept content ends exactly at a line boundary of the input — no dangling fragment
+        assertTrue(text.startsWith(content + "\n"));
+        assertTrue(content.endsWith("long line of code with content"));
+    }
+
+    @Test
+    void fallsBackToRawCutWhenTextHasNoNewline() {
+        String clipped = TokenBudget.clip("y".repeat(10_000), 100);
+        assertTrue(clipped.endsWith("...(truncated to fit the model context)"));
+        assertTrue(clipped.length() < 10_000);
+    }
+
+    @Test
+    void truncationMarkerCountsAgainstTheBudget() {
+        // the ~13-token marker must not push a small budget over the limit
+        String clipped = TokenBudget.clip("x".repeat(1_000), 14);
+        assertTrue(clipped.endsWith("...(truncated to fit the model context)"));
+        assertTrue(TokenBudget.estimateTokens(clipped) <= 14);
+    }
 }
