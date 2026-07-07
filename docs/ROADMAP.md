@@ -3,6 +3,57 @@
 Phased plan. Estimates are rough person-weeks for one developer in private time; treat as relative
 sizing, not commitments.
 
+---
+
+## Current status & next-up backlog (updated 2026-07-07)
+
+This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
+down is the original design-time roadmap (kept for reference).
+
+### Delivered
+- **P0 + P1**: event backbone, 3 services over Redpanda, real Bitbucket adapter set, event store,
+  idempotent posting + stale-run guard, live operator UI (`spire-ui`).
+- **Encryption at rest** (ADR-009): `EncryptionService`/Tink in the shared `spire-encryption` module.
+- **Provider registry** (Settings → Providers): encrypted credentials in the DB, no `.env` tokens.
+- **ADR-015**: active-mode worker gets per-command SCM credentials brokered (encrypted) over the bus.
+- **GitHub adapter** (`spire-scm-github`): registry is type-aware end-to-end; GitHub PRs register and
+  observe live (verified against `github.com/artyomsv/spire-test`). Bitbucket API access is still
+  blocked at work, so GitHub/GitLab are being built first to prove the flow.
+- **UI**: provider badge, dedicated Title/Author columns, truncate-plus-copy (`CopyableValue`),
+  provider-aware "Open in …", non-overflowing metadata card.
+
+### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
+
+**A. Finish the multi-SCM story (current thread)**
+1. GitHub **active mode** — post a real review comment · S · ⚑ write-scoped token + worker running.
+   Smallest step to a complete GitHub loop (diff → LLM → comment).
+2. **GitLab adapter (Phase C)** · L · ⚑ gitlab.com vs self-hosted host. Static-token auth (not HMAC),
+   MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths (touches reviewId slug).
+3. **Real webhooks (Phase D)** · M. `/webhooks/{provider}` dispatch in the gateway so PRs auto-register
+   on open/update instead of manual "Register PR". Needs a public tunnel to test.
+
+**B. Make the reviewer genuinely useful (P2 — currently diff-only)**
+4. **`/review` command** · M. Author types `/review` in a PR comment to (re-)trigger. Parsed, inactive.
+5. **Conversational replies** · M. Answer follow-ups in a thread (`AuthorReplied` received but ignored).
+6. **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked-ticket context. Biggest lever.
+
+**C. Correctness & robustness**
+7. **Store provider type in the read model** · S. Badge is currently derived from the PR URL host —
+   fine for github.com/gitlab.com, but **self-hosted GitLab** shows no badge. Do before GitLab self-hosted.
+8. **SmallRye FT retry budgets** · M. A stalled run needs a manual re-push today; add bounded auto-retry.
+9. **Author numeric id column** · S. If "user id" meant the numeric provider id (not `@username`),
+   surface `author_id` in the list summary.
+
+**D. Infra & security hardening**
+10. **OIDC on the dashboard** · M. UI/API is unauthenticated — matters before any shared deployment.
+11. **`costMillicents` LLM pricing** · S. Data is collected but unpriced; show per-review token cost.
+12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
+
+**Suggested order for momentum:** 1 (finish GitHub actively) → 7 (cheap correctness before GitLab) → 2
+(GitLab). Operator decides.
+
+---
+
 ## Phase 0 — Skeleton & event backbone (~2–3 pw) — SINGLE process (ADR-008 sequencing)
 - Quarkus multi-module scaffold: `spire-contract` + one app wiring the modules in **one process** over
   the SmallRye **in-memory connector** (dev/test harness; services split at Phase 1).
