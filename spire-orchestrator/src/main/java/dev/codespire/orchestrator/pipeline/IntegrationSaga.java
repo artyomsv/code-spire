@@ -149,21 +149,25 @@ public class IntegrationSaga {
         projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
                 e.action().name().toLowerCase(Locale.ROOT) + " · head " + commit);
 
-        var emitted = lifecycle.handle(reviewId,
-                new RecordCommand.RequestReview(commit, e.action().name(), false));
-
-        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
-        if (!started) {
-            return;
-        }
-
-        // Observe-only gate: registered above, but emit no work (no diff/LLM/comments).
+        // Observe-only gate: register on the dashboard but do NOT advance the
+        // aggregate. Emitting ReviewRequested here would lock the review into
+        // REVIEWING, so a later active registration of the same commit would find
+        // it "already requested" and never dispatch FetchDiff (stuck in DIFF). The
+        // review must stay un-started so activating it later runs a fresh pipeline.
         if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,
                     "observe-only: registered, no review run");
             projection.appendEvent(reviewId, "domain", "ReviewObserved", "observe-only: registered, no review run");
             projection.setNote(reviewId, "Observe-only mode — registered, no review run.");
-            LOG.infof("Observe-only: registered %s, emitting no commands", reviewId);
+            LOG.infof("Observe-only: registered %s, no review started", reviewId);
+            return;
+        }
+
+        var emitted = lifecycle.handle(reviewId,
+                new RecordCommand.RequestReview(commit, e.action().name(), false));
+
+        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+        if (!started) {
             return;
         }
 

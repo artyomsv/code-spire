@@ -187,10 +187,13 @@ class IntegrationSagaPolicyTest {
     }
 
     @Test
-    void observeMode_registersButEmitsNoCommands() {
+    void observeMode_registersHeaderButDoesNotStartTheReview() {
         var saga = sagaWith(policyMode(true), provider(List.of("alice")));
         saga.on(pr("acc-1", "alice"));
-        assertTrue(reviewRegistered, "review is still registered in observe mode");
+        // Observe registers the dashboard header but MUST NOT advance the aggregate —
+        // otherwise a later active registration of the same commit stays stuck in DIFF.
+        assertFalse(reviewRegistered, "observe mode emits no ReviewRequested (aggregate untouched)");
+        assertEquals(List.of("bitbucket-cloud"), headerProviderTypes, "the dashboard header is still registered");
         assertTrue(emitted.isEmpty(), "observe mode emits no action commands");
         assertTrue(notes.contains("ReviewObserved"));
     }
