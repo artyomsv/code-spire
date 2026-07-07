@@ -204,12 +204,13 @@
   .chip.on .n { color: var(--iris-ink); }
 
   /* ---------- table ---------- */
-  .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow: hidden; }
+  .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 128px minmax(190px, 1.1fr) minmax(0, 1.4fr) 150px minmax(120px, 0.8fr) 88px 84px;
+    grid-template-columns: 128px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 80px;
     align-items: center; gap: 14px;
     padding: 0 18px;
+    min-width: 940px;
   }
   .thead {
     height: 38px; border-bottom: 1px solid var(--border);
@@ -227,10 +228,15 @@
   .row .sha { color: var(--text-2); font-size: 12px; }
   .cell-r { text-align: right; }
 
-  /* Title + Commit cells: value truncates, copy button reveals on row hover. */
+  /* Title + Commit cells: value truncates, copy button sits right after the text. */
   .title-cell, .commit-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .title-cell .title { flex: 1; min-width: 0; }
+  .title-cell .title { flex: 0 1 auto; min-width: 0; }
   .commit-cell .sha { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Provider + Author columns (extracted from the Pull request cell). */
+  .prov-cell { display: flex; align-items: center; min-width: 0; }
+  .prov-none { color: var(--text-3); font-family: var(--font-mono); font-size: 12px; }
+  .author-cell { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .copybtn {
     flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
     width: 22px; height: 22px; padding: 0; border-radius: 5px;
@@ -399,8 +405,10 @@
     .grid2 { grid-template-columns: 1fr; }
     .thead .h-mini, .row .cell-mini,
     .thead .h-title, .row .title-cell,
-    .thead .h-commit, .row .commit-cell { display: none; }
-    .thead, .row { grid-template-columns: 116px minmax(0, 1fr) 74px 84px; }
+    .thead .h-commit, .row .commit-cell,
+    .thead .h-prov, .row .prov-cell,
+    .thead .h-author, .row .author-cell { display: none; }
+    .thead, .row { grid-template-columns: 116px minmax(0, 1fr) 74px 84px; min-width: 0; }
   }
   :focus-visible { outline: 2px solid var(--iris); outline-offset: 2px; border-radius: 4px; }
 

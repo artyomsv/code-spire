@@ -137,7 +137,9 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
       <div className="tablewrap">
         <div className="thead">
           <div>Status</div>
+          <div className="h-prov">Provider</div>
           <div>Pull request</div>
+          <div className="h-author">Author</div>
           <div className="h-title">Title</div>
           <div className="h-commit">Commit</div>
           <div className="h-mini">Pipeline</div>
@@ -163,17 +165,20 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                 }}
               >
                 <div>{pill(r.status)}</div>
+                <div className="prov-cell">
+                  {providerBadge(r.htmlUrl) ?? <span className="prov-none">—</span>}
+                </div>
                 <div style={{ minWidth: 0 }}>
                   <div className="repo">
-                    {providerBadge(r.htmlUrl)}
                     {r.repo}
                     <span className="pr">#{r.pr}</span>
                   </div>
                   <div className="sub">
-                    <span>@{r.author}</span>
-                    <span>·</span>
                     <span>{r.branch}</span>
                   </div>
+                </div>
+                <div className="author-cell mono" title={`@${r.author}`}>
+                  @{r.author}
                 </div>
                 <div className="title-cell">
                   <span className="title" title={r.title}>
