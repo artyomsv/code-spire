@@ -2,20 +2,25 @@ package dev.codespire.orchestrator.policy;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * The pure mode-normalization used by {@link ReviewPolicy}. The DB-backed
+ * read/toggle (stored override vs seed default) is covered by
+ * {@code ReviewModeResourceTest} against a real datasource.
+ */
 class ReviewPolicyTest {
 
     @Test
-    void observeModeParsedCaseInsensitively() {
-        assertTrue(new ReviewPolicy("observe").observeOnly());
-        assertTrue(new ReviewPolicy(" OBSERVE ").observeOnly());
+    void observeParsedCaseInsensitively() {
+        assertEquals(ReviewPolicy.OBSERVE, ReviewPolicy.normalize("observe"));
+        assertEquals(ReviewPolicy.OBSERVE, ReviewPolicy.normalize(" OBSERVE "));
     }
 
     @Test
-    void activeIsNotObserve() {
-        assertFalse(new ReviewPolicy("active").observeOnly());
-        assertFalse(new ReviewPolicy((String) null).observeOnly());
+    void anythingElseIsActive() {
+        assertEquals(ReviewPolicy.ACTIVE, ReviewPolicy.normalize("active"));
+        assertEquals(ReviewPolicy.ACTIVE, ReviewPolicy.normalize(null));
+        assertEquals(ReviewPolicy.ACTIVE, ReviewPolicy.normalize("bogus"));
     }
 }

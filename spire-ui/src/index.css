@@ -517,6 +517,25 @@
   .field-check input { width: 16px; height: 16px; accent-color: var(--iris); }
   .field-check span { font-size: 13px; color: var(--text); }
 
+  /* Toggle switch (review mode). Checked = active (accent); unchecked = observe (muted). */
+  .switch-row { display: flex; align-items: center; gap: 12px; }
+  .switch { position: relative; display: inline-flex; flex: none; cursor: pointer; }
+  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .switch-track {
+    width: 40px; height: 22px; border-radius: 999px; background: var(--muted);
+    display: inline-flex; align-items: center; padding: 2px; transition: background 0.15s ease;
+  }
+  .switch input:checked + .switch-track { background: var(--iris); }
+  .switch input:disabled + .switch-track { opacity: 0.5; cursor: default; }
+  .switch input:focus-visible + .switch-track { outline: 2px solid var(--iris); outline-offset: 2px; }
+  .switch-thumb {
+    width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm);
+    transform: translateX(0); transition: transform 0.15s ease;
+  }
+  .switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+  .switch-label { font-size: 13px; font-weight: 600; color: var(--text); }
+  .switch-hint { margin: 12px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
+
   .chip-add { display: flex; gap: 8px; }
   .chip-add input {
     flex: 1; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;

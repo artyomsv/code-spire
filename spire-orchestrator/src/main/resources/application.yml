@@ -104,6 +104,9 @@ mp:
 # Global review mode (see ReviewPolicy). observe = register PR events, emit no
 # work (no diff/LLM/comments). The per-provider author allowlist lives in the
 # provider registry, not here.
+# NOTE: `mode` here is only the SEED default. The live value lives in the DB
+# (app_setting, key review.mode) and is toggled from Settings -> Providers without
+# a restart; once set there, the stored value wins and this env var is ignored.
 spire:
   review:
     mode: ${SPIRE_REVIEW_MODE:active}

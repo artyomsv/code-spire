@@ -183,3 +183,27 @@ export async function deleteProvider(id: string): Promise<void> {
   const res = await fetch(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete provider');
 }
+
+// ---- Review mode (global observe/active toggle) ----
+
+export type ReviewMode = 'observe' | 'active';
+
+export interface ReviewModeView {
+  mode: ReviewMode;
+}
+
+export async function getReviewMode(): Promise<ReviewModeView> {
+  const res = await fetch('/api/settings/review-mode');
+  if (!res.ok) return throwResponse(res, 'Failed to load review mode');
+  return res.json();
+}
+
+export async function setReviewMode(mode: ReviewMode): Promise<ReviewModeView> {
+  const res = await fetch('/api/settings/review-mode', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update review mode');
+  return res.json();
+}

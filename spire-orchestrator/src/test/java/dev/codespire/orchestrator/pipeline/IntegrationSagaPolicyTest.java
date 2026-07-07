@@ -98,6 +98,16 @@ class IntegrationSagaPolicyTest {
                 "bearer", null, "secret", "acct", true, authors));
     }
 
+    /** A ReviewPolicy fake with a fixed mode — the saga only reads observeOnly(). */
+    private static ReviewPolicy policyMode(boolean observeOnly) {
+        return new ReviewPolicy() {
+            @Override
+            public boolean observeOnly() {
+                return observeOnly;
+            }
+        };
+    }
+
     private static PullRequestEventReceived pr(String accountId, String username) {
         return new PullRequestEventReceived(
                 new RepoRef("acme", "web"), 412L, PrAction.OPENED,
@@ -109,7 +119,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void noProviderRegistered_skippedEntirely() {
-        var saga = sagaWith(new ReviewPolicy("active"), Optional.empty());
+        var saga = sagaWith(policyMode(false), Optional.empty());
         saga.on(pr("acc-1", "alice"));
         assertFalse(reviewRegistered);
         assertTrue(emitted.isEmpty());
@@ -118,7 +128,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void authorNotInProviderAllowlist_skipped() {
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
         saga.on(pr("acc-9", "bob"));
         assertFalse(reviewRegistered);
         assertTrue(emitted.isEmpty());
@@ -127,7 +137,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void emptyProviderAllowlist_reviewsEveryone() {
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of()));
+        var saga = sagaWith(policyMode(false), provider(List.of()));
         saga.on(pr("acc-1", "anyone"));
         assertTrue(reviewRegistered);
         assertEquals(1, emitted.size());
@@ -136,7 +146,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void active_allowlistedAuthor_emitsFetchDiff() {
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
         saga.on(pr("acc-1", "alice"));
         assertEquals(1, emitted.size());
         assertInstanceOf(ActionCommand.FetchDiff.class, emitted.get(0));
@@ -144,14 +154,14 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void allowlistMatchesByAccountId() {
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of("712020:d1005216")));
+        var saga = sagaWith(policyMode(false), provider(List.of("712020:d1005216")));
         saga.on(pr("712020:d1005216", "any-nickname"));
         assertEquals(1, emitted.size());
     }
 
     @Test
     void registerHeader_carriesTheResolvedProviderType() {
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
         saga.on(pr("acc-1", "alice"));
         assertEquals(List.of("bitbucket-cloud"), headerProviderTypes,
                 "the registered provider's type is projected onto the review row (C7)");
@@ -161,7 +171,7 @@ class IntegrationSagaPolicyTest {
     void botAuthoredCommand_isDroppedBySelfLoopGuard() {
         // The bot's account id is the provider's botAccountId ("acct") — the guard
         // moved from the gateway to here, resolving it from the registry.
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of()));
+        var saga = sagaWith(policyMode(false), provider(List.of()));
         saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("acct", "spire-bot", "Bot")));
         assertTrue(notes.contains("SelfLoopDropped"), "bot-authored /command is dropped (self-loop guard)");
@@ -170,7 +180,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void humanAuthoredCommand_isNotDroppedBySelfLoopGuard() {
-        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of()));
+        var saga = sagaWith(policyMode(false), provider(List.of()));
         saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("human-1", "alice", "Alice")));
         assertFalse(notes.contains("SelfLoopDropped"), "a human /command is not a self-loop");
@@ -178,7 +188,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void observeMode_registersButEmitsNoCommands() {
-        var saga = sagaWith(new ReviewPolicy("observe"), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
         saga.on(pr("acc-1", "alice"));
         assertTrue(reviewRegistered, "review is still registered in observe mode");
         assertTrue(emitted.isEmpty(), "observe mode emits no action commands");

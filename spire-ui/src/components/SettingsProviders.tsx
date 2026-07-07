@@ -8,6 +8,7 @@ import {
   type ProviderInput,
   type ProviderView,
 } from '../api';
+import ReviewModeToggle from './ReviewModeToggle';
 
 // Provider types and their default API base URLs. When a user switches type
 // without having customised the base URL, we swap in the matching default.
@@ -55,6 +56,8 @@ export default function SettingsProviders() {
           Add provider
         </button>
       </div>
+
+      <ReviewModeToggle />
 
       <div className="card">
         {error ? (
