@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.scm.Author;
@@ -36,6 +37,7 @@ class IntegrationSagaPolicyTest {
 
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
+    private final List<String> headerProviderTypes = new ArrayList<>();
     private boolean reviewRegistered;
 
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
@@ -63,7 +65,8 @@ class IntegrationSagaPolicyTest {
             @Override
             public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                        String authorId, String sourceBranch, String destBranch, String sha,
-                                       String htmlUrl, String status, int stage) {
+                                       String htmlUrl, String providerType, String status, int stage) {
+                headerProviderTypes.add(providerType);
             }
 
             @Override
@@ -144,6 +147,33 @@ class IntegrationSagaPolicyTest {
         var saga = sagaWith(new ReviewPolicy("active"), provider(List.of("712020:d1005216")));
         saga.on(pr("712020:d1005216", "any-nickname"));
         assertEquals(1, emitted.size());
+    }
+
+    @Test
+    void registerHeader_carriesTheResolvedProviderType() {
+        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of("alice")));
+        saga.on(pr("acc-1", "alice"));
+        assertEquals(List.of("bitbucket-cloud"), headerProviderTypes,
+                "the registered provider's type is projected onto the review row (C7)");
+    }
+
+    @Test
+    void botAuthoredCommand_isDroppedBySelfLoopGuard() {
+        // The bot's account id is the provider's botAccountId ("acct") — the guard
+        // moved from the gateway to here, resolving it from the registry.
+        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acct", "spire-bot", "Bot")));
+        assertTrue(notes.contains("SelfLoopDropped"), "bot-authored /command is dropped (self-loop guard)");
+        assertTrue(emitted.isEmpty());
+    }
+
+    @Test
+    void humanAuthoredCommand_isNotDroppedBySelfLoopGuard() {
+        var saga = sagaWith(new ReviewPolicy("active"), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("human-1", "alice", "Alice")));
+        assertFalse(notes.contains("SelfLoopDropped"), "a human /command is not a self-loop");
     }
 
     @Test

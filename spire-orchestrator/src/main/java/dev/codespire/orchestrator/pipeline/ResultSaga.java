@@ -16,6 +16,7 @@ import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
 
@@ -51,6 +52,10 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
+
+    /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
+    @ConfigProperty(name = "spire.review.max-attempts", defaultValue = "3")
+    int maxAttempts;
 
     @Incoming("results-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
@@ -92,23 +97,54 @@ public class ResultSaga {
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordCommentsPosted(
                         e.commit(), e.summaryCommentId(), e.inline().size()));
             }
-            case ReviewFailed e -> {
-                projection.appendEvent(e.reviewId(), "result", "ReviewFailed", "stalled: " + e.phase());
-                projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
-                projection.setNote(e.reviewId(), e.retryable()
-                        ? "Stalled at " + e.phase() + " — retryable, but no retry budget yet; re-push or /review to restart."
-                        : "Failed terminally at " + e.phase() + ".");
-                lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(
-                        e.commit(), e.phase(), e.retryable()));
-                if (e.retryable()) {
-                    // No retry budget yet (ADR-013 TODO): surface the stall on
-                    // the dashboard instead of letting the run vanish (M3).
-                    timeline.record("result", "stalled:" + e.phase(), e.reviewId(),
-                            "retryable failure, retry budget not implemented yet — re-push or /review to restart");
-                }
-            }
+            case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Bounded auto-retry (C8). A retryable failure with budget left restarts the
+     * pipeline from FetchDiff (same as a manual re-push, but automatic and
+     * capped) — the LLM/comment idempotency stores make the re-run safe. When the
+     * budget is exhausted, the provider is gone, or the failure is permanent, the
+     * run fails terminally so the aggregate leaves REVIEWING instead of stalling.
+     */
+    private void onReviewFailed(ReviewFailed e) {
+        projection.appendEvent(e.reviewId(), "result", "ReviewFailed", "failed at " + e.phase());
+        ReviewIds.Parsed parsed = ReviewIds.parse(e.reviewId());
+        int attempt = projection.currentAttempt(e.reviewId());
+
+        if (e.retryable() && attempt < maxAttempts) {
+            java.util.Optional<String> cred = workerCredentials.packForWorkspace(parsed.repo().workspace());
+            if (cred.isPresent()) {
+                int next = attempt + 1;
+                projection.retryPipeline(e.reviewId(), next,
+                        "Transient failure at " + e.phase() + " — retrying (attempt " + next + "/" + maxAttempts + ").");
+                timeline.record("result", "retry:" + e.phase(), e.reviewId(),
+                        "retryable failure — auto-retry " + next + "/" + maxAttempts);
+                commands.emit(new ActionCommand.FetchDiff(
+                        e.reviewId(), parsed.repo(), parsed.prId(), e.commit(), cred.get()));
+                return;
+            }
+            LOG.warnf("Cannot retry %s — no enabled provider for workspace %s",
+                    e.reviewId(), parsed.repo().workspace());
+        }
+
+        // Terminal: budget exhausted, provider gone, or a permanent failure.
+        projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
+        projection.setNote(e.reviewId(), terminalNote(e, attempt));
+        // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
+        lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
+    }
+
+    private String terminalNote(ReviewFailed e, int attempt) {
+        if (e.retryable() && attempt >= maxAttempts) {
+            return "Failed at " + e.phase() + " after " + attempt + " attempts (retry budget exhausted).";
+        }
+        if (e.retryable()) {
+            return "Failed at " + e.phase() + " — provider unavailable, cannot retry.";
+        }
+        return "Failed terminally at " + e.phase() + ".";
     }
 
     /**

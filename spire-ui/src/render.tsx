@@ -9,21 +9,32 @@ import type {
 
 export const STAGES = ['Received', 'Diff', 'Context', 'Review', 'Comments', 'Done'];
 
-/** Derive the SCM provider from the real PR URL host — no guessing, no hardcoding. */
-export function providerLabel(htmlUrl: string | undefined): string {
-  const u = (htmlUrl ?? '').toLowerCase();
+/** Anything carrying a stored SCM type + a PR URL — both ReviewSummary and ReviewDetail. */
+export type ProviderSource = { providerType?: string; htmlUrl?: string };
+
+/**
+ * Canonical provider slug ('github' | 'gitlab' | 'bitbucket' | '—'). Prefers the
+ * stored SCM type (correct for self-hosted GitLab/Bitbucket whose host contains
+ * none of the vendor names); falls back to sniffing the URL host only for legacy
+ * rows written before the type was persisted.
+ */
+export function providerLabel(r: ProviderSource | undefined): string {
+  const t = (r?.providerType ?? '').toLowerCase();
+  if (t === 'github') return 'github';
+  if (t === 'gitlab') return 'gitlab';
+  if (t === 'bitbucket-cloud' || t === 'bitbucket-dc') return 'bitbucket';
+  const u = (r?.htmlUrl ?? '').toLowerCase();
   if (u.includes('github')) return 'github';
   if (u.includes('gitlab')) return 'gitlab';
-  if (u.includes('bitbucket')) return 'bitbucket-cloud';
+  if (u.includes('bitbucket')) return 'bitbucket';
   return '—';
 }
 
-/** A small provider badge derived from the PR URL host (null when unknown). */
-export function providerBadge(htmlUrl: string | undefined) {
-  const p = providerLabel(htmlUrl);
+/** A small provider badge from the stored type (null when unknown). */
+export function providerBadge(r: ProviderSource | undefined) {
+  const p = providerLabel(r);
   if (p === '—') return null;
-  const short = p === 'bitbucket-cloud' ? 'bitbucket' : p;
-  return <span className={`prov-badge prov-${short}`}>{short}</span>;
+  return <span className={`prov-badge prov-${p}`}>{p}</span>;
 }
 
 /** Full hashes (GitHub is 40 chars) get truncated for display; the copy button carries the full value. */
@@ -93,10 +104,9 @@ export function CopyableValue({
 }
 
 /** "Open in GitHub / GitLab / Bitbucket" — matches the real provider (was hardcoded). */
-export function openInLabel(htmlUrl: string | undefined): string {
-  const p = providerLabel(htmlUrl);
-  const name =
-    p === 'github' ? 'GitHub' : p === 'gitlab' ? 'GitLab' : p === 'bitbucket-cloud' ? 'Bitbucket' : 'provider';
+export function openInLabel(r: ProviderSource | undefined): string {
+  const p = providerLabel(r);
+  const name = p === 'github' ? 'GitHub' : p === 'gitlab' ? 'GitLab' : p === 'bitbucket' ? 'Bitbucket' : 'provider';
   return `Open in ${name}`;
 }
 
@@ -342,7 +352,7 @@ export function metaCard(r: ReviewDetail) {
             <CopyableValue text={r.id} mono copyTitle="Copy review ID" />
           </dd>
           <dt>Provider</dt>
-          <dd>{providerBadge(r.htmlUrl) ?? providerLabel(r.htmlUrl)}</dd>
+          <dd>{providerBadge(r) ?? providerLabel(r)}</dd>
           <dt>Target</dt>
           <dd>{r.base}</dd>
           <dt>Head</dt>
@@ -350,7 +360,7 @@ export function metaCard(r: ReviewDetail) {
             <CopyableValue text={r.sha} mono copyTitle="Copy commit hash" />
           </dd>
           <dt>Attempt</dt>
-          <dd>1</dd>
+          <dd>{r.attempt}</dd>
         </dl>
       </div>
     </div>

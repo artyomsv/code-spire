@@ -10,10 +10,12 @@ package dev.codespire.contract.scm;
  * <p>{@code type} is the provider type ({@code "bitbucket-cloud"} | {@code "github"} |
  * {@code "gitlab"}) — the worker uses it to pick the SCM adapter. {@code authKind} is
  * {@code "bearer"} (secret is an access token) or {@code "basic"} (secret is a
- * password/app-password paired with {@code username}).
+ * password/app-password paired with {@code username}). The bot account id is NOT
+ * carried: the self-loop guard runs in the orchestrator against the provider
+ * registry, so the worker never needs it.
  */
 public record ScmCredential(String type, String baseUrl, String authKind, String username,
-                            String secret, String botAccountId) {
+                            String secret) {
 
     /**
      * The Tink associated-data for a worker credential, binding the ciphertext

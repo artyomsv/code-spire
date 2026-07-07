@@ -166,7 +166,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
               >
                 <div>{pill(r.status)}</div>
                 <div className="prov-cell">
-                  {providerBadge(r.htmlUrl) ?? <span className="prov-none">—</span>}
+                  {providerBadge(r) ?? <span className="prov-none">—</span>}
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div className="repo">
@@ -177,8 +177,9 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                     <span>{r.branch}</span>
                   </div>
                 </div>
-                <div className="author-cell mono" title={`@${r.author}`}>
-                  @{r.author}
+                <div className="author-cell" title={r.authorId ? `@${r.author} · ${r.authorId}` : `@${r.author}`}>
+                  <div className="mono ellip">@{r.author}</div>
+                  {r.authorId && <div className="sub mono ellip">{r.authorId}</div>}
                 </div>
                 <div className="title-cell">
                   <CopyableValue text={r.title} copyTitle="Copy title" />

@@ -45,7 +45,6 @@ class WorkerCredentialsTest {
         assertEquals("https://api.bitbucket.org/2.0", back.baseUrl());
         assertEquals("bearer", back.authKind());
         assertEquals("sk-secret-token", back.secret());
-        assertEquals("acct-1", back.botAccountId());
     }
 
     @Test

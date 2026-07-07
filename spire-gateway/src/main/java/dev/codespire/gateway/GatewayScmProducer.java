@@ -37,9 +37,6 @@ public class GatewayScmProducer {
     @ConfigProperty(name = "spire.scm.bitbucket.webhook-secret")
     Optional<String> webhookSecret;
 
-    @ConfigProperty(name = "spire.scm.bitbucket.bot-account-id")
-    Optional<String> botAccountId;
-
     @Inject
     ObjectMapper mapper;
 
@@ -48,16 +45,16 @@ public class GatewayScmProducer {
     ScmIngress ingress() {
         return switch (provider) {
             // Least privilege (security finding): the internet-facing gateway
-            // holds ONLY the webhook secret + bot account id. It never calls
-            // the Bitbucket API, so it is never handed the bot App Password —
-            // placeholders satisfy the config invariant (same pattern as the
-            // worker's unused webhook secret).
+            // holds ONLY the webhook secret. It never calls the Bitbucket API, so
+            // it is never handed the bot App Password — placeholders satisfy the
+            // config invariant. The self-loop guard (bot-authored events) now runs
+            // in the orchestrator against the provider registry, so the gateway no
+            // longer needs the bot account id either.
             case "bitbucket-cloud" -> new BitbucketCloudIngress(new BitbucketCloudConfig(
                     baseUrl,
                     "unused-by-gateway",
                     "unused-by-gateway",
-                    required(webhookSecret, "spire.scm.bitbucket.webhook-secret"),
-                    required(botAccountId, "spire.scm.bitbucket.bot-account-id")),
+                    required(webhookSecret, "spire.scm.bitbucket.webhook-secret")),
                     mapper, COMMANDS);
             case "stub" -> new RejectingIngress();
             default -> throw new IllegalStateException("Unknown spire.scm.provider '" + provider

@@ -344,13 +344,16 @@ function ProviderFormModal({
           </label>
 
           <label className="field">
-            <span>Bot account id</span>
+            <span>Bot account id <span className="field-optional">optional</span></span>
             <input
               className="mono"
-              placeholder="account id"
+              placeholder="auto-detected from the token"
               value={botAccountId}
               onChange={(e) => setBotAccountId(e.target.value)}
             />
+            <small className="field-hint">
+              Leave blank — it's resolved from the token when you save (which also validates the token).
+            </small>
           </label>
 
           <div className="field">

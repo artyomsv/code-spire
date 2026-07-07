@@ -41,8 +41,7 @@ class GatewayWebhookTest {
                     "spire.scm.provider", "bitbucket-cloud",
                     "spire.scm.bitbucket.bot-username", "e2e-bot",
                     "spire.scm.bitbucket.bot-app-password", "e2e-app-password",
-                    "spire.scm.bitbucket.webhook-secret", SECRET,
-                    "spire.scm.bitbucket.bot-account-id", "bot-account-e2e");
+                    "spire.scm.bitbucket.webhook-secret", SECRET);
         }
     }
 

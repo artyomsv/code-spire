@@ -2,6 +2,7 @@ package dev.codespire.scm.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.codespire.contract.port.DiffSource;
+import dev.codespire.contract.port.IdentitySource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
@@ -20,7 +21,7 @@ import java.util.List;
  * shared {@link UnifiedDiffParser}. The returned Diff carries the reviewed commit;
  * the worker's stale-run pre-check (ADR-013) guarantees current == expected.
  */
-public class GitHubDiffSource implements DiffSource {
+public class GitHubDiffSource implements DiffSource, IdentitySource {
 
     private final GitHubClient client;
 
@@ -31,6 +32,14 @@ public class GitHubDiffSource implements DiffSource {
     @Override
     public ScmType type() {
         return ScmType.GITHUB;
+    }
+
+    /** GET /user — the token owner (SCM-MAPPING §GitHub); {@code id} is the stable numeric account id. */
+    @Override
+    public Author whoami() {
+        JsonNode user = client.getJson("/user");
+        String login = user.path("login").asText("");
+        return Author.of(user.path("id").asText(""), login, user.path("name").asText(login));
     }
 
     @Override

@@ -97,7 +97,7 @@ export default function ReviewDetail({ reviews }: Props) {
         </div>
         <div className="actions">
           <a className="btn-ghost" href={r.htmlUrl} target="_blank" rel="noreferrer">
-            {openInLabel(r.htmlUrl)} ↗
+            {openInLabel(r)} ↗
           </a>
           {r.status === 'failed' && <button className="btn">Re-run review</button>}
         </div>

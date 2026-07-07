@@ -31,7 +31,7 @@ class BitbucketCloudIngressTest {
 
     private final BitbucketCloudIngress ingress = new BitbucketCloudIngress(
             new BitbucketCloudConfig("https://api.example.invalid/2.0",
-                    "test-bot", "test-app-password", SECRET, BOT_ACCOUNT_ID),
+                    "test-bot", "test-app-password", SECRET),
             new ObjectMapper(),
             Set.of("review"));
 
@@ -87,11 +87,15 @@ class BitbucketCloudIngressTest {
     }
 
     @Test
-    void dropsBotAuthoredComments() {
-        // ADR-013 self-loop guard: the bot's own follow-up must not re-trigger it.
+    void forwardsBotAuthoredCommentsCarryingTheAuthor() {
+        // The self-loop guard (ADR-013) moved to the orchestrator, which holds the
+        // registry's bot account id. The ingress no longer drops the bot's own
+        // comment — it forwards it with the author so the orchestrator can drop it.
         String payload = comment(BOT_ACCOUNT_ID, "Thanks, fixed!", null);
-        assertTrue(ingress.translate(webhook(payload.getBytes(StandardCharsets.UTF_8),
-                Map.of("X-Event-Key", "pullrequest:comment_created"))).isEmpty());
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(payload.getBytes(StandardCharsets.UTF_8),
+                        Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
+        assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
     }
 
     @Test

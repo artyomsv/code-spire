@@ -40,7 +40,7 @@ class GitHubApiTest {
         server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();
         GitHubClient client = new GitHubClient(
-                new GitHubConfig("http://localhost:" + server.port(), "test-token", "test-secret", "bot-000"),
+                new GitHubConfig("http://localhost:" + server.port(), "test-token", "test-secret"),
                 new ObjectMapper());
         diffSource = new GitHubDiffSource(client);
         commentSink = new GitHubCommentSink(client);
@@ -155,6 +155,26 @@ class GitHubApiTest {
         assertEquals("9001", author.providerUserId());
         assertEquals("jdoe", author.username());
         assertNull(author.email()); // never carried (SCM-MAPPING §1)
+    }
+
+    @Test
+    void whoamiResolvesTheTokenOwner() {
+        server.stubFor(get(urlEqualTo("/user"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
+                        { "id": 40727, "login": "spire-bot", "name": "Code Spire Bot" }
+                        """)));
+        var me = diffSource.whoami();
+        assertEquals("40727", me.providerUserId()); // the stable numeric id -> bot account id
+        assertEquals("spire-bot", me.username());
+        assertEquals("Code Spire Bot", me.displayName());
+        assertNull(me.email());
+    }
+
+    @Test
+    void whoamiOnBadTokenSurfacesAs401() {
+        server.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401)));
+        GitHubApiException e = assertThrows(GitHubApiException.class, () -> diffSource.whoami());
+        assertEquals(401, e.status());
     }
 
     private void stubReviewCommentCreated() {

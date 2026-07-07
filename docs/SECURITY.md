@@ -53,7 +53,8 @@ Trust boundaries, authn/authz, encryption, and secrets.
 - **KEK blast radius (ADR-015):** the KEK is held by `spire-orchestrator` (event log + provider
   registry), `spire-ui` (encrypted finding fields), and — in **active mode** — `spire-review-worker`,
   which decrypts the per-command SCM credential the orchestrator brokers to it. `spire-gateway` never
-  holds the KEK (only the webhook secret + bot account id). A compromised worker therefore exposes the
+  holds the KEK (only the webhook secret — the self-loop guard's bot account id lives in the registry,
+  read by the orchestrator, so the gateway holds no SCM identity). A compromised worker therefore exposes the
   master key; this was an explicit operator trade-off (one keyset, no cross-schema DB read) over a
   dedicated worker-only key. The narrowing path — a separate envelope key for worker credentials — is
   recorded in ADR-015. Keep the holder list this short as services are added.

@@ -21,6 +21,14 @@ down is the original design-time roadmap (kept for reference).
   blocked at work, so GitHub/GitLab are being built first to prove the flow.
 - **UI**: provider badge, dedicated Title/Author columns, truncate-plus-copy (`CopyableValue`),
   provider-aware "Open in …", non-overflowing metadata card.
+- **Correctness pass (C7/C8/C9, 2026-07-07)**: provider type persisted on the review row (badge is now
+  the real registered type, fixing self-hosted GitLab/Bitbucket); author numeric id surfaced in the list
+  + detail; **bounded auto-retry** (ADR-016) — a transient failure restarts the pipeline up to
+  `spire.review.max-attempts` (default 3) then fails terminally, ending the "stuck in REVIEWING" stall.
+  Covered by orchestrator unit + Postgres tests and a new `spire-ui` vitest suite.
+- **Provider token auto-resolve/validate (2026-07-07)**: registering a provider now calls the SCM's
+  "who am I" (`IdentitySource`) to fill the bot account id from the token owner and validate the token
+  up front — no more manual `curl … /user`. GitHub/Bitbucket adapters + WireMock tests.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -37,20 +45,21 @@ down is the original design-time roadmap (kept for reference).
 5. **Conversational replies** · M. Answer follow-ups in a thread (`AuthorReplied` received but ignored).
 6. **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked-ticket context. Biggest lever.
 
-**C. Correctness & robustness**
-7. **Store provider type in the read model** · S. Badge is currently derived from the PR URL host —
-   fine for github.com/gitlab.com, but **self-hosted GitLab** shows no badge. Do before GitLab self-hosted.
-8. **SmallRye FT retry budgets** · M. A stalled run needs a manual re-push today; add bounded auto-retry.
-9. **Author numeric id column** · S. If "user id" meant the numeric provider id (not `@username`),
-   surface `author_id` in the list summary.
+**C. Correctness & robustness** — ✅ done (2026-07-07)
+7. ✅ **Store provider type in the read model** · S. `review_status.provider_type` (V4); badge/label/
+   "Open in …" key off the stored type with a URL-sniff fallback for legacy rows. Self-hosted now badges.
+8. ✅ **Bounded auto-retry** · M. Saga-owned retry budget (ADR-016), `spire.review.max-attempts` (V5
+   `attempt` column). Not per-call SmallRye FT — see the ADR for why.
+9. ✅ **Author numeric id** · S. `author_id` surfaced on `ReviewSummary` + shown under `@username` in the
+   list; `Attempt` on the detail page is now live too.
 
 **D. Infra & security hardening**
 10. **OIDC on the dashboard** · M. UI/API is unauthenticated — matters before any shared deployment.
 11. **`costMillicents` LLM pricing** · S. Data is collected but unpriced; show per-review token cost.
 12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
 
-**Suggested order for momentum:** 1 (finish GitHub actively) → 7 (cheap correctness before GitLab) → 2
-(GitLab). Operator decides.
+**Suggested order for momentum:** C (7/8/9) is done. Next: 1 (finish GitHub actively) → 2 (GitLab) → 3
+(webhooks). Operator decides.
 
 ---
 

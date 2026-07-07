@@ -35,9 +35,10 @@ import java.util.Set;
 /**
  * Bitbucket Cloud webhook ingress (CONTRACT §10, SCM-MAPPING §7):
  * X-Hub-Signature HMAC-SHA256 verification (constant-time compare),
- * bot-authored-event drop (ADR-013 self-loop guard), "/command" parsing
- * against the registered capability commands, and translation into
- * integration events.
+ * "/command" parsing against the registered capability commands, and
+ * translation into integration events. The self-loop guard (dropping
+ * bot-authored events, ADR-013) runs downstream in the orchestrator, which
+ * holds the registry's resolved bot account id; each event carries its author.
  */
 public class BitbucketCloudIngress implements ScmIngress {
 
@@ -118,13 +119,9 @@ public class BitbucketCloudIngress implements ScmIngress {
 
     private List<IntegrationEvent> comment(JsonNode payload) {
         JsonNode comment = payload.path("comment");
-        String commentAuthorId = comment.path("user").path("account_id").asText("");
-
-        // Self-loop guard (ADR-013): drop anything the bot itself authored.
-        if (config.botAccountId().equals(commentAuthorId)) {
-            return List.of();
-        }
-
+        // The self-loop guard (drop bot-authored events, ADR-013) now runs in the
+        // orchestrator against the provider registry — the gateway holds no bot
+        // account id. The comment's author rides on the emitted event for that check.
         RepoRef repo = repo(payload);
         long prId = payload.path("pullrequest").path("id").asLong();
         String text = comment.path("content").path("raw").asText("").trim();

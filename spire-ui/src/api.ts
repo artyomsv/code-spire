@@ -16,10 +16,12 @@ export interface ReviewSummary {
   pr: number;
   title: string;
   author: string; // username
+  authorId: string; // stable numeric/provider user id (Bitbucket account_id, GitHub/GitLab numeric id)
   branch: string; // source branch
   base: string; // destination branch
   sha: string; // commit hash (12-char on Bitbucket, 40-char on GitHub)
-  htmlUrl: string; // the PR's web URL — the provider badge is derived from its host
+  htmlUrl: string; // the PR's web URL — provider badge falls back to its host when providerType is empty
+  providerType: string; // stored SCM type: 'github' | 'gitlab' | 'bitbucket-cloud' | 'bitbucket-dc' | ''
   status: ReviewStatus;
   stage: number; // 0..6 index into [Received, Diff, Context, Review, Comments, Done]
   findings: number;
@@ -48,8 +50,7 @@ export interface ReviewEvent {
 }
 
 export interface ReviewDetail extends ReviewSummary {
-  authorId: string;
-  htmlUrl: string;
+  attempt: number; // pipeline run count (1 = first run; bumped by each bounded auto-retry)
   stages: StageState[]; // length 6, aligns to the 6 pipeline steps
   timings: string[]; // length 6, e.g. "0.8s" or ""
   findingsList: Finding[];
@@ -135,7 +136,7 @@ export interface ProviderInput {
   authKind: AuthKind;
   authUsername?: string | null;
   secret?: string; // omit/empty on edit = keep the stored token
-  botAccountId: string;
+  botAccountId?: string; // blank = auto-resolved server-side from the token owner
   enabled: boolean;
   authors: string[];
 }

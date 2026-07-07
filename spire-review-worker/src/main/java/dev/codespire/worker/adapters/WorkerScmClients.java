@@ -84,20 +84,16 @@ public class WorkerScmClients {
         }
     }
 
-    private static String botAccountId(ScmCredential cred) {
-        return cred.botAccountId() == null || cred.botAccountId().isBlank() ? "unset" : cred.botAccountId();
-    }
-
     private static BitbucketCloudConfig bitbucketConfig(ScmCredential cred) {
         // The worker holds no webhook secret — a placeholder satisfies the config
         // invariant (least privilege). Bearer when authKind=bearer, else Basic.
         return "bearer".equalsIgnoreCase(cred.authKind())
-                ? new BitbucketCloudConfig(cred.baseUrl(), null, null, cred.secret(), "unused-by-worker", botAccountId(cred))
-                : new BitbucketCloudConfig(cred.baseUrl(), cred.username(), cred.secret(), "unused-by-worker", botAccountId(cred));
+                ? new BitbucketCloudConfig(cred.baseUrl(), null, null, cred.secret(), "unused-by-worker")
+                : new BitbucketCloudConfig(cred.baseUrl(), cred.username(), cred.secret(), "unused-by-worker");
     }
 
     private static GitHubConfig githubConfig(ScmCredential cred) {
         // GitHub is always Bearer; the webhook secret is a worker-side placeholder.
-        return new GitHubConfig(cred.baseUrl(), cred.secret(), "unused-by-worker", botAccountId(cred));
+        return new GitHubConfig(cred.baseUrl(), cred.secret(), "unused-by-worker");
     }
 }

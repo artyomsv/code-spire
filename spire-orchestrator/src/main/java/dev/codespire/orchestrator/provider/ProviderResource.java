@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.provider;
 
+import dev.codespire.contract.scm.Author;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -30,6 +31,9 @@ public class ProviderResource {
     @Inject
     ProviderRegistry registry;
 
+    @Inject
+    ProviderIdentityResolver identity;
+
     @GET
     public List<ProviderView> list() {
         return registry.list();
@@ -44,14 +48,46 @@ public class ProviderResource {
     @POST
     public Response create(ProviderInput in) {
         validate(in, true);
-        return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
+        return Response.status(Response.Status.CREATED).entity(registry.create(resolveIdentity(in))).build();
     }
 
     @PUT
     @Path("/{id}")
     public ProviderView update(@PathParam("id") String id, ProviderInput in) {
         validate(in, false);
-        return registry.update(uuid(id), in).orElseThrow(() -> new NotFoundException("No provider " + id));
+        return registry.update(uuid(id), resolveIdentity(in))
+                .orElseThrow(() -> new NotFoundException("No provider " + id));
+    }
+
+    /**
+     * When a token is supplied, validate it against the SCM and auto-fill the bot
+     * account id from the token owner if the operator left it blank. On update with
+     * no new token (keeping the stored one) there is nothing new to validate, so the
+     * input is passed through untouched.
+     */
+    ProviderInput resolveIdentity(ProviderInput in) {
+        if (in.secret() == null || in.secret().isBlank()) {
+            return in;
+        }
+        Author owner;
+        try {
+            owner = identity.resolve(in);
+        } catch (RuntimeException e) {
+            throw new BadRequestException(
+                    "Could not validate the API token against " + in.type() + ": " + rootMessage(e));
+        }
+        boolean hasBotId = in.botAccountId() != null && !in.botAccountId().isBlank();
+        String botId = hasBotId ? in.botAccountId() : owner.providerUserId();
+        return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
+                in.authUsername(), in.secret(), botId, in.enabled(), in.authors());
+    }
+
+    private static String rootMessage(Throwable e) {
+        Throwable c = e;
+        while (c.getCause() != null && c.getCause() != c) {
+            c = c.getCause();
+        }
+        return c.getMessage() == null ? c.getClass().getSimpleName() : c.getMessage();
     }
 
     @DELETE

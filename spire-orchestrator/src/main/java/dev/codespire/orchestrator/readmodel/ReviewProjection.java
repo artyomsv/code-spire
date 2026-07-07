@@ -61,16 +61,18 @@ public class ReviewProjection {
     /** Upsert the header of a review and reset its status/stage for a (re)run. */
     public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                String authorId, String sourceBranch, String destBranch, String sha,
-                               String htmlUrl, String status, int stage) {
+                               String htmlUrl, String providerType, String status, int stage) {
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,
-                        source_branch, dest_branch, commit_sha, html_url, status, stage, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                        source_branch, dest_branch, commit_sha, html_url, provider_type, status, stage,
+                        attempt, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, now())
                 ON CONFLICT (review_id) DO UPDATE SET
                         title = EXCLUDED.title, author = EXCLUDED.author, author_id = EXCLUDED.author_id,
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
-                        status = EXCLUDED.status, stage = EXCLUDED.stage, updated_at = now()
+                        provider_type = EXCLUDED.provider_type,
+                        status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, updated_at = now()
                 """;
         update(sql, ps -> {
             ps.setString(1, reviewId);
@@ -84,8 +86,9 @@ public class ReviewProjection {
             ps.setString(9, destBranch);
             ps.setString(10, sha);
             ps.setString(11, htmlUrl);
-            ps.setString(12, status);
-            ps.setInt(13, stage);
+            ps.setString(12, providerType == null ? "" : providerType);
+            ps.setString(13, status);
+            ps.setInt(14, stage);
         });
         broadcast(reviewId);
     }
@@ -121,6 +124,34 @@ public class ReviewProjection {
             ps.setString(1, note);
             ps.setString(2, reviewId);
         });
+    }
+
+    /** The current attempt (pipeline run) count for a review; 1 when unknown (C8 retry budget). */
+    public int currentAttempt(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT attempt FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt("attempt") : 1;
+            }
+        } catch (SQLException e) {
+            LOG.warnf("currentAttempt read failed for %s: %s", reviewId, e.getMessage());
+            return 1;
+        }
+    }
+
+    /** Bump the attempt counter and put the review back into REVIEWING at the diff step for a retry. */
+    public void retryPipeline(String reviewId, int attempt, String note) {
+        update("""
+                UPDATE review_status SET attempt = ?, status = 'reviewing', stage = ?, note = ?, updated_at = now()
+                WHERE review_id = ?
+                """, ps -> {
+            ps.setInt(1, attempt);
+            ps.setInt(2, STAGE_DIFF);
+            ps.setString(3, note);
+            ps.setString(4, reviewId);
+        });
+        broadcast(reviewId);
     }
 
     /** Record the generated review's findings + usage against the row. */
@@ -227,12 +258,12 @@ public class ReviewProjection {
 
     private record ReviewRow(String id, String workspace, String slug, long pr, String title, String author,
                              String authorId, String branch, String base, String sha, String htmlUrl,
-                             String status, int stage, int findings, String findingsJson, String model,
-                             Integer tokensIn, Integer tokensOut, Long costMillicents, String note,
-                             Instant createdAt, Instant updatedAt) {
+                             String providerType, String status, int stage, int findings, String findingsJson,
+                             String model, Integer tokensIn, Integer tokensOut, Long costMillicents, String note,
+                             int attempt, Instant createdAt, Instant updatedAt) {
         ReviewSummary toSummary() {
-            return new ReviewSummary(id, workspace, slug, slug, pr, title, author, branch, base, sha,
-                    htmlUrl, status, stage, findings, updatedAt);
+            return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
+                    htmlUrl, providerType, status, stage, findings, updatedAt);
         }
     }
 
@@ -254,17 +285,18 @@ public class ReviewProjection {
                 rs.getString("review_id"), rs.getString("workspace"), rs.getString("slug"), rs.getLong("pr_id"),
                 rs.getString("title"), rs.getString("author"), rs.getString("author_id"),
                 rs.getString("source_branch"), rs.getString("dest_branch"), rs.getString("commit_sha"),
-                rs.getString("html_url"), rs.getString("status"), rs.getInt("stage"), rs.getInt("findings_count"),
+                rs.getString("html_url"), rs.getString("provider_type"),
+                rs.getString("status"), rs.getInt("stage"), rs.getInt("findings_count"),
                 rs.getString("findings_json"), rs.getString("model"),
                 (Integer) rs.getObject("tokens_in"), (Integer) rs.getObject("tokens_out"),
-                (Long) rs.getObject("cost_millicents"), rs.getString("note"),
+                (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 
     private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events) {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
-                r.branch, r.base, r.sha, r.htmlUrl, r.status, r.stage, r.findings, r.updatedAt,
-                computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
+                r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, r.updatedAt,
+                r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
                 parseFindings(r.findingsJson, r.id), usageView(r), r.note, events);
     }
 

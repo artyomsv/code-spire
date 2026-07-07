@@ -43,7 +43,8 @@ class ReviewProjectionTest {
         long pr = 4101L;
         String id = ReviewIds.reviewId(REPO, pr);
         projection.registerHeader(id, REPO, pr, "Add checkout", "mtorres", "acc-1",
-                "feature", "main", "cafe123", "https://x/pr/4101", "reviewing", ReviewProjection.STAGE_DIFF);
+                "feature", "main", "cafe123", "https://x/pr/4101", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
         projection.appendEvent(id, "integration", "PullRequestEventReceived", "opened");
 
         ReviewSummary found = projection.listSummaries().stream()
@@ -53,6 +54,8 @@ class ReviewProjectionTest {
         assertEquals(pr, found.pr());
         assertEquals("reviewing", found.status());
         assertEquals("mtorres", found.author());
+        assertEquals("acc-1", found.authorId(), "numeric provider id surfaces in the list summary (C9)");
+        assertEquals("github", found.providerType(), "stored provider type surfaces in the list summary (C7)");
     }
 
     @Test
@@ -60,7 +63,8 @@ class ReviewProjectionTest {
         long pr = 4102L;
         String id = ReviewIds.reviewId(REPO, pr);
         projection.registerHeader(id, REPO, pr, "Refactor", "jlee", "acc-2",
-                "fix", "main", "beef456", "https://x/pr/4102", "reviewing", ReviewProjection.STAGE_DIFF);
+                "fix", "main", "beef456", "https://x/pr/4102", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
         projection.appendEvent(id, "integration", "PullRequestEventReceived", "opened");
 
         var result = new ReviewResult(
@@ -71,6 +75,8 @@ class ReviewProjectionTest {
 
         ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
         assertEquals("completed", d.status());
+        assertEquals("acc-2", d.authorId(), "numeric provider id carried on the detail (C9)");
+        assertEquals("github", d.providerType(), "stored provider type carried on the detail (C7)");
         assertEquals(1, d.findings());
         assertEquals(6, d.stages().size());
         assertTrue(d.stages().stream().allMatch("done"::equals), "completed review = all steps done");
@@ -83,6 +89,31 @@ class ReviewProjectionTest {
     }
 
     @Test
+    void attemptCounterStartsAtOneAndBumpsOnRetry() {
+        long pr = 4104L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Retry me", "kdev", "acc-3",
+                "feature", "main", "d00d", "https://x/pr/4104", "github", "reviewing",
+                ReviewProjection.STAGE_REVIEW);
+
+        assertEquals(1, projection.currentAttempt(id), "a freshly registered review is on attempt 1");
+
+        projection.retryPipeline(id, 2, "retrying (attempt 2/3)");
+        assertEquals(2, projection.currentAttempt(id), "retry bumps the attempt counter");
+
+        ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertEquals(2, d.attempt(), "attempt carried on the detail payload");
+        assertEquals("reviewing", d.status(), "retry puts the review back into REVIEWING");
+        assertEquals(ReviewProjection.STAGE_DIFF, d.stage(), "retry restarts at the diff step");
+
+        // Re-registering (a manual re-push / new commit) resets the budget.
+        projection.registerHeader(id, REPO, pr, "Retry me", "kdev", "acc-3",
+                "feature", "main", "beef", "https://x/pr/4104", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
+        assertEquals(1, projection.currentAttempt(id), "re-registration resets the attempt counter to 1");
+    }
+
+    @Test
     void missingReviewIsEmpty() {
         assertTrue(projection.loadDetail("acme", "web", 999999L).isEmpty());
     }
@@ -92,7 +123,7 @@ class ReviewProjectionTest {
         long pr = 4103L;
         String id = ReviewIds.reviewId(REPO, pr);
         projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
-                "reviewing", ReviewProjection.STAGE_DIFF);
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
         var result = new ReviewResult(
                 List.of(new Finding("src/X.java", new LineRange(1, 1), Severity.MAJOR, "SECRET-MARKER-XYZ", null)),
                 "summary", null);

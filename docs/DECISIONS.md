@@ -4,6 +4,82 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-017 — Self-loop guard in the orchestrator; bot account id lives only in the registry
+
+**Context.** The bot account id exists for exactly one purpose: the self-loop guard (ADR-013) — don't
+re-act on comment events the bot itself authored. It used to be threaded everywhere as config: an env
+var (`SPIRE_SCM_BITBUCKET_BOT_ACCOUNT_ID`) read by the gateway, and a `botAccountId` field on
+`BitbucketCloudConfig`, `GitHubConfig`, and the brokered `ScmCredential` — fed placeholders (`"unset"`,
+`"unused-by-worker"`, `"resolving"`) on every path except the gateway ingress. Once provider registration
+learned to resolve the id from the token via `whoami()` (the `IdentitySource` port), there were two
+sources of the same fact, and the gateway still needed a hand-set env var because — being internet-facing
+and least-privilege (it holds no SCM token) — it cannot call `whoami()` itself.
+
+**Decision.** Make the bot account id a **registry-only** fact and run the self-loop guard where the
+registry is readable: the **orchestrator**. `IntegrationSaga` drops bot-authored `ManualCommandReceived` /
+`AuthorReplied` events by comparing the event's author (which the ingress already carries) against the
+workspace provider's `botAccountId` from the registry (whoami-resolved). The gateway ingress stops
+dropping and just forwards, holding no identity. `botAccountId` is removed from `BitbucketCloudConfig`,
+`GitHubConfig`, and `ScmCredential`, and `SPIRE_SCM_BITBUCKET_BOT_ACCOUNT_ID` is retired.
+
+**Why here, not the gateway.** The gateway can't `whoami` (no token, by design — the internet-facing
+service must stay credential-light). The alternatives were worse: give the gateway the App Password
+(breaks least-privilege) or have it fetch the id from the orchestrator at boot (a startup coupling for one
+string). The orchestrator already resolves the provider per workspace, so the guard costs it nothing new.
+
+**Consequence.**
+- One source of truth: the registry. No env var, no placeholder `botAccountId` scattered across configs.
+- The guard now runs downstream, so a bot-authored comment event briefly rides `cs.integration` before
+  being dropped (vs. dropped at the edge). It surfaces on the timeline as `SelfLoopDropped` — more
+  visible, not less. `/command` + replies are P2, so there is no live behavioural change today.
+- The gateway holds only the webhook secret (SECURITY.md updated). When a GitHub ingress lands, its
+  self-loop guard is already implemented — the same orchestrator check, no new config.
+
+---
+
+## ADR-016 — Bounded auto-retry as a saga-owned budget, not per-call fault tolerance
+
+**Context.** A retryable failure (transient 5xx / I/O / timeout from the SCM or LLM) left a review
+**stalled forever**: workers catch the error and emit `ReviewFailed{retryable=true}` instead of
+throwing, and the decider's `RecordFailure` branch only produces `ReviewFailedTerminally` when
+`!retryable` — so a retryable failure emitted no domain event, issued no next command, and the aggregate
+sat in `REVIEWING` with nothing to advance it. Recovery meant a manual re-push. The roadmap framed the
+fix as "SmallRye Fault Tolerance retry budgets" (per a `DiffWorker` TODO).
+
+**Decision.** Implement the budget in the **orchestrator's `ResultSaga`, event-driven and persisted**,
+rather than as per-call `@Retry` inside the workers. On a retryable `ReviewFailed` with budget left, the
+saga bumps a persisted `attempt` counter on the read-model row and **re-emits `FetchDiff`** — restarting
+the whole pipeline with a freshly-brokered credential (ADR-015), exactly what a manual re-push does, but
+automatic and capped by `spire.review.max-attempts` (default 3). When the budget is spent, the provider
+is gone, or the failure is permanent, the saga records `RecordFailure{retryable=false}` so the aggregate
+yields `ReviewFailedTerminally` and leaves `REVIEWING`.
+
+**Why saga-level over per-call `@Retry`:**
+- **Removes the stall at the actual cause.** The stall is a missing state transition in the orchestrator,
+  not a missing wrap around one HTTP call — fixing it where the aggregate lives is the direct fix.
+- **Restart-from-`FetchDiff` needs no payload threading.** The failed phase's inputs (`contextRef` for
+  generate, the `ReviewResult` for post-comments) are NOT carried on `ReviewFailed`; retrying the exact
+  phase would require bloating the failure event or a contract change. Restarting from the diff is
+  reconstructable from `reviewId + commit` alone, and the LLM/comment idempotency stores (finding H4)
+  make the re-run free of double-charges or duplicate comments.
+- **Persisted & crash-safe.** The counter lives in the read model, so the budget survives a worker
+  restart; an in-memory `@Retry` loop would reset on every redeploy and couldn't span the pipeline.
+- **One retry layer, not two.** Per-call FT nested under a pipeline restart would multiply attempts and
+  obscure the true count. A single budget keeps the semantics legible.
+
+**Consequence.**
+- No contract change: no new events/commands, `ReviewFailed.attempt` is left informational (the saga
+  trusts the persisted counter). New `review_status.attempt` column (V5); `Attempt` on the detail page is
+  now live instead of hardcoded `1`. The timeline shows `retry:<phase>`; a transient blip auto-recovers
+  without ever showing `failed`.
+- The budget is a read-model counter, not a domain fact — a full projection rebuild resets `attempt` to
+  1 (a rebuilt-then-failing review simply gets a fresh budget). Accepted: retry budgeting is operational
+  metadata, not an invariant of the write model.
+- Per-call `@Retry`/`@Timeout` inside a phase (to smooth a single blip without a full pipeline restart)
+  remains a possible future refinement layered *under* this budget — not needed to close the stall.
+
+---
+
 ## ADR-015 — Active-mode worker credentials: KEK to the worker, credentials brokered on the bus
 
 **Context.** In active mode the review worker performs the credential-bearing work — `FetchDiff`,

@@ -17,19 +17,16 @@ package dev.codespire.scm.bitbucket;
  * @param botAppPassword the bot's App Password or Atlassian API token (Basic auth)
  * @param apiToken       a Bitbucket API access token (Bearer auth); takes precedence when set
  * @param webhookSecret  per-hook HMAC secret for X-Hub-Signature verification
- * @param botAccountId   the bot's stable account_id — ingress drops events it authored (ADR-013)
  */
 public record BitbucketCloudConfig(String baseUrl,
                                    String botUsername,
                                    String botAppPassword,
                                    String apiToken,
-                                   String webhookSecret,
-                                   String botAccountId) {
+                                   String webhookSecret) {
 
     public BitbucketCloudConfig {
         require(baseUrl, "baseUrl");
         require(webhookSecret, "webhookSecret");
-        require(botAccountId, "botAccountId");
         boolean hasToken = notBlank(apiToken);
         boolean hasBasic = notBlank(botUsername) && notBlank(botAppPassword);
         if (!hasToken && !hasBasic) {
@@ -40,8 +37,8 @@ public record BitbucketCloudConfig(String baseUrl,
 
     /** Backward-compatible Basic-auth constructor (no Bearer access token). */
     public BitbucketCloudConfig(String baseUrl, String botUsername, String botAppPassword,
-                                String webhookSecret, String botAccountId) {
-        this(baseUrl, botUsername, botAppPassword, null, webhookSecret, botAccountId);
+                                String webhookSecret) {
+        this(baseUrl, botUsername, botAppPassword, null, webhookSecret);
     }
 
     /** True when a Bearer access token is configured (takes precedence over Basic). */

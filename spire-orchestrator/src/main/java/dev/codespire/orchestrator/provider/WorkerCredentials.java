@@ -31,7 +31,7 @@ public class WorkerCredentials {
     /** Encrypt an already-resolved provider's credential (IntegrationSaga path). */
     public String pack(ScmProvider provider) {
         ScmCredential cred = new ScmCredential(provider.type(), provider.baseUrl(), provider.authKind(),
-                provider.authUsername(), provider.secret(), provider.botAccountId());
+                provider.authUsername(), provider.secret());
         try {
             return encryption.encryptString(mapper.writeValueAsString(cred), ScmCredential.aad(provider.workspace()));
         } catch (JsonProcessingException e) {

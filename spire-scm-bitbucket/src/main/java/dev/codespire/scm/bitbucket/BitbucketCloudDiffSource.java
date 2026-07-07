@@ -2,6 +2,7 @@ package dev.codespire.scm.bitbucket;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.codespire.contract.port.DiffSource;
+import dev.codespire.contract.port.IdentitySource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
@@ -19,7 +20,7 @@ import java.util.List;
  * they expect and the returned Diff carries it; the worker's stale-run
  * pre-check (ADR-013) guarantees we only act when current == expected.
  */
-public class BitbucketCloudDiffSource implements DiffSource {
+public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
 
     private final BitbucketCloudClient client;
 
@@ -30,6 +31,14 @@ public class BitbucketCloudDiffSource implements DiffSource {
     @Override
     public ScmType type() {
         return ScmType.BITBUCKET_CLOUD;
+    }
+
+    /** GET /2.0/user — the token owner (baseUrl already carries /2.0); {@code account_id} is the stable id. */
+    @Override
+    public Author whoami() {
+        JsonNode user = client.getJson("/user");
+        String username = user.path("username").asText(user.path("nickname").asText(""));
+        return Author.of(user.path("account_id").asText(""), username, user.path("display_name").asText(username));
     }
 
     @Override

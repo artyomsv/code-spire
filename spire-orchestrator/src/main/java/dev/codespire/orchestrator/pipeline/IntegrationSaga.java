@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
@@ -67,9 +68,42 @@ public class IntegrationSaga {
             case PullRequestEventReceived e -> onPullRequestEvent(e);
             case PullRequestClosed e -> lifecycle.handle(ReviewIds.reviewId(e.repo(), e.prId()),
                     new RecordCommand.CancelReview(e.reason().name()));
-            case ManualCommandReceived e -> LOG.infof("Manual /%s command received — handled in P2", e.command());
+            case ManualCommandReceived e -> {
+                if (isBotAuthored(e.repo().workspace(), e.author())) {
+                    dropSelfLoop(reviewIdOf(e), "/" + e.command());
+                } else {
+                    LOG.infof("Manual /%s command received — handled in P2", e.command());
+                }
+            }
+            case AuthorReplied e -> {
+                if (isBotAuthored(e.repo().workspace(), e.author())) {
+                    dropSelfLoop(e.reviewId(), "reply");
+                } else {
+                    LOG.debugf("Author reply received on %s — handled in P2", e.reviewId());
+                }
+            }
             default -> LOG.debugf("No integration reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    private void dropSelfLoop(String reviewId, String what) {
+        timeline.record("integration", "SelfLoopDropped", reviewId, "bot-authored " + what + " ignored");
+        LOG.debugf("Dropping bot-authored %s (self-loop guard) on %s", what, reviewId);
+    }
+
+    /**
+     * Self-loop guard (ADR-013): true when a comment-derived event was authored by
+     * the workspace's registered bot. Moved here from the gateway ingress — the
+     * bot account id lives in the provider registry (whoami-resolved), which only
+     * the orchestrator can read, so the internet-facing gateway holds no identity.
+     */
+    private boolean isBotAuthored(String workspace, Author author) {
+        if (author == null || author.providerUserId() == null || author.providerUserId().isBlank()) {
+            return false;
+        }
+        return providers.resolveByWorkspace(workspace)
+                .map(p -> author.providerUserId().equals(p.botAccountId()))
+                .orElse(false);
     }
 
     private void onPullRequestEvent(PullRequestEventReceived e) {
@@ -97,7 +131,7 @@ public class IntegrationSaga {
         // Register in the read model (header + first event) so the review is
         // visible on the dashboard whether or not any work runs.
         projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
-                e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(),
+                e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
                 observe ? "observed" : "reviewing",
                 observe ? ReviewProjection.STAGE_RECEIVED : ReviewProjection.STAGE_DIFF);
         projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
@@ -150,6 +184,7 @@ public class IntegrationSaga {
             case PullRequestEventReceived e -> ReviewIds.reviewId(e.repo(), e.prId());
             case PullRequestClosed e -> ReviewIds.reviewId(e.repo(), e.prId());
             case ManualCommandReceived e -> ReviewIds.reviewId(e.repo(), e.prId());
+            case AuthorReplied e -> e.reviewId();
             default -> "";
         };
     }

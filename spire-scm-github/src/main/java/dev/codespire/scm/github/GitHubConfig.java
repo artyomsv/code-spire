@@ -14,14 +14,12 @@ package dev.codespire.scm.github;
  * @param apiToken      the bot's Bearer token
  * @param webhookSecret per-hook HMAC secret for X-Hub-Signature-256 (ingress only;
  *                      null/placeholder for the worker + manual-register paths)
- * @param botAccountId  the bot's stable user id — ingress drops events it authored (ADR-013)
  */
-public record GitHubConfig(String baseUrl, String apiToken, String webhookSecret, String botAccountId) {
+public record GitHubConfig(String baseUrl, String apiToken, String webhookSecret) {
 
     public GitHubConfig {
         require(baseUrl, "baseUrl");
         require(apiToken, "apiToken");
-        require(botAccountId, "botAccountId");
     }
 
     private static void require(String value, String name) {

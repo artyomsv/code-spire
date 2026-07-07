@@ -56,7 +56,8 @@ public class DiffWorker {
 
     private void fail(FetchDiff command, RuntimeException e) {
         LOG.warnf(e, "FetchDiff failed for %s", command.reviewId());
-        // TODO(P1.x): retry budget via SmallRye Fault Tolerance (ADR-013); one attempt for now.
+        // retryable=true lets the orchestrator's ResultSaga re-run the pipeline under its
+        // bounded retry budget (ADR-016); transient (5xx / I/O) -> retryable, else terminal.
         boolean retryable = e instanceof BitbucketApiException api ? api.status() >= 500
                 : e instanceof java.io.UncheckedIOException;
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",

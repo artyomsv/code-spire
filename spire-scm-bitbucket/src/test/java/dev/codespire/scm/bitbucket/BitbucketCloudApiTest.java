@@ -40,7 +40,7 @@ class BitbucketCloudApiTest {
         server.start();
         BitbucketCloudClient client = new BitbucketCloudClient(
                 new BitbucketCloudConfig("http://localhost:" + server.port(),
-                        "test-bot", "test-app-password", "test-secret", "bot-account-000"),
+                        "test-bot", "test-app-password", "test-secret"),
                 new ObjectMapper());
         diffSource = new BitbucketCloudDiffSource(client);
         commentSink = new BitbucketCloudCommentSink(client);
@@ -155,6 +155,25 @@ class BitbucketCloudApiTest {
         assertEquals("author-9", author.providerUserId());
         assertEquals("jdoe", author.username());
         org.junit.jupiter.api.Assertions.assertNull(author.email()); // never carried (SCM-MAPPING §1)
+    }
+
+    @Test
+    void whoamiResolvesTheTokenOwner() {
+        server.stubFor(get(urlEqualTo("/user"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
+                        { "account_id": "712020:abc-def", "username": "spire_bot", "display_name": "Code Spire Bot" }
+                        """)));
+        var me = diffSource.whoami();
+        assertEquals("712020:abc-def", me.providerUserId()); // the account_id -> bot account id
+        assertEquals("spire_bot", me.username());
+        assertEquals("Code Spire Bot", me.displayName());
+    }
+
+    @Test
+    void whoamiOnBadTokenSurfacesAs401() {
+        server.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401)));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class, () -> diffSource.whoami());
+        assertEquals(401, e.status());
     }
 
     private void stubCommentCreated() {

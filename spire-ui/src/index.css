@@ -239,7 +239,9 @@
   /* Provider + Author columns (extracted from the Pull request cell). */
   .prov-cell { display: flex; align-items: center; min-width: 0; }
   .prov-none { color: var(--text-3); font-family: var(--font-mono); font-size: 12px; }
-  .author-cell { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .author-cell { font-size: 12px; color: var(--text-2); min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+  .author-cell .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .author-cell .sub { display: block; margin-top: 1px; }
   .copybtn {
     flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
     width: 22px; height: 22px; padding: 0; border-radius: 5px;
@@ -251,7 +253,7 @@
   .copybtn.copied { opacity: 1; color: var(--good); }
   @media (prefers-reduced-motion: reduce) { .copybtn { transition: none; } }
 
-  /* Provider badge (github / gitlab / bitbucket) — derived from the PR URL host. */
+  /* Provider badge (github / gitlab / bitbucket) — from the stored SCM type. */
   .prov-badge {
     --brand: var(--text-2);
     flex: 0 0 auto; display: inline-flex; align-items: center;
@@ -507,6 +509,7 @@
   }
   .field select:focus { border-color: var(--iris); }
   .field-hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); text-transform: none; letter-spacing: 0; }
+  .field-optional { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
   .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
   .field-check { display: flex; align-items: center; gap: 9px; }

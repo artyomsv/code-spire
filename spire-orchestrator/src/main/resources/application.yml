@@ -88,6 +88,9 @@ mp:
 spire:
   review:
     mode: ${SPIRE_REVIEW_MODE:active}
+    # Bounded auto-retry (C8/ADR-016): total pipeline runs before a transient
+    # failure fails terminally. Tuning knob — a safe default is fine here.
+    max-attempts: ${SPIRE_REVIEW_MAX_ATTEMPTS:3}
 
 # Dev: docker-compose Postgres + Redpanda. Credentials come from .env (Quarkus
 # loads it from the project root) — NO defaults for credentials, fail fast.

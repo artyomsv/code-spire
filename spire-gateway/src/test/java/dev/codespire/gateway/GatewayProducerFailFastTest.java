@@ -17,7 +17,6 @@ class GatewayProducerFailFastTest {
         producer.provider = provider;
         producer.baseUrl = "https://api.bitbucket.org/2.0";
         producer.webhookSecret = webhookSecret;
-        producer.botAccountId = Optional.of("acc-1");
         producer.mapper = new ObjectMapper();
         return producer;
     }
@@ -41,7 +40,6 @@ class GatewayProducerFailFastTest {
         GatewayScmProducer stub = new GatewayScmProducer();
         stub.provider = "stub";
         stub.webhookSecret = Optional.empty();
-        stub.botAccountId = Optional.empty();
         var ingress = stub.ingress();
         assertNotNull(ingress);
         assertTrue(!ingress.verifySignature(new dev.codespire.contract.port.RawWebhook(

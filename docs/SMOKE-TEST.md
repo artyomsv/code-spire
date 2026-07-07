@@ -70,10 +70,10 @@ LLM key, start the worker, and continue with the full review below.
 1. Create (or pick) the **bot account** — the identity that posts all reviews.
 2. As the bot: *Personal settings -> App passwords -> Create* with scopes
    **Pull requests: Write** and **Repositories: Read**.
-3. Get the bot's stable `account_id`:
-   ```bash
-   curl -s -u "<bot-username>:<app-password>" https://api.bitbucket.org/2.0/user | python3 -m json.tool | grep account_id
-   ```
+3. You do **not** need the bot's `account_id` at all — register the provider in
+   Settings → Providers, leave "Bot account id" blank, and it is resolved from the
+   token on save (which also validates the token). The same resolved id drives the
+   orchestrator's self-loop guard, so nothing reads it from env anymore.
 4. Give the bot access to a **sandbox test repository** (read + comment is enough).
 
 ### 2. LLM
@@ -104,10 +104,7 @@ Append to your Mode-A `.env`:
 SPIRE_SCM_PROVIDER=bitbucket-cloud
 SPIRE_LLM_PROVIDER=openai-compatible
 
-SPIRE_SCM_BITBUCKET_BOT_USERNAME=<bot-username>         # worker
-SPIRE_SCM_BITBUCKET_BOT_APP_PASSWORD=<app-password>     # worker
-SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET=<webhook-secret>     # gateway
-SPIRE_SCM_BITBUCKET_BOT_ACCOUNT_ID=<account_id>         # gateway + worker
+SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET=<webhook-secret>     # gateway (webhook HMAC only)
 
 SPIRE_LLM_BASE_URL=<endpoint>/v1
 SPIRE_LLM_API_KEY=<key>
@@ -139,7 +136,9 @@ Missing keys fail the affected service at startup naming the exact key — that'
 
 - No Jira/Confluence context yet; replies to bot comments are ingested but not answered; `/review`
   re-trigger is parsed but inactive (all P2).
-- A transient SCM/LLM failure shows `stalled:` on the timeline — restart by pushing a new commit.
+- A transient SCM/LLM failure auto-retries the pipeline up to `spire.review.max-attempts` (default 3);
+  the timeline shows `retry:<phase>` and the metadata `Attempt` climbs. Only once the budget is spent
+  (or the failure is permanent) does the review go to `failed` — then push a new commit to restart.
 - The dashboard is unauthenticated (OIDC lands in P2) — don't expose :34080 through the tunnel.
 
 ### Troubleshooting
@@ -149,7 +148,7 @@ Missing keys fail the affected service at startup naming the exact key — that'
 | Webhook shows 401 in Bitbucket's request log | secret in `.env` != secret in the webhook config |
 | 202 in gateway log but nothing on the dashboard | broker: `docker exec spire-redpanda rpk topic list` should show `cs.*`; orchestrator/worker logs |
 | Run stuck at `GenerateReview` | worker log — LLM endpoint/key/model; Ollama: is the model pulled? |
-| `stalled:<phase>` on timeline | transient failure, no retry budget yet — push a new commit |
+| `retry:<phase>` then `failed` | transient failures exhausted the retry budget — check the worker log for the root cause; raise `spire.review.max-attempts` or push a new commit |
 | Dead letters | `docker exec spire-redpanda rpk topic consume cs.dlq --num 5` |
 | Service refuses to start | it names the missing config key — set it in `.env` |
 

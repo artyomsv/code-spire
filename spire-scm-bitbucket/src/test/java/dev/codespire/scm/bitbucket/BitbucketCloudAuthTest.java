@@ -39,7 +39,7 @@ class BitbucketCloudAuthTest {
     void bearerTokenSendsBearerHeader() {
         BitbucketCloudClient client = new BitbucketCloudClient(
                 new BitbucketCloudConfig("http://localhost:" + server.port(),
-                        null, null, "tok-abc", "sec", "acct"),
+                        null, null, "tok-abc", "sec"),
                 new ObjectMapper());
         client.getJson("/ping");
         server.verify(getRequestedFor(urlEqualTo("/ping"))
@@ -50,7 +50,7 @@ class BitbucketCloudAuthTest {
     void basicAuthSendsBasicHeader() {
         BitbucketCloudClient client = new BitbucketCloudClient(
                 new BitbucketCloudConfig("http://localhost:" + server.port(),
-                        "user@example.com", "token123", "sec", "acct"),
+                        "user@example.com", "token123", "sec"),
                 new ObjectMapper());
         client.getJson("/ping");
         String expected = "Basic " + Base64.getEncoder().encodeToString(
@@ -63,7 +63,7 @@ class BitbucketCloudAuthTest {
     void tokenTakesPrecedenceOverBasic() {
         BitbucketCloudClient client = new BitbucketCloudClient(
                 new BitbucketCloudConfig("http://localhost:" + server.port(),
-                        "user", "pw", "tok-xyz", "sec", "acct"),
+                        "user", "pw", "tok-xyz", "sec"),
                 new ObjectMapper());
         client.getJson("/ping");
         server.verify(getRequestedFor(urlEqualTo("/ping"))
@@ -73,6 +73,6 @@ class BitbucketCloudAuthTest {
     @Test
     void rejectsWhenNoAuthProvided() {
         assertThrows(IllegalArgumentException.class, () ->
-                new BitbucketCloudConfig("http://x", null, null, null, "sec", "acct"));
+                new BitbucketCloudConfig("http://x", null, null, null, "sec"));
     }
 }
