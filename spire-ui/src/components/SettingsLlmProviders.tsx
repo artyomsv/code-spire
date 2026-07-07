@@ -28,6 +28,15 @@ export function defaultBaseUrl(type: string): string {
   return DEFAULT_BASE_URLS[type] ?? '';
 }
 
+/** Models most-expensive-first by combined input+output price per 1M tokens; ties by label. */
+export function byExpenseDesc(models: LlmModelView[]): LlmModelView[] {
+  return [...models].sort((a, b) => {
+    const ea = a.inputPriceMillicentsPerMillion + a.outputPriceMillicentsPerMillion;
+    const eb = b.inputPriceMillicentsPerMillion + b.outputPriceMillicentsPerMillion;
+    return eb - ea || a.label.localeCompare(b.label);
+  });
+}
+
 export default function SettingsLlmProviders() {
   const [providers, setProviders] = useState<LlmProviderView[]>([]);
   const [models, setModels] = useState<LlmModelView[]>([]);
@@ -106,7 +115,7 @@ export default function SettingsLlmProviders() {
               </tr>
             </thead>
             <tbody>
-              {models.map((m) => (
+              {byExpenseDesc(models).map((m) => (
                 <tr key={m.id}>
                   <td>
                     {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
@@ -273,7 +282,7 @@ function LlmProviderForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const typeModels = models.filter((m) => m.type === type && m.enabled);
+  const typeModels = byExpenseDesc(models.filter((m) => m.type === type && m.enabled));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
