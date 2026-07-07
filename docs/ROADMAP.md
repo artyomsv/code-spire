@@ -119,7 +119,9 @@ register instead of manual Register PR) → 2 (GitLab). Operator decides.
 ## Explicitly deferred (NOT in v1)
 - **Fleet-level cost/abuse caps** — per-repo/workspace rate limit, daily LLM spend cap, giant-PR
   guard, draft/WIP-PR skip, bot-authored-PR skip. v1 has only per-review token budgeting (ported).
-  Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of.
+  Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of. NOTE: a giant PR
+  is not silently mis-reviewed — the diff is clipped to the token budget and the partial review is now
+  MARKED (dashboard note + a line on the posted summary comment). A hard giant-PR skip is still future.
 - Whole-repo RAG (P3), learned memory + per-author analytics (P4), non-Bitbucket SCMs.
 
 ## Immediate next steps

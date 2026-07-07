@@ -6,7 +6,6 @@ import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.llm.Completion;
-import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.port.CommentSink;
@@ -94,12 +93,17 @@ public class ReviewWorker {
             }
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
 
-            Prompt prompt = ReviewPromptBuilder.build(pr, diff.files(), List.of()); // context items land in P2
+            ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(pr, diff.files(), List.of()); // context items land in P2
             WorkerLlmProvider.LlmClient client = llm.forCommand(command);
-            Completion completion = client.provider().complete(prompt, client.params())
+            Completion completion = client.provider().complete(built.prompt(), client.params())
                     .toCompletableFuture().join();
 
-            ReviewResult result = FindingsParser.parse(completion.text(), completion.usage());
+            ReviewResult parsed = FindingsParser.parse(completion.text(), completion.usage());
+            // Carry the "diff was clipped to fit the budget" flag so a partial review is
+            // marked on the dashboard and the posted summary comment (not silent).
+            ReviewResult result = built.truncated()
+                    ? new ReviewResult(parsed.findings(), parsed.summary(), parsed.usage(), true)
+                    : parsed;
             // Persist-then-emit (finding M2): marking first makes the paid call
             // unrepeatable; the serialized result keeps redelivery re-emittable
             // when a crash lands between the mark and the emit.
@@ -271,6 +275,10 @@ public class ReviewWorker {
                                  List<Finding> failed, String commit) {
         StringBuilder sb = new StringBuilder();
         sb.append("### Code Spire review (`").append(commit).append("`)\n\n");
+        if (review.truncated()) {
+            sb.append("> **Partial review:** this PR's diff exceeded the review budget and was ")
+                    .append("truncated — changes beyond the token limit were not reviewed.\n\n");
+        }
         sb.append(escapeHtml(review.summary())).append('\n');
         if (!review.findings().isEmpty()) {
             sb.append("\n**Findings:** ").append(review.findings().size()).append('\n');

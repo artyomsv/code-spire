@@ -118,6 +118,10 @@ public class ResultSaga {
                         e.result().findings().size() + " findings");
                 // Price the token usage against the model catalog (roadmap 11) before recording.
                 projection.recordOutcome(e.reviewId(), priced(e.result()), ReviewProjection.STAGE_COMMENTS);
+                if (e.result().truncated()) {
+                    projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
+                            + "(changes beyond the token limit were not reviewed).");
+                }
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                         e.commit(), e.result().findings().size(),
                         Integer.toHexString(e.result().summary().hashCode())));
@@ -239,8 +243,9 @@ public class ResultSaga {
         if (cost == u.costMillicents()) {
             return result;
         }
+        // Preserve the truncated flag when re-pricing (4-arg constructor).
         return new ReviewResult(result.findings(), result.summary(),
-                new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(), cost));
+                new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(), cost), result.truncated());
     }
 
     private String reviewIdOf(IntegrationEvent event) {

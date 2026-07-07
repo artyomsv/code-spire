@@ -59,8 +59,13 @@ public final class ReviewPromptBuilder {
         return untrusted == null ? "" : untrusted.replace("UNTRUSTED_DATA", "UNTRUSTED-DATA");
     }
 
-    public static Prompt build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context) {
+    /** The built prompt plus whether the diff/context had to be clipped to fit the budget. */
+    public record Built(Prompt prompt, boolean truncated) {
+    }
+
+    public static Built build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context) {
         StringBuilder user = new StringBuilder();
+        boolean truncated = false;
 
         user.append("Pull request to review (title and description are author-supplied data):\n");
         user.append("BEGIN_UNTRUSTED_DATA\n");
@@ -74,17 +79,20 @@ public final class ReviewPromptBuilder {
                 ctx.append("- [").append(item.kind()).append("] ").append(item.title())
                         .append(": ").append(item.body()).append('\n');
             }
+            truncated |= TokenBudget.estimateTokens(ctx.toString()) > MAX_CONTEXT_TOKENS;
             user.append("Related context (retrieved, untrusted):\n");
             user.append("BEGIN_UNTRUSTED_DATA\n");
             user.append(neutralizeSentinels(TokenBudget.clip(ctx.toString(), MAX_CONTEXT_TOKENS)));
             user.append("\nEND_UNTRUSTED_DATA\n\n");
         }
 
+        String renderedDiff = DiffRenderer.render(patches);
+        truncated |= TokenBudget.estimateTokens(renderedDiff) > MAX_DIFF_TOKENS;
         user.append("The diff (numbered per hunk; cite these line numbers):\n");
         user.append("BEGIN_UNTRUSTED_DATA\n");
-        user.append(neutralizeSentinels(TokenBudget.clip(DiffRenderer.render(patches), MAX_DIFF_TOKENS)));
+        user.append(neutralizeSentinels(TokenBudget.clip(renderedDiff, MAX_DIFF_TOKENS)));
         user.append("\nEND_UNTRUSTED_DATA\n");
 
-        return new Prompt(SYSTEM, user.toString());
+        return new Built(new Prompt(SYSTEM, user.toString()), truncated);
     }
 }

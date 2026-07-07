@@ -156,6 +156,16 @@ class ReviewWorkerTest {
     }
 
     @Test
+    void truncatedReviewMarksThePostedSummary() {
+        var review = new ReviewResult(List.of(finding("src/A.java", 2)), "ok",
+                new ModelUsage("m", 1, 1, 0), true);
+        worker.postComments(new PostComments(REVIEW_ID, REPO, 9, COMMIT, review, null));
+        assertInstanceOf(CommentsPosted.class, emitted.getLast());
+        assertTrue(sink.summaryBody.contains("Partial review"),
+                "a truncated review is flagged on the posted summary comment");
+    }
+
+    @Test
     void oneFailingInlinePostNeverAbortsTheBatch() {
         sink.failOnInline = 1; // the FIRST inline post throws a 500
         worker.postComments(postCommand(List.of(finding("src/A.java", 1), finding("src/A.java", 2))));
