@@ -29,12 +29,17 @@ down is the original design-time roadmap (kept for reference).
 - **Provider token auto-resolve/validate (2026-07-07)**: registering a provider now calls the SCM's
   "who am I" (`IdentitySource`) to fill the bot account id from the token owner and validate the token
   up front — no more manual `curl … /user`. GitHub/Bitbucket adapters + WireMock tests.
+- **GitHub active mode verified live (2026-07-07)**: the worker posts a real review to a GitHub PR —
+  inline comments anchored to changed lines + a summary — proven end-to-end against
+  `github.com/artyomsv/spire-test` via the manual **Register PR** path (no webhook). Closes backlog
+  item 1. The no-tunnel runbook is documented in SMOKE-TEST.md (Mode C).
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
 **A. Finish the multi-SCM story (current thread)**
-1. GitHub **active mode** — post a real review comment · S · ⚑ write-scoped token + worker running.
-   Smallest step to a complete GitHub loop (diff → LLM → comment).
+1. ✅ GitHub **active mode** — post a real review comment (2026-07-07). Complete GitHub loop
+   (diff → LLM → inline + summary) proven live against `artyomsv/spire-test` PR #2 via manual
+   Register PR. See SMOKE-TEST.md Mode C.
 2. **GitLab adapter (Phase C)** · L · ⚑ gitlab.com vs self-hosted host. Static-token auth (not HMAC),
    MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths (touches reviewId slug).
 3. **Real webhooks (Phase D)** · M. `/webhooks/{provider}` dispatch in the gateway so PRs auto-register
@@ -58,8 +63,8 @@ down is the original design-time roadmap (kept for reference).
 11. **`costMillicents` LLM pricing** · S. Data is collected but unpriced; show per-review token cost.
 12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
 
-**Suggested order for momentum:** C (7/8/9) is done. Next: 1 (finish GitHub actively) → 2 (GitLab) → 3
-(webhooks). Operator decides.
+**Suggested order for momentum:** C (7/8/9) and 1 (GitHub active) are done. Next: 3 (webhooks — auto-
+register instead of manual Register PR) → 2 (GitLab). Operator decides.
 
 ---
 

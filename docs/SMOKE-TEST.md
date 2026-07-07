@@ -156,3 +156,76 @@ Missing keys fail the affected service at startup naming the exact key — that'
 
 Delete the webhook + tunnel; bot comments can stay or be deleted in the PR UI. Local state:
 `docker compose down -v` wipes the event store and topics.
+
+---
+
+## Mode C — real GitHub PR, active review, **no webhook** (manual Register PR)
+
+The fastest way to prove a full active review against a real SCM without setting up a
+tunnel or webhook. It drives the identical pipeline as Mode B — diff → LLM → inline +
+summary comments — but the PR is registered manually through the dashboard instead of
+arriving on a webhook. Works for any registered provider (used here with GitHub).
+
+**Gateway is not needed** — the orchestrator's `POST /api/reviews/register` publishes the
+same `PullRequestEventReceived` the gateway webhook would, onto the same `cs.integration`
+topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
+
+### 1. One-time prerequisites
+
+1. Register a **GitHub provider** in Settings → Providers (workspace = repo owner, e.g.
+   `artyomsv`) with a token scoped **Contents: Read** + **Pull requests: Read and write**.
+   Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
+2. In `.env`:
+   ```bash
+   SPIRE_REVIEW_MODE=active
+   SPIRE_LLM_PROVIDER=openai-compatible
+   SPIRE_LLM_BASE_URL=https://api.openai.com/v1   # or http://localhost:11434/v1 for Ollama
+   SPIRE_LLM_API_KEY=<key>                        # any non-blank value for Ollama
+   SPIRE_LLM_MODEL=<model>                         # e.g. gpt-4o
+   ```
+   `SPIRE_ENCRYPTION_KEYSET` must be the **same** value the orchestrator uses — the worker
+   decrypts the brokered per-command credential with it (ADR-015). `SPIRE_REVIEW_MODE` is only
+   the seed default — once the app is up you flip observe↔active from the **Settings → Providers
+   "Review mode" toggle** (persisted in the DB, no restart), so you can start in `observe` and
+   switch to `active` from the UI when ready.
+3. The PR author must pass the provider's allowlist (empty allowlist = everyone).
+
+### 2. Run the two services
+
+```bash
+./gradlew :spire-orchestrator:quarkusDev    # :34080 dashboard + register endpoint
+./gradlew :spire-review-worker:quarkusDev   # :34082
+```
+The orchestrator logs the posture at boot: `Review policy: mode=active`.
+
+### 3. Register a PR and watch it review
+
+Open a PR on the sandbox repo with a small **code** change (a text-only diff gives the LLM
+nothing to anchor inline comments to — the summary still posts). Then either:
+
+- **UI:** open http://localhost:34080 → **Register PR** (top bar) → paste the PR URL
+  (auto-fills owner / repo / PR #) → **Register**, or
+- **curl:**
+  ```bash
+  curl -s -X POST http://localhost:34080/api/reviews/register \
+    -H 'Content-Type: application/json' \
+    -d '{"workspace":"<owner>","slug":"<repo>","pr":<number>}'
+  # → {"reviewId":"review::<owner>/<repo>#<number>", ...}
+  ```
+
+**Expected:** within ~LLM latency the review reaches `status=completed` (stage 6) on the
+dashboard, and the PR gets **inline comments on the changed lines + one summary comment**,
+posted by the token owner. Inline findings whose line is not on a diff line are folded into
+the summary as "unanchored" rather than dropped (GitHub rejects out-of-diff inline anchors).
+
+### Verify from the CLI
+
+```bash
+gh api repos/<owner>/<repo>/pulls/<number>/comments --jq 'length'     # inline count
+gh api repos/<owner>/<repo>/issues/<number>/comments --jq 'length'    # summary count
+```
+
+### Cleanup
+
+Set `SPIRE_REVIEW_MODE=observe` (or stop the services) to return to a no-write posture. Bot
+comments can stay or be deleted in the PR UI.
