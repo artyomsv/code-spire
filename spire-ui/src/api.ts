@@ -25,6 +25,7 @@ export interface ReviewSummary {
   status: ReviewStatus;
   stage: number; // 0..6 index into [Received, Diff, Context, Review, Comments, Done]
   findings: number;
+  costMillicents: number; // review cost (1/100,000 dollar); 0 = unpriced/uncatalogued model
   updatedAt: string; // ISO-8601
 }
 
@@ -273,4 +274,57 @@ export async function setDefaultLlmProvider(id: string): Promise<LlmProviderView
 export async function deleteLlmProvider(id: string): Promise<void> {
   const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
+}
+
+// ---- LLM model catalog (with token pricing) ----
+
+export interface LlmModelView {
+  id: string;
+  type: LlmType;
+  name: string; // wire model id, e.g. gpt-4o
+  label: string;
+  inputPriceMillicentsPerMillion: number; // millicents per 1M input tokens
+  outputPriceMillicentsPerMillion: number;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface LlmModelInput {
+  type: LlmType;
+  name: string;
+  label: string;
+  inputPriceMillicentsPerMillion: number;
+  outputPriceMillicentsPerMillion: number;
+  enabled?: boolean;
+}
+
+export async function fetchLlmModels(): Promise<LlmModelView[]> {
+  const res = await fetch('/api/llm-models');
+  if (!res.ok) return throwResponse(res, 'Failed to load LLM models');
+  return res.json();
+}
+
+export async function createLlmModel(input: LlmModelInput): Promise<LlmModelView> {
+  const res = await fetch('/api/llm-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to create LLM model');
+  return res.json();
+}
+
+export async function updateLlmModel(id: string, input: LlmModelInput): Promise<LlmModelView> {
+  const res = await fetch(`/api/llm-models/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update LLM model');
+  return res.json();
+}
+
+export async function deleteLlmModel(id: string): Promise<void> {
+  const res = await fetch(`/api/llm-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to delete LLM model');
 }

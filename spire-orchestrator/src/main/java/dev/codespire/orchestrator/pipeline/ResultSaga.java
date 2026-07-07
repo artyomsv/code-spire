@@ -10,6 +10,8 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewState;
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
@@ -56,6 +58,9 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
+
+    @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
     /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
     @ConfigProperty(name = "spire.review.max-attempts", defaultValue = "3")
@@ -111,7 +116,8 @@ public class ResultSaga {
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
-                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+                // Price the token usage against the model catalog (roadmap 11) before recording.
+                projection.recordOutcome(e.reviewId(), priced(e.result()), ReviewProjection.STAGE_COMMENTS);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                         e.commit(), e.result().findings().size(),
                         Integer.toHexString(e.result().summary().hashCode())));
@@ -221,6 +227,20 @@ public class ResultSaga {
             return ReviewProjection.STAGE_COMMENTS;
         }
         return ReviewProjection.STAGE_REVIEW; // generate / llm / unknown
+    }
+
+    /** Fill in the review cost by pricing the token usage against the model catalog (roadmap 11). */
+    private ReviewResult priced(ReviewResult result) {
+        ModelUsage u = result.usage();
+        if (u == null || u.model() == null) {
+            return result;
+        }
+        long cost = llmModels.costMillicents(u.model(), u.tokensIn(), u.tokensOut());
+        if (cost == u.costMillicents()) {
+            return result;
+        }
+        return new ReviewResult(result.findings(), result.summary(),
+                new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(), cost));
     }
 
     private String reviewIdOf(IntegrationEvent event) {

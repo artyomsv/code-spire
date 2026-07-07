@@ -60,7 +60,10 @@ down is the original design-time roadmap (kept for reference).
 
 **D. Infra & security hardening**
 10. **OIDC on the dashboard** · M. UI/API is unauthenticated — matters before any shared deployment.
-11. **`costMillicents` LLM pricing** · S. Data is collected but unpriced; show per-review token cost.
+11. ✅ **`costMillicents` LLM pricing** (2026-07-07). LLM model catalog with operator-entered token
+    pricing (`llm_model`); a review's real token usage is priced into `review_status.cost_millicents`
+    and shown on the detail page + a Cost column in the reviews list. Model is now a dropdown from the
+    catalog. See ADR-018.
 12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
 
 **Suggested order for momentum:** C (7/8/9) and 1 (GitHub active) are done. Next: 3 (webhooks — auto-

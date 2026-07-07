@@ -175,9 +175,11 @@ topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
 1. Register a **GitHub provider** in Settings → Providers (workspace = repo owner, e.g.
    `artyomsv`) with a token scoped **Contents: Read** + **Pull requests: Read and write**.
    Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
-2. Register an **LLM provider** in Settings → LLM (ADR-018): type `openai`, base URL
-   `https://api.openai.com/v1`, your API key, a model (e.g. `gpt-4o`). The key is validated on
-   save and stored encrypted; mark it the **default**. No `SPIRE_LLM_*` env vars.
+2. In Settings → LLM (ADR-018): first **add a model** (e.g. name `gpt-4o`, input `$2.50` / output
+   `$10.00` per 1M tokens — from OpenAI's pricing page), then register an **LLM provider**: type
+   `openai`, base URL `https://api.openai.com/v1`, your API key, and pick the model from the dropdown.
+   The key is validated on save and stored encrypted; mark the provider the **default**. No
+   `SPIRE_LLM_*` env vars. The model's pricing is what shows the per-review **cost** on the dashboard.
 3. In `.env`, only the mode flags are needed:
    ```bash
    SPIRE_REVIEW_MODE=active   # seed default; flip live from Settings → Providers "Review mode"

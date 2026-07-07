@@ -31,6 +31,15 @@ per-SCM-provider LLM override (`scm_provider.llm_provider_id`) is phase 3. Subsc
 backends (ChatGPT/Codex, Claude Code, Copilot seats) are explicitly out: they are not embeddable APIs
 and repurposing them violates ToS — use the native provider APIs, which serve the same models.
 
+**Model catalog + cost (roadmap 11).** A separate `llm_model` catalog holds the selectable models and
+their token pricing — millicents (1/100,000 dollar) per 1M tokens, integers as providers quote them.
+Prices are operator-entered, never hardcoded: model prices drift, and a stale number would make every
+cost estimate silently wrong (same reasoning as the no-fabricated-data rule). A provider's model is
+picked from this catalog. When a review completes, the orchestrator prices its real token usage
+against the catalog (`cost = (tokensIn·inputPrice + tokensOut·outputPrice) / 1M`) and stores
+`review_status.cost_millicents` — the field was collected since S1 but always 0. Cost is computed in
+the orchestrator (the registry owner), not brokered to the worker, so pricing stays in one place.
+
 ---
 
 ## ADR-017 — Self-loop guard in the orchestrator; bot account id lives only in the registry

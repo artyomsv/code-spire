@@ -24,5 +24,6 @@ public record ReviewSummary(
         String status,
         int stage,
         int findings,
+        long costMillicents,
         Instant updatedAt) {
 }

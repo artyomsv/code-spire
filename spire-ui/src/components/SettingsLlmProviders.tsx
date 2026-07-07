@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
+  createLlmModel,
   createLlmProvider,
+  deleteLlmModel,
   deleteLlmProvider,
+  fetchLlmModels,
   fetchLlmProviders,
   setDefaultLlmProvider,
+  updateLlmModel,
   updateLlmProvider,
+  type LlmModelInput,
+  type LlmModelView,
   type LlmProviderInput,
   type LlmProviderView,
   type LlmType,
 } from '../api';
+import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
 const LLM_TYPES: LlmType[] = ['openai'];
@@ -23,16 +30,22 @@ export function defaultBaseUrl(type: string): string {
 
 export default function SettingsLlmProviders() {
   const [providers, setProviders] = useState<LlmProviderView[]>([]);
+  const [models, setModels] = useState<LlmModelView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState<'new' | LlmProviderView | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<LlmProviderView | null>(null);
+  const [providerForm, setProviderForm] = useState<'new' | LlmProviderView | null>(null);
+  const [modelForm, setModelForm] = useState<'new' | LlmModelView | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ kind: 'provider' | 'model'; id: string; name: string } | null>(
+    null,
+  );
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      setProviders(await fetchLlmProviders());
+      const [ps, ms] = await Promise.all([fetchLlmProviders(), fetchLlmModels()]);
+      setProviders(ps);
+      setModels(ms);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -54,32 +67,84 @@ export default function SettingsLlmProviders() {
     }
   }
 
+  function priceLabel(mc: number): string {
+    return `$${millicentsPerMillionToDollars(mc).toFixed(2)}`;
+  }
+
   return (
     <section className="content">
-      <div className="page-head">
-        <div className="grow"></div>
-        <button className="btn" onClick={() => setForm('new')}>
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-          Add LLM provider
-        </button>
+      {error && (
+        <div className="card" style={{ padding: '14px 18px', color: 'var(--crit)', fontSize: 13, marginBottom: 18 }}>
+          {error}
+        </div>
+      )}
+
+      {/* --- Models catalog --- */}
+      <div className="card">
+        <div className="head">
+          <h3>Models</h3>
+          <span className="k">catalog · pricing</span>
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setModelForm('new')}>
+            Add model
+          </button>
+        </div>
+        {loading && models.length === 0 ? (
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
+        ) : models.length === 0 ? (
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
+            No models yet — add one (name + price per 1M tokens) so reviews can be priced and providers can pick it.
+          </div>
+        ) : (
+          <table className="prov-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Type</th>
+                <th className="cell-r">Input / 1M</th>
+                <th className="cell-r">Output / 1M</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map((m) => (
+                <tr key={m.id}>
+                  <td>
+                    {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
+                  </td>
+                  <td className="mono">{m.type}</td>
+                  <td className="cell-r mono">{priceLabel(m.inputPriceMillicentsPerMillion)}</td>
+                  <td className="cell-r mono">{priceLabel(m.outputPriceMillicentsPerMillion)}</td>
+                  <td className="prov-actions">
+                    <button className="btn-ghost" onClick={() => setModelForm(m)}>
+                      Edit
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      <div className="card">
-        {error ? (
-          <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
-        ) : loading && providers.length === 0 ? (
-          <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
+      {/* --- Providers --- */}
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="head">
+          <h3>Providers</h3>
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setProviderForm('new')}>
+            Add provider
+          </button>
+        </div>
+        {loading && providers.length === 0 ? (
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : providers.length === 0 ? (
-          <div className="prov-empty">
-            <span>No LLM providers yet — add one so reviews have a model to run.</span>
-            <button className="btn" onClick={() => setForm('new')}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-              Add LLM provider
-            </button>
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
+            No LLM providers yet — add one so reviews have a model to run.
           </div>
         ) : (
           <table className="prov-table">
@@ -118,10 +183,13 @@ export default function SettingsLlmProviders() {
                     </span>
                   </td>
                   <td className="prov-actions">
-                    <button className="btn-ghost" onClick={() => setForm(p)}>
+                    <button className="btn-ghost" onClick={() => setProviderForm(p)}>
                       Edit
                     </button>
-                    <button className="btn-ghost" onClick={() => setConfirmDelete(p)}>
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setConfirmDelete({ kind: 'provider', id: p.id, name: p.name })}
+                    >
                       Delete
                     </button>
                   </td>
@@ -132,12 +200,24 @@ export default function SettingsLlmProviders() {
         )}
       </div>
 
-      {form && (
+      {providerForm && (
         <LlmProviderForm
-          initial={form === 'new' ? null : form}
-          onClose={() => setForm(null)}
+          initial={providerForm === 'new' ? null : providerForm}
+          models={models}
+          onClose={() => setProviderForm(null)}
           onSaved={async () => {
-            setForm(null);
+            setProviderForm(null);
+            await load();
+          }}
+        />
+      )}
+
+      {modelForm && (
+        <LlmModelForm
+          initial={modelForm === 'new' ? null : modelForm}
+          onClose={() => setModelForm(null)}
+          onSaved={async () => {
+            setModelForm(null);
             await load();
           }}
         />
@@ -147,9 +227,7 @@ export default function SettingsLlmProviders() {
         <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Delete “{confirmDelete.name}”?</h3>
-            <p style={{ color: 'var(--text-3)', fontSize: 13 }}>
-              Reviews will fall back to the default provider. This cannot be undone.
-            </p>
+            <p style={{ color: 'var(--text-3)', fontSize: 13 }}>This cannot be undone.</p>
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setConfirmDelete(null)}>
                 Cancel
@@ -157,9 +235,9 @@ export default function SettingsLlmProviders() {
               <button
                 className="btn btn-danger"
                 onClick={() => {
-                  const id = confirmDelete.id;
+                  const { kind, id } = confirmDelete;
                   setConfirmDelete(null);
-                  void act(() => deleteLlmProvider(id));
+                  void act(() => (kind === 'model' ? deleteLlmModel(id) : deleteLlmProvider(id)));
                 }}
               >
                 Delete
@@ -174,10 +252,12 @@ export default function SettingsLlmProviders() {
 
 function LlmProviderForm({
   initial,
+  models,
   onClose,
   onSaved,
 }: {
   initial: LlmProviderView | null;
+  models: LlmModelView[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -192,6 +272,8 @@ function LlmProviderForm({
   const [isDefault, setIsDefault] = useState(initial?.isDefault ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const typeModels = models.filter((m) => m.type === type && m.enabled);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -254,7 +336,26 @@ function LlmProviderForm({
             </label>
             <label className="field">
               <span>Model</span>
-              <input className="mono" placeholder="gpt-4o" value={model} onChange={(e) => setModel(e.target.value)} />
+              {typeModels.length > 0 ? (
+                <select value={model} onChange={(e) => setModel(e.target.value)}>
+                  <option value="">— select a model —</option>
+                  {typeModels.map((m) => (
+                    <option key={m.id} value={m.name}>
+                      {m.label} ({m.name})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="mono"
+                  placeholder="gpt-4o"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              )}
+              {typeModels.length === 0 && (
+                <small className="field-hint">No models registered — add one above to price reviews.</small>
+              )}
             </label>
           </div>
 
@@ -323,6 +424,125 @@ function LlmProviderForm({
             </button>
             <button type="submit" className="btn" disabled={busy}>
               {busy ? 'Saving…' : editing ? 'Save changes' : 'Add provider'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function LlmModelForm({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: LlmModelView | null;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const editing = initial !== null;
+  const [type, setType] = useState<LlmType>(initial?.type ?? 'openai');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [label, setLabel] = useState(initial?.label ?? '');
+  const [inputPrice, setInputPrice] = useState(
+    initial ? String(millicentsPerMillionToDollars(initial.inputPriceMillicentsPerMillion)) : '',
+  );
+  const [outputPrice, setOutputPrice] = useState(
+    initial ? String(millicentsPerMillionToDollars(initial.outputPriceMillicentsPerMillion)) : '',
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const input: LlmModelInput = {
+      type,
+      name: name.trim(),
+      label: label.trim() || name.trim(),
+      inputPriceMillicentsPerMillion: dollarsToMillicentsPerMillion(Number(inputPrice) || 0),
+      outputPriceMillicentsPerMillion: dollarsToMillicentsPerMillion(Number(outputPrice) || 0),
+      enabled: initial?.enabled ?? true,
+    };
+    try {
+      if (editing && initial) {
+        await updateLlmModel(initial.id, input);
+      } else {
+        await createLlmModel(input);
+      }
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{editing ? 'Edit model' : 'Add model'}</h3>
+        <form className="modal-body" onSubmit={submit}>
+          <div className="field-row-2">
+            <label className="field">
+              <span>Type</span>
+              <select value={type} onChange={(e) => setType(e.target.value as LlmType)}>
+                {LLM_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Model name</span>
+              <input className="mono" placeholder="gpt-4o" value={name} onChange={(e) => setName(e.target.value)} />
+            </label>
+          </div>
+
+          <label className="field">
+            <span>
+              Label <span className="field-optional">defaults to the model name</span>
+            </span>
+            <input placeholder="GPT-4o" value={label} onChange={(e) => setLabel(e.target.value)} />
+          </label>
+
+          <div className="field-row-2">
+            <label className="field">
+              <span>Input price $ / 1M tokens</span>
+              <input
+                className="mono"
+                inputMode="decimal"
+                placeholder="2.50"
+                value={inputPrice}
+                onChange={(e) => setInputPrice(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Output price $ / 1M tokens</span>
+              <input
+                className="mono"
+                inputMode="decimal"
+                placeholder="10.00"
+                value={outputPrice}
+                onChange={(e) => setOutputPrice(e.target.value)}
+              />
+            </label>
+          </div>
+          <small className="field-hint">
+            Enter the provider's current published price per 1M tokens — used to cost each review.
+          </small>
+
+          {error && <div className="modal-msg modal-error">{error}</div>}
+
+          <div className="modal-actions">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="btn" disabled={busy}>
+              {busy ? 'Saving…' : editing ? 'Save changes' : 'Add model'}
             </button>
           </div>
         </form>

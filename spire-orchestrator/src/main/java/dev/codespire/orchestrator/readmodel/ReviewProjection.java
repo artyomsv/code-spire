@@ -283,7 +283,8 @@ public class ReviewProjection {
                              int attempt, Instant createdAt, Instant updatedAt) {
         ReviewSummary toSummary() {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
-                    htmlUrl, providerType, status, stage, findings, updatedAt);
+                    htmlUrl, providerType, status, stage, findings,
+                    costMillicents == null ? 0L : costMillicents, updatedAt);
         }
     }
 

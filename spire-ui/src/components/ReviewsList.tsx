@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ReviewStatus, ReviewSummary } from '../api';
 import { ago, CopyableValue, findCell, miniPipeline, pill, providerBadge, shortSha } from '../render';
+import { formatCost } from '../money';
 
 type ChipFilter = 'all' | 'reviewing' | 'completed' | 'failed' | 'closed';
 
@@ -145,6 +146,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
           <div className="h-commit">Commit</div>
           <div className="h-mini">Pipeline</div>
           <div className="cell-r">Findings</div>
+          <div className="cell-r">Cost</div>
           <div className="cell-r">Updated</div>
         </div>
         <div id="rows">
@@ -190,6 +192,9 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                 </div>
                 <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
                 <div className="cell-r">{findCell(r.status, r.findings)}</div>
+                <div className="cell-r">
+                  <span className="mono" title="Review cost">{formatCost(r.costMillicents)}</span>
+                </div>
                 <div className="cell-r">
                   <span className="time">{ago(r.updatedAt)}</span>
                 </div>
