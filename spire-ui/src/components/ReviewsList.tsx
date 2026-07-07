@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ReviewStatus, ReviewSummary } from '../api';
-import { ago, findCell, miniPipeline, pill } from '../render';
+import { ago, CopyButton, findCell, miniPipeline, pill, providerBadge, shortSha } from '../render';
 
 type ChipFilter = 'all' | 'reviewing' | 'completed' | 'failed' | 'closed';
 
@@ -138,7 +138,8 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
         <div className="thead">
           <div>Status</div>
           <div>Pull request</div>
-          <div>Commit</div>
+          <div className="h-title">Title</div>
+          <div className="h-commit">Commit</div>
           <div className="h-mini">Pipeline</div>
           <div className="cell-r">Findings</div>
           <div className="cell-r">Updated</div>
@@ -164,18 +165,27 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                 <div>{pill(r.status)}</div>
                 <div style={{ minWidth: 0 }}>
                   <div className="repo">
+                    {providerBadge(r.htmlUrl)}
                     {r.repo}
                     <span className="pr">#{r.pr}</span>
                   </div>
-                  <div className="title">{r.title}</div>
                   <div className="sub">
                     <span>@{r.author}</span>
                     <span>·</span>
                     <span>{r.branch}</span>
                   </div>
                 </div>
-                <div className="mono sha" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                  {r.sha}
+                <div className="title-cell">
+                  <span className="title" title={r.title}>
+                    {r.title}
+                  </span>
+                  {r.title && <CopyButton text={r.title} title="Copy title" />}
+                </div>
+                <div className="commit-cell">
+                  <span className="mono sha" title={r.sha}>
+                    {shortSha(r.sha)}
+                  </span>
+                  <CopyButton text={r.sha} title="Copy commit hash" />
                 </div>
                 <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
                 <div className="cell-r">{findCell(r.status, r.findings)}</div>

@@ -18,6 +18,7 @@ public record ReviewSummary(
         String branch,
         String base,
         String sha,
+        String htmlUrl,
         String status,
         int stage,
         int findings,

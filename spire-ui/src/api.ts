@@ -18,7 +18,8 @@ export interface ReviewSummary {
   author: string; // username
   branch: string; // source branch
   base: string; // destination branch
-  sha: string; // short commit hash
+  sha: string; // commit hash (12-char on Bitbucket, 40-char on GitHub)
+  htmlUrl: string; // the PR's web URL — the provider badge is derived from its host
   status: ReviewStatus;
   stage: number; // 0..6 index into [Received, Diff, Context, Review, Comments, Done]
   findings: number;

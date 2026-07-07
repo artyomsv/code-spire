@@ -232,7 +232,7 @@ public class ReviewProjection {
                              Instant createdAt, Instant updatedAt) {
         ReviewSummary toSummary() {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, branch, base, sha,
-                    status, stage, findings, updatedAt);
+                    htmlUrl, status, stage, findings, updatedAt);
         }
     }
 

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type {
   Finding,
   ReviewDetail,
@@ -15,6 +16,52 @@ export function providerLabel(htmlUrl: string | undefined): string {
   if (u.includes('gitlab')) return 'gitlab';
   if (u.includes('bitbucket')) return 'bitbucket-cloud';
   return '—';
+}
+
+/** A small provider badge derived from the PR URL host (null when unknown). */
+export function providerBadge(htmlUrl: string | undefined) {
+  const p = providerLabel(htmlUrl);
+  if (p === '—') return null;
+  const short = p === 'bitbucket-cloud' ? 'bitbucket' : p;
+  return <span className={`prov-badge prov-${short}`}>{short}</span>;
+}
+
+/** Full hashes (GitHub is 40 chars) get truncated for display; the copy button carries the full value. */
+export function shortSha(sha: string): string {
+  return sha.length > 12 ? sha.slice(0, 10) : sha;
+}
+
+const COPY_ICON = (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M3.5 10.5H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h6.5a1 1 0 0 1 1 1v.5" stroke="currentColor" strokeWidth="1.3" />
+  </svg>
+);
+const CHECK_ICON = (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/** Copy-to-clipboard icon button; stops row-click propagation and flashes a check. */
+export function CopyButton({ text, title }: { text: string; title: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`copybtn ${copied ? 'copied' : ''}`}
+      title={title}
+      aria-label={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard?.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? CHECK_ICON : COPY_ICON}
+    </button>
+  );
 }
 
 export const STATUS_LABEL: Record<ReviewStatus, string> = {

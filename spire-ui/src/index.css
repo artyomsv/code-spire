@@ -207,7 +207,7 @@
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow: hidden; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 132px minmax(0, 1.6fr) 96px minmax(150px, 1fr) 96px 92px;
+    grid-template-columns: 128px minmax(190px, 1.1fr) minmax(0, 1.4fr) 150px minmax(120px, 0.8fr) 88px 84px;
     align-items: center; gap: 14px;
     padding: 0 18px;
   }
@@ -220,12 +220,42 @@
   .row:last-child { border-bottom: none; }
   .row:hover { background: var(--hover); }
   .row.faded { opacity: 0.55; }
-  .row .repo { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); }
+  .row .repo { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 7px; min-width: 0; }
   .row .repo .pr { color: var(--text-3); font-weight: 500; }
   .row .title { font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
-  .row .sha { color: var(--text-2); }
+  .row .sha { color: var(--text-2); font-size: 12px; }
   .cell-r { text-align: right; }
+
+  /* Title + Commit cells: value truncates, copy button reveals on row hover. */
+  .title-cell, .commit-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .title-cell .title { flex: 1; min-width: 0; }
+  .commit-cell .sha { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copybtn {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; padding: 0; border-radius: 5px;
+    border: 1px solid transparent; background: transparent; color: var(--text-3);
+    cursor: pointer; opacity: 0; transition: opacity 0.12s, color 0.12s, background 0.12s;
+  }
+  .row:hover .copybtn, .copybtn:focus-visible { opacity: 1; }
+  .copybtn:hover { color: var(--text); background: var(--hover); border-color: var(--border); }
+  .copybtn.copied { opacity: 1; color: var(--good); }
+  @media (prefers-reduced-motion: reduce) { .copybtn { transition: none; } }
+
+  /* Provider badge (github / gitlab / bitbucket) — derived from the PR URL host. */
+  .prov-badge {
+    --brand: var(--text-2);
+    flex: 0 0 auto; display: inline-flex; align-items: center;
+    font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 1px 6px; border-radius: 5px; text-transform: lowercase;
+    color: color-mix(in srgb, var(--brand) 80%, var(--text));
+    background: color-mix(in srgb, var(--brand) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--brand) 34%, transparent);
+  }
+  /* Brand hues (theme-safe via color-mix): GitHub neutral, GitLab orange, Bitbucket blue. */
+  .prov-badge.prov-github { --brand: #8b949e; }
+  .prov-badge.prov-gitlab { --brand: #fc6d26; }
+  .prov-badge.prov-bitbucket { --brand: #2684ff; }
   .findcount { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
   .findcount small { font-weight: 500; color: var(--text-3); font-size: 10.5px; margin-left: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
   .findcount.zero { color: var(--good); }
@@ -367,7 +397,9 @@
     .rail .nav .label, .rail .spacer, .rail .foot { display: none; }
     .summary { grid-template-columns: repeat(2, 1fr); }
     .grid2 { grid-template-columns: 1fr; }
-    .thead .h-mini, .row .cell-mini { display: none; }
+    .thead .h-mini, .row .cell-mini,
+    .thead .h-title, .row .title-cell,
+    .thead .h-commit, .row .commit-cell { display: none; }
     .thead, .row { grid-template-columns: 116px minmax(0, 1fr) 74px 84px; }
   }
   :focus-visible { outline: 2px solid var(--iris); outline-offset: 2px; border-radius: 4px; }
