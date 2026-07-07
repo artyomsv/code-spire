@@ -7,7 +7,9 @@ import { registerPr } from '../api';
  * or query segments still parse.
  */
 function parsePrUrl(raw: string): { workspace: string; slug: string; pr: string } | null {
-  const m = raw.match(/([^/\s?#]+)\/([^/\s?#]+)\/(?:pull-requests|pullrequests)\/(\d+)/);
+  // {workspace}/{slug}/<pr-segment>/{id}: Bitbucket "pull-requests"/"pullrequests" or GitHub "pull".
+  // Mirrors the backend ManualRegisterResource.PR_URL parser.
+  const m = raw.match(/([^/\s?#]+)\/([^/\s?#]+)\/(?:pull-requests|pullrequests|pull)\/(\d+)/);
   return m ? { workspace: m[1], slug: m[2], pr: m[3] } : null;
 }
 
@@ -65,7 +67,7 @@ export default function RegisterPrDialog({ onClose }: { onClose: () => void }) {
             <span>Pull request URL</span>
             <input
               className="mono"
-              placeholder="https://bitbucket.org/workspace/repo/pull-requests/123"
+              placeholder="https://github.com/owner/repo/pull/123"
               value={url}
               onChange={(e) => onUrlChange(e.target.value)}
               autoFocus
