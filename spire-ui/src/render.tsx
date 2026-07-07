@@ -64,6 +64,42 @@ export function CopyButton({ text, title }: { text: string; title: string }) {
   );
 }
 
+/**
+ * Generic "value that may be long" widget: shows {@link display} (or the text),
+ * truncated with an ellipsis when it doesn't fit, and a copy button carrying the
+ * FULL text. The full value is always in the tooltip. Reused by the reviews table
+ * and the detail metadata so truncate-plus-copy is written once.
+ */
+export function CopyableValue({
+  text,
+  display,
+  mono,
+  copyTitle,
+}: {
+  text: string;
+  display?: string;
+  mono?: boolean;
+  copyTitle?: string;
+}) {
+  if (!text) return <span className="copyval-empty">—</span>;
+  return (
+    <span className="copyval">
+      <span className={`copyval-text ${mono ? 'mono' : ''}`} title={text}>
+        {display ?? text}
+      </span>
+      <CopyButton text={text} title={copyTitle ?? 'Copy'} />
+    </span>
+  );
+}
+
+/** "Open in GitHub / GitLab / Bitbucket" — matches the real provider (was hardcoded). */
+export function openInLabel(htmlUrl: string | undefined): string {
+  const p = providerLabel(htmlUrl);
+  const name =
+    p === 'github' ? 'GitHub' : p === 'gitlab' ? 'GitLab' : p === 'bitbucket-cloud' ? 'Bitbucket' : 'provider';
+  return `Open in ${name}`;
+}
+
 export const STATUS_LABEL: Record<ReviewStatus, string> = {
   reviewing: 'Reviewing',
   completed: 'Completed',
@@ -300,15 +336,19 @@ export function metaCard(r: ReviewDetail) {
         <h3>Metadata</h3>
       </div>
       <div className="body">
-        <dl className="kv">
+        <dl className="kv kv-meta">
           <dt>Review ID</dt>
-          <dd style={{ fontSize: 11 }}>{r.id}</dd>
+          <dd>
+            <CopyableValue text={r.id} mono copyTitle="Copy review ID" />
+          </dd>
           <dt>Provider</dt>
-          <dd>{providerLabel(r.htmlUrl)}</dd>
+          <dd>{providerBadge(r.htmlUrl) ?? providerLabel(r.htmlUrl)}</dd>
           <dt>Target</dt>
           <dd>{r.base}</dd>
           <dt>Head</dt>
-          <dd>{r.sha}</dd>
+          <dd>
+            <CopyableValue text={r.sha} mono copyTitle="Copy commit hash" />
+          </dd>
           <dt>Attempt</dt>
           <dd>1</dd>
         </dl>

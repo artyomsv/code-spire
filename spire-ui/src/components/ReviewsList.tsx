@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ReviewStatus, ReviewSummary } from '../api';
-import { ago, CopyButton, findCell, miniPipeline, pill, providerBadge, shortSha } from '../render';
+import { ago, CopyableValue, findCell, miniPipeline, pill, providerBadge, shortSha } from '../render';
 
 type ChipFilter = 'all' | 'reviewing' | 'completed' | 'failed' | 'closed';
 
@@ -181,16 +181,10 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                   @{r.author}
                 </div>
                 <div className="title-cell">
-                  <span className="title" title={r.title}>
-                    {r.title}
-                  </span>
-                  {r.title && <CopyButton text={r.title} title="Copy title" />}
+                  <CopyableValue text={r.title} copyTitle="Copy title" />
                 </div>
                 <div className="commit-cell">
-                  <span className="mono sha" title={r.sha}>
-                    {shortSha(r.sha)}
-                  </span>
-                  <CopyButton text={r.sha} title="Copy commit hash" />
+                  <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
                 </div>
                 <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
                 <div className="cell-r">{findCell(r.status, r.findings)}</div>

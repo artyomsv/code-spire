@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
-import { eventsCard, findingsCard, metaCard, pill, STAGES, STATUS_LABEL, stepper, usageCard } from '../render';
+import { eventsCard, findingsCard, metaCard, openInLabel, pill, STAGES, STATUS_LABEL, stepper, usageCard } from '../render';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -97,7 +97,7 @@ export default function ReviewDetail({ reviews }: Props) {
         </div>
         <div className="actions">
           <a className="btn-ghost" href={r.htmlUrl} target="_blank" rel="noreferrer">
-            Open in Bitbucket ↗
+            {openInLabel(r.htmlUrl)} ↗
           </a>
           {r.status === 'failed' && <button className="btn">Re-run review</button>}
         </div>
