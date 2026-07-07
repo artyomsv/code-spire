@@ -76,7 +76,8 @@ public class ReviewProjection {
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
-                        status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, updated_at = now()
+                        status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1,
+                        error_detail = NULL, updated_at = now()
                 """;
         update(sql, ps -> {
             ps.setString(1, reviewId);
@@ -126,6 +127,21 @@ public class ReviewProjection {
     public void setNote(String reviewId, String note) {
         update("UPDATE review_status SET note = ?, updated_at = now() WHERE review_id = ?", ps -> {
             ps.setString(1, note);
+            ps.setString(2, reviewId);
+        });
+    }
+
+    /**
+     * Persist the technical error behind a terminal failure so the UI can show WHY
+     * a review failed. Encrypted at rest (AAD = reviewId, like findings) and bounded
+     * — a provider error can be a large blob and may echo fragments of the diff.
+     */
+    public void setError(String reviewId, String error) {
+        String stored = (error == null || error.isBlank())
+                ? null
+                : encryption.encryptString(error.strip().substring(0, Math.min(error.strip().length(), 4000)), reviewId);
+        update("UPDATE review_status SET error_detail = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, stored);
             ps.setString(2, reviewId);
         });
     }
@@ -185,6 +201,44 @@ public class ReviewProjection {
             ps.setString(8, reviewId);
         });
         broadcast(reviewId);
+    }
+
+    /**
+     * Permanently delete a review and everything derived from it: the read-model
+     * row, its scoped timeline ({@code review_event}) and the underlying event
+     * stream ({@code event_log}, keyed by stream_id = reviewId). Done in one
+     * transaction so a review never half-vanishes. Returns false when there was
+     * no such review; broadcasts a removal so live clients drop the row.
+     */
+    public boolean deleteReview(String workspace, String slug, long pr) {
+        String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
+        try (Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                boolean existed = deleteBy(c, "DELETE FROM review_status WHERE review_id = ?", reviewId) > 0;
+                deleteBy(c, "DELETE FROM review_event WHERE review_id = ?", reviewId);
+                deleteBy(c, "DELETE FROM event_log WHERE stream_id = ?", reviewId);
+                c.commit();
+                if (existed) {
+                    broadcastRemoval(reviewId);
+                }
+                return existed;
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete review " + reviewId, e);
+        }
+    }
+
+    private int deleteBy(Connection c, String sql, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            return ps.executeUpdate();
+        }
     }
 
     /**
@@ -268,6 +322,22 @@ public class ReviewProjection {
             LOG.warn("Failed to serialize review summary", e);
             return;
         }
+        push(json);
+    }
+
+    /** Tell live clients to drop a review that was just deleted. */
+    private void broadcastRemoval(String reviewId) {
+        String json;
+        try {
+            json = mapper.writeValueAsString(java.util.Map.of("removed", reviewId));
+        } catch (JsonProcessingException e) {
+            LOG.warn("Failed to serialize review removal", e);
+            return;
+        }
+        push(json);
+    }
+
+    private void push(String json) {
         connections.stream()
                 .filter(conn -> conn.handshakeRequest().path().endsWith("/ws/reviews"))
                 .forEach(conn -> conn.sendText(json).subscribe().with(v -> {
@@ -280,7 +350,7 @@ public class ReviewProjection {
                              String authorId, String branch, String base, String sha, String htmlUrl,
                              String providerType, String status, int stage, int findings, String findingsJson,
                              String model, Integer tokensIn, Integer tokensOut, Long costMillicents, String note,
-                             int attempt, Instant createdAt, Instant updatedAt) {
+                             String errorDetail, int attempt, Instant createdAt, Instant updatedAt) {
         ReviewSummary toSummary() {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, findings,
@@ -310,7 +380,8 @@ public class ReviewProjection {
                 rs.getString("status"), rs.getInt("stage"), rs.getInt("findings_count"),
                 rs.getString("findings_json"), rs.getString("model"),
                 (Integer) rs.getObject("tokens_in"), (Integer) rs.getObject("tokens_out"),
-                (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getInt("attempt"),
+                (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getString("error_detail"),
+                rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 
@@ -318,7 +389,19 @@ public class ReviewProjection {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, r.updatedAt,
                 r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                parseFindings(r.findingsJson, r.id), usageView(r), r.note, events);
+                parseFindings(r.findingsJson, r.id), usageView(r), r.note, decryptError(r.errorDetail, r.id), events);
+    }
+
+    /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
+    private String decryptError(String stored, String reviewId) {
+        if (stored == null || stored.isBlank()) {
+            return null;
+        }
+        try {
+            return encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException notEncrypted) {
+            return stored;
+        }
     }
 
     private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0) throws SQLException {

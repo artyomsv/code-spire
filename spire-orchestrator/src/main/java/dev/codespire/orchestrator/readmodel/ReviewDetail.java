@@ -32,6 +32,7 @@ public record ReviewDetail(
         List<FindingView> findingsList,
         UsageView usage,
         String note,
+        String errorDetail,
         List<EventView> events) {
 
     /** A finding as the UI renders it: severity slug, "path:line" location, message. */

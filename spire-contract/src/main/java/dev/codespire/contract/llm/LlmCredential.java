@@ -13,9 +13,22 @@ package dev.codespire.contract.llm;
  * @param model       the model name
  * @param temperature sampling temperature
  * @param maxTokens   max output tokens, or {@code null} for the provider default
+ * @param profile     the model's API parameter dialect (never null)
  */
 public record LlmCredential(String type, String baseUrl, String apiKey, String model,
-                            double temperature, Integer maxTokens) {
+                            double temperature, Integer maxTokens, ModelParamProfile profile) {
+
+    public LlmCredential {
+        if (profile == null) {
+            profile = ModelParamProfile.legacyDefault();
+        }
+    }
+
+    /** Convenience: the classic Chat Completions dialect (max_tokens + temperature). */
+    public LlmCredential(String type, String baseUrl, String apiKey, String model,
+                         double temperature, Integer maxTokens) {
+        this(type, baseUrl, apiKey, model, temperature, maxTokens, ModelParamProfile.legacyDefault());
+    }
 
     /** Binds the ciphertext to the PR workspace — distinct prefix from the SCM cred AAD. */
     public static String aad(String workspace) {

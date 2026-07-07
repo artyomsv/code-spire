@@ -1,6 +1,7 @@
 package dev.codespire.llm;
 
 import dev.codespire.contract.llm.Completion;
+import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.port.LlmProvider;
@@ -11,6 +12,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.output.TokenUsage;
 
 import java.time.Duration;
@@ -42,11 +44,13 @@ public class LangChain4jLlmProvider implements LlmProvider {
 
     /** Builds the provider for any OpenAI-compatible endpoint from explicit config. */
     public static LangChain4jLlmProvider openAiCompatible(LlmConfig config) {
+        // Temperature/max-tokens are applied per-request from the model's parameter
+        // profile, NOT baked into the model here — otherwise a baked-in temperature
+        // would leak onto reasoning models that reject it (it survives the merge).
         ChatModel chatModel = OpenAiChatModel.builder()
                 .baseUrl(config.baseUrl())
                 .apiKey(config.apiKey())
                 .modelName(config.model())
-                .temperature(config.temperature())
                 .timeout(Duration.ofSeconds(60)) // ADR-013 LLM budget
                 .build();
         return new LangChain4jLlmProvider(chatModel, "openai-compatible/" + config.model());
@@ -60,14 +64,11 @@ public class LangChain4jLlmProvider implements LlmProvider {
     @Override
     public CompletionStage<Completion> complete(Prompt prompt, ModelParams params) {
         try {
-            // Per-call params override the model's construction-time defaults;
-            // maxOutputTokens is always set so the paid call has a hard cap.
             ChatRequest request = ChatRequest.builder()
                     .messages(List.of(
                             SystemMessage.from(prompt.system()),
                             UserMessage.from(prompt.user())))
-                    .temperature(params.temperature())
-                    .maxOutputTokens(params.maxTokens() != null ? params.maxTokens() : DEFAULT_MAX_OUTPUT_TOKENS)
+                    .parameters(requestParameters(params))
                     .build();
             ChatResponse response = model.chat(request);
             TokenUsage usage = response.tokenUsage();
@@ -80,5 +81,42 @@ public class LangChain4jLlmProvider implements LlmProvider {
         } catch (RuntimeException e) {
             return CompletableFuture.failedFuture(e);
         }
+    }
+
+    /**
+     * Build the OpenAI request parameters from the model's parameter profile — no
+     * dialect is hardcoded. The output cap goes on {@code max_tokens} or
+     * {@code max_completion_tokens} per the profile (or neither), temperature is
+     * omitted for models that only accept the default, and {@code reasoning_effort}
+     * / any operator-supplied extra params are passed through.
+     *
+     * <p>Passed to {@code model.chat(...)} via the request parameters: the real
+     * {@link OpenAiChatModel} keeps its defaults as {@link OpenAiChatRequestParameters}
+     * so the merge preserves these OpenAI-specific fields on the wire. (A bare mock
+     * {@code ChatModel} would merge through the base interface and drop them — which
+     * is why this method is unit-tested directly, not through a mock's merge.)
+     * Package-private for that direct test.
+     */
+    static OpenAiChatRequestParameters requestParameters(ModelParams params) {
+        ModelParamProfile profile = params.profile();
+        OpenAiChatRequestParameters.Builder b = OpenAiChatRequestParameters.builder();
+
+        if (profile.supportsTemperature()) {
+            b.temperature(params.temperature());
+        }
+        // The paid call carries a hard output cap (cost control) unless the model rejects one.
+        Integer cap = params.maxTokens() != null ? params.maxTokens() : DEFAULT_MAX_OUTPUT_TOKENS;
+        switch (profile.outputTokenParam()) {
+            case MAX_TOKENS -> b.maxOutputTokens(cap);
+            case MAX_COMPLETION_TOKENS -> b.maxCompletionTokens(cap);
+            case NONE -> { /* model rejects an explicit output cap */ }
+        }
+        if (profile.reasoningEffort() != null) {
+            b.reasoningEffort(profile.reasoningEffort());
+        }
+        if (!profile.extraParams().isEmpty()) {
+            b.customParameters(profile.extraParams());
+        }
+        return b.build();
     }
 }

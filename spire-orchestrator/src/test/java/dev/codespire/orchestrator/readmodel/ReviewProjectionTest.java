@@ -20,6 +20,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -162,6 +163,80 @@ class ReviewProjectionTest {
     @Test
     void missingReviewIsEmpty() {
         assertTrue(projection.loadDetail("acme", "web", 999999L).isEmpty());
+    }
+
+    @Test
+    void deleteRemovesRowTimelineAndEventStream() throws Exception {
+        long pr = 4106L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Delete me", "ddev", "acc-5",
+                "feature", "main", "dead", "https://x/pr/4106", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
+        projection.appendEvent(id, "integration", "PullRequestEventReceived", "opened");
+        // Seed the underlying event stream too, so we can assert it is cleared.
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO event_log (event_id, stream_id, sequence, event_type, event_version, "
+                             + "payload, occurred_at) VALUES (?, ?, 1, 'X', 1, ?, now())")) {
+            ps.setObject(1, java.util.UUID.randomUUID());
+            ps.setString(2, id);
+            ps.setBytes(3, new byte[]{1});
+            ps.executeUpdate();
+        }
+
+        assertTrue(projection.deleteReview("acme", "web", pr), "deleting an existing review reports success");
+
+        assertTrue(projection.loadDetail("acme", "web", pr).isEmpty(), "the read-model row is gone");
+        assertEquals(0, countBy("SELECT COUNT(*) FROM review_event WHERE review_id = ?", id), "timeline cleared");
+        assertEquals(0, countBy("SELECT COUNT(*) FROM event_log WHERE stream_id = ?", id), "event stream cleared");
+
+        assertFalse(projection.deleteReview("acme", "web", pr), "deleting a missing review reports no-op");
+    }
+
+    private int countBy(String sql, String id) throws Exception {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                return rs.getInt(1);
+            }
+        }
+    }
+
+    @Test
+    void terminalErrorIsStoredEncryptedSurfacedAndClearedOnRerun() throws Exception {
+        long pr = 4107L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Boom", "edev", "acc-6",
+                "feature", "main", "err1", "https://x/pr/4107", "github", "reviewing",
+                ReviewProjection.STAGE_REVIEW);
+
+        projection.updateStatus(id, "failed", ReviewProjection.STAGE_REVIEW);
+        projection.setError(id, "OPENAI-ERROR: 'max_tokens' is not supported with this model.");
+
+        // surfaced on the detail...
+        ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertEquals("OPENAI-ERROR: 'max_tokens' is not supported with this model.", d.errorDetail());
+
+        // ...but encrypted at rest
+        String stored;
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT error_detail FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                stored = rs.getString("error_detail");
+            }
+        }
+        assertNotNull(stored);
+        assertFalse(stored.contains("max_tokens"), "error detail must be encrypted at rest");
+
+        // re-registering (a re-push / new commit) clears the stale error
+        projection.registerHeader(id, REPO, pr, "Boom", "edev", "acc-6",
+                "feature", "main", "err2", "https://x/pr/4107", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
+        assertNull(projection.loadDetail("acme", "web", pr).orElseThrow().errorDetail(),
+                "a fresh run clears the previous error");
     }
 
     @Test

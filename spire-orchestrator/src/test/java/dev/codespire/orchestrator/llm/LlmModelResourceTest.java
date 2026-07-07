@@ -68,7 +68,8 @@ class LlmModelResourceTest {
 
     @Test
     void pricesAReviewFromTokenUsage() {
-        registry.create(new LlmModelInput("openai", "gpt-4o", "GPT-4o", 250_000L, 1_000_000L, true));
+        registry.create(new LlmModelInput("openai", "gpt-4o", "GPT-4o", 250_000L, 1_000_000L,
+                "MAX_TOKENS", true, null, Map.of(), true));
         // (10000 * 250000 + 2000 * 1000000) / 1_000_000 = 4500 millicents = $0.045
         assertEquals(4500L, registry.costMillicents("gpt-4o", 10_000, 2_000));
     }
@@ -76,5 +77,26 @@ class LlmModelResourceTest {
     @Test
     void uncataloguedModelCostsZero() {
         assertEquals(0L, registry.costMillicents("not-registered", 1_000, 1_000));
+    }
+
+    @Test
+    void roundTripsTheParameterProfileAndBrokersItByName() {
+        registry.create(new LlmModelInput("openai", "o3", "OpenAI o3", 2_000_000L, 8_000_000L,
+                "MAX_COMPLETION_TOKENS", false, "medium", Map.of("service_tier", "flex"), true));
+
+        var view = registry.list().stream().filter(m -> m.name().equals("o3")).findFirst().orElseThrow();
+        assertEquals("MAX_COMPLETION_TOKENS", view.outputTokenParam());
+        assertEquals(false, view.supportsTemperature());
+        assertEquals("medium", view.reasoningEffort());
+        assertEquals("flex", view.extraParams().get("service_tier"));
+
+        var profile = registry.profileForName("o3").orElseThrow();
+        assertEquals(dev.codespire.contract.llm.ModelParamProfile.OutputTokenParam.MAX_COMPLETION_TOKENS,
+                profile.outputTokenParam());
+        assertEquals(false, profile.supportsTemperature());
+        assertEquals("medium", profile.reasoningEffort());
+
+        // an uncatalogued model has no profile — caller falls back to the legacy dialect
+        assertEquals(java.util.Optional.empty(), registry.profileForName("not-registered"));
     }
 }

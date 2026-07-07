@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { deleteReview, fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { eventsCard, findingsCard, metaCard, openInLabel, pill, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
+import ConfirmDialog from './ConfirmDialog';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -9,9 +10,11 @@ interface Props {
 
 export default function ReviewDetail({ reviews }: Props) {
   const { workspace, slug, pr } = useParams();
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<ReviewDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Monotonic request id: a response only applies while it is still the latest
   // load for the current params — otherwise navigating A→B can let A's slower
@@ -115,8 +118,37 @@ export default function ReviewDetail({ reviews }: Props) {
             </a>
           )}
           {r.status === 'failed' && <button className="btn">Re-run review</button>}
+          <button className="btn-ghost danger" onClick={() => setConfirmDelete(true)}>
+            Delete
+          </button>
         </div>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this review?"
+          message={
+            <>
+              <p>
+                This permanently deletes the review for{' '}
+                <span className="mono">
+                  {r.repo}#{r.pr}
+                </span>{' '}
+                — its findings, timeline and event stream. This cannot be undone.
+              </p>
+              <p>The pull request itself is not affected.</p>
+            </>
+          }
+          confirmLabel="Delete review"
+          busyLabel="Deleting…"
+          danger
+          onConfirm={async () => {
+            await deleteReview(r.workspace, r.slug, r.pr);
+            navigate('/');
+          }}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
 
       <div className="card">
         <div className="head">

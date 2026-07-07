@@ -3,9 +3,11 @@ package dev.codespire.orchestrator.llm;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.llm.LlmCredential;
+import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
 import java.util.Optional;
 
@@ -17,8 +19,13 @@ import java.util.Optional;
 @ApplicationScoped
 public class WorkerLlmCredentials {
 
+    private static final Logger LOG = Logger.getLogger(WorkerLlmCredentials.class);
+
     @Inject
     LlmProviderRegistry registry;
+
+    @Inject
+    LlmModelRegistry models;
 
     @Inject
     EncryptionService encryption;
@@ -32,8 +39,22 @@ public class WorkerLlmCredentials {
     }
 
     private String pack(LlmProviderConfig cfg, String workspace) {
+        // The parameter dialect lives on the model catalog, keyed by model name;
+        // fall back to the classic Chat Completions dialect for uncatalogued models.
+        Optional<ModelParamProfile> resolved = models.profileForName(cfg.model());
+        ModelParamProfile profile = resolved.orElseGet(ModelParamProfile::legacyDefault);
+        if (resolved.isEmpty()) {
+            // Silent fallback here is exactly what makes "still sends max_tokens" baffling —
+            // say so, and point at the fix.
+            LOG.warnf("LLM model '%s' is not in the catalog — using the default max_tokens dialect. "
+                    + "If this is a reasoning model (o1/o3/gpt-5), register it in Settings → LLM → Models "
+                    + "with output token limit = max_completion_tokens.", cfg.model());
+        } else {
+            LOG.infof("LLM model '%s' resolved: outputTokenParam=%s, supportsTemperature=%s, reasoningEffort=%s",
+                    cfg.model(), profile.outputTokenParam(), profile.supportsTemperature(), profile.reasoningEffort());
+        }
         LlmCredential cred = new LlmCredential(cfg.type(), cfg.baseUrl(), cfg.apiKey(),
-                cfg.model(), cfg.temperature(), cfg.maxTokens());
+                cfg.model(), cfg.temperature(), cfg.maxTokens(), profile);
         try {
             return encryption.encryptString(mapper.writeValueAsString(cred), LlmCredential.aad(workspace));
         } catch (JsonProcessingException e) {

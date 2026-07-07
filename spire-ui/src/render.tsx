@@ -275,6 +275,12 @@ export function findingsCard(r: ReviewDetail) {
               <div className="msg" style={{ marginTop: 0 }}>{r.note ?? ''}</div>
             </div>
           </div>
+          {r.errorDetail && (
+            <details className="error-detail" open>
+              <summary>Error detail</summary>
+              <pre className="mono">{r.errorDetail}</pre>
+            </details>
+          )}
         </div>
       </div>
     );

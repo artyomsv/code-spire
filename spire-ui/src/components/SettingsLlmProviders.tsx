@@ -14,6 +14,7 @@ import {
   type LlmProviderInput,
   type LlmProviderView,
   type LlmType,
+  type OutputTokenParam,
 } from '../api';
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 
@@ -22,6 +23,25 @@ const LLM_TYPES: LlmType[] = ['openai'];
 const DEFAULT_BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
 };
+
+// Per-model API dialect (ADR-018): newer OpenAI reasoning models need
+// max_completion_tokens instead of max_tokens and reject a custom temperature.
+const TOKEN_PARAMS: { value: OutputTokenParam; label: string }[] = [
+  { value: 'MAX_TOKENS', label: 'max_tokens · classic chat models' },
+  { value: 'MAX_COMPLETION_TOKENS', label: 'max_completion_tokens · reasoning models' },
+  { value: 'NONE', label: 'none · no output cap' },
+];
+const REASONING_EFFORTS = ['', 'low', 'medium', 'high'];
+
+/** A one-glance hint of a model's non-default API dialect, or '' when it's the classic one. */
+export function profileHint(m: LlmModelView): string {
+  const bits: string[] = [];
+  if (m.outputTokenParam === 'MAX_COMPLETION_TOKENS') bits.push('max_completion_tokens');
+  else if (m.outputTokenParam === 'NONE') bits.push('no cap');
+  if (!m.supportsTemperature) bits.push('no temp');
+  if (m.reasoningEffort) bits.push(`effort: ${m.reasoningEffort}`);
+  return bits.join(' · ');
+}
 
 /** The default API base URL for a provider type ('' when unknown). */
 export function defaultBaseUrl(type: string): string {
@@ -119,6 +139,7 @@ export default function SettingsLlmProviders() {
                 <tr key={m.id}>
                   <td>
                     {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
+                    {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
                   </td>
                   <td className="mono">{m.type}</td>
                   <td className="cell-r mono">{priceLabel(m.inputPriceMillicentsPerMillion)}</td>
@@ -460,11 +481,36 @@ function LlmModelForm({
   const [outputPrice, setOutputPrice] = useState(
     initial ? String(millicentsPerMillionToDollars(initial.outputPriceMillicentsPerMillion)) : '',
   );
+  const [outputTokenParam, setOutputTokenParam] = useState<OutputTokenParam>(
+    initial?.outputTokenParam ?? 'MAX_TOKENS',
+  );
+  const [supportsTemperature, setSupportsTemperature] = useState(initial?.supportsTemperature ?? true);
+  const [reasoningEffort, setReasoningEffort] = useState(initial?.reasoningEffort ?? '');
+  const [extraParams, setExtraParams] = useState(
+    initial && initial.extraParams && Object.keys(initial.extraParams).length > 0
+      ? JSON.stringify(initial.extraParams, null, 2)
+      : '',
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    let parsedExtra: Record<string, unknown> = {};
+    if (extraParams.trim()) {
+      let value: unknown;
+      try {
+        value = JSON.parse(extraParams);
+      } catch {
+        setError('Extra params must be valid JSON.');
+        return;
+      }
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        setError('Extra params must be a JSON object, e.g. {"service_tier": "flex"}.');
+        return;
+      }
+      parsedExtra = value as Record<string, unknown>;
+    }
     setBusy(true);
     setError(null);
     const input: LlmModelInput = {
@@ -473,6 +519,10 @@ function LlmModelForm({
       label: label.trim() || name.trim(),
       inputPriceMillicentsPerMillion: dollarsToMillicentsPerMillion(Number(inputPrice) || 0),
       outputPriceMillicentsPerMillion: dollarsToMillicentsPerMillion(Number(outputPrice) || 0),
+      outputTokenParam,
+      supportsTemperature,
+      reasoningEffort: reasoningEffort.trim() || null,
+      extraParams: parsedExtra,
       enabled: initial?.enabled ?? true,
     };
     try {
@@ -543,6 +593,66 @@ function LlmModelForm({
           <small className="field-hint">
             Enter the provider's current published price per 1M tokens — used to cost each review.
           </small>
+
+          <div className="field-sep">API parameters</div>
+          <div className="field-row-2">
+            <label className="field">
+              <span>Output token limit</span>
+              <select
+                value={outputTokenParam}
+                onChange={(e) => {
+                  const v = e.target.value as OutputTokenParam;
+                  setOutputTokenParam(v);
+                  // Reasoning models that require max_completion_tokens also reject a custom
+                  // temperature — preset the toggle so it's not a second thing to remember.
+                  if (v === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
+                }}
+              >
+                {TOKEN_PARAMS.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>
+                Reasoning effort <span className="field-optional">optional</span>
+              </span>
+              <select value={reasoningEffort} onChange={(e) => setReasoningEffort(e.target.value)}>
+                {REASONING_EFFORTS.map((r) => (
+                  <option key={r} value={r}>
+                    {r === '' ? '— none —' : r}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="field-check">
+            <input
+              type="checkbox"
+              checked={supportsTemperature}
+              onChange={(e) => setSupportsTemperature(e.target.checked)}
+            />
+            <span>Model accepts a custom temperature (uncheck for reasoning models)</span>
+          </label>
+
+          <label className="field">
+            <span>
+              Extra params <span className="field-optional">advanced · JSON</span>
+            </span>
+            <textarea
+              className="mono"
+              rows={3}
+              placeholder={'{ "service_tier": "flex" }'}
+              value={extraParams}
+              onChange={(e) => setExtraParams(e.target.value)}
+            />
+            <small className="field-hint">
+              Passed through verbatim to the model API — for parameters not covered above.
+            </small>
+          </label>
 
           {error && <div className="modal-msg modal-error">{error}</div>}
 

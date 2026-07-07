@@ -500,6 +500,27 @@
   .tbtn:hover { color: var(--text); border-color: var(--border-strong); }
   .tbtn.danger:hover { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, transparent); }
   .btn-danger { background: var(--crit); }
+  .btn-ghost.danger:hover { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, transparent); }
+
+  /* ---- extension: failure error detail ---- */
+  .error-detail { margin-top: 10px; }
+  .error-detail summary {
+    cursor: pointer; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-3); user-select: none;
+  }
+  .error-detail summary:hover { color: var(--text-2); }
+  .error-detail pre {
+    margin: 8px 0 0; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 12px; line-height: 1.5; color: var(--text-2);
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+  }
+
+  /* ---- extension: confirm modal ---- */
+  .modal.modal-sm { max-width: 420px; }
+  .confirm-msg { font-size: 13px; color: var(--text-2); line-height: 1.55; }
+  .confirm-msg p { margin: 0 0 8px; }
+  .confirm-msg p:last-child { margin-bottom: 0; }
+  .confirm-msg .mono { font-family: var(--font-mono); color: var(--text); }
 
   /* form controls not covered by the base modal styles */
   .modal-body.scroll { max-height: min(72vh, 640px); overflow-y: auto; }
@@ -509,6 +530,16 @@
     font-family: var(--font-sans);
   }
   .field select:focus { border-color: var(--iris); }
+  .field textarea {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 11px; color: var(--text); font-size: 12.5px; outline: none; width: 100%;
+    resize: vertical; min-height: 44px;
+  }
+  .field textarea:focus { border-color: var(--iris); }
+  .field-sep {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--text-3); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 2px;
+  }
   .field-hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); text-transform: none; letter-spacing: 0; }
   .field-optional { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
   .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

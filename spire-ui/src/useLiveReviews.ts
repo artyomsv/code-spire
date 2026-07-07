@@ -14,6 +14,11 @@ function isReviewSummary(d: unknown): d is ReviewSummary {
   return typeof d === 'object' && d !== null && typeof (d as { id?: unknown }).id === 'string';
 }
 
+/** A `{ removed: reviewId }` push tells us a review was deleted — drop its row. */
+function isRemoval(d: unknown): d is { removed: string } {
+  return typeof d === 'object' && d !== null && typeof (d as { removed?: unknown }).removed === 'string';
+}
+
 function upsert(prev: ReviewSummary[], next: ReviewSummary): ReviewSummary[] {
   const idx = prev.findIndex((r) => r.id === next.id);
   const merged = idx >= 0 ? prev.map((r) => (r.id === next.id ? next : r)) : [...prev, next];
@@ -74,6 +79,9 @@ export function useLiveReviews(): LiveReviews {
           wsDelivered.current = true;
           setReviews(sortReviews(data.filter(isReviewSummary)));
           setLoading(false);
+        } else if (isRemoval(data)) {
+          const removedId = data.removed;
+          setReviews((prev) => prev.filter((r) => r.id !== removedId));
         } else if (isReviewSummary(data)) {
           wsDelivered.current = true;
           setReviews((prev) => upsert(prev, data));

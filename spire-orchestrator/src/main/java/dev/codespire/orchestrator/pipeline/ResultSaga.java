@@ -173,6 +173,8 @@ public class ResultSaga {
                 e.reviewId(), e.phase(), attempt, maxAttempts, e.retryable(), e.error(), note);
         projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
         projection.setNote(e.reviewId(), note);
+        // Persist the actual provider/worker error so the UI can show why it failed (not just the log).
+        projection.setError(e.reviewId(), e.error());
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
     }

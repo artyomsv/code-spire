@@ -40,6 +40,20 @@ against the catalog (`cost = (tokensIn·inputPrice + tokensOut·outputPrice) / 1
 `review_status.cost_millicents` — the field was collected since S1 but always 0. Cost is computed in
 the orchestrator (the registry owner), not brokered to the worker, so pricing stays in one place.
 
+**Per-model parameter profile.** Different models accept different request parameters: classic Chat
+Completions models take `max_tokens` + a custom `temperature`, while OpenAI reasoning models (o1/o3/
+gpt-5) reject `max_tokens` (they require `max_completion_tokens`) and reject a non-default temperature.
+Rather than sniff model names in the worker, each catalog model carries a **profile** the operator
+declares (`output_token_param` = MAX_TOKENS | MAX_COMPLETION_TOKENS | NONE, `supports_temperature`,
+`reasoning_effort`, and a free-form `extra_params` JSON passed through as OpenAI `customParameters` —
+the escape hatch for any future param, so a new knob never needs a code change). The profile lives on
+the model (it is intrinsic to the model, not the deployment), defaults to the classic dialect so
+existing models are unchanged, and is brokered to the worker on the `LlmCredential` (`ModelParamProfile`)
+keyed by model name. The worker builds `OpenAiChatRequestParameters` from it — no dialect is hardcoded.
+Correctness note: the params ride via the request; the real `OpenAiChatModel` keeps its defaults as the
+OpenAI subtype so the merge preserves these fields on the wire (a bare mock `ChatModel` would drop them,
+so the mapping is unit-tested directly).
+
 ---
 
 ## ADR-017 — Self-loop guard in the orchestrator; bot account id lives only in the registry

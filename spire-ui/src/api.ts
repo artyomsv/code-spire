@@ -57,6 +57,7 @@ export interface ReviewDetail extends ReviewSummary {
   findingsList: Finding[];
   usage: Usage | null;
   note: string | null; // observe/stalled/superseded explanation, may be empty
+  errorDetail: string | null; // technical error behind a terminal failure (e.g. the LLM provider's message)
   events: ReviewEvent[];
 }
 
@@ -76,6 +77,19 @@ export async function fetchReviewDetail(
   );
   if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
   return res.json();
+}
+
+/** Permanently delete a review and all of its data (row, timeline, event stream). */
+export async function deleteReview(
+  workspace: string,
+  slug: string,
+  pr: string | number,
+): Promise<void> {
+  const res = await fetch(
+    `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) await throwResponse(res, 'Failed to delete review');
 }
 
 export interface RegisterResult {
@@ -278,6 +292,9 @@ export async function deleteLlmProvider(id: string): Promise<void> {
 
 // ---- LLM model catalog (with token pricing) ----
 
+/** Which OpenAI parameter carries the output-token cap for a model. */
+export type OutputTokenParam = 'MAX_TOKENS' | 'MAX_COMPLETION_TOKENS' | 'NONE';
+
 export interface LlmModelView {
   id: string;
   type: LlmType;
@@ -285,6 +302,10 @@ export interface LlmModelView {
   label: string;
   inputPriceMillicentsPerMillion: number; // millicents per 1M input tokens
   outputPriceMillicentsPerMillion: number;
+  outputTokenParam: OutputTokenParam; // max_tokens (chat) vs max_completion_tokens (reasoning)
+  supportsTemperature: boolean; // false = omit temperature (reasoning models)
+  reasoningEffort: string | null; // low | medium | high, or null
+  extraParams: Record<string, unknown>; // free-form pass-through params
   enabled: boolean;
   createdAt: string;
 }
@@ -295,6 +316,10 @@ export interface LlmModelInput {
   label: string;
   inputPriceMillicentsPerMillion: number;
   outputPriceMillicentsPerMillion: number;
+  outputTokenParam?: OutputTokenParam;
+  supportsTemperature?: boolean;
+  reasoningEffort?: string | null;
+  extraParams?: Record<string, unknown>;
   enabled?: boolean;
 }
 

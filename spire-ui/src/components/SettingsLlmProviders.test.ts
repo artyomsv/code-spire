@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LlmModelView } from '../api';
-import { byExpenseDesc, defaultBaseUrl } from './SettingsLlmProviders';
+import { byExpenseDesc, defaultBaseUrl, profileHint } from './SettingsLlmProviders';
 
 describe('defaultBaseUrl', () => {
   it('returns the OpenAI base URL for openai', () => {
@@ -21,6 +21,10 @@ describe('byExpenseDesc', () => {
     label,
     inputPriceMillicentsPerMillion: input,
     outputPriceMillicentsPerMillion: output,
+    outputTokenParam: 'MAX_TOKENS',
+    supportsTemperature: true,
+    reasoningEffort: null,
+    extraParams: {},
     enabled: true,
     createdAt: '2026-07-07T00:00:00Z',
   });
@@ -36,5 +40,36 @@ describe('byExpenseDesc', () => {
     const list = [model('a', 1, 1), model('b', 9, 9)];
     byExpenseDesc(list);
     expect(list.map((m) => m.label)).toEqual(['a', 'b']);
+  });
+});
+
+describe('profileHint', () => {
+  const base = (): LlmModelView => ({
+    id: 'x',
+    type: 'openai',
+    name: 'x',
+    label: 'x',
+    inputPriceMillicentsPerMillion: 0,
+    outputPriceMillicentsPerMillion: 0,
+    outputTokenParam: 'MAX_TOKENS',
+    supportsTemperature: true,
+    reasoningEffort: null,
+    extraParams: {},
+    enabled: true,
+    createdAt: '2026-07-07T00:00:00Z',
+  });
+
+  it('is empty for the classic chat dialect', () => {
+    expect(profileHint(base())).toBe('');
+  });
+
+  it('summarizes a reasoning model', () => {
+    expect(
+      profileHint({ ...base(), outputTokenParam: 'MAX_COMPLETION_TOKENS', supportsTemperature: false, reasoningEffort: 'medium' }),
+    ).toBe('max_completion_tokens · no temp · effort: medium');
+  });
+
+  it('notes when no output cap is sent', () => {
+    expect(profileHint({ ...base(), outputTokenParam: 'NONE' })).toBe('no cap');
   });
 });

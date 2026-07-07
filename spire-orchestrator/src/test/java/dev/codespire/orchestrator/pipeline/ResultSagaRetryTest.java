@@ -38,6 +38,7 @@ class ResultSagaRetryTest {
     private final List<String> retryNotes = new ArrayList<>();
     private final List<Integer> retryAttempts = new ArrayList<>();
     private final List<String> terminalStatuses = new ArrayList<>();
+    private final List<String> terminalErrors = new ArrayList<>();
 
     private ResultSaga sagaWith(int storedAttempt, int maxAttempts, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
@@ -83,6 +84,11 @@ class ResultSagaRetryTest {
 
             @Override
             public void setNote(String reviewId, String note) {
+            }
+
+            @Override
+            public void setError(String reviewId, String error) {
+                terminalErrors.add(error);
             }
         };
         saga.workerCredentials = new WorkerCredentials() {
@@ -134,6 +140,7 @@ class ResultSagaRetryTest {
 
         assertTrue(emitted.isEmpty(), "a permanent failure is never retried");
         assertEquals(List.of("failed"), terminalStatuses);
+        assertEquals(List.of("boom"), terminalErrors, "the provider error is persisted for the UI");
         var rf = assertInstanceOf(RecordCommand.RecordFailure.class, recorded.get(0));
         assertEquals(false, rf.retryable());
     }

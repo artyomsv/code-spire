@@ -63,7 +63,8 @@ public class WorkerLlmProvider {
                     new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(), cred.temperature()));
             default -> throw new IllegalStateException("Unsupported LLM provider type: " + cred.type());
         };
-        return new LlmClient(provider, new ModelParams(cred.model(), cred.temperature(), cred.maxTokens()));
+        return new LlmClient(provider,
+                new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()));
     }
 
     private LlmCredential unpack(GenerateReview command) {

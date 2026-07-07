@@ -1,6 +1,8 @@
 package dev.codespire.llm;
 
 import dev.codespire.contract.llm.Completion;
+import dev.codespire.contract.llm.ModelParamProfile;
+import dev.codespire.contract.llm.ModelParamProfile.OutputTokenParam;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
 import dev.langchain4j.data.message.AiMessage;
@@ -10,12 +12,14 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,6 +67,46 @@ class LangChain4jLlmProviderTest {
 
         assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, captured.get().maxOutputTokens());
         assertEquals(0.2, captured.get().temperature());
+    }
+
+    @Test
+    void reasoningProfileUsesMaxCompletionTokensAndOmitsTemperature() {
+        // A reasoning model (o1/o3/gpt-5): max_completion_tokens, no temperature, reasoning_effort.
+        var profile = new ModelParamProfile(OutputTokenParam.MAX_COMPLETION_TOKENS, false, "medium", Map.of());
+        var params = LangChain4jLlmProvider.requestParameters(new ModelParams("o3", 0.7, 256, profile));
+
+        assertEquals(256, params.maxCompletionTokens(), "output cap goes on max_completion_tokens");
+        assertNull(params.maxOutputTokens(), "max_tokens must not be sent to a reasoning model");
+        assertNull(params.temperature(), "temperature is omitted when the model rejects it");
+        assertEquals("medium", params.reasoningEffort());
+    }
+
+    @Test
+    void legacyProfileUsesMaxTokensWithTemperature() {
+        var params = LangChain4jLlmProvider.requestParameters(new ModelParams("gpt-4o", 0.7, 512));
+
+        assertEquals(512, params.maxOutputTokens(), "classic chat models cap via max_tokens");
+        assertNull(params.maxCompletionTokens());
+        assertEquals(0.7, params.temperature());
+    }
+
+    @Test
+    void noOutputCapProfileSendsNeitherTokenParam() {
+        var profile = new ModelParamProfile(OutputTokenParam.NONE, true, null, Map.of());
+        var params = LangChain4jLlmProvider.requestParameters(new ModelParams("m", 0.2, 999, profile));
+
+        assertNull(params.maxOutputTokens());
+        assertNull(params.maxCompletionTokens());
+    }
+
+    @Test
+    void extraParamsPassThroughAsCustomParameters() {
+        var profile = new ModelParamProfile(OutputTokenParam.MAX_TOKENS, true, null, Map.of("service_tier", "flex"));
+        var params = LangChain4jLlmProvider.requestParameters(new ModelParams("gpt-4o", 0.2, null, profile));
+
+        assertEquals("flex", params.customParameters().get("service_tier"));
+        assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, params.maxOutputTokens(),
+                "unset cap still enforces the default output cap");
     }
 
     @Test
