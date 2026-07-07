@@ -4,6 +4,35 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-018 — LLM provider registry: in-app, encrypted, brokered per command
+
+**Context.** The LLM was selected at worker boot from env (`SPIRE_LLM_PROVIDER` + `SPIRE_LLM_BASE_URL`/
+`API_KEY`/`MODEL`) — one provider per deployment, key on disk, no way to change model without a
+restart. The SCM side had already solved the same shape: a DB registry (`scm_provider`) with
+Tink-encrypted secrets, resolved at review time and brokered encrypted to the worker per command
+(ADR-009 + ADR-015). LLM config should follow it, not diverge.
+
+**Decision.** LLM providers are registered in the app (Settings → LLM), stored in `llm_provider`
+(Tink-encrypted `api_key`, AAD bound to the row id), never returned by the API. One row is the global
+default (partial unique index). At `GenerateReview` time the orchestrator resolves the default,
+packs its config as an `LlmCredential`, encrypts it (AAD `worker-llm-cred:<workspace>` — a distinct
+prefix from the SCM cred so ciphertexts can't be swapped), and rides it on the command. The worker
+decrypts it and builds the model per command (`WorkerLlmProvider`, mirroring `WorkerScmClients`).
+The key is validated on save with a cheap authenticated call to the provider's models list,
+SSRF-guarded by the shared `PublicHttpsGuard` (the same guard the SCM whoami uses).
+
+`SPIRE_LLM_*` credential env vars are gone. `spire.llm.provider` survives only as a `stub|registry`
+mode flag (dev/test stub), exactly like `spire.scm.provider`. If no default LLM provider is
+registered, `GenerateReview` is skipped with a visible note rather than emitted uncredentialed.
+
+**Providers.** Phase 1 supports OpenAI (via LangChain4j `langchain4j-open-ai`). Anthropic and Gemini
+are phase 2 — the credential's `type` selects the builder, so they slot in without a wire change. A
+per-SCM-provider LLM override (`scm_provider.llm_provider_id`) is phase 3. Subscription-license
+backends (ChatGPT/Codex, Claude Code, Copilot seats) are explicitly out: they are not embeddable APIs
+and repurposing them violates ToS — use the native provider APIs, which serve the same models.
+
+---
+
 ## ADR-017 — Self-loop guard in the orchestrator; bot account id lives only in the registry
 
 **Context.** The bot account id exists for exactly one purpose: the self-loop guard (ADR-013) — don't

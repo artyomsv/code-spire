@@ -4,6 +4,7 @@ import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
 import SettingsProviders from './components/SettingsProviders';
+import SettingsLlmProviders from './components/SettingsLlmProviders';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -18,11 +19,14 @@ export default function App() {
   const { reviews, loading, error } = useLiveReviews();
   const location = useLocation();
   const onProviders = location.pathname.startsWith('/settings/providers');
+  const onLlm = location.pathname.startsWith('/settings/llm');
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
     : onProviders
       ? 'Providers'
-      : 'Reviews';
+      : onLlm
+        ? 'LLM providers'
+        : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -73,6 +77,13 @@ export default function App() {
             </svg>
             Providers
           </a>
+          <a className={onLlm ? 'active' : ''} href="#/settings/llm">
+            <svg className="ic" viewBox="0 0 16 16" fill="none">
+              <path d="M8 2a4 4 0 0 1 4 4c0 1.5-1 2.3-1.6 3H5.6C5 8.3 4 7.5 4 6a4 4 0 0 1 4-4Z" stroke="currentColor" strokeWidth="1.3" fill="none" />
+              <path d="M6 12h4M6.5 14h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+            LLM providers
+          </a>
         </nav>
         <div className="spacer"></div>
         <div className="foot">
@@ -111,6 +122,7 @@ export default function App() {
           <Route path="/" element={<ReviewsList reviews={reviews} loading={loading} error={error} />} />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/settings/providers" element={<SettingsProviders />} />
+          <Route path="/settings/llm" element={<SettingsLlmProviders />} />
         </Routes>
       </main>
 

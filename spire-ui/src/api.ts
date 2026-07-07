@@ -207,3 +207,70 @@ export async function setReviewMode(mode: ReviewMode): Promise<ReviewModeView> {
   if (!res.ok) return throwResponse(res, 'Failed to update review mode');
   return res.json();
 }
+
+// ---- LLM providers ----
+
+export type LlmType = 'openai'; // anthropic | gemini land in phase 2
+
+export interface LlmProviderView {
+  id: string;
+  name: string;
+  type: LlmType;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number | null;
+  hasApiKey: boolean; // the key is never returned
+  enabled: boolean;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface LlmProviderInput {
+  name: string;
+  type: LlmType;
+  baseUrl: string;
+  apiKey?: string; // omit/empty on edit = keep the stored key
+  model: string;
+  temperature?: number;
+  maxTokens?: number | null;
+  enabled?: boolean;
+  isDefault?: boolean;
+}
+
+export async function fetchLlmProviders(): Promise<LlmProviderView[]> {
+  const res = await fetch('/api/llm-providers');
+  if (!res.ok) return throwResponse(res, 'Failed to load LLM providers');
+  return res.json();
+}
+
+export async function createLlmProvider(input: LlmProviderInput): Promise<LlmProviderView> {
+  const res = await fetch('/api/llm-providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to create LLM provider');
+  return res.json();
+}
+
+export async function updateLlmProvider(id: string, input: LlmProviderInput): Promise<LlmProviderView> {
+  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update LLM provider');
+  return res.json();
+}
+
+export async function setDefaultLlmProvider(id: string): Promise<LlmProviderView> {
+  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
+  if (!res.ok) return throwResponse(res, 'Failed to set default LLM provider');
+  return res.json();
+}
+
+export async function deleteLlmProvider(id: string): Promise<void> {
+  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
+}

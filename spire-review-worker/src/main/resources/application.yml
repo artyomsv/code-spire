@@ -32,7 +32,10 @@ spire:
   scm:
     provider: ${SPIRE_SCM_PROVIDER}   # stub | bitbucket-cloud
   llm:
-    provider: ${SPIRE_LLM_PROVIDER}   # stub | openai-compatible
+    # Mode flag only (NOT credentials): stub forces the canned dev/test LLM;
+    # registry uses the per-command brokered credential from the LLM provider
+    # registry (Settings -> LLM, ADR-018). No SPIRE_LLM_BASE_URL/API_KEY/MODEL.
+    provider: ${SPIRE_LLM_PROVIDER:registry}   # stub | registry
 
 mp:
   messaging:

@@ -105,7 +105,7 @@ class WorkerPipelineTest {
     @Test
     @Order(3)
     void generateReviewUsesRealDiffAndStubLlm() throws Exception {
-        sendCommand(new ActionCommand.GenerateReview(REVIEW_ID, REPO, 42, COMMIT, null, 1, null, cred()));
+        sendCommand(new ActionCommand.GenerateReview(REVIEW_ID, REPO, 42, COMMIT, null, 1, null, cred(), null));
         List<String> results = consumeResults(5);
         String generated = results.stream()
                 .filter(v -> v.contains("\"type\":\"ReviewGenerated\"")).findFirst().orElseThrow();

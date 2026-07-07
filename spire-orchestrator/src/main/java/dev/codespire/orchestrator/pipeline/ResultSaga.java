@@ -54,6 +54,9 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
 
+    @Inject
+    dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
+
     /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
     @ConfigProperty(name = "spire.review.max-attempts", defaultValue = "3")
     int maxAttempts;
@@ -89,9 +92,21 @@ public class ResultSaga {
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
-                emitWithCredential(e.reviewId(), "GenerateReview", cred -> new ActionCommand.GenerateReview(
+                // GenerateReview also needs the LLM credential (ADR-018): resolve the
+                // global-default provider and pack it encrypted; skip if none is set.
+                String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
+                java.util.Optional<String> llmCred = workerLlmCredentials.packDefault(workspace);
+                if (llmCred.isEmpty()) {
+                    timeline.record("result", "skipped:GenerateReview", e.reviewId(),
+                            "no default LLM provider configured");
+                    projection.setNote(e.reviewId(),
+                            "No default LLM provider configured — register one in Settings → LLM.");
+                    LOG.warnf("Skipping GenerateReview for %s — no default LLM provider set", e.reviewId());
+                    return;
+                }
+                emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.contextRef(), 1, null, cred));
+                        e.contextRef(), 1, null, scmCred, llmCred.get()));
             });
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",

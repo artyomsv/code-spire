@@ -42,6 +42,17 @@ public sealed interface ActionCommand {
         return null;
     }
 
+    /**
+     * Opaque, KEK-encrypted LLM credential (ADR-018) — base64 Tink ciphertext of an
+     * {@link dev.codespire.contract.llm.LlmCredential}, resolved and packed by the
+     * orchestrator from the LLM provider registry (global default). Only
+     * {@link GenerateReview} carries it; {@code null} means "use the stub LLM"
+     * (dev/test). Never logged.
+     */
+    default String llmCredential() {
+        return null;
+    }
+
     record FetchDiff(String reviewId, RepoRef repo, long prId, String commit,
                      String scmCredential) implements ActionCommand {
     }
@@ -52,7 +63,8 @@ public sealed interface ActionCommand {
 
     /** providerOverride is set by the fallback saga on retry; worker re-fetches the diff by commit. */
     record GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
-                          int attempt, String providerOverride, String scmCredential) implements ActionCommand {
+                          int attempt, String providerOverride, String scmCredential,
+                          String llmCredential) implements ActionCommand {
     }
 
     /** Findings inline — same ReviewResult as ReviewGenerated (ADR-011). */

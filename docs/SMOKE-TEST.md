@@ -175,20 +175,18 @@ topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
 1. Register a **GitHub provider** in Settings → Providers (workspace = repo owner, e.g.
    `artyomsv`) with a token scoped **Contents: Read** + **Pull requests: Read and write**.
    Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
-2. In `.env`:
+2. Register an **LLM provider** in Settings → LLM (ADR-018): type `openai`, base URL
+   `https://api.openai.com/v1`, your API key, a model (e.g. `gpt-4o`). The key is validated on
+   save and stored encrypted; mark it the **default**. No `SPIRE_LLM_*` env vars.
+3. In `.env`, only the mode flags are needed:
    ```bash
-   SPIRE_REVIEW_MODE=active
-   SPIRE_LLM_PROVIDER=openai-compatible
-   SPIRE_LLM_BASE_URL=https://api.openai.com/v1   # or http://localhost:11434/v1 for Ollama
-   SPIRE_LLM_API_KEY=<key>                        # any non-blank value for Ollama
-   SPIRE_LLM_MODEL=<model>                         # e.g. gpt-4o
+   SPIRE_REVIEW_MODE=active   # seed default; flip live from Settings → Providers "Review mode"
+   SPIRE_LLM_PROVIDER=registry  # stub|registry mode flag (NOT credentials); registry = use the UI
    ```
    `SPIRE_ENCRYPTION_KEYSET` must be the **same** value the orchestrator uses — the worker
-   decrypts the brokered per-command credential with it (ADR-015). `SPIRE_REVIEW_MODE` is only
-   the seed default — once the app is up you flip observe↔active from the **Settings → Providers
-   "Review mode" toggle** (persisted in the DB, no restart), so you can start in `observe` and
-   switch to `active` from the UI when ready.
-3. The PR author must pass the provider's allowlist (empty allowlist = everyone).
+   decrypts the brokered per-command SCM + LLM credentials with it (ADR-015/ADR-018). Start in
+   `observe` and flip to `active` from the UI when ready (no restart).
+4. The PR author must pass the provider's allowlist (empty allowlist = everyone).
 
 ### 2. Run the two services
 

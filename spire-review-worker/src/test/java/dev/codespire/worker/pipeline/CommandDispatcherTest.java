@@ -92,7 +92,7 @@ class CommandDispatcherTest {
 
     @Test
     void generateReviewRoutesToTheReviewWorker() {
-        dispatcher.on(new GenerateReview(REVIEW_ID, REPO, 7, "abc123", null, 1, null, null));
+        dispatcher.on(new GenerateReview(REVIEW_ID, REPO, 7, "abc123", null, 1, null, null, null));
         assertEquals(List.of("generateReview"), calls);
     }
 
@@ -133,7 +133,7 @@ class CommandDispatcherTest {
     void mdcIsClearedEvenWhenTheWorkerThrows() {
         workerFailure = new IllegalStateException("worker blew up");
         assertThrows(IllegalStateException.class,
-                () -> dispatcher.on(new GenerateReview(REVIEW_ID, REPO, 7, "abc123", null, 1, null, null)),
+                () -> dispatcher.on(new GenerateReview(REVIEW_ID, REPO, 7, "abc123", null, 1, null, null, null)),
                 "the failure must propagate so the record is nacked to cs.dlq");
         assertNull(MDC.get("reviewId"));
     }

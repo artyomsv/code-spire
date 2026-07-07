@@ -6,13 +6,12 @@ import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.llm.Completion;
-import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
-import dev.codespire.contract.port.LlmProvider;
+import dev.codespire.worker.adapters.WorkerLlmProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.ReviewResult;
@@ -62,7 +61,7 @@ public class ReviewWorker {
     WorkerScmClients scm;
 
     @Inject
-    LlmProvider llm;
+    WorkerLlmProvider llm;
 
     @Inject
     CommentIdempotencyStore idempotency;
@@ -96,8 +95,9 @@ public class ReviewWorker {
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
 
             Prompt prompt = ReviewPromptBuilder.build(pr, diff.files(), List.of()); // context items land in P2
-            Completion completion = llm.complete(prompt,
-                    new ModelParams(llm.id(), 0.2, null)).toCompletableFuture().join();
+            WorkerLlmProvider.LlmClient client = llm.forCommand(command);
+            Completion completion = client.provider().complete(prompt, client.params())
+                    .toCompletableFuture().join();
 
             ReviewResult result = FindingsParser.parse(completion.text(), completion.usage());
             // Persist-then-emit (finding M2): marking first makes the paid call

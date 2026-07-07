@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.provider;
 
 import dev.codespire.contract.scm.Author;
+import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -17,10 +18,6 @@ import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -137,50 +134,11 @@ public class ProviderResource {
     /**
      * SSRF guard (CWE-918): the baseUrl is dereferenced server-side right after
      * validation (whoami), so it must be an https URL resolving to a public
-     * address — loopback, link-local (cloud metadata 169.254.169.254), RFC1918,
-     * carrier-NAT 100.64/10 and IPv6 unique-local fc00::/7 are all rejected.
-     * The relaxed mode (%dev/%test) still requires a parseable absolute URL.
+     * address. Delegates to the shared {@link PublicHttpsGuard} (also used by the
+     * LLM key validation), so the two server-side-fetch paths cannot drift.
      */
     void validateBaseUrl(String baseUrl) {
-        URI uri;
-        try {
-            uri = new URI(baseUrl.trim());
-        } catch (URISyntaxException e) {
-            throw new BadRequestException("baseUrl is not a valid URL");
-        }
-        if (uri.getScheme() == null || uri.getHost() == null) {
-            throw new BadRequestException("baseUrl must be an absolute http(s) URL with a host");
-        }
-        if (allowInsecureProviderUrls) {
-            return;
-        }
-        if (!"https".equalsIgnoreCase(uri.getScheme())) {
-            throw new BadRequestException("baseUrl must use https");
-        }
-        InetAddress[] addresses;
-        try {
-            addresses = InetAddress.getAllByName(uri.getHost());
-        } catch (UnknownHostException e) {
-            throw new BadRequestException("baseUrl host cannot be resolved");
-        }
-        for (InetAddress address : addresses) {
-            if (!isPublicAddress(address)) {
-                throw new BadRequestException("baseUrl must resolve to a public address");
-            }
-        }
-    }
-
-    private static boolean isPublicAddress(InetAddress address) {
-        if (address.isLoopbackAddress() || address.isAnyLocalAddress() || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress() || address.isMulticastAddress()) {
-            return false; // loopback, 0.0.0.0/::, 169.254/fe80 (cloud metadata), RFC1918
-        }
-        byte[] raw = address.getAddress();
-        if (raw.length == 16 && (raw[0] & 0xFE) == 0xFC) {
-            return false; // fc00::/7 unique-local
-        }
-        // 100.64.0.0/10 carrier-grade NAT — used for metadata endpoints by some clouds
-        return !(raw.length == 4 && (raw[0] & 0xFF) == 100 && (raw[1] & 0xC0) == 64);
+        PublicHttpsGuard.validate(baseUrl, allowInsecureProviderUrls);
     }
 
     private static void requireField(String value, String name) {

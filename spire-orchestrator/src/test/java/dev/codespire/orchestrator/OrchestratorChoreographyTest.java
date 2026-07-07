@@ -58,6 +58,9 @@ class OrchestratorChoreographyTest {
     @Inject
     dev.codespire.orchestrator.provider.ProviderRegistry providers;
 
+    @Inject
+    dev.codespire.orchestrator.llm.LlmProviderRegistry llmProviders;
+
     private KafkaProducer<String, String> producer;
 
     @org.junit.jupiter.api.BeforeEach
@@ -69,6 +72,13 @@ class OrchestratorChoreographyTest {
                     "bearer", null, "tok", "acct", true, List.of()));
         } catch (RuntimeException alreadyRegistered) {
             // fine — one provider per (type, workspace)
+        }
+        // GenerateReview needs a default LLM provider (ADR-018); the worker runs in
+        // stub mode here, but the orchestrator still packs the default's credential.
+        if (llmProviders.resolveDefault().isEmpty()) {
+            llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
+                    "test-llm", "openai", "http://localhost", "sk-test", "gpt-4o",
+                    0.2, null, true, true));
         }
     }
 
