@@ -193,6 +193,92 @@ class ReviewProjectionTest {
         assertFalse(projection.deleteReview("acme", "web", pr), "deleting a missing review reports no-op");
     }
 
+    @Test
+    void deleteAlsoClearsTheWorkerIdempotencyClaims() throws Exception {
+        long pr = 4107L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Rerun me", "rdev", "acc-7",
+                "feature", "main", "c0ffee", "https://x/pr/4107", "github", "completed",
+                ReviewProjection.STAGE_DONE);
+
+        // Stand in for the worker's own schema/table (the worker migrates it in prod). A claim row
+        // for this review must NOT survive delete, else a re-register resurrects the stale result.
+        try (Connection c = dataSource.getConnection(); var st = c.createStatement()) {
+            st.execute("CREATE SCHEMA IF NOT EXISTS worker");
+            st.execute("CREATE TABLE IF NOT EXISTS worker.comment_idempotency ("
+                    + "review_id text NOT NULL, commit text NOT NULL, anchor_key text NOT NULL, "
+                    + "comment_id text, posted_at timestamptz, created_at timestamptz DEFAULT now(), "
+                    + "PRIMARY KEY (review_id, commit, anchor_key))");
+        }
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO worker.comment_idempotency (review_id, commit, anchor_key, comment_id) "
+                             + "VALUES (?, 'c0ffee', 'LLM', '{\"usage\":{\"model\":\"stale\"}}')")) {
+            ps.setString(1, id);
+            ps.executeUpdate();
+        }
+        assertEquals(1, countBy("SELECT COUNT(*) FROM worker.comment_idempotency WHERE review_id = ?", id),
+                "precondition: the worker claim exists");
+
+        assertTrue(projection.deleteReview("acme", "web", pr));
+
+        assertEquals(0, countBy("SELECT COUNT(*) FROM worker.comment_idempotency WHERE review_id = ?", id),
+                "delete clears the worker's idempotency claims so a re-register runs the LLM fresh");
+    }
+
+    @Test
+    void commitOfReturnsTheStoredHeadShaOrEmpty() {
+        long pr = 4108L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "T", "u", "a", "f", "main", "sha-head-9",
+                "https://x/pr/4108", "github", "completed", ReviewProjection.STAGE_DONE);
+        assertEquals("sha-head-9", projection.commitOf(id).orElseThrow());
+        assertTrue(projection.commitOf(ReviewIds.reviewId(REPO, 99999L)).isEmpty(), "unknown review -> empty");
+    }
+
+    @Test
+    void clearWorkerIdempotencyDropsClaimsButKeepsTheReview() throws Exception {
+        long pr = 4109L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Keep me", "u", "a", "f", "main", "sha-x",
+                "https://x/pr/4109", "github", "completed", ReviewProjection.STAGE_DONE);
+        try (Connection c = dataSource.getConnection(); var st = c.createStatement()) {
+            st.execute("CREATE SCHEMA IF NOT EXISTS worker");
+            st.execute("CREATE TABLE IF NOT EXISTS worker.comment_idempotency ("
+                    + "review_id text NOT NULL, commit text NOT NULL, anchor_key text NOT NULL, "
+                    + "comment_id text, posted_at timestamptz, created_at timestamptz DEFAULT now(), "
+                    + "PRIMARY KEY (review_id, commit, anchor_key))");
+        }
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("INSERT INTO worker.comment_idempotency "
+                     + "(review_id, commit, anchor_key) VALUES (?, 'sha-x', 'LLM')")) {
+            ps.setString(1, id);
+            ps.executeUpdate();
+        }
+
+        projection.clearWorkerIdempotency(id);
+
+        assertEquals(0, countBy("SELECT COUNT(*) FROM worker.comment_idempotency WHERE review_id = ?", id),
+                "the worker claim is cleared");
+        assertTrue(projection.loadDetail("acme", "web", pr).isPresent(),
+                "but the orchestrator review itself is kept (unlike delete)");
+    }
+
+    @Test
+    void markRerunStartedResetsStatusAndClearsError() {
+        long pr = 4110L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Rerun", "u", "a", "f", "main", "sha",
+                "https://x/pr/4110", "github", "failed", ReviewProjection.STAGE_DIFF);
+        projection.setError(id, "boom: the model rejected the request");
+
+        projection.markRerunStarted(id);
+
+        ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertEquals("reviewing", d.status());
+        assertNull(d.errorDetail(), "the prior terminal error is cleared on re-run");
+    }
+
     private int countBy(String sql, String id) throws Exception {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, id);

@@ -208,11 +208,32 @@
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 128px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 72px 80px;
+    grid-template-columns: 128px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 44px 72px 80px;
     align-items: center; gap: 14px;
     padding: 0 18px;
-    min-width: 940px;
+    min-width: 984px;
   }
+  .thead .h-model { text-align: center; }
+  .model-cell { display: flex; align-items: center; justify-content: center; }
+  .llm-icon { display: inline-flex; align-items: center; justify-content: center; }
+  .llm-icon svg { display: block; }
+  .llm-openai { color: #10a37f; }
+  .llm-anthropic { color: #d97757; }
+  .llm-gemini { color: #1a73e8; }
+  .llm-unknown { color: var(--text-3); }
+  .llm-icon-empty { color: var(--text-3); font-size: 12px; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text-2);
+    cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .icon-btn.rerun { color: var(--good); }
+  .icon-btn.rerun:hover { border-color: var(--good); background: var(--good-soft); }
+  .icon-btn.danger { color: var(--crit); }
+  .icon-btn.danger:hover { border-color: var(--crit); background: var(--crit-soft); }
+  .icon-btn:disabled { opacity: 0.5; cursor: default; }
   .thead {
     height: 38px; border-bottom: 1px solid var(--border);
     font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
@@ -277,16 +298,20 @@
 
   /* ---------- status pill ---------- */
   .pill {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
-    padding: 4px 9px 4px 7px; border-radius: 20px;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 2px 7px; border-radius: 6px;
     background: var(--st-soft); color: var(--st); border: 1px solid color-mix(in srgb, var(--st) 28%, transparent);
     white-space: nowrap;
   }
-  .pill .glyph { width: 7px; height: 7px; border-radius: 50%; background: var(--st); flex: none; }
+  /* Review status/outcome badges render no glyph (compact); Settings/mode pills still opt in. */
+  .pill .glyph { width: 6px; height: 6px; border-radius: 50%; background: var(--st); flex: none; }
   .pill.reviewing { --st: var(--iris); --st-soft: var(--iris-soft); }
   .pill.reviewing .glyph { animation: pulse 1.4s ease-in-out infinite; box-shadow: 0 0 0 0 var(--iris); }
   .pill.completed { --st: var(--good); --st-soft: var(--good-soft); }
+  .pill.passed { --st: var(--good); --st-soft: var(--good-soft); }
+  .pill.changes { --st: var(--crit); --st-soft: var(--crit-soft); }
+  .pill.suggestions { --st: var(--iris); --st-soft: var(--iris-soft); }
   .pill.failed { --st: var(--crit); --st-soft: var(--crit-soft); }
   .pill.cancelled { --st: var(--muted); --st-soft: var(--muted-soft); }
   .pill.superseded { --st: var(--muted); --st-soft: var(--muted-soft); }
@@ -418,6 +443,7 @@
     .thead .h-title, .row .title-cell,
     .thead .h-commit, .row .commit-cell,
     .thead .h-prov, .row .prov-cell,
+    .thead .h-model, .row .model-cell,
     .thead .h-author, .row .author-cell { display: none; }
     .thead, .row { grid-template-columns: 116px minmax(0, 1fr) 74px 84px; min-width: 0; }
   }

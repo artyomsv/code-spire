@@ -218,6 +218,15 @@ public class ReviewProjection {
                 boolean existed = deleteBy(c, "DELETE FROM review_status WHERE review_id = ?", reviewId) > 0;
                 deleteBy(c, "DELETE FROM review_event WHERE review_id = ?", reviewId);
                 deleteBy(c, "DELETE FROM event_log WHERE stream_id = ?", reviewId);
+                // The worker (separate service, `worker` schema) caches the completed LLM result in
+                // comment_idempotency keyed by (review_id, commit) and RE-EMITS it on any redelivery
+                // for the same PR@commit — crash-safety so a retry never pays for the LLM twice. But a
+                // delete-then-re-register is that same key, so without clearing it here the worker
+                // resurrects the stale result and never calls the LLM again (observed: a re-registered
+                // review kept showing the old model). Clear it in the same transaction so delete is a
+                // true clean slate. Guarded because the worker schema may be absent (worker never
+                // started) — its absence must not block deleting an orchestrator review.
+                deleteWorkerClaims(c, reviewId);
                 c.commit();
                 if (existed) {
                     broadcastRemoval(reviewId);
@@ -239,6 +248,67 @@ public class ReviewProjection {
             ps.setString(1, reviewId);
             return ps.executeUpdate();
         }
+    }
+
+    /** Whether a (schema-qualified) relation exists — {@code to_regclass} yields NULL if not. */
+    private boolean tableExists(Connection c, String qualifiedName) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT to_regclass(?)")) {
+            ps.setString(1, qualifiedName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getString(1) != null;
+            }
+        }
+    }
+
+    /**
+     * Delete the worker's idempotency claims for a review (its cached LLM result + posted-comment
+     * slots). Guarded because the worker schema may be absent (worker never started). Shared by
+     * {@link #deleteReview} (full delete) and {@link #clearWorkerIdempotency} (re-run).
+     */
+    private void deleteWorkerClaims(Connection c, String reviewId) throws SQLException {
+        if (tableExists(c, "worker.comment_idempotency")) {
+            deleteBy(c, "DELETE FROM worker.comment_idempotency WHERE review_id = ?", reviewId);
+        }
+    }
+
+    /**
+     * Clear ONLY the worker's cached result + comment claims, keeping the orchestrator review intact.
+     * Used by a manual re-run so the worker actually re-runs the LLM (instead of re-emitting the stored
+     * result) and posts fresh comments.
+     */
+    public void clearWorkerIdempotency(String reviewId) {
+        try (Connection c = dataSource.getConnection()) {
+            deleteWorkerClaims(c, reviewId);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear worker idempotency for " + reviewId, e);
+        }
+    }
+
+    /** The commit the review last ran against (its stored head SHA), or empty if the review is gone. */
+    public Optional<String> commitOf(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT commit_sha FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the commit for " + reviewId, e);
+        }
+    }
+
+    /** Reset the row to an in-progress state for a manual re-run, clearing any prior terminal error. */
+    public void markRerunStarted(String reviewId) {
+        update("""
+                UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,
+                       note = 'Re-run requested.', updated_at = now()
+                WHERE review_id = ?
+                """, ps -> {
+            ps.setInt(1, STAGE_DIFF);
+            ps.setString(2, reviewId);
+        });
+        broadcast(reviewId);
     }
 
     /**
@@ -274,7 +344,12 @@ public class ReviewProjection {
     // ---- reads (REST + WS) -------------------------------------------------
 
     public List<ReviewSummary> listSummaries() {
-        String sql = "SELECT * FROM review_status ORDER BY updated_at DESC";
+        // The LLM vendor for the badge comes from the catalog (name -> type); a scalar subquery keeps
+        // it one-row-per-review and yields NULL for uncatalogued models (shown as a neutral chip).
+        String sql = """
+                SELECT rs.*, (SELECT m.type FROM llm_model m WHERE m.name = rs.model LIMIT 1) AS llm_type
+                FROM review_status rs ORDER BY rs.updated_at DESC
+                """;
         List<ReviewSummary> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql);
@@ -310,7 +385,7 @@ public class ReviewProjection {
             if (row == null) {
                 return; // header not written yet (events can race ahead) — nothing to push
             }
-            summary = row.toSummary();
+            summary = row.toSummary(llmTypeFor(c, row.model()), blockerCount(row));
         } catch (SQLException e) {
             LOG.debugf("broadcast load failed for %s: %s", reviewId, e.getMessage());
             return;
@@ -351,10 +426,11 @@ public class ReviewProjection {
                              String providerType, String status, int stage, int findings, String findingsJson,
                              String model, Integer tokensIn, Integer tokensOut, Long costMillicents, String note,
                              String errorDetail, int attempt, Instant createdAt, Instant updatedAt) {
-        ReviewSummary toSummary() {
+        ReviewSummary toSummary(String llmType, int blockerCount) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
-                    htmlUrl, providerType, status, stage, findings,
-                    costMillicents == null ? 0L : costMillicents, updatedAt);
+                    htmlUrl, providerType, status, stage, findings, blockerCount,
+                    costMillicents == null ? 0L : costMillicents, model == null ? "" : model,
+                    llmType == null ? "" : llmType, updatedAt);
         }
     }
 
@@ -368,7 +444,28 @@ public class ReviewProjection {
     }
 
     private ReviewSummary toSummary(ResultSet rs) throws SQLException {
-        return readRow(rs).toSummary();
+        ReviewRow row = readRow(rs);
+        return row.toSummary(rs.getString("llm_type"), blockerCount(row));
+    }
+
+    /** Count of blocker-severity (critical) findings on a row — drives the "changes requested" outcome. */
+    private int blockerCount(ReviewRow row) {
+        return (int) parseFindings(row.findingsJson(), row.id()).stream()
+                .filter(f -> "critical".equals(f.sev()))
+                .count();
+    }
+
+    /** The LLM vendor for a model name, from the catalog; null when uncatalogued or no model yet. */
+    private String llmTypeFor(Connection c, String model) throws SQLException {
+        if (model == null || model.isBlank()) {
+            return null;
+        }
+        try (PreparedStatement ps = c.prepareStatement("SELECT type FROM llm_model WHERE name = ? LIMIT 1")) {
+            ps.setString(1, model);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        }
     }
 
     private ReviewRow readRow(ResultSet rs) throws SQLException {
@@ -387,8 +484,8 @@ public class ReviewProjection {
 
     private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events) {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
-                r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, r.updatedAt,
-                r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
+                r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, blockerCount(r),
+                r.updatedAt, r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
                 parseFindings(r.findingsJson, r.id), usageView(r), r.note, decryptError(r.errorDetail, r.id), events);
     }
 

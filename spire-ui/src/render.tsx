@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { Cpu } from 'lucide-react';
+import { RiOpenaiFill } from 'react-icons/ri';
+import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
   Finding,
   ReviewDetail,
@@ -55,6 +58,36 @@ export function providerBadge(r: ProviderSource | undefined) {
   const p = providerLabel(r);
   if (p === '—') return null;
   return <span className={`prov-badge prov-${p}`}>{p}</span>;
+}
+
+/** The LLM vendor behind a model — from the catalogued provider type, else inferred from the name. */
+function llmProvider(llmType: string, model: string): 'openai' | 'anthropic' | 'gemini' | '' {
+  if (llmType === 'openai' || llmType === 'anthropic' || llmType === 'gemini') return llmType;
+  const m = model.toLowerCase();
+  if (m.startsWith('gemini')) return 'gemini';
+  if (m.startsWith('claude')) return 'anthropic';
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('chatgpt') || m.startsWith('openai'))
+    return 'openai';
+  return '';
+}
+
+/** The real vendor logo (react-icons) for the model that produced a review; tooltip = model name. */
+export function llmIcon(model: string, llmType: string) {
+  if (!model) return <span className="llm-icon-empty">—</span>;
+  const p = llmProvider(llmType, model);
+  const Logo = p === 'openai' ? RiOpenaiFill : p === 'anthropic' ? SiClaude : p === 'gemini' ? SiGooglegemini : null;
+  if (!Logo) {
+    return (
+      <span className="llm-icon llm-unknown" title={model} aria-label={`Model: ${model}`}>
+        <Cpu size={15} />
+      </span>
+    );
+  }
+  return (
+    <span className={`llm-icon llm-${p}`} title={model} aria-label={`Model: ${model}`}>
+      <Logo size={15} />
+    </span>
+  );
 }
 
 /** Full hashes (GitHub is 40 chars) get truncated for display; the copy button carries the full value. */
@@ -141,7 +174,7 @@ export function openInLabel(r: ProviderSource | undefined): string {
 export const STATUS_LABEL: Record<ReviewStatus, string> = {
   reviewing: 'Reviewing',
   completed: 'Completed',
-  failed: 'Needs attention',
+  failed: 'Attention',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
   observed: 'Observed',
@@ -156,12 +189,25 @@ export function ago(updatedAt: string): string {
 }
 
 export function pill(status: ReviewStatus) {
-  return (
-    <span className={`pill ${status}`}>
-      <span className="glyph"></span>
-      {STATUS_LABEL[status]}
-    </span>
-  );
+  return <span className={`pill ${status}`}>{STATUS_LABEL[status]}</span>;
+}
+
+/**
+ * Outcome-aware badge: a finished review is only "Passed" when it's clean. Findings with a
+ * blocker read as "Changes requested"; lower-severity-only findings read as "Suggestions".
+ * Non-terminal states (reviewing/failed/…) fall back to the plain status pill.
+ */
+export function outcomeBadge(status: ReviewStatus, findings: number, blockerCount: number) {
+  if (status === 'completed') {
+    const [cls, label] =
+      findings === 0
+        ? ['passed', 'Passed']
+        : blockerCount > 0
+          ? ['changes', 'Changes']
+          : ['suggestions', 'Suggestions'];
+    return <span className={`pill ${cls}`}>{label}</span>;
+  }
+  return pill(status);
 }
 
 // In the list, ReviewSummary carries only `status` + `stage` (no per-segment
@@ -229,12 +275,7 @@ export function findCell(status: ReviewStatus, findings: number) {
       </span>
     );
   if (status === 'failed' || status === 'cancelled') return <span className="time">—</span>;
-  if (findings === 0)
-    return (
-      <span className="findcount zero tnum">
-        0<small>clean</small>
-      </span>
-    );
+  if (findings === 0) return <span className="findcount zero tnum">0</span>;
   return <span className="findcount some tnum">{findings}</span>;
 }
 

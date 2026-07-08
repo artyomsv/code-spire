@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ReviewStatus, ReviewSummary } from '../api';
-import { ago, CopyableValue, findCell, miniPipeline, pill, providerBadge, shortSha } from '../render';
+import { ago, CopyableValue, findCell, llmIcon, miniPipeline, outcomeBadge, providerBadge, shortSha } from '../render';
 import { formatCost } from '../money';
 
 type ChipFilter = 'all' | 'reviewing' | 'completed' | 'failed' | 'closed';
@@ -146,6 +146,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
           <div className="h-commit">Commit</div>
           <div className="h-mini">Pipeline</div>
           <div className="cell-r">Findings</div>
+          <div className="h-model">Model</div>
           <div className="cell-r">Cost</div>
           <div className="cell-r">Updated</div>
         </div>
@@ -167,7 +168,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                   if (e.key === 'Enter') open(r);
                 }}
               >
-                <div>{pill(r.status)}</div>
+                <div>{outcomeBadge(r.status, r.findings, r.blockerCount)}</div>
                 <div className="prov-cell">
                   {providerBadge(r) ?? <span className="prov-none">—</span>}
                 </div>
@@ -192,6 +193,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                 </div>
                 <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
                 <div className="cell-r">{findCell(r.status, r.findings)}</div>
+                <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                 <div className="cell-r">
                   <span className="mono" title="Review cost">{formatCost(r.costMillicents)}</span>
                 </div>

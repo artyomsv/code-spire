@@ -25,6 +25,7 @@ public record ReviewDetail(
         String status,
         int stage,
         int findings,
+        int blockerCount,
         Instant updatedAt,
         int attempt,
         List<String> stages,

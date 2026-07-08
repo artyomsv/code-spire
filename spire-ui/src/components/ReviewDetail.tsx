@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { deleteReview, fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
-import { eventsCard, findingsCard, metaCard, openInLabel, pill, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
+import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
+import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
+import { eventsCard, findingsCard, metaCard, openInLabel, outcomeBadge, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 
 interface Props {
@@ -15,6 +16,7 @@ export default function ReviewDetail({ reviews }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmRerun, setConfirmRerun] = useState(false);
 
   // Monotonic request id: a response only applies while it is still the latest
   // load for the current params — otherwise navigating A→B can let A's slower
@@ -100,7 +102,7 @@ export default function ReviewDetail({ reviews }: Props) {
             <span className="repo">
               {r.repo}#{r.pr}
             </span>
-            {pill(r.status)}
+            {outcomeBadge(r.status, r.findings, r.blockerCount)}
             <span className="sep">·</span>
             <span>@{r.author}</span>
             <span className="sep">·</span>
@@ -113,16 +115,62 @@ export default function ReviewDetail({ reviews }: Props) {
         </div>
         <div className="actions">
           {prUrl && (
-            <a className="btn-ghost" href={prUrl} target="_blank" rel="noreferrer">
-              {openInLabel(r)} ↗
+            <a
+              className="icon-btn"
+              href={prUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={openInLabel(r)}
+              aria-label={openInLabel(r)}
+            >
+              <ExternalLink size={16} />
             </a>
           )}
-          {r.status === 'failed' && <button className="btn">Re-run review</button>}
-          <button className="btn-ghost danger" onClick={() => setConfirmDelete(true)}>
-            Delete
+          {(r.status === 'completed' || r.status === 'failed') && (
+            <button
+              className="icon-btn rerun"
+              title="Re-run review on the same commit"
+              aria-label="Re-run review"
+              onClick={() => setConfirmRerun(true)}
+            >
+              <RotateCw size={16} />
+            </button>
+          )}
+          <button
+            className="icon-btn danger"
+            title="Delete review"
+            aria-label="Delete review"
+            onClick={() => setConfirmDelete(true)}
+          >
+            <Trash2 size={16} />
           </button>
         </div>
       </div>
+
+      {confirmRerun && (
+        <ConfirmDialog
+          title="Re-run this review?"
+          message={
+            <>
+              <p>
+                Re-runs the model on{' '}
+                <span className="mono">
+                  {r.repo}#{r.pr}
+                </span>{' '}
+                at the same commit and posts fresh comments.
+              </p>
+              <p>Previously posted comments on the pull request are not removed.</p>
+            </>
+          }
+          confirmLabel="Re-run"
+          busyLabel="Starting…"
+          onConfirm={async () => {
+            await rerunReview(r.workspace, r.slug, r.pr);
+            load(); // reflect the in-progress state immediately (live updates follow)
+          }}
+          onClose={() => setConfirmRerun(false)}
+        />
+      )}
 
       {confirmDelete && (
         <ConfirmDialog
