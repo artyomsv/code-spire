@@ -492,6 +492,10 @@
   .modal-error { color: var(--crit); background: var(--crit-soft); }
   .modal-ok { color: var(--good); background: var(--good-soft); font-family: var(--font-mono); }
   .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 2px; }
+  /* Bare modal title / standalone footer (e.g. the context preview) sit directly in .modal, which has
+     no padding of its own — give them the same insets as .modal-body so they aren't flush to the edge. */
+  .modal > h3 { margin: 0; padding: 15px 18px 0; }
+  .modal > .modal-actions { padding: 6px 18px 16px; }
   @media (max-width: 560px) { .field-row { grid-template-columns: 1fr; } }
 
   /* ---- extension: settings → providers ---- */
@@ -594,6 +598,22 @@
   .field-optional { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
   .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .field-row-12 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: start; }
+
+  /* Provider connection cell (SCM + context settings) — reason shown inline under a failed check */
+  .conn-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .conn-detail { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.4; color: var(--crit);
+    max-width: 260px; white-space: normal; }
+
+  /* Context preview (Settings -> Context -> Test) */
+  .ctx-preview { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+  .ctx-preview-meta { display: flex; align-items: center; gap: 10px; }
+  .ctx-preview-meta .mono { color: var(--text-3); font-size: 12px; }
+  .ctx-preview-item { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--surface); }
+  .ctx-preview-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  .ctx-preview-title a { color: var(--iris); text-decoration: none; }
+  .ctx-preview-title a:hover { text-decoration: underline; }
+  .ctx-preview-body { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text-2);
+    white-space: pre-wrap; word-break: break-word; margin: 0; max-height: 320px; overflow-y: auto; }
   .field-row-13 { display: grid; grid-template-columns: 1fr 3fr; gap: 10px; align-items: start; }
   /* Match the leading select to the sibling input's natural height (input unchanged). */
   .field-row-12 select, .field-row-13 select { height: 36px; }

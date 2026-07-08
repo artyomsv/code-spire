@@ -215,16 +215,19 @@ function ConnCell({ conn, onRecheck }: { conn: Conn | undefined; onRecheck: () =
         ? `Connected${conn?.account ? ` as @${conn.account}` : ''} — click to re-check`
         : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
   return (
-    <button
-      type="button"
-      className={`conn conn-${state}`}
-      onClick={onRecheck}
-      disabled={state === 'checking'}
-      title={title}
-    >
-      <span className="conn-dot" />
-      <span className="conn-label">{label}</span>
-    </button>
+    <div className="conn-cell">
+      <button
+        type="button"
+        className={`conn conn-${state}`}
+        onClick={onRecheck}
+        disabled={state === 'checking'}
+        title={title}
+      >
+        <span className="conn-dot" />
+        <span className="conn-label">{label}</span>
+      </button>
+      {state === 'fail' && conn?.detail && <div className="conn-detail">{conn.detail}</div>}
+    </div>
   );
 }
 

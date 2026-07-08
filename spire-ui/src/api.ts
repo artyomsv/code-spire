@@ -343,6 +343,112 @@ export async function deleteLlmProvider(id: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
 }
 
+// --- context providers (Jira, later Confluence) --------------------------------
+
+export type ContextType = 'jira';
+export type ContextAuthKind = 'basic' | 'bearer';
+
+export interface ContextProviderView {
+  id: string;
+  name: string;
+  type: ContextType;
+  baseUrl: string;
+  authKind: ContextAuthKind;
+  username: string | null;
+  projectKeys: string | null; // e.g. "ACME" — narrows candidate issue keys; null = accept all
+  hasSecret: boolean; // the secret is never returned
+  enabled: boolean;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface ContextProviderInput {
+  name: string;
+  type: ContextType;
+  baseUrl: string;
+  authKind: ContextAuthKind;
+  username?: string; // required for basic (account email); unused for bearer
+  secret?: string; // omit/empty on edit = keep the stored secret
+  projectKeys?: string; // space/comma-separated project keys; blank = accept every well-formed key
+  enabled?: boolean;
+  isDefault?: boolean;
+}
+
+export interface ContextPreviewItem {
+  kind: string;
+  title: string;
+  body: string;
+  uri: string | null;
+}
+
+export interface ContextPreviewResult {
+  keys: string[]; // the issue keys that resolved from the input
+  status: string; // OK | EMPTY | ERROR
+  items: ContextPreviewItem[]; // exactly what a review would inject
+  detail: string | null; // note when empty/errored
+}
+
+// Test the integration: resolve the input to a ticket via the pattern and fetch its context, live.
+export async function previewContextProvider(id: string, text: string): Promise<ContextPreviewResult> {
+  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to preview context');
+  return res.json();
+}
+
+export async function fetchContextProviders(): Promise<ContextProviderView[]> {
+  const res = await fetch('/api/context-providers');
+  if (!res.ok) return throwResponse(res, 'Failed to load context providers');
+  return res.json();
+}
+
+export async function createContextProvider(input: ContextProviderInput): Promise<ContextProviderView> {
+  const res = await fetch('/api/context-providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to create context provider');
+  return res.json();
+}
+
+export async function updateContextProvider(id: string, input: ContextProviderInput): Promise<ContextProviderView> {
+  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update context provider');
+  return res.json();
+}
+
+export async function setDefaultContextProvider(id: string): Promise<ContextProviderView> {
+  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
+  if (!res.ok) return throwResponse(res, 'Failed to set default context provider');
+  return res.json();
+}
+
+export async function deleteContextProvider(id: string): Promise<void> {
+  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to delete context provider');
+}
+
+export interface ContextProviderCheck {
+  ok: boolean;
+  account: string | null; // token owner's display name when ok
+  detail: string | null; // safe failure reason when not ok
+}
+
+// Live connectivity check: contacts the source with the stored credential (/myself).
+export async function checkContextProvider(id: string): Promise<ContextProviderCheck> {
+  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  if (!res.ok) await throwResponse(res, 'Failed to check context provider');
+  return res.json();
+}
+
 // ---- LLM model catalog (with token pricing) ----
 
 /** Which OpenAI parameter carries the output-token cap for a model. */

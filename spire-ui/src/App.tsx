@@ -5,6 +5,7 @@ import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
 import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
+import SettingsContextProviders from './components/SettingsContextProviders';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -20,13 +21,16 @@ export default function App() {
   const location = useLocation();
   const onProviders = location.pathname.startsWith('/settings/providers');
   const onLlm = location.pathname.startsWith('/settings/llm');
+  const onContext = location.pathname.startsWith('/settings/context');
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
     : onProviders
       ? 'Providers'
       : onLlm
         ? 'LLM providers'
-        : 'Reviews';
+        : onContext
+          ? 'Context providers'
+          : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -64,12 +68,12 @@ export default function App() {
             Repositories<span className="tag">P2</span>
           </a>
           <div className="label">Configure</div>
-          <a className="disabled">
+          <a className={onContext ? 'active' : ''} href="#/settings/context">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <circle cx="8" cy="8" r="2.4" stroke="currentColor" strokeWidth="1.4" />
               <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2" stroke="currentColor" strokeWidth="1.4" />
             </svg>
-            Rules &amp; context<span className="tag">P2</span>
+            Context
           </a>
           <a className={onProviders ? 'active' : ''} href="#/settings/providers">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
@@ -123,6 +127,7 @@ export default function App() {
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/settings/providers" element={<SettingsProviders />} />
           <Route path="/settings/llm" element={<SettingsLlmProviders />} />
+          <Route path="/settings/context" element={<SettingsContextProviders />} />
         </Routes>
       </main>
 
