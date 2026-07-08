@@ -53,12 +53,24 @@ public sealed interface ActionCommand {
         return null;
     }
 
+    /**
+     * Opaque, KEK-encrypted context-source credential — base64 Tink ciphertext of a
+     * {@link dev.codespire.contract.context.ContextCredential}, resolved and packed by
+     * the orchestrator from the context-provider registry (global default). Only
+     * {@link GatherContext} carries it; {@code null} means "no context source configured"
+     * — the worker still assembles (an empty/rules-only context). Never logged.
+     */
+    default String contextCredential() {
+        return null;
+    }
+
     record FetchDiff(String reviewId, RepoRef repo, long prId, String commit,
                      String scmCredential) implements ActionCommand {
     }
 
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
-                         Set<String> ticketKeys, List<String> links) implements ActionCommand {
+                         Set<String> ticketKeys, List<String> links,
+                         String contextCredential) implements ActionCommand {
     }
 
     /** providerOverride is set by the fallback saga on retry; worker re-fetches the diff by commit. */

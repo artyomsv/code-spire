@@ -60,6 +60,9 @@ public class ResultSaga {
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
 
     @Inject
+    dev.codespire.orchestrator.context.WorkerContextCredentials workerContextCredentials;
+
+    @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
     /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
@@ -90,9 +93,13 @@ public class ResultSaga {
             case DiffFetched e -> ifCurrentRun(e.reviewId(), e.commit(), "DiffFetched", () -> {
                 projection.appendEvent(e.reviewId(), "result", "DiffFetched", e.changedFiles() + " files");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_CONTEXT);
+                // Pack the default context credential (Jira) — null when none is configured,
+                // in which case the worker assembles an empty context (the review still runs).
+                String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
+                String contextCred = workerContextCredentials.packDefault(workspace).orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        Set.of(), List.of()));
+                        e.ticketKeys() == null ? Set.of() : e.ticketKeys(), List.of(), contextCred));
             });
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");

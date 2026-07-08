@@ -86,7 +86,7 @@ class CommandDispatcherTest {
 
     @Test
     void gatherContextRoutesToTheContextWorker() {
-        dispatcher.on(new GatherContext(REVIEW_ID, REPO, 7, "abc123", Set.of(), List.of()));
+        dispatcher.on(new GatherContext(REVIEW_ID, REPO, 7, "abc123", Set.of(), List.of(), null));
         assertEquals(List.of("gatherContext"), calls);
     }
 

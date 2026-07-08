@@ -8,6 +8,7 @@ import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.worker.adapters.WorkerScmClients;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.PullRequest;
@@ -54,7 +55,13 @@ class DiffWorkerTest {
 
             @Override
             public PullRequest fetchPullRequest(RepoRef repo, long prId) {
-                throw new UnsupportedOperationException();
+                // DiffWorker fetches the PR before the diff (for ticket-key extraction);
+                // an SCM failure surfaces on this first call and classifies identically.
+                if (failure != null) {
+                    throw failure;
+                }
+                return new PullRequest(repo, prId, "Demo PR", "desc", "feature/demo", "main",
+                        DiffRefs.headOnly("abc123"), Author.of("1", "bot", "bot"), "http://pr");
             }
 
             @Override

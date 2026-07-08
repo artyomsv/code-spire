@@ -94,19 +94,22 @@ class WorkerPipelineTest {
 
     @Test
     @Order(2)
-    void gatherContextEmitsTheFanOutTriple() throws Exception {
-        sendCommand(new ActionCommand.GatherContext(REVIEW_ID, REPO, 42, COMMIT, Set.of(), List.of()));
-        List<String> results = consumeResults(4); // 1 prior + 3 new
+    void gatherContextAssemblesAnEmptyContextWhenNoProviderConfigured() throws Exception {
+        // No context credential on the command (none registered) -> the aggregator fans out to
+        // zero providers: Requested then Assembled, no Contributed, and no blob persisted.
+        sendCommand(new ActionCommand.GatherContext(REVIEW_ID, REPO, 42, COMMIT, Set.of(), List.of(), null));
+        List<String> results = consumeResults(3); // 1 prior + 2 new
         assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextRequested\"")));
-        assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextContributed\"")));
         assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextAssembled\"")));
+        assertTrue(results.stream().noneMatch(v -> v.contains("\"type\":\"ContextContributed\"")),
+                "nothing configured to contribute");
     }
 
     @Test
     @Order(3)
     void generateReviewUsesRealDiffAndStubLlm() throws Exception {
         sendCommand(new ActionCommand.GenerateReview(REVIEW_ID, REPO, 42, COMMIT, null, 1, null, cred(), null));
-        List<String> results = consumeResults(5);
+        List<String> results = consumeResults(4);
         String generated = results.stream()
                 .filter(v -> v.contains("\"type\":\"ReviewGenerated\"")).findFirst().orElseThrow();
         assertTrue(generated.contains("STUB summary"));
@@ -122,7 +125,7 @@ class WorkerPipelineTest {
                 "STUB summary", new ModelUsage("stub-model", 0, 0, 0));
 
         sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings, cred()));
-        List<String> results = consumeResults(6);
+        List<String> results = consumeResults(5);
         String posted = results.stream()
                 .filter(v -> v.contains("\"type\":\"CommentsPosted\"")).findFirst().orElseThrow();
         assertTrue(posted.contains("\"summaryCommentId\":\"991\""));
@@ -130,7 +133,7 @@ class WorkerPipelineTest {
 
         // redelivery: same command again -> reconstructed CommentsPosted, NO new posts
         sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings, cred()));
-        List<String> after = consumeResults(7);
+        List<String> after = consumeResults(6);
         long postedCount = after.stream().filter(v -> v.contains("\"type\":\"CommentsPosted\"")).count();
         assertEquals(2, postedCount);
         BitbucketWireMockResource.server.verify(2, postRequestedFor(urlEqualTo(COMMENTS)));

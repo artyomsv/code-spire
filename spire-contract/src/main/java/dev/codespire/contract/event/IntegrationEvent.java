@@ -78,12 +78,18 @@ public sealed interface IntegrationEvent {
 
     // --- worker results ---
 
-    /** METADATA ONLY — no diff content (ADR-011); content is re-fetched by commit at generate time. */
+    /**
+     * METADATA ONLY — no diff content (ADR-011); content is re-fetched by commit at generate time.
+     * {@code ticketKeys} are the issue keys ({@code PROJ-123}) parsed from the PR title/branch when the
+     * diff is fetched, threaded into {@code GatherContext} so context providers (Jira) can resolve them.
+     */
     record DiffFetched(String reviewId, long prId, String commit, int changedFiles,
-                       List<String> languages, long sizeBytes, boolean truncated) implements IntegrationEvent {
+                       List<String> languages, long sizeBytes, boolean truncated,
+                       Set<String> ticketKeys) implements IntegrationEvent {
 
         public DiffFetched {
             languages = languages == null ? null : List.copyOf(languages);
+            ticketKeys = ticketKeys == null ? null : Set.copyOf(ticketKeys);
         }
     }
 

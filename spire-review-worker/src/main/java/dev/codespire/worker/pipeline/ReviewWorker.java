@@ -8,10 +8,13 @@ import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
+import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.worker.adapters.WorkerLlmProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
+import dev.codespire.contract.review.AssembledContext;
+import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.CommentRef;
@@ -69,6 +72,9 @@ public class ReviewWorker {
     ResultsEmitter results;
 
     @Inject
+    BlobStore blobStore;
+
+    @Inject
     ObjectMapper mapper;
 
     /** Idempotency slot for the paid LLM call itself (finding H4). */
@@ -93,7 +99,8 @@ public class ReviewWorker {
             }
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
 
-            ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(pr, diff.files(), List.of()); // context items land in P2
+            List<ContextItem> context = loadContext(command.contextRef());
+            ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(pr, diff.files(), context);
             WorkerLlmProvider.LlmClient client = llm.forCommand(command);
             Completion completion = client.provider().complete(built.prompt(), client.params())
                     .toCompletableFuture().join();
@@ -138,6 +145,30 @@ public class ReviewWorker {
         }
         LOG.infof("Re-emitting ReviewGenerated for %s from the persisted LLM result", command.reviewId());
         results.emit(new ReviewGenerated(command.reviewId(), command.prId(), command.commit(), persisted));
+    }
+
+    /**
+     * Loads the assembled context the aggregator persisted for this run. A null
+     * ref (no context source configured) or a vanished blob (deleted / superseded
+     * by a re-run mid-flight) both degrade to an empty list — the review still
+     * runs, just without ticket context.
+     */
+    private List<ContextItem> loadContext(String contextRef) {
+        if (contextRef == null || contextRef.isBlank()) {
+            return List.of();
+        }
+        byte[] bytes = blobStore.get(new BlobStore.BlobRef(contextRef));
+        if (bytes == null) {
+            LOG.debugf("Context blob %s not found — reviewing without context", contextRef);
+            return List.of();
+        }
+        try {
+            AssembledContext assembled = mapper.readValue(bytes, AssembledContext.class);
+            return assembled.items() == null ? List.of() : assembled.items();
+        } catch (java.io.IOException e) {
+            LOG.warnf(e, "Unreadable context blob %s — reviewing without context", contextRef);
+            return List.of();
+        }
     }
 
     private String writeResult(ReviewResult result) {

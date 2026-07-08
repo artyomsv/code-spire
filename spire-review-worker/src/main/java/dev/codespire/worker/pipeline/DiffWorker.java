@@ -9,6 +9,7 @@ import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffLine;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.Hunk;
+import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.ScmApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -35,13 +36,19 @@ public class DiffWorker {
     public void fetchDiff(FetchDiff command) {
         try {
             DiffSource diffSource = scm.forCommand(command).diff();
+            // The PR carries the title/branch/description the issue keys are parsed
+            // from — fetched here (one idempotent GET) so GatherContext can drive the
+            // context providers; the diff itself stays metadata-only (ADR-011).
+            PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
             results.emit(new DiffFetched(
                     command.reviewId(), command.prId(), command.commit(),
                     diff.files().size(),
                     diff.files().stream().map(FilePatch::language).distinct().toList(),
                     approximateSize(diff.files()),
-                    diff.truncated()));
+                    diff.truncated(),
+                    dev.codespire.context.jira.JiraTicketKeys.candidates(
+                            pr.title(), pr.sourceBranch(), pr.description())));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {

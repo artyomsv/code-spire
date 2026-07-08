@@ -261,13 +261,21 @@ public class ReviewProjection {
     }
 
     /**
-     * Delete the worker's idempotency claims for a review (its cached LLM result + posted-comment
-     * slots). Guarded because the worker schema may be absent (worker never started). Shared by
-     * {@link #deleteReview} (full delete) and {@link #clearWorkerIdempotency} (re-run).
+     * Delete ALL worker-owned per-review state (separate service, {@code worker} schema): its
+     * idempotency claims (cached LLM result + posted-comment slots) AND its assembled-context blobs.
+     * Each guarded independently because the worker schema — or a given table within it — may be absent
+     * (worker never started / migrated). Shared by {@link #deleteReview} (full delete) and
+     * {@link #clearWorkerIdempotency} (re-run): both must leave no worker orphans behind.
+     *
+     * <p>The context blob is deleted by {@code review_id}, so it catches every blob a review owns,
+     * including ones superseded across re-runs — content and reference vanish together (no orphaned blob).
      */
     private void deleteWorkerClaims(Connection c, String reviewId) throws SQLException {
         if (tableExists(c, "worker.comment_idempotency")) {
             deleteBy(c, "DELETE FROM worker.comment_idempotency WHERE review_id = ?", reviewId);
+        }
+        if (tableExists(c, "worker.context_blob")) {
+            deleteBy(c, "DELETE FROM worker.context_blob WHERE review_id = ?", reviewId);
         }
     }
 

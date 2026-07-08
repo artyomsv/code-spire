@@ -27,6 +27,7 @@ dependencies {
     implementation(project(":spire-scm-bitbucket")) // read-only: fetch PR metadata for manual register
     implementation(project(":spire-scm-github")) // read-only: fetch PR metadata for manual register
     implementation(project(":spire-scm-gitlab")) // read-only: fetch PR metadata for manual register
+    implementation(project(":spire-context-jira")) // context preview: resolve a ticket for the Settings test
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-websockets-next")
