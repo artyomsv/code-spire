@@ -1,17 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { registerPr } from '../api';
-
-/**
- * Extract workspace / repo / PR from any Bitbucket PR URL, ignoring the host —
- * so proxied hosts (e.g. company MCAS: bitbucket.org.mcas.ms) and trailing path
- * or query segments still parse.
- */
-function parsePrUrl(raw: string): { workspace: string; slug: string; pr: string } | null {
-  // {workspace}/{slug}/<pr-segment>/{id}: Bitbucket "pull-requests"/"pullrequests" or GitHub "pull".
-  // Mirrors the backend ManualRegisterResource.PR_URL parser.
-  const m = raw.match(/([^/\s?#]+)\/([^/\s?#]+)\/(?:pull-requests|pullrequests|pull)\/(\d+)/);
-  return m ? { workspace: m[1], slug: m[2], pr: m[3] } : null;
-}
+import { registerPr, resolvePrUrl, type ResolvedUrl } from '../api';
 
 /**
  * Parse the PR # field into a positive integer, or null when it isn't one —
@@ -29,25 +17,51 @@ export default function RegisterPrDialog({ onClose }: { onClose: () => void }) {
   const [workspace, setWorkspace] = useState('');
   const [slug, setSlug] = useState('');
   const [pr, setPr] = useState('');
+  const [resolved, setResolved] = useState<ResolvedUrl | null>(null);
+  const [urlUnrecognised, setUrlUnrecognised] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const resolveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const resolveSeq = useRef(0);
   useEffect(
     () => () => {
       if (closeTimer.current) clearTimeout(closeTimer.current);
+      if (resolveTimer.current) clearTimeout(resolveTimer.current);
     },
     [],
   );
 
+  // The URL is parsed on the backend (one source of truth for the URL shapes),
+  // which also reports which registered provider will handle it. Debounced, with
+  // a sequence guard so a slow response can't overwrite a newer keystroke.
   function onUrlChange(value: string) {
     setUrl(value);
-    const parsed = parsePrUrl(value);
-    if (parsed) {
-      setWorkspace(parsed.workspace);
-      setSlug(parsed.slug);
-      setPr(parsed.pr);
+    if (resolveTimer.current) clearTimeout(resolveTimer.current);
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setResolved(null);
+      setUrlUnrecognised(false);
+      return;
     }
+    const seq = ++resolveSeq.current;
+    resolveTimer.current = setTimeout(() => {
+      void resolvePrUrl(trimmed)
+        .then((r) => {
+          if (seq !== resolveSeq.current) return; // superseded by a newer keystroke
+          setResolved(r);
+          setUrlUnrecognised(false);
+          setWorkspace(r.workspace);
+          setSlug(r.slug);
+          setPr(String(r.pr));
+        })
+        .catch(() => {
+          if (seq !== resolveSeq.current) return;
+          setResolved(null);
+          setUrlUnrecognised(true); // recognised nothing — tell the user why it stayed blank
+        });
+    }, 300);
   }
 
   async function submit(e: React.FormEvent) {
@@ -90,13 +104,29 @@ export default function RegisterPrDialog({ onClose }: { onClose: () => void }) {
             <span>Pull request URL</span>
             <input
               className="mono"
-              placeholder="https://github.com/owner/repo/pull/123"
+              placeholder="https://gitlab.com/group/project/-/merge_requests/123"
               value={url}
               onChange={(e) => onUrlChange(e.target.value)}
               autoFocus
             />
           </label>
           <div className="modal-or">fills in the fields below — edit if needed</div>
+          {resolved &&
+            (resolved.providerRegistered ? (
+              <div className="resolve-hint ok">
+                Will use {resolved.providerType} · {resolved.providerName}
+              </div>
+            ) : (
+              <div className="resolve-hint warn">
+                No provider registered for “{resolved.workspace}” — add one under Settings → Providers
+              </div>
+            ))}
+          {!resolved && urlUnrecognised && (
+            <div className="resolve-hint warn">
+              Not a PR/MR URL — include the number, e.g. …/-/merge_requests/1, …/pull/1, or
+              …/pull-requests/1
+            </div>
+          )}
           <div className="field-row">
             <label className="field">
               <span>Workspace</span>

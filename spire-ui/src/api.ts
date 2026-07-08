@@ -124,6 +124,30 @@ export async function registerPr(body: {
   return res.json();
 }
 
+export interface ResolvedUrl {
+  workspace: string;
+  slug: string;
+  pr: number;
+  providerRegistered: boolean;
+  providerType: string | null;
+  providerName: string | null;
+}
+
+/**
+ * Parse a PR/MR URL on the backend (single source of truth for the URL shapes)
+ * and report which registered provider would handle it. Throws on an
+ * unparseable URL (HTTP 400) — callers treat that as "keep typing".
+ */
+export async function resolvePrUrl(url: string): Promise<ResolvedUrl> {
+  const res = await fetch('/api/reviews/register/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) await throwResponse(res, 'Could not resolve the URL');
+  return res.json();
+}
+
 // ---- SCM providers ----
 
 export type AuthKind = 'bearer' | 'basic';
@@ -197,6 +221,19 @@ export async function updateProvider(id: string, input: ProviderInput): Promise<
 export async function deleteProvider(id: string): Promise<void> {
   const res = await fetch(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete provider');
+}
+
+export interface ProviderCheck {
+  ok: boolean;
+  account: string | null; // token owner's username when ok
+  detail: string | null; // safe failure reason when not ok
+}
+
+// Live connectivity check: contacts the SCM with the stored token (whoami).
+export async function checkProvider(id: string): Promise<ProviderCheck> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  if (!res.ok) await throwResponse(res, 'Failed to check provider');
+  return res.json();
 }
 
 // ---- Review mode (global observe/active toggle) ----

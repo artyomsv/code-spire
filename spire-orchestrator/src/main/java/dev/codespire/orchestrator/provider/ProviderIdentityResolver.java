@@ -20,4 +20,9 @@ public class ProviderIdentityResolver {
     public Author resolve(ProviderInput in) {
         return clients.identitySource(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret()).whoami();
     }
+
+    /** The token owner for an already-stored provider (its secret decrypted) — used by the connectivity check. */
+    public Author resolve(ScmProvider p) {
+        return clients.identitySource(p.type(), p.baseUrl(), p.authKind(), p.authUsername(), p.secret()).whoami();
+    }
 }

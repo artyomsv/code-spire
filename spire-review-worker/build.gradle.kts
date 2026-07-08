@@ -28,6 +28,7 @@ dependencies {
     implementation(project(":spire-diff"))
     implementation(project(":spire-scm-bitbucket"))
     implementation(project(":spire-scm-github"))
+    implementation(project(":spire-scm-gitlab"))
     implementation(project(":spire-llm"))
 
     implementation("io.quarkus:quarkus-jackson")

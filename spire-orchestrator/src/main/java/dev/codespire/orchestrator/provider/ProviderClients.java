@@ -9,6 +9,9 @@ import dev.codespire.scm.bitbucket.BitbucketCloudDiffSource;
 import dev.codespire.scm.github.GitHubClient;
 import dev.codespire.scm.github.GitHubConfig;
 import dev.codespire.scm.github.GitHubDiffSource;
+import dev.codespire.scm.gitlab.GitLabClient;
+import dev.codespire.scm.gitlab.GitLabConfig;
+import dev.codespire.scm.gitlab.GitLabDiffSource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -28,6 +31,7 @@ public class ProviderClients {
         return switch (provider.type()) {
             case "bitbucket-cloud" -> new BitbucketCloudDiffSource(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
             case "github" -> new GitHubDiffSource(new GitHubClient(githubConfig(provider), mapper));
+            case "gitlab" -> new GitLabDiffSource(new GitLabClient(gitlabConfig(provider), mapper));
             default -> throw new IllegalStateException("Unsupported provider type: " + provider.type());
         };
     }
@@ -42,6 +46,8 @@ public class ProviderClients {
                     new BitbucketCloudClient(bitbucketConfig(baseUrl, authKind, authUsername, secret), mapper));
             case "github" -> new GitHubDiffSource(
                     new GitHubClient(githubConfig(baseUrl, secret), mapper));
+            case "gitlab" -> new GitLabDiffSource(
+                    new GitLabClient(new GitLabConfig(baseUrl, secret), mapper));
             default -> throw new IllegalStateException("Unsupported provider type: " + type);
         };
     }
@@ -65,5 +71,10 @@ public class ProviderClients {
     private static GitHubConfig githubConfig(String baseUrl, String secret) {
         // GitHub is always Bearer; the webhook secret is a read-path placeholder.
         return new GitHubConfig(baseUrl, secret, "unused-read-only");
+    }
+
+    private static GitLabConfig gitlabConfig(ScmProvider p) {
+        // GitLab is always Bearer; it carries no webhook secret on the read path.
+        return new GitLabConfig(p.baseUrl(), p.secret());
     }
 }

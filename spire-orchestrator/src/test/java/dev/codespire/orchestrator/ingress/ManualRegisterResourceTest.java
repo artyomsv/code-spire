@@ -89,4 +89,64 @@ class ManualRegisterResourceTest {
                 .withHeader("Authorization",
                         com.github.tomakehurst.wiremock.client.WireMock.equalTo("Bearer provider-tok")));
     }
+
+    @Test
+    void registersGitLabMergeRequestByUrlWithNestedGroup() {
+        // workspace = top group; slug = the rest of the nested namespace + project.
+        providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp",
+                "bearer", null, "gl-tok", "botid", true, List.of()));
+        // The project path is addressed URL-encoded (group/subgroup/project -> one segment).
+        wm.stubFor(get(urlEqualTo("/projects/grp%2Fsub%2Fproj/merge_requests/9"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
+                        { "iid": 9, "title": "T", "description": "",
+                          "source_branch": "f", "target_branch": "main",
+                          "diff_refs": { "base_sha": "b", "start_sha": "s", "head_sha": "h" },
+                          "author": { "id": 1, "username": "n", "name": "N" },
+                          "web_url": "http://x" }
+                        """)));
+
+        given().contentType("application/json")
+                .body(Map.of("url", wm.baseUrl() + "/grp/sub/proj/-/merge_requests/9"))
+                .when().post("/api/reviews/register")
+                .then().statusCode(200).body("reviewId", equalTo("review::grp/sub/proj#9"));
+
+        wm.verify(getRequestedFor(urlEqualTo("/projects/grp%2Fsub%2Fproj/merge_requests/9"))
+                .withHeader("Authorization",
+                        com.github.tomakehurst.wiremock.client.WireMock.equalTo("Bearer gl-tok")));
+    }
+
+    @Test
+    void resolveParsesGitLabUrlAndReportsTheRegisteredProvider() {
+        providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp2",
+                "bearer", null, "gl-tok", "botid", true, List.of()));
+        // No SCM call — the resolve endpoint only parses + looks up the provider.
+        given().contentType("application/json")
+                .body(Map.of("url", "https://gitlab.com/grp2/sub/proj/-/merge_requests/9"))
+                .when().post("/api/reviews/register/resolve")
+                .then().statusCode(200)
+                .body("workspace", equalTo("grp2"))
+                .body("slug", equalTo("sub/proj"))
+                .body("pr", equalTo(9))
+                .body("providerRegistered", equalTo(true))
+                .body("providerType", equalTo("gitlab"))
+                .body("providerName", equalTo("GL"));
+    }
+
+    @Test
+    void resolveReportsNoProviderForAnUnregisteredWorkspace() {
+        given().contentType("application/json")
+                .body(Map.of("url", "https://github.com/nobody-here/repo/pull/3"))
+                .when().post("/api/reviews/register/resolve")
+                .then().statusCode(200)
+                .body("workspace", equalTo("nobody-here"))
+                .body("slug", equalTo("repo"))
+                .body("pr", equalTo(3))
+                .body("providerRegistered", equalTo(false));
+    }
+
+    @Test
+    void resolveRejectsAnUnparseableUrl() {
+        given().contentType("application/json").body(Map.of("url", "not-a-pr-url"))
+                .when().post("/api/reviews/register/resolve").then().statusCode(400);
+    }
 }

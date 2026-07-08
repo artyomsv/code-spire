@@ -459,6 +459,9 @@
     text-align: center; font-family: var(--font-mono); font-size: 11px;
     color: var(--text-3); letter-spacing: 0.03em;
   }
+  .resolve-hint { font-family: var(--font-mono); font-size: 11.5px; text-align: center; }
+  .resolve-hint.ok { color: var(--good); }
+  .resolve-hint.warn { color: var(--warn); }
   .modal-msg { font-size: 12.5px; padding: 9px 11px; border-radius: 8px; }
   .modal-error { color: var(--crit); background: var(--crit-soft); }
   .modal-ok { color: var(--good); background: var(--good-soft); font-family: var(--font-mono); }
@@ -473,6 +476,27 @@
     padding: 44px 18px; display: flex; flex-direction: column; align-items: center; gap: 16px;
     color: var(--text-3); font-size: 13.5px;
   }
+
+  .prov-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+  }
+  .prov-title { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--text); }
+
+  /* Connectivity indicator — a dot + label, click to re-check. */
+  .conn {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: none; border: none; padding: 0; cursor: pointer;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-2);
+  }
+  .conn:disabled { cursor: default; }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .conn-checking .conn-dot { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+  .conn-checking .conn-label { color: var(--text-3); }
+  .conn-ok .conn-dot { background: var(--good); }
+  .conn-fail .conn-dot { background: var(--crit); }
+  .conn-fail .conn-label { color: var(--crit); }
+  .conn:not(:disabled):hover .conn-label { text-decoration: underline; }
 
   .prov-table { width: 100%; border-collapse: collapse; }
   .prov-table thead th {
@@ -543,6 +567,10 @@
   .field-hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); text-transform: none; letter-spacing: 0; }
   .field-optional { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
   .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field-row-12 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: start; }
+  .field-row-13 { display: grid; grid-template-columns: 1fr 3fr; gap: 10px; align-items: start; }
+  /* Match the leading select to the sibling input's natural height (input unchanged). */
+  .field-row-12 select, .field-row-13 select { height: 36px; }
 
   .field-check { display: flex; align-items: center; gap: 9px; }
   .field-check input { width: 16px; height: 16px; accent-color: var(--iris); }
@@ -582,4 +610,6 @@
   .chip-x button { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; }
   .chip-x button:hover { color: var(--crit); }
 
-  @media (max-width: 560px) { .field-row-2 { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) {
+    .field-row-2, .field-row-12, .field-row-13 { grid-template-columns: 1fr; }
+  }

@@ -124,10 +124,35 @@ class ProviderResourceTest {
     @Test
     void rejectsUnknownType() {
         var b = body("rest-type", "bearer", "tok", null);
-        b.put("type", "gitlab");
+        b.put("type", "gitea"); // not a supported SCM type
         given().contentType("application/json").body(b)
                 .when().post("/api/providers")
                 .then().statusCode(400);
+    }
+
+    @Test
+    void checkReportsOkWithTheTokenOwner() {
+        String id = given().contentType("application/json").body(body("rest-check-ok", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201)
+                .extract().path("id");
+        given().when().post("/api/providers/" + id + "/check")
+                .then().statusCode(200)
+                .body("ok", is(true))
+                .body("account", equalTo("spire_bot"));
+    }
+
+    @Test
+    void checkReportsFailureOnRejectedToken() {
+        String id = given().contentType("application/json").body(body("rest-check-fail", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201)
+                .extract().path("id");
+        // the token is later rejected upstream — the live check must surface it
+        scm.resetAll();
+        scm.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401)));
+        given().when().post("/api/providers/" + id + "/check")
+                .then().statusCode(200)
+                .body("ok", is(false))
+                .body("detail", org.hamcrest.Matchers.containsString("Authentication failed"));
     }
 
     @Test

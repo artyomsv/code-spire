@@ -181,6 +181,19 @@ public class ProviderRegistry {
         }
     }
 
+    /** A single provider by id, with its secret decrypted — for the connectivity check (enabled or not). */
+    public Optional<ScmProvider> resolveById(UUID id) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(decryptedProvider(c, rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve provider " + id, e);
+        }
+    }
+
     private ScmProvider decryptedProvider(Connection c, ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         return new ScmProvider(id, rs.getString("name"), rs.getString("type"),

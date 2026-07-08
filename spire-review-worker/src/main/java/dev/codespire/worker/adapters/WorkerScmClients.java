@@ -16,6 +16,10 @@ import dev.codespire.scm.github.GitHubClient;
 import dev.codespire.scm.github.GitHubCommentSink;
 import dev.codespire.scm.github.GitHubConfig;
 import dev.codespire.scm.github.GitHubDiffSource;
+import dev.codespire.scm.gitlab.GitLabClient;
+import dev.codespire.scm.gitlab.GitLabCommentSink;
+import dev.codespire.scm.gitlab.GitLabConfig;
+import dev.codespire.scm.gitlab.GitLabDiffSource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -67,6 +71,10 @@ public class WorkerScmClients {
                 GitHubClient c = new GitHubClient(githubConfig(cred), mapper);
                 yield new Clients(new GitHubDiffSource(c), new GitHubCommentSink(c));
             }
+            case "gitlab" -> {
+                GitLabClient c = new GitLabClient(gitlabConfig(cred), mapper);
+                yield new Clients(new GitLabDiffSource(c), new GitLabCommentSink(c));
+            }
             default -> throw new IllegalStateException("Unsupported provider type: " + cred.type());
         };
     }
@@ -95,5 +103,10 @@ public class WorkerScmClients {
     private static GitHubConfig githubConfig(ScmCredential cred) {
         // GitHub is always Bearer; the webhook secret is a worker-side placeholder.
         return new GitHubConfig(cred.baseUrl(), cred.secret(), "unused-by-worker");
+    }
+
+    private static GitLabConfig gitlabConfig(ScmCredential cred) {
+        // GitLab is always Bearer; it carries no webhook secret.
+        return new GitLabConfig(cred.baseUrl(), cred.secret());
     }
 }

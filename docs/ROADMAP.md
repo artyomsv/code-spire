@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-07-07)
+## Current status & next-up backlog (updated 2026-07-08)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -33,6 +33,20 @@ down is the original design-time roadmap (kept for reference).
   inline comments anchored to changed lines + a summary — proven end-to-end against
   `github.com/artyomsv/spire-test` via the manual **Register PR** path (no webhook). Closes backlog
   item 1. The no-tunnel runbook is documented in SMOKE-TEST.md (Mode C).
+- **Per-model LLM parameter profiles + failure detail + review deletion (2026-07-08)**: each catalog
+  model declares its API dialect (output token param `max_tokens`/`max_completion_tokens`/none, custom
+  temperature, reasoning effort, extra-params passthrough), brokered to the worker keyed by model name,
+  so reasoning models (o1/o3/gpt-5) no longer fail on `max_tokens` or a rejected temperature (ADR-018).
+  Terminal-failure errors are persisted (encrypted) and shown on the detail page. A review and all of
+  its data can be deleted from the detail page behind a confirmation dialog, broadcast live.
+- **GitLab adapter (`spire-scm-gitlab`) built (2026-07-08)** · read + write over the manual Register PR
+  path, baseUrl-driven (gitlab.com default, self-managed override). `GitLabDiffSource` (MR by `iid`,
+  full `DiffRefs{base,start,head}` from `diff_refs`, header-less per-file diffs re-wrapped for the
+  shared parser), `GitLabCommentSink` (summary note, inline discussion `position`, `discussion_id`
+  reply), URL-encoded nested-group project paths. Registry/worker/UI wired for the `gitlab` type; the
+  manual-register slug + MR-URL (`/-/merge_requests/`) parsers now accept nested groups. WireMock unit
+  suite (18) + an orchestrator nested-group register test green. **Live verification pending** an
+  operator-supplied GitLab project + token (the GitHub `spire-test` analog).
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -40,10 +54,15 @@ down is the original design-time roadmap (kept for reference).
 1. ✅ GitHub **active mode** — post a real review comment (2026-07-07). Complete GitHub loop
    (diff → LLM → inline + summary) proven live against `artyomsv/spire-test` PR #2 via manual
    Register PR. See SMOKE-TEST.md Mode C.
-2. **GitLab adapter (Phase C)** · L · ⚑ gitlab.com vs self-hosted host. Static-token auth (not HMAC),
-   MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths (touches reviewId slug).
-3. **Real webhooks (Phase D)** · M. `/webhooks/{provider}` dispatch in the gateway so PRs auto-register
-   on open/update instead of manual "Register PR". Needs a public tunnel to test.
+2. **GitLab adapter (Phase C)** · L · ✅ **built 2026-07-08, live verification pending.** baseUrl-driven
+   (gitlab.com + self-managed), MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths
+   (slug parsers widened). Read+write over manual Register PR; WireMock + register tests green. Webhook
+   ingress deliberately omitted — see item 3. Remaining: register a real GitLab MR and confirm the
+   diff → LLM → inline + summary loop, then add a SMOKE-TEST GitLab mode.
+3. **Real webhooks (Phase D)** · M · ⏸ **postponed for all providers.** `/webhooks/{provider}` dispatch
+   so PRs auto-register on open/update instead of manual "Register PR". Deferred until there is a public
+   tunnel or an always-on host to receive hooks — until then the manual Register PR path is the only
+   live entry, and no provider (Bitbucket/GitHub/GitLab) wires an ingress.
 
 **B. Make the reviewer genuinely useful (P2 — currently diff-only)**
 4. **`/review` command** · M. Author types `/review` in a PR comment to (re-)trigger. Parsed, inactive.
@@ -66,8 +85,10 @@ down is the original design-time roadmap (kept for reference).
     catalog. See ADR-018.
 12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
 
-**Suggested order for momentum:** C (7/8/9) and 1 (GitHub active) are done. Next: 3 (webhooks — auto-
-register instead of manual Register PR) → 2 (GitLab). Operator decides.
+**Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are done —
+GitLab awaits only a live-verification pass with a real project + token. Webhooks (3) are postponed
+(no host/tunnel). Next real lever: **B4/B5** (`/review` command, conversational replies) or **B6**
+(ContextProviders — Jira/Confluence, the biggest lever toward useful reviews). Operator decides.
 
 ---
 

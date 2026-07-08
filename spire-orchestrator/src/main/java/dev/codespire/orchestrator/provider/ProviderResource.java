@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.provider;
 
 import dev.codespire.contract.scm.Author;
+import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
@@ -31,7 +32,7 @@ public class ProviderResource {
     private static final Logger LOG = Logger.getLogger(ProviderResource.class);
 
     private static final Set<String> AUTH_KINDS = Set.of("bearer", "basic");
-    private static final Set<String> TYPES = Set.of("bitbucket-cloud", "github");
+    private static final Set<String> TYPES = Set.of("bitbucket-cloud", "github", "gitlab");
 
     @Inject
     ProviderRegistry registry;
@@ -96,6 +97,49 @@ public class ProviderResource {
         String botId = hasBotId ? in.botAccountId() : owner.providerUserId();
         return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
                 in.authUsername(), in.secret(), botId, in.enabled(), in.authors());
+    }
+
+    /**
+     * Live connectivity check: contact the SCM with the provider's stored token
+     * ({@code whoami}) and report whether it works, so the operator can confirm a
+     * newly-added provider is reachable and authorised without waiting for the
+     * first review. The token is never returned; only a category of the failure.
+     */
+    @POST
+    @Path("/{id}/check")
+    @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
+    public CheckResult check(@PathParam("id") String id) {
+        ScmProvider provider = registry.resolveById(uuid(id))
+                .orElseThrow(() -> new NotFoundException("No provider " + id));
+        try {
+            Author owner = identity.resolve(provider);
+            return new CheckResult(true, owner.username(), null);
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "Provider connectivity check failed for %s (type %s)", id, provider.type());
+            return new CheckResult(false, null, reason(e));
+        }
+    }
+
+    /** Result of {@link #check}: {@code account} on success, a safe {@code detail} on failure. */
+    public record CheckResult(boolean ok, String account, String detail) {
+    }
+
+    /** A non-leaky, actionable reason — status codes are safe; upstream bodies are not echoed. */
+    private static String reason(RuntimeException e) {
+        if (e instanceof ScmApiException api) {
+            int status = api.status();
+            if (status == 401 || status == 403) {
+                return "Authentication failed (HTTP " + status + ") — check the token and its scopes.";
+            }
+            if (status == 404) {
+                return "Not found (HTTP 404) — check the base URL.";
+            }
+            if (status == 429) {
+                return "Rate limited (HTTP 429) — try again shortly.";
+            }
+            return "Provider returned HTTP " + status + ".";
+        }
+        return "Could not reach the provider (network or TLS error).";
     }
 
     @DELETE

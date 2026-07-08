@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  checkProvider,
   createProvider,
   deleteProvider,
   fetchProviders,
@@ -12,28 +13,60 @@ import ReviewModeToggle from './ReviewModeToggle';
 
 // Provider types and their default API base URLs. When a user switches type
 // without having customised the base URL, we swap in the matching default.
-const PROVIDER_TYPES = ['bitbucket-cloud', 'github'] as const;
+const PROVIDER_TYPES = ['bitbucket-cloud', 'github', 'gitlab'] as const;
 const DEFAULT_BASE_URLS: Record<string, string> = {
   'bitbucket-cloud': 'https://api.bitbucket.org/2.0',
   github: 'https://api.github.com',
+  gitlab: 'https://gitlab.com/api/v4',
 };
+// Providers that authenticate with a Bearer token only (no Basic-auth path).
+const BEARER_ONLY = new Set(['github', 'gitlab']);
 const KNOWN_DEFAULTS = new Set(Object.values(DEFAULT_BASE_URLS));
 const DEFAULT_BASE_URL = DEFAULT_BASE_URLS['bitbucket-cloud'];
+
+// Per-provider connectivity status, keyed by provider id.
+type ConnState = 'checking' | 'ok' | 'fail';
+interface Conn {
+  state: ConnState;
+  account?: string | null;
+  detail?: string | null;
+}
 
 export default function SettingsProviders() {
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [conns, setConns] = useState<Record<string, Conn>>({});
 
   // null = form closed; a ProviderView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | ProviderView | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ProviderView | null>(null);
 
+  async function checkOne(id: string) {
+    setConns((prev) => ({ ...prev, [id]: { state: 'checking' } }));
+    try {
+      const r = await checkProvider(id);
+      setConns((prev) => ({
+        ...prev,
+        [id]: r.ok ? { state: 'ok', account: r.account } : { state: 'fail', detail: r.detail },
+      }));
+    } catch (err) {
+      setConns((prev) => ({
+        ...prev,
+        [id]: { state: 'fail', detail: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  }
+
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      setProviders(await fetchProviders());
+      const list = await fetchProviders();
+      setProviders(list);
+      // Check connectivity once on load — no continuous polling, to avoid
+      // burning the provider's rate limit; re-run per row on demand.
+      list.forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -47,19 +80,22 @@ export default function SettingsProviders() {
 
   return (
     <section className="content">
-      <div className="page-head">
-        <div className="grow"></div>
-        <button className="btn" onClick={() => setForm('new')}>
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-          Add provider
-        </button>
-      </div>
-
       <ReviewModeToggle />
 
       <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">Providers</h2>
+          <button
+            className="iconbtn"
+            onClick={() => setForm('new')}
+            aria-label="Add provider"
+            title="Add provider"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
         {error ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading && providers.length === 0 ? (
@@ -82,6 +118,7 @@ export default function SettingsProviders() {
                 <th>Type</th>
                 <th>Workspace</th>
                 <th>Auth</th>
+                <th>Connection</th>
                 <th className="cell-r">Authors</th>
                 <th>Enabled</th>
                 <th></th>
@@ -106,6 +143,9 @@ export default function SettingsProviders() {
                       {p.authKind === 'basic' && p.authUsername ? ` · ${p.authUsername}` : ''}
                     </div>
                     <div className="prov-sub">{p.hasSecret ? 'token set' : 'no token'}</div>
+                  </td>
+                  <td>
+                    <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />
                   </td>
                   <td className="cell-r mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
                     {p.authors.length}
@@ -158,6 +198,36 @@ export default function SettingsProviders() {
   );
 }
 
+function ConnCell({ conn, onRecheck }: { conn: Conn | undefined; onRecheck: () => void }) {
+  const state = conn?.state ?? 'checking';
+  const label =
+    state === 'checking'
+      ? 'Checking…'
+      : state === 'ok'
+        ? conn?.account
+          ? `@${conn.account}`
+          : 'Connected'
+        : 'Failed';
+  const title =
+    state === 'checking'
+      ? 'Contacting the provider…'
+      : state === 'ok'
+        ? `Connected${conn?.account ? ` as @${conn.account}` : ''} — click to re-check`
+        : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
+  return (
+    <button
+      type="button"
+      className={`conn conn-${state}`}
+      onClick={onRecheck}
+      disabled={state === 'checking'}
+      title={title}
+    >
+      <span className="conn-dot" />
+      <span className="conn-label">{label}</span>
+    </button>
+  );
+}
+
 function ProviderFormModal({
   initial,
   onClose,
@@ -190,8 +260,8 @@ function ProviderFormModal({
     if (!baseUrl.trim() || KNOWN_DEFAULTS.has(baseUrl.trim())) {
       setBaseUrl(DEFAULT_BASE_URLS[next] ?? baseUrl);
     }
-    // GitHub authenticates with a Bearer token only.
-    if (next === 'github') {
+    // GitHub and GitLab authenticate with a Bearer token only.
+    if (BEARER_ONLY.has(next)) {
       setAuthKind('bearer');
     }
   }
@@ -273,7 +343,7 @@ function ProviderFormModal({
             <input placeholder="Acme Bitbucket" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
           </label>
 
-          <div className="field-row-2">
+          <div className="field-row-12">
             <label className="field">
               <span>Type</span>
               <select value={type} onChange={(e) => changeType(e.target.value)}>
@@ -305,46 +375,46 @@ function ProviderFormModal({
             />
           </label>
 
-          <div className="field-row-2">
+          <div className="field-row-13">
             <label className="field">
               <span>Auth kind</span>
               <select
                 value={authKind}
-                disabled={type === 'github'}
+                disabled={BEARER_ONLY.has(type)}
                 onChange={(e) => setAuthKind(e.target.value as AuthKind)}
               >
                 <option value="bearer">bearer</option>
-                {type !== 'github' && <option value="basic">basic</option>}
+                {!BEARER_ONLY.has(type) && <option value="basic">basic</option>}
               </select>
             </label>
-            {authKind === 'basic' && (
-              <label className="field">
-                <span>Username</span>
-                <input
-                  className="mono"
-                  placeholder="username"
-                  value={authUsername}
-                  onChange={(e) => setAuthUsername(e.target.value)}
-                />
-              </label>
-            )}
+            <label className="field">
+              <span>Secret / token</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={editing ? 'leave blank to keep current' : 'access token'}
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+              />
+              {editing && (
+                <small className="field-hint">
+                  {initial?.hasSecret ? 'A token is stored — leave blank to keep it.' : 'No token stored yet.'}
+                </small>
+              )}
+            </label>
           </div>
 
-          <label className="field">
-            <span>Secret / token</span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              placeholder={editing ? 'leave blank to keep current' : 'access token'}
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-            />
-            {editing && (
-              <small className="field-hint">
-                {initial?.hasSecret ? 'A token is stored — leave blank to keep it.' : 'No token stored yet.'}
-              </small>
-            )}
-          </label>
+          {authKind === 'basic' && (
+            <label className="field">
+              <span>Username</span>
+              <input
+                className="mono"
+                placeholder="username"
+                value={authUsername}
+                onChange={(e) => setAuthUsername(e.target.value)}
+              />
+            </label>
+          )}
 
           <label className="field">
             <span>Bot account id <span className="field-optional">optional</span></span>

@@ -24,7 +24,7 @@ import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
 import java.util.Map;
-import java.util.regex.Matcher;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -38,19 +38,19 @@ public class ManualRegisterResource {
 
     private static final Logger LOG = Logger.getLogger(ManualRegisterResource.class);
 
-    // workspace / repo slug charset (same as the webhook ingress guard).
+    // A single path segment's charset (same as the webhook ingress guard), used to
+    // validate the explicit workspace + slug JSON path. URL parsing is delegated to
+    // the per-provider PrUrlParsers, which own their own grammar.
     private static final Pattern SLUG = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
-    // {workspace}/{slug}/<pr-segment>/{id} anywhere in the URL — host-agnostic so
-    // proxied hosts (company MCAS: bitbucket.org.mcas.ms) and trailing path/query parse.
-    // pr-segment: Bitbucket "pull-requests"/"pullrequests" or GitHub "pull".
-    private static final Pattern PR_URL =
-            Pattern.compile("([^/\\s?#]+)/([^/\\s?#]+)/(?:pull-requests|pullrequests|pull)/(\\d+)");
 
     @Inject
     ProviderRegistry providers;
 
     @Inject
     ProviderClients clients;
+
+    @Inject
+    PrUrlParsers urlParsers;
 
     @Inject
     IntegrationEmitter integration;
@@ -104,14 +104,39 @@ public class ManualRegisterResource {
     private record Target(String workspace, String slug, long pr) {
     }
 
+    /** Request + result of the URL-preview endpoint (parse without registering). */
+    public record ResolveRequest(String url) {
+    }
+
+    public record ResolvedUrl(String workspace, String slug, long pr,
+                              boolean providerRegistered, String providerType, String providerName) {
+    }
+
+    /**
+     * Parse a pull-request / merge-request URL into its fields WITHOUT registering,
+     * and report which registered provider (if any) would handle it — so the UI can
+     * fill the form and confirm a provider is set up, using the single backend
+     * parser instead of duplicating the URL regexes client-side.
+     */
+    @POST
+    @Path("/resolve")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public ResolvedUrl resolve(ResolveRequest req) {
+        if (req == null || req.url() == null || req.url().isBlank()) {
+            throw new BadRequestException("url is required");
+        }
+        Target target = parseUrl(req.url().trim());
+        Optional<ScmProvider> provider = providers.resolveByWorkspace(target.workspace);
+        return new ResolvedUrl(target.workspace, target.slug, target.pr,
+                provider.isPresent(),
+                provider.map(ScmProvider::type).orElse(null),
+                provider.map(ScmProvider::name).orElse(null));
+    }
+
     private Target resolve(RegisterRequest req) {
         if (req != null && req.url() != null && !req.url().isBlank()) {
-            Matcher m = PR_URL.matcher(req.url().trim());
-            if (!m.find()) {
-                throw new BadRequestException("Unrecognised pull request URL — expected "
-                        + ".../<workspace>/<repo>/pull-requests/<id>");
-            }
-            return validated(m.group(1), m.group(2), Long.parseLong(m.group(3)));
+            return parseUrl(req.url().trim());
         }
         if (req == null || req.workspace() == null || req.slug() == null || req.pr() == null) {
             throw new BadRequestException("Provide a pull request 'url', or 'workspace' + 'slug' + 'pr'.");
@@ -119,13 +144,34 @@ public class ManualRegisterResource {
         return validated(req.workspace().trim(), req.slug().trim(), req.pr());
     }
 
+    /** Delegate URL parsing to the per-provider parsers; the first match wins. */
+    private Target parseUrl(String url) {
+        return urlParsers.parse(url)
+                .map(c -> new Target(c.repo().workspace(), c.repo().slug(), c.prId()))
+                .orElseThrow(() -> new BadRequestException("Unrecognised pull request URL — expected "
+                        + ".../pull-requests/<id>, .../pull/<id>, or .../-/merge_requests/<id>"));
+    }
+
     private Target validated(String workspace, String slug, long pr) {
-        if (!SLUG.matcher(workspace).matches() || !SLUG.matcher(slug).matches()) {
+        if (!SLUG.matcher(workspace).matches() || !validSlug(slug)) {
             throw new BadRequestException("Invalid workspace or repository slug.");
         }
         if (pr <= 0) {
             throw new BadRequestException("Pull request number must be positive.");
         }
         return new Target(workspace, slug, pr);
+    }
+
+    /** A repo slug is one or more path segments (GitLab nested groups); each must be a valid segment. */
+    private static boolean validSlug(String slug) {
+        if (slug.isBlank()) {
+            return false;
+        }
+        for (String segment : slug.split("/", -1)) {
+            if (!SLUG.matcher(segment).matches()) {
+                return false;
+            }
+        }
+        return true;
     }
 }
