@@ -229,3 +229,49 @@ gh api repos/<owner>/<repo>/issues/<number>/comments --jq 'length'    # summary 
 
 Set `SPIRE_REVIEW_MODE=observe` (or stop the services) to return to a no-write posture. Bot
 comments can stay or be deleted in the PR UI.
+
+## Mode D — real GitLab MR, active review, **no webhook** (manual Register PR)
+
+Identical to Mode C — the same manual-register pipeline (diff → LLM → inline + summary), the
+same minimal service set (Postgres + Redpanda + orchestrator + worker), the same review-mode
+flags. Only the SCM-provider specifics differ. Works against `gitlab.com` and any self-managed
+GitLab (`baseUrl` drives it — e.g. a company `https://git.example.com/api/v4`).
+
+### GitLab-specific prerequisites
+
+1. Register a **GitLab provider** in Settings → Providers:
+   - **workspace** = the top-level group (for `gitlab.com/<group>/<sub>/<project>`, use `<group>`;
+     the sub-group + project become the slug automatically),
+   - **base URL** = `https://gitlab.com/api/v4` (or `https://<self-managed-host>/api/v4`),
+   - **token** = a Personal (or Project/Group) Access Token with the **`api`** scope,
+   - Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource` → `GET /user`).
+2. LLM provider + review-mode flags: exactly as Mode C, steps 2–4.
+
+### Register an MR and watch it review
+
+Open an MR on the sandbox project with a small **code** change, then Register PR (or curl) with
+the MR URL:
+
+- **UI:** **Register PR** → paste `https://gitlab.com/<group>/<project>/-/merge_requests/<iid>`
+  (the backend `/resolve` auto-fills group / project / MR # and shows which provider will handle
+  it) → **Register**.
+- **curl:** post the resolved fields (`workspace` = group, `slug` = `[sub-group/]project`,
+  `pr` = the MR `iid`) to `POST /api/reviews/register`, same shape as Mode C.
+
+**Expected:** `status=completed`, and the MR gets **inline discussion comments on the changed
+lines + one summary note**, posted by the token owner. GitLab needs all three diff SHAs
+(`base`/`start`/`head`) to anchor an inline position — the adapter carries them; findings whose
+line is off the diff fold into the summary rather than being dropped (same as GitHub).
+
+### Verify from the CLI
+
+```bash
+# encode the full project path (group%2F…%2Fproject); <iid> is the MR number
+curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.com/api/v4/projects/<enc-path>/merge_requests/<iid>/discussions" --output - | grep -c '"id"'
+```
+
+### Cleanup
+
+Same as Mode C — set `SPIRE_REVIEW_MODE=observe` (or stop the services); MR discussions can stay
+or be resolved/deleted in the GitLab UI.

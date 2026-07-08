@@ -45,8 +45,18 @@ down is the original design-time roadmap (kept for reference).
   shared parser), `GitLabCommentSink` (summary note, inline discussion `position`, `discussion_id`
   reply), URL-encoded nested-group project paths. Registry/worker/UI wired for the `gitlab` type; the
   manual-register slug + MR-URL (`/-/merge_requests/`) parsers now accept nested groups. WireMock unit
-  suite (18) + an orchestrator nested-group register test green. **Live verification pending** an
-  operator-supplied GitLab project + token (the GitHub `spire-test` analog).
+  suite (18) + an orchestrator nested-group register test green. **Verified live** against a real
+  GitLab MR (diff → LLM → inline discussions + summary note) via the manual Register PR path; the
+  no-tunnel runbook is documented in SMOKE-TEST.md (Mode D). Closes backlog item 2.
+- **Native Anthropic + Gemini LLM providers (2026-07-08)**: `spire-llm` gains first-class
+  `anthropic` and `gemini` provider types alongside the OpenAI-compatible path, via the native
+  LangChain4j clients (`AnthropicChatModel`, `GoogleAiGeminiChatModel`). The one `LangChain4jLlmProvider`
+  serves all three — the wrapped `ChatModel` and the request-parameter factory vary: OpenAI keeps the
+  per-model `ModelParamProfile` dialect, the native clients take a profile-free shape (temperature +
+  output cap). baseUrl-driven (gitlab-style self-managed/proxy override), per-type key validation on
+  save (`Authorization: Bearer` / `x-api-key` / `x-goog-api-key` against `/models`), registry/worker/UI
+  wired, and the model-catalog form hides the OpenAI-only dialect knobs for native types. Unit +
+  WireMock tests green.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -54,11 +64,10 @@ down is the original design-time roadmap (kept for reference).
 1. ✅ GitHub **active mode** — post a real review comment (2026-07-07). Complete GitHub loop
    (diff → LLM → inline + summary) proven live against `artyomsv/spire-test` PR #2 via manual
    Register PR. See SMOKE-TEST.md Mode C.
-2. **GitLab adapter (Phase C)** · L · ✅ **built 2026-07-08, live verification pending.** baseUrl-driven
-   (gitlab.com + self-managed), MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths
-   (slug parsers widened). Read+write over manual Register PR; WireMock + register tests green. Webhook
-   ingress deliberately omitted — see item 3. Remaining: register a real GitLab MR and confirm the
-   diff → LLM → inline + summary loop, then add a SMOKE-TEST GitLab mode.
+2. ✅ **GitLab adapter (Phase C)** — **verified live 2026-07-08.** baseUrl-driven (gitlab.com +
+   self-managed), MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths (slug parsers
+   widened). Read+write over manual Register PR; WireMock + register tests green; live diff → LLM →
+   inline + summary confirmed. Webhook ingress deliberately omitted — see item 3. See SMOKE-TEST.md Mode D.
 3. **Real webhooks (Phase D)** · M · ⏸ **postponed for all providers.** `/webhooks/{provider}` dispatch
    so PRs auto-register on open/update instead of manual "Register PR". Deferred until there is a public
    tunnel or an always-on host to receive hooks — until then the manual Register PR path is the only
@@ -85,10 +94,11 @@ down is the original design-time roadmap (kept for reference).
     catalog. See ADR-018.
 12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
 
-**Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are done —
-GitLab awaits only a live-verification pass with a real project + token. Webhooks (3) are postponed
-(no host/tunnel). Next real lever: **B4/B5** (`/review` command, conversational replies) or **B6**
-(ContextProviders — Jira/Confluence, the biggest lever toward useful reviews). Operator decides.
+**Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are all done and
+verified live; native Anthropic + Gemini LLM providers landed 2026-07-08. Webhooks (3) are postponed
+(no host/tunnel), and **B4/B5** (`/review` command, conversational replies) depend on that ingress —
+also parked. Next real lever with no infra blocker: **B6** (ContextProviders — Jira/Confluence, the
+biggest lever toward useful reviews) or **D10** (OIDC, before any shared deploy). Operator decides.
 
 ---
 
@@ -130,8 +140,9 @@ GitLab awaits only a live-verification pass with a real project + token. Webhook
 - **Exit:** the bot adapts to team conventions over time; basic analytics dashboard.
 
 ## Cross-cutting (ongoing)
-- Additional SCM adapters (GitHub, GitLab) — proves the port abstraction.
-- Additional LLM providers (Vertex, Anthropic, Azure, Ollama).
+- Additional SCM adapters (GitHub, GitLab) — proves the port abstraction. ✅ GitHub + GitLab done.
+- Additional LLM providers — ✅ Anthropic + Gemini (native) done; OpenAI-compatible covers Azure/Ollama.
+  Vertex still open.
 - **Contract-compat CI gate** — round-trip + snapshot tests on `spire-contract` events; fail on a
   breaking change without an `eventVersion` bump + upcaster (ADR-013).
 - Packaging: container image, Helm chart / ArgoCD-friendly manifests, `.env.example` contract.
