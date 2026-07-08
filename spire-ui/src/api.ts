@@ -25,7 +25,10 @@ export interface ReviewSummary {
   status: ReviewStatus;
   stage: number; // 0..6 index into [Received, Diff, Context, Review, Comments, Done]
   findings: number;
+  blockerCount: number; // number of blocker-severity (critical) findings — drives the outcome badge
   costMillicents: number; // review cost (1/100,000 dollar); 0 = unpriced/uncatalogued model
+  model: string; // model that produced the review, e.g. "gemini-3.1-pro-preview" ('' if none yet)
+  llmType: string; // LLM vendor from the catalog: 'openai' | 'anthropic' | 'gemini' | '' (uncatalogued)
   updatedAt: string; // ISO-8601
 }
 
@@ -90,6 +93,19 @@ export async function deleteReview(
     { method: 'DELETE' },
   );
   if (!res.ok) await throwResponse(res, 'Failed to delete review');
+}
+
+/** Re-run a review's pipeline on its stored commit (force restart; re-runs the LLM, re-posts). */
+export async function rerunReview(
+  workspace: string,
+  slug: string,
+  pr: string | number,
+): Promise<void> {
+  const res = await fetch(
+    `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}/rerun`,
+    { method: 'POST' },
+  );
+  if (!res.ok) await throwResponse(res, 'Failed to re-run review');
 }
 
 export interface RegisterResult {
@@ -262,7 +278,7 @@ export async function setReviewMode(mode: ReviewMode): Promise<ReviewModeView> {
 
 // ---- LLM providers ----
 
-export type LlmType = 'openai'; // anthropic | gemini land in phase 2
+export type LlmType = 'openai' | 'anthropic' | 'gemini';
 
 export interface LlmProviderView {
   id: string;

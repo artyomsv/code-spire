@@ -170,7 +170,7 @@ class ProviderIdentityResolverTest {
     @Test
     void unsupportedProviderTypeIsRejected() {
         assertThrows(IllegalStateException.class,
-                () -> resolver.resolve(input("gitlab", "bearer", null, "tok")));
+                () -> resolver.resolve(input("gitea", "bearer", null, "tok")));
         assertEquals(0, scm.getAllServeEvents().size(), "no call may leave the process for an unknown type");
     }
 }

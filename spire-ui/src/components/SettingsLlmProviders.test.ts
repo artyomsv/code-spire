@@ -3,12 +3,14 @@ import type { LlmModelView } from '../api';
 import { byExpenseDesc, defaultBaseUrl, profileHint } from './SettingsLlmProviders';
 
 describe('defaultBaseUrl', () => {
-  it('returns the OpenAI base URL for openai', () => {
+  it('returns the base URL for each supported type', () => {
     expect(defaultBaseUrl('openai')).toBe('https://api.openai.com/v1');
+    expect(defaultBaseUrl('anthropic')).toBe('https://api.anthropic.com/v1');
+    expect(defaultBaseUrl('gemini')).toBe('https://generativelanguage.googleapis.com/v1beta');
   });
 
   it('returns empty for an unknown type', () => {
-    expect(defaultBaseUrl('anthropic')).toBe('');
+    expect(defaultBaseUrl('cohere')).toBe('');
     expect(defaultBaseUrl('')).toBe('');
   });
 });

@@ -8,9 +8,12 @@ import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.review.ModelUsage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.output.TokenUsage;
@@ -19,12 +22,20 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Function;
 
 /**
  * Default LlmProvider implementation behind LangChain4j (ADR: LangChain4j is
  * the default impl of the port, swappable). Synchronous under the hood —
  * callers are @Blocking worker threads; the CompletionStage is the port's
  * contract, not a promise of internal async I/O.
+ *
+ * <p>One class serves every backend: the wrapped {@link ChatModel} varies
+ * (OpenAI-compatible, Anthropic, Gemini) and so does {@code paramFactory} — how
+ * a request's parameters are shaped. OpenAI uses the per-model {@link
+ * ModelParamProfile} dialect ({@link #requestParameters}); the native Anthropic
+ * and Gemini clients take the profile-free {@link #nativeParameters} (temperature
+ * + output cap only), which is all their APIs need.
  */
 public class LangChain4jLlmProvider implements LlmProvider {
 
@@ -36,10 +47,18 @@ public class LangChain4jLlmProvider implements LlmProvider {
 
     private final ChatModel model;
     private final String id;
+    private final Function<ModelParams, ChatRequestParameters> paramFactory;
 
+    /** Defaults to the OpenAI dialect — the historical behavior + the {@link #openAiCompatible} path. */
     public LangChain4jLlmProvider(ChatModel model, String id) {
+        this(model, id, LangChain4jLlmProvider::requestParameters);
+    }
+
+    public LangChain4jLlmProvider(ChatModel model, String id,
+                                  Function<ModelParams, ChatRequestParameters> paramFactory) {
         this.model = model;
         this.id = id;
+        this.paramFactory = paramFactory;
     }
 
     /** Builds the provider for any OpenAI-compatible endpoint from explicit config. */
@@ -56,6 +75,34 @@ public class LangChain4jLlmProvider implements LlmProvider {
         return new LangChain4jLlmProvider(chatModel, "openai-compatible/" + config.model());
     }
 
+    /** Builds the provider for Anthropic's native API from explicit config. */
+    public static LangChain4jLlmProvider anthropic(LlmConfig config) {
+        // Anthropic requires max_tokens on every request; nativeParameters always sends
+        // one (the operator's cap or DEFAULT_MAX_OUTPUT_TOKENS), and a build-time default
+        // is set too so the paid call is bounded even if a request slips through unset.
+        ChatModel chatModel = AnthropicChatModel.builder()
+                .baseUrl(config.baseUrl())
+                .apiKey(config.apiKey())
+                .modelName(config.model())
+                .maxTokens(DEFAULT_MAX_OUTPUT_TOKENS)
+                .timeout(Duration.ofSeconds(60)) // ADR-013 LLM budget
+                .build();
+        return new LangChain4jLlmProvider(chatModel, "anthropic/" + config.model(),
+                LangChain4jLlmProvider::nativeParameters);
+    }
+
+    /** Builds the provider for Google's native Gemini API from explicit config. */
+    public static LangChain4jLlmProvider gemini(LlmConfig config) {
+        ChatModel chatModel = GoogleAiGeminiChatModel.builder()
+                .baseUrl(config.baseUrl())
+                .apiKey(config.apiKey())
+                .modelName(config.model())
+                .timeout(Duration.ofSeconds(60)) // ADR-013 LLM budget
+                .build();
+        return new LangChain4jLlmProvider(chatModel, "gemini/" + config.model(),
+                LangChain4jLlmProvider::nativeParameters);
+    }
+
     @Override
     public String id() {
         return id;
@@ -68,7 +115,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                     .messages(List.of(
                             SystemMessage.from(prompt.system()),
                             UserMessage.from(prompt.user())))
-                    .parameters(requestParameters(params))
+                    .parameters(paramFactory.apply(params))
                     .build();
             ChatResponse response = model.chat(request);
             TokenUsage usage = response.tokenUsage();
@@ -116,6 +163,25 @@ public class LangChain4jLlmProvider implements LlmProvider {
         }
         if (!profile.extraParams().isEmpty()) {
             b.customParameters(profile.extraParams());
+        }
+        return b.build();
+    }
+
+    /**
+     * Request parameters for the native Anthropic/Gemini clients: a hard output cap
+     * plus temperature — the only knobs those APIs need here. The OpenAI-specific
+     * {@link ModelParamProfile} dialect (max_completion_tokens, reasoning_effort,
+     * custom params) does not apply and is ignored, but {@code supportsTemperature}
+     * DOES: newer Claude models (e.g. Fable) deprecate {@code temperature} and reject
+     * the request outright when it is sent, so it is omitted when the profile says so.
+     * Package-private for direct unit testing.
+     */
+    static ChatRequestParameters nativeParameters(ModelParams params) {
+        // The paid call always carries a bound (cost control) — the operator's cap or the default.
+        int cap = params.maxTokens() != null ? params.maxTokens() : DEFAULT_MAX_OUTPUT_TOKENS;
+        var b = ChatRequestParameters.builder().maxOutputTokens(cap);
+        if (params.profile().supportsTemperature()) {
+            b.temperature(params.temperature());
         }
         return b.build();
     }

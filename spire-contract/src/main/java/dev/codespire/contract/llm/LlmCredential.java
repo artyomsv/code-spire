@@ -7,7 +7,7 @@ package dev.codespire.contract.llm;
  * this record, and encrypts it; the worker decrypts it to build the model per
  * command. Never logged.
  *
- * @param type        provider type — {@code openai} (Phase 1); {@code anthropic}/{@code gemini} later
+ * @param type        provider type — {@code openai}, {@code anthropic}, or {@code gemini}
  * @param baseUrl     API base URL
  * @param apiKey      the API key (decrypted only inside the worker)
  * @param model       the model name

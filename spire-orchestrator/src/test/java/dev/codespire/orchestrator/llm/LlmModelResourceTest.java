@@ -45,7 +45,7 @@ class LlmModelResourceTest {
     @Test
     void rejectsAnUnsupportedType() {
         given().contentType("application/json")
-                .body(Map.of("type", "anthropic", "name", "claude", "label", "C",
+                .body(Map.of("type", "cohere", "name", "command-r", "label", "C",
                         "inputPriceMillicentsPerMillion", 1, "outputPriceMillicentsPerMillion", 1))
                 .when().post("/api/llm-models").then().statusCode(400);
     }

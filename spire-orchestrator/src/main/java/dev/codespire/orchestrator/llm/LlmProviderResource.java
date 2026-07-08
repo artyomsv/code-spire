@@ -26,8 +26,7 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmProviderResource {
 
-    // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
-    private static final Set<String> TYPES = Set.of("openai");
+    private static final Set<String> TYPES = Set.of("openai", "anthropic", "gemini");
 
     @Inject
     LlmProviderRegistry registry;

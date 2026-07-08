@@ -153,6 +153,74 @@ class LangChain4jLlmProviderTest {
     }
 
     @Test
+    void nativeParametersSendTemperatureAndCap() {
+        var p = LangChain4jLlmProvider.nativeParameters(new ModelParams("claude-sonnet", 0.3, 500));
+        assertEquals(0.3, p.temperature());
+        assertEquals(500, p.maxOutputTokens());
+    }
+
+    @Test
+    void nativeParametersDefaultTheCapWhenUnset() {
+        var p = LangChain4jLlmProvider.nativeParameters(new ModelParams("gemini-pro", 0.2, null));
+        assertEquals(LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS, p.maxOutputTokens());
+    }
+
+    @Test
+    void nativeParametersIgnoreTheOpenAiDialectButHonorTemperatureSupport() {
+        // The OpenAI-only dialect fields (max_completion_tokens, reasoning_effort, custom params)
+        // do not apply to native clients and are ignored — the cap always goes on maxOutputTokens.
+        var profile = new ModelParamProfile(OutputTokenParam.MAX_COMPLETION_TOKENS, true, "high", Map.of());
+        var p = LangChain4jLlmProvider.nativeParameters(new ModelParams("claude", 0.7, 256, profile));
+        assertEquals(0.7, p.temperature());
+        assertEquals(256, p.maxOutputTokens());
+    }
+
+    @Test
+    void nativeParametersOmitTemperatureWhenTheModelRejectsIt() {
+        // Newer Claude models (Fable) deprecate temperature and reject the request if it is sent.
+        var profile = new ModelParamProfile(OutputTokenParam.MAX_TOKENS, false, null, Map.of());
+        var p = LangChain4jLlmProvider.nativeParameters(new ModelParams("claude-fable-5", 0.7, 256, profile));
+        assertNull(p.temperature(), "temperature must be omitted when the profile marks it unsupported");
+        assertEquals(256, p.maxOutputTokens(), "the output cap still goes through");
+    }
+
+    @Test
+    void nativeProviderCompletesUsingNativeParams() {
+        var captured = new AtomicReference<ChatRequest>();
+        var provider = new LangChain4jLlmProvider(
+                capturing(captured), "native", LangChain4jLlmProvider::nativeParameters);
+
+        provider.complete(PROMPT, new ModelParams("claude", 0.5, 700)).toCompletableFuture().join();
+
+        assertEquals(0.5, captured.get().temperature());
+        assertEquals(700, captured.get().maxOutputTokens());
+    }
+
+    @Test
+    void nativeProviderOmitsTemperatureThroughCompleteWhenUnsupported() {
+        var captured = new AtomicReference<ChatRequest>();
+        var provider = new LangChain4jLlmProvider(
+                capturing(captured), "native", LangChain4jLlmProvider::nativeParameters);
+
+        var profile = new ModelParamProfile(OutputTokenParam.MAX_TOKENS, false, null, Map.of());
+        provider.complete(PROMPT, new ModelParams("claude-fable-5", 0.7, 700, profile)).toCompletableFuture().join();
+
+        assertNull(captured.get().temperature(), "no temperature reaches the wire for a Fable-style model");
+        assertEquals(700, captured.get().maxOutputTokens());
+    }
+
+    @Test
+    void anthropicAndGeminiFactoriesBuildWithoutNetwork() {
+        var anthropic = LangChain4jLlmProvider.anthropic(
+                new LlmConfig("https://api.anthropic.com/v1", "sk-ant", "claude-sonnet-4", 0.2));
+        assertEquals("anthropic/claude-sonnet-4", anthropic.id());
+
+        var gemini = LangChain4jLlmProvider.gemini(
+                new LlmConfig("https://generativelanguage.googleapis.com/v1beta", "key", "gemini-2.5-pro", 0.2));
+        assertEquals("gemini/gemini-2.5-pro", gemini.id());
+    }
+
+    @Test
     void openAiCompatibleRequiresFullConfig() {
         assertThrows(IllegalArgumentException.class,
                 () -> new LlmConfig("", "key", "model", 0.2));

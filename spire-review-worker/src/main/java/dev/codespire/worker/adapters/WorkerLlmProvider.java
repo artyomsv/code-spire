@@ -58,9 +58,11 @@ public class WorkerLlmProvider {
 
     /** Build the model from a decrypted credential (no network call — model init is lazy). */
     static LlmClient clientFor(LlmCredential cred) {
+        LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(), cred.temperature());
         LlmProvider provider = switch (cred.type()) {
-            case "openai" -> LangChain4jLlmProvider.openAiCompatible(
-                    new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(), cred.temperature()));
+            case "openai" -> LangChain4jLlmProvider.openAiCompatible(config);
+            case "anthropic" -> LangChain4jLlmProvider.anthropic(config);
+            case "gemini" -> LangChain4jLlmProvider.gemini(config);
             default -> throw new IllegalStateException("Unsupported LLM provider type: " + cred.type());
         };
         return new LlmClient(provider,

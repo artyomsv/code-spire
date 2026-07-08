@@ -19,9 +19,11 @@ import {
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
-const LLM_TYPES: LlmType[] = ['openai'];
+const LLM_TYPES: LlmType[] = ['openai', 'anthropic', 'gemini'];
 const DEFAULT_BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta',
 };
 
 // Per-model API dialect (ADR-018): newer OpenAI reasoning models need
@@ -393,7 +395,7 @@ function LlmProviderForm({
             <span>Base URL</span>
             <input
               className="mono"
-              placeholder={defaultBaseUrl('openai')}
+              placeholder={defaultBaseUrl(type)}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
@@ -595,64 +597,73 @@ function LlmModelForm({
           </small>
 
           <div className="field-sep">API parameters</div>
-          <div className="field-row-2">
-            <label className="field">
-              <span>Output token limit</span>
-              <select
-                value={outputTokenParam}
-                onChange={(e) => {
-                  const v = e.target.value as OutputTokenParam;
-                  setOutputTokenParam(v);
-                  // Reasoning models that require max_completion_tokens also reject a custom
-                  // temperature — preset the toggle so it's not a second thing to remember.
-                  if (v === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
-                }}
-              >
-                {TOKEN_PARAMS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>
-                Reasoning effort <span className="field-optional">optional</span>
-              </span>
-              <select value={reasoningEffort} onChange={(e) => setReasoningEffort(e.target.value)}>
-                {REASONING_EFFORTS.map((r) => (
-                  <option key={r} value={r}>
-                    {r === '' ? '— none —' : r}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
 
+          {/* Output-cap dialect + reasoning effort are OpenAI-specific; Anthropic/Gemini use a fixed
+              native shape (temperature + a single output cap). */}
+          {type === 'openai' && (
+            <div className="field-row-2">
+              <label className="field">
+                <span>Output token limit</span>
+                <select
+                  value={outputTokenParam}
+                  onChange={(e) => {
+                    const v = e.target.value as OutputTokenParam;
+                    setOutputTokenParam(v);
+                    // Reasoning models that require max_completion_tokens also reject a custom
+                    // temperature — preset the toggle so it's not a second thing to remember.
+                    if (v === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
+                  }}
+                >
+                  {TOKEN_PARAMS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>
+                  Reasoning effort <span className="field-optional">optional</span>
+                </span>
+                <select value={reasoningEffort} onChange={(e) => setReasoningEffort(e.target.value)}>
+                  {REASONING_EFFORTS.map((r) => (
+                    <option key={r} value={r}>
+                      {r === '' ? '— none —' : r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          {/* Temperature applies to every backend — some newer models (reasoning models, and newer
+              Claude models like Fable) reject or deprecate it, so it must be togglable for all types. */}
           <label className="field-check">
             <input
               type="checkbox"
               checked={supportsTemperature}
               onChange={(e) => setSupportsTemperature(e.target.checked)}
             />
-            <span>Model accepts a custom temperature (uncheck for reasoning models)</span>
+            <span>Model accepts a custom temperature (uncheck if the model rejects or deprecates it)</span>
           </label>
 
-          <label className="field">
-            <span>
-              Extra params <span className="field-optional">advanced · JSON</span>
-            </span>
-            <textarea
-              className="mono"
-              rows={3}
-              placeholder={'{ "service_tier": "flex" }'}
-              value={extraParams}
-              onChange={(e) => setExtraParams(e.target.value)}
-            />
-            <small className="field-hint">
-              Passed through verbatim to the model API — for parameters not covered above.
-            </small>
-          </label>
+          {type === 'openai' && (
+            <label className="field">
+              <span>
+                Extra params <span className="field-optional">advanced · JSON</span>
+              </span>
+              <textarea
+                className="mono"
+                rows={3}
+                placeholder={'{ "service_tier": "flex" }'}
+                value={extraParams}
+                onChange={(e) => setExtraParams(e.target.value)}
+              />
+              <small className="field-hint">
+                Passed through verbatim to the model API — for parameters not covered above.
+              </small>
+            </label>
+          )}
 
           {error && <div className="modal-msg modal-error">{error}</div>}
 

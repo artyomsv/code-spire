@@ -88,9 +88,29 @@ class LlmProviderResourceTest {
     @Test
     void rejectsAnUnsupportedType() {
         var b = body("sk-good");
-        b.put("type", "anthropic"); // phase 2
+        b.put("type", "cohere"); // not a supported provider type
         given().contentType("application/json").body(b)
                 .when().post("/api/llm-providers").then().statusCode(400);
+    }
+
+    @Test
+    void createsAnAnthropicProviderValidatingItsKey() {
+        var b = body("sk-ant");
+        b.put("type", "anthropic");
+        b.put("model", "claude-sonnet-4");
+        given().contentType("application/json").body(b)
+                .when().post("/api/llm-providers")
+                .then().statusCode(201).body("type", is("anthropic")).body("apiKey", nullValue());
+    }
+
+    @Test
+    void createsAGeminiProviderValidatingItsKey() {
+        var b = body("gk-1");
+        b.put("type", "gemini");
+        b.put("model", "gemini-2.5-pro");
+        given().contentType("application/json").body(b)
+                .when().post("/api/llm-providers")
+                .then().statusCode(201).body("type", is("gemini")).body("apiKey", nullValue());
     }
 
     @Test

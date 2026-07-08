@@ -24,8 +24,8 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmModelResource {
 
-    // Phase 1: OpenAI only, matching the provider types.
-    private static final Set<String> TYPES = Set.of("openai");
+    // Must match the provider types in LlmProviderResource.
+    private static final Set<String> TYPES = Set.of("openai", "anthropic", "gemini");
 
     @Inject
     LlmModelRegistry registry;
