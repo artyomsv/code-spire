@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
+import ReviewModeToggle from './components/ReviewModeToggle';
 import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
 import SettingsContextProviders from './components/SettingsContextProviders';
@@ -19,17 +20,20 @@ function toggleTheme() {
 export default function App() {
   const { reviews, loading, error } = useLiveReviews();
   const location = useLocation();
+  const navigate = useNavigate();
   const onProviders = location.pathname.startsWith('/settings/providers');
   const onLlm = location.pathname.startsWith('/settings/llm');
   const onContext = location.pathname.startsWith('/settings/context');
+  const onSettings = onProviders || onLlm || onContext;
+  const onReviews = location.pathname === '/';
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
     : onProviders
-      ? 'Providers'
+      ? 'Repositories'
       : onLlm
-        ? 'LLM providers'
+        ? 'LLM'
         : onContext
-          ? 'Context providers'
+          ? 'Context'
           : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
@@ -47,7 +51,7 @@ export default function App() {
         </div>
         <nav className="nav">
           <div className="label">Operate</div>
-          <a className={onProviders ? '' : 'active'} href="#/">
+          <a className={onSettings ? '' : 'active'} href="#/">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <rect x="1.5" y="2.5" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="1.5" y="7" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
@@ -55,41 +59,45 @@ export default function App() {
             </svg>
             Reviews
           </a>
-          <a className="disabled">
-            <svg className="ic" viewBox="0 0 16 16" fill="none">
-              <path d="M2 8h12M8 2v12" stroke="currentColor" strokeWidth="1.4" />
-            </svg>
-            Dead letters<span className="tag">P2</span>
-          </a>
-          <a className="disabled">
-            <svg className="ic" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.4" />
-            </svg>
-            Repositories<span className="tag">P2</span>
-          </a>
           <div className="label">Configure</div>
           <a className={onContext ? 'active' : ''} href="#/settings/context">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="2.4" stroke="currentColor" strokeWidth="1.4" />
-              <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2" stroke="currentColor" strokeWidth="1.4" />
+              <ellipse cx="8" cy="3.6" rx="5" ry="2.1" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M3 3.6v8.8c0 1.16 2.24 2.1 5 2.1s5-.94 5-2.1V3.6" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M3 8c0 1.16 2.24 2.1 5 2.1s5-.94 5-2.1" stroke="currentColor" strokeWidth="1.4" />
             </svg>
             Context
           </a>
           <a className={onProviders ? 'active' : ''} href="#/settings/providers">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
-              <path d="M4 8l3 3 5-6" stroke="currentColor" strokeWidth="1.4" fill="none" />
+              <circle cx="4" cy="3.5" r="1.9" stroke="currentColor" strokeWidth="1.4" />
+              <circle cx="4" cy="12.5" r="1.9" stroke="currentColor" strokeWidth="1.4" />
+              <circle cx="12" cy="3.5" r="1.9" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M4 5.4v5.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <path d="M12 5.4c0 3.4-3.5 3.6-6 5.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
-            Providers
+            Repositories
           </a>
           <a className={onLlm ? 'active' : ''} href="#/settings/llm">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
-              <path d="M8 2a4 4 0 0 1 4 4c0 1.5-1 2.3-1.6 3H5.6C5 8.3 4 7.5 4 6a4 4 0 0 1 4-4Z" stroke="currentColor" strokeWidth="1.3" fill="none" />
-              <path d="M6 12h4M6.5 14h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <path
+                d="M7.6 2.2 8.7 5.4 11.9 6.5 8.7 7.6 7.6 10.8 6.5 7.6 3.3 6.5 6.5 5.4z"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M12 9.6 12.55 11.05 14 11.6 12.55 12.15 12 13.6 11.45 12.15 10 11.6 11.45 11.05z"
+                stroke="currentColor"
+                strokeWidth="1.1"
+                strokeLinejoin="round"
+              />
             </svg>
-            LLM providers
+            LLM
           </a>
         </nav>
         <div className="spacer"></div>
+        <ReviewModeToggle />
         <div className="foot">
           spire-orchestrator
           <br />
@@ -131,7 +139,16 @@ export default function App() {
         </Routes>
       </main>
 
-      {registerOpen && <RegisterPrDialog onClose={() => setRegisterOpen(false)} />}
+      {registerOpen && (
+        <RegisterPrDialog
+          onClose={() => setRegisterOpen(false)}
+          onRegistered={() => {
+            // Registering from anywhere but the Reviews list — jump there so the
+            // new review is visible in the live list once the dialog closes.
+            if (!onReviews) navigate('/');
+          }}
+        />
+      )}
     </div>
   );
 }

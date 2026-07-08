@@ -12,7 +12,13 @@ export function parsePrNumber(raw: string): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-export default function RegisterPrDialog({ onClose }: { onClose: () => void }) {
+export default function RegisterPrDialog({
+  onClose,
+  onRegistered,
+}: {
+  onClose: () => void;
+  onRegistered?: () => void;
+}) {
   const [url, setUrl] = useState('');
   const [workspace, setWorkspace] = useState('');
   const [slug, setSlug] = useState('');
@@ -81,6 +87,7 @@ export default function RegisterPrDialog({ onClose }: { onClose: () => void }) {
     try {
       const result = await registerPr({ workspace: workspace.trim(), slug: slug.trim(), pr: prNumber });
       setOk(result.reviewId);
+      onRegistered?.();
       // let the live list show the new row, then close
       closeTimer.current = setTimeout(onClose, 1000);
     } catch (err) {

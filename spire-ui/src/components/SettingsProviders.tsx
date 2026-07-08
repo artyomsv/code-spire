@@ -9,7 +9,7 @@ import {
   type ProviderInput,
   type ProviderView,
 } from '../api';
-import ReviewModeToggle from './ReviewModeToggle';
+import IconButton from './IconButton';
 
 // Provider types and their default API base URLs. When a user switches type
 // without having customised the base URL, we swap in the matching default.
@@ -80,11 +80,9 @@ export default function SettingsProviders() {
 
   return (
     <section className="content">
-      <ReviewModeToggle />
-
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">Providers</h2>
+          <h2 className="prov-title">Repositories</h2>
           <button
             className="iconbtn"
             onClick={() => setForm('new')}
@@ -158,12 +156,8 @@ export default function SettingsProviders() {
                   </td>
                   <td>
                     <div className="prov-actions">
-                      <button className="tbtn" onClick={() => setForm(p)}>
-                        Edit
-                      </button>
-                      <button className="tbtn danger" onClick={() => setConfirmDelete(p)}>
-                        Delete
-                      </button>
+                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
+                      <IconButton kind="delete" onClick={() => setConfirmDelete(p)} title="Delete" aria-label="Delete" />
                     </div>
                   </td>
                 </tr>

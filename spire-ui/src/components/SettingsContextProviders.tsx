@@ -13,6 +13,8 @@ import {
   type ContextProviderView,
   type ContextType,
 } from '../api';
+import { Plus } from 'lucide-react';
+import IconButton from './IconButton';
 
 const CONTEXT_TYPES: ContextType[] = ['jira'];
 
@@ -90,8 +92,14 @@ export default function SettingsContextProviders() {
         <div className="head">
           <h3>Context providers</h3>
           <span className="k">Jira · enrich reviews with linked-ticket context</span>
-          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setForm('new')}>
-            Add provider
+          <button
+            className="iconbtn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setForm('new')}
+            aria-label="Add provider"
+            title="Add provider"
+          >
+            <Plus size={15} />
           </button>
         </div>
         {loading && providers.length === 0 ? (
@@ -141,16 +149,22 @@ export default function SettingsContextProviders() {
                       {p.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
-                  <td className="prov-actions">
-                    <button className="btn-ghost" onClick={() => setTestProvider(p)}>
-                      Test
-                    </button>
-                    <button className="btn-ghost" onClick={() => setForm(p)}>
-                      Edit
-                    </button>
-                    <button className="btn-ghost" onClick={() => setConfirmDelete({ id: p.id, name: p.name })}>
-                      Delete
-                    </button>
+                  <td>
+                    <div className="prov-actions">
+                      <IconButton
+                        kind="test"
+                        onClick={() => setTestProvider(p)}
+                        title="Test connection & preview a ticket"
+                        aria-label="Test"
+                      />
+                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
+                      <IconButton
+                        kind="delete"
+                        onClick={() => setConfirmDelete({ id: p.id, name: p.name })}
+                        title="Delete"
+                        aria-label="Delete"
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}

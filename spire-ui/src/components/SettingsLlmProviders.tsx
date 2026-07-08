@@ -17,6 +17,8 @@ import {
   type OutputTokenParam,
 } from '../api';
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
+import { Plus } from 'lucide-react';
+import IconButton from './IconButton';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
 const LLM_TYPES: LlmType[] = ['openai', 'anthropic', 'gemini'];
@@ -110,66 +112,19 @@ export default function SettingsLlmProviders() {
         </div>
       )}
 
-      {/* --- Models catalog --- */}
+      {/* --- Providers --- */}
       <div className="card">
         <div className="head">
-          <h3>Models</h3>
-          <span className="k">catalog · pricing</span>
-          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setModelForm('new')}>
-            Add model
-          </button>
-        </div>
-        {loading && models.length === 0 ? (
-          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : models.length === 0 ? (
-          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
-            No models yet — add one (name + price per 1M tokens) so reviews can be priced and providers can pick it.
-          </div>
-        ) : (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Type</th>
-                <th className="cell-r">Input / 1M</th>
-                <th className="cell-r">Output / 1M</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {byExpenseDesc(models).map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
-                    {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
-                  </td>
-                  <td className="mono">{m.type}</td>
-                  <td className="cell-r mono">{priceLabel(m.inputPriceMillicentsPerMillion)}</td>
-                  <td className="cell-r mono">{priceLabel(m.outputPriceMillicentsPerMillion)}</td>
-                  <td className="prov-actions">
-                    <button className="btn-ghost" onClick={() => setModelForm(m)}>
-                      Edit
-                    </button>
-                    <button
-                      className="btn-ghost"
-                      onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* --- Providers --- */}
-      <div className="card" style={{ marginTop: 18 }}>
-        <div className="head">
           <h3>Providers</h3>
-          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setProviderForm('new')}>
-            Add provider
+          <span className="k">model connections</span>
+          <button
+            className="iconbtn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setProviderForm('new')}
+            aria-label="Add provider"
+            title="Add provider"
+          >
+            <Plus size={15} />
           </button>
         </div>
         {loading && providers.length === 0 ? (
@@ -214,16 +169,76 @@ export default function SettingsLlmProviders() {
                       {p.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
-                  <td className="prov-actions">
-                    <button className="btn-ghost" onClick={() => setProviderForm(p)}>
-                      Edit
-                    </button>
-                    <button
-                      className="btn-ghost"
-                      onClick={() => setConfirmDelete({ kind: 'provider', id: p.id, name: p.name })}
-                    >
-                      Delete
-                    </button>
+                  <td>
+                    <div className="prov-actions">
+                      <IconButton kind="edit" onClick={() => setProviderForm(p)} title="Edit" aria-label="Edit" />
+                      <IconButton
+                        kind="delete"
+                        onClick={() => setConfirmDelete({ kind: 'provider', id: p.id, name: p.name })}
+                        title="Delete"
+                        aria-label="Delete"
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* --- Models catalog --- */}
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="head">
+          <h3>Models</h3>
+          <span className="k">catalog · pricing</span>
+          <button
+            className="iconbtn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setModelForm('new')}
+            aria-label="Add model"
+            title="Add model"
+          >
+            <Plus size={15} />
+          </button>
+        </div>
+        {loading && models.length === 0 ? (
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
+        ) : models.length === 0 ? (
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
+            No models yet — add one (name + price per 1M tokens) so reviews can be priced and providers can pick it.
+          </div>
+        ) : (
+          <table className="prov-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Type</th>
+                <th className="cell-r">Input / 1M</th>
+                <th className="cell-r">Output / 1M</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {byExpenseDesc(models).map((m) => (
+                <tr key={m.id}>
+                  <td>
+                    {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
+                    {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
+                  </td>
+                  <td className="mono">{m.type}</td>
+                  <td className="cell-r mono">{priceLabel(m.inputPriceMillicentsPerMillion)}</td>
+                  <td className="cell-r mono">{priceLabel(m.outputPriceMillicentsPerMillion)}</td>
+                  <td>
+                    <div className="prov-actions">
+                      <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" />
+                      <IconButton
+                        kind="delete"
+                        onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
+                        title="Delete"
+                        aria-label="Delete"
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
