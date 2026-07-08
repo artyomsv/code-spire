@@ -188,10 +188,10 @@ interface CommentSink {                                 // scm adapter
   CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd);  // ThreadRef, not bare id
   Author     getPullRequestAuthor(RepoRef repo, long prId);
 }   // DiffRefs feeds GitLab/GitHub anchoring; ThreadRef = comment id (BB/GH/DC) or discussion_id (GitLab). See SCM-MAPPING.md
-interface ContextProvider {                             // jira / confluence / rules / rag / memory
+interface ContextProvider {                             // jira (shipped) / confluence / rules / rag / memory
   String source();
   boolean supports(ContextRequest req);
-  Uni<ContextContribution> contribute(ContextRequest req);   // async; may return EMPTY/ERROR
+  CompletionStage<ContextContribution> contribute(ContextRequest req);  // async; may return EMPTY/ERROR
 }
 interface LlmProvider {                                 // langchain4j default impl
   String id();
@@ -212,10 +212,15 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 1. On `GatherContext`, the context-worker computes `expectedSources` = every enabled `ContextProvider`
    where `supports(req)` is true, and emits `ContextRequested{expectedSources}`.
 2. Each provider emits `ContextContributed{status}` (`OK`/`EMPTY`/`ERROR`).
-3. A stateful aggregator (a `View` + a per-review timer) tracks arrivals. It emits `ContextAssembled`
-   when **received ⊇ expected** OR a **timeout `T` (default 20s)** elapses, recording
-   `contributingSources` and `missingSources`.
+3. An aggregator tracks arrivals and emits `ContextAssembled` when **received ⊇ expected** OR a
+   **timeout `T` (default 20s)** elapses, recording `contributingSources` and `missingSources`.
+   *Shipped form (single worker):* the aggregator is worker-local — an in-process
+   `allOf(providers).get(T)` fan-out rather than an event-sourced `View` + timer; a distributed
+   arrivals model is only needed once context providers run in separate processes.
 4. Guarantees the pipeline never blocks on a slow/broken provider; missing sources degrade gracefully.
+   The assembled context is persisted encrypted to the `BlobStore` (Postgres today, DATA-MODEL §4) and
+   referenced by `contextRef` on `ContextAssembled`/`GenerateReview`. **Jira is the first live provider**
+   (`spire-context-jira`).
 
 ## 9. Kafka topics (keyed by `reviewId`)
 

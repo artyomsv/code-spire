@@ -275,3 +275,32 @@ curl -s -H "PRIVATE-TOKEN: $TOKEN" \
 
 Same as Mode C — set `SPIRE_REVIEW_MODE=observe` (or stop the services); MR discussions can stay
 or be resolved/deleted in the GitLab UI.
+
+## Context enrichment (Jira) — add-on to any mode
+
+Any of the review modes above pulls linked-Jira context into the prompt once a context provider is
+registered. It is additive: no provider registered → reviews run exactly as before (empty context).
+
+1. **Register the provider:** Settings → **Context** → Add provider (or
+   `POST /api/context-providers`): `type=jira`, `baseUrl=https://<your-site>.atlassian.net`,
+   `authKind=basic`, `username=<account-email>`, `secret=<API token>`. Optionally set **project keys**
+   (`ACME`) so only that project's keys are looked up (and a bare ticket number resolves in the
+   test box). Save validates the credential against `GET /rest/api/2/myself` — a bad token is a 400 up
+   front. The row shows a live **Connection** indicator; set it as the default.
+2. **Test it (no PR needed):** Settings → Context → **Test**, enter a ticket number/key (or a PR title)
+   → the tool resolves the key with the configured pattern, fetches it live, and previews the exact
+   `ContextItem` a review would inject (`POST /api/context-providers/{id}/preview`).
+3. **Reference a ticket:** open a PR/MR whose title or source branch contains a real issue key
+   (`PROJ-123`), then Register it (Mode C/D) or let a webhook fire.
+4. **Verify:** the review timeline shows `ContextRequested → ContextContributed(JIRA) → ContextAssembled`;
+   the posted review reflects the ticket's intent. Under the hood the assembled context is stored
+   encrypted in `worker.context_blob` (keyed by `review_id`) and referenced by the `GenerateReview`
+   `contextRef`. Deleting or re-running the review clears its blob (no orphans).
+
+A typo'd or unreachable key is skipped (not fatal); an auth failure records an `ERROR` contribution and
+the review still runs without context. Self-managed Jira (Data Center): use `authKind=bearer` with a PAT.
+
+### Cleanup
+
+Remove the provider in Settings → Context (or `DELETE /api/context-providers/{id}`). Any context blobs
+vanish with their reviews — no separate cleanup.

@@ -57,6 +57,20 @@ down is the original design-time roadmap (kept for reference).
   save (`Authorization: Bearer` / `x-api-key` / `x-goog-api-key` against `/models`), registry/worker/UI
   wired, and the model-catalog form hides the OpenAI-only dialect knobs for native types. Unit +
   WireMock tests green.
+- **Jira context provider (`spire-context-jira`) — first ContextProvider (B6, 2026-07-08)**: the P1
+  context-pipeline stub is now real. The `ContextProvider` SPI, event chain (`ContextRequested` →
+  `ContextContributed` → `ContextAssembled`) and the `ReviewPromptBuilder` context slot already existed;
+  this wires them end to end. Issue keys (`PROJ-123`) are parsed from the PR title/branch at diff-fetch
+  time and threaded through `GatherContext`; `JiraContextProvider` (v2 REST, baseUrl-driven Cloud +
+  Data Center, basic/bearer auth, SSRF-guarded like the SCM adapters) resolves each into a
+  `ContextItem` (summary + description + status + type). `ContextWorker` is now the real aggregator —
+  `@All`-style per-command fan-out with a bounded 20s timeout — persisting the assembled context
+  encrypted (Tink, AAD=reviewId) to a **Postgres `BlobStore`** (`worker.context_blob`), threading its
+  `contextRef` into `GenerateReview`, where `ReviewWorker` loads it into the prompt (untrusted-fenced).
+  Credentials live in a new encrypted **context-provider registry** (Settings → Context, `/api/context-providers`,
+  global default) brokered per-command exactly like SCM/LLM creds (ADR-015). Blob deletion is wired at
+  all three sites (review delete, re-run, re-assembly) keyed by `review_id` — no orphaned blobs.
+  Unit + WireMock + REST-layer tests green. **Confluence** is the next ContextProvider (same SPI).
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -77,6 +91,8 @@ down is the original design-time roadmap (kept for reference).
 4. **`/review` command** · M. Author types `/review` in a PR comment to (re-)trigger. Parsed, inactive.
 5. **Conversational replies** · M. Answer follow-ups in a thread (`AuthorReplied` received but ignored).
 6. **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked-ticket context. Biggest lever.
+   ✅ **Jira done (2026-07-08)** — SPI made real end-to-end (`spire-context-jira`, ticket-key extraction,
+   worker-local aggregator, Postgres `BlobStore`, encrypted registry). **Confluence** next on the same SPI.
 
 **C. Correctness & robustness** — ✅ done (2026-07-07)
 7. ✅ **Store provider type in the read model** · S. `review_status.provider_type` (V4); badge/label/
@@ -97,8 +113,9 @@ down is the original design-time roadmap (kept for reference).
 **Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are all done and
 verified live; native Anthropic + Gemini LLM providers landed 2026-07-08. Webhooks (3) are postponed
 (no host/tunnel), and **B4/B5** (`/review` command, conversational replies) depend on that ingress —
-also parked. Next real lever with no infra blocker: **B6** (ContextProviders — Jira/Confluence, the
-biggest lever toward useful reviews) or **D10** (OIDC, before any shared deploy). Operator decides.
+also parked. **B6 Jira landed 2026-07-08** — the ContextProvider SPI is proven end-to-end. Next real
+levers with no infra blocker: **B6 Confluence** (second provider on the same SPI) or **D10** (OIDC,
+before any shared deploy). Operator decides.
 
 ---
 

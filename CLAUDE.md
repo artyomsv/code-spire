@@ -84,6 +84,18 @@ The design is fully specified in `docs/` — **treat those files as the source o
   redirect hardening in SCM clients (GET-only, private-IP guard, port-normalized auth pinning),
   structured JSON logging + reviewId MDC (prod profile), UI URL-scheme guard + fetch-race fixes,
   npm audit 0 vulnerabilities.
+- **First ContextProvider — Jira delivered (B6, 2026-07-08):** the P1 context stub is now the real
+  aggregator. `spire-context-jira` (framework-free, JDK HttpClient + Jackson, SSRF-guarded like the SCM
+  adapters) resolves PR-referenced issue keys (`PROJ-123`, parsed from title/branch at diff-fetch) into
+  `ContextItem`s via the Jira v2 REST API (baseUrl-driven Cloud + Data Center, basic/bearer). `ContextWorker`
+  fans out to the supported providers under a bounded 20s timeout and persists the assembled context
+  encrypted (Tink, AAD=reviewId) to a Postgres `BlobStore` (`worker.context_blob`); `ReviewWorker` loads
+  it into the untrusted-fenced prompt slot. Credentials live in a new encrypted context-provider registry
+  (Settings → Context, `/api/context-providers`, global default) brokered per-command like SCM/LLM (ADR-015).
+  Blob deletion is keyed by `review_id` at all three sites (delete, re-run, re-assembly) — no orphans.
+  Per-instance **project keys** (`ACME`) narrow candidate keys; a live **connectivity check**
+  (`/{id}/check`) and a **preview/test** endpoint (`/{id}/preview` — resolve a ticket number via the
+  pattern and show the exact `ContextItem` a review would inject) back the Settings → Context UI.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 
