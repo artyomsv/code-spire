@@ -10,6 +10,7 @@ import {
   type ProviderView,
 } from '../api';
 import IconButton from './IconButton';
+import Tooltip from './Tooltip';
 
 // Provider types and their default API base URLs. When a user switches type
 // without having customised the base URL, we swap in the matching default.
@@ -83,16 +84,13 @@ export default function SettingsProviders() {
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">Repositories</h2>
-          <button
-            className="iconbtn"
-            onClick={() => setForm('new')}
-            aria-label="Add provider"
-            title="Add provider"
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-          </button>
+          <Tooltip label="Add provider">
+            <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add provider">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+          </Tooltip>
         </div>
         {error ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>

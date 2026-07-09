@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { ExternalLink, FlaskConical, Pencil, Plus, RotateCw, Trash2, type LucideIcon } from 'lucide-react';
+import Tooltip from './Tooltip';
 
 /**
  * Reusable icon action button — the same look as the review-detail actions
@@ -32,10 +33,12 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: number;
 }
 
-export default function IconButton({ kind, size = 16, className, type, ...rest }: Props) {
+export default function IconButton({ kind, size = 16, className, type, title, ...rest }: Props) {
   const Glyph = GLYPH[kind];
   const variant = VARIANT[kind];
-  return (
+  // `title` drives a non-native tooltip (not the browser's default) — the raw
+  // title attribute is intentionally dropped so the two don't stack.
+  const button = (
     <button
       type={type ?? 'button'}
       className={['icon-btn', variant, className].filter(Boolean).join(' ')}
@@ -44,4 +47,5 @@ export default function IconButton({ kind, size = 16, className, type, ...rest }
       <Glyph size={size} />
     </button>
   );
+  return title ? <Tooltip label={title}>{button}</Tooltip> : button;
 }

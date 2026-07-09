@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { GitPullRequest } from 'lucide-react';
+import Tooltip from './components/Tooltip';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
@@ -112,22 +114,23 @@ export default function App() {
             <span className="dot"></span>LIVE
           </span>
           <div className="grow"></div>
-          <button className="btn" onClick={() => setRegisterOpen(true)}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            Register PR
-          </button>
-          <button className="iconbtn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme" onClick={toggleTheme}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                fill="none"
-              />
-            </svg>
-          </button>
+          <Tooltip label="Register PR">
+            <button className="iconbtn pr" aria-label="Register PR" onClick={() => setRegisterOpen(true)}>
+              <GitPullRequest size={17} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Toggle theme">
+            <button className="iconbtn" id="themeBtn" aria-label="Toggle theme" onClick={toggleTheme}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  fill="none"
+                />
+              </svg>
+            </button>
+          </Tooltip>
         </header>
 
         <Routes>

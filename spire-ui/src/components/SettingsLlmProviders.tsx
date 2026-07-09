@@ -19,6 +19,7 @@ import {
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
+import Tooltip from './Tooltip';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
 const LLM_TYPES: LlmType[] = ['openai', 'anthropic', 'gemini'];
@@ -117,15 +118,11 @@ export default function SettingsLlmProviders() {
         <div className="head">
           <h3>Providers</h3>
           <span className="k">model connections</span>
-          <button
-            className="iconbtn"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => setProviderForm('new')}
-            aria-label="Add provider"
-            title="Add provider"
-          >
-            <Plus size={15} />
-          </button>
+          <Tooltip label="Add provider" className="tt-push">
+            <button className="iconbtn" onClick={() => setProviderForm('new')} aria-label="Add provider">
+              <Plus size={15} />
+            </button>
+          </Tooltip>
         </div>
         {loading && providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
@@ -192,15 +189,11 @@ export default function SettingsLlmProviders() {
         <div className="head">
           <h3>Models</h3>
           <span className="k">catalog · pricing</span>
-          <button
-            className="iconbtn"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => setModelForm('new')}
-            aria-label="Add model"
-            title="Add model"
-          >
-            <Plus size={15} />
-          </button>
+          <Tooltip label="Add model" className="tt-push">
+            <button className="iconbtn" onClick={() => setModelForm('new')} aria-label="Add model">
+              <Plus size={15} />
+            </button>
+          </Tooltip>
         </div>
         {loading && models.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>

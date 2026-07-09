@@ -14,6 +14,7 @@ import {
 } from '../api';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
+import Tooltip from './Tooltip';
 
 const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence'];
 
@@ -137,15 +138,11 @@ export default function SettingsContextProviders() {
         <div className="head">
           <h3>Context providers</h3>
           <span className="k">Jira &amp; Confluence · enrich reviews with linked ticket &amp; page context</span>
-          <button
-            className="iconbtn"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => setForm('new')}
-            aria-label="Add provider"
-            title="Add provider"
-          >
-            <Plus size={15} />
-          </button>
+          <Tooltip label="Add provider" className="tt-push">
+            <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add provider">
+              <Plus size={15} />
+            </button>
+          </Tooltip>
         </div>
         {loading && providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>

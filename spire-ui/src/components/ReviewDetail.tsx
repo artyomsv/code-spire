@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
+import Tooltip from './Tooltip';
 import { eventsCard, findingsCard, metaCard, openInLabel, outcomeBadge, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 
@@ -115,35 +116,38 @@ export default function ReviewDetail({ reviews }: Props) {
         </div>
         <div className="actions">
           {prUrl && (
-            <a
-              className="icon-btn"
-              href={prUrl}
-              target="_blank"
-              rel="noreferrer"
-              title={openInLabel(r)}
-              aria-label={openInLabel(r)}
-            >
-              <ExternalLink size={16} />
-            </a>
+            <Tooltip label={openInLabel(r)}>
+              <a
+                className="icon-btn"
+                href={prUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={openInLabel(r)}
+              >
+                <ExternalLink size={16} />
+              </a>
+            </Tooltip>
           )}
           {(r.status === 'completed' || r.status === 'failed') && (
-            <button
-              className="icon-btn rerun"
-              title="Re-run review on the same commit"
-              aria-label="Re-run review"
-              onClick={() => setConfirmRerun(true)}
-            >
-              <RotateCw size={16} />
-            </button>
+            <Tooltip label="Re-run review on the same commit">
+              <button
+                className="icon-btn rerun"
+                aria-label="Re-run review"
+                onClick={() => setConfirmRerun(true)}
+              >
+                <RotateCw size={16} />
+              </button>
+            </Tooltip>
           )}
-          <button
-            className="icon-btn danger"
-            title="Delete review"
-            aria-label="Delete review"
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 size={16} />
-          </button>
+          <Tooltip label="Delete review">
+            <button
+              className="icon-btn danger"
+              aria-label="Delete review"
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 size={16} />
+            </button>
+          </Tooltip>
         </div>
       </div>
 
