@@ -188,7 +188,7 @@ interface CommentSink {                                 // scm adapter
   CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd);  // ThreadRef, not bare id
   Author     getPullRequestAuthor(RepoRef repo, long prId);
 }   // DiffRefs feeds GitLab/GitHub anchoring; ThreadRef = comment id (BB/GH/DC) or discussion_id (GitLab). See SCM-MAPPING.md
-interface ContextProvider {                             // jira (shipped) / confluence / rules / rag / memory
+interface ContextProvider {                             // jira, confluence (shipped) / rules / rag / memory
   String source();
   boolean supports(ContextRequest req);
   CompletionStage<ContextContribution> contribute(ContextRequest req);  // async; may return EMPTY/ERROR

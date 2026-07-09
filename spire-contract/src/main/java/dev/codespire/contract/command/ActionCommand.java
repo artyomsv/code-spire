@@ -54,11 +54,12 @@ public sealed interface ActionCommand {
     }
 
     /**
-     * Opaque, KEK-encrypted context-source credential — base64 Tink ciphertext of a
-     * {@link dev.codespire.contract.context.ContextCredential}, resolved and packed by
-     * the orchestrator from the context-provider registry (global default). Only
-     * {@link GatherContext} carries it; {@code null} means "no context source configured"
-     * — the worker still assembles (an empty/rules-only context). Never logged.
+     * Opaque, KEK-encrypted context-source credentials — base64 Tink ciphertext of a
+     * {@code List<}{@link dev.codespire.contract.context.ContextCredential}{@code >}, packed by
+     * the orchestrator from EVERY enabled row of the context-provider registry (no single default; a
+     * PR's references are matched against all of them). Only {@link GatherContext} carries it;
+     * {@code null} means "no context source configured" — the worker still assembles (an empty/rules-only
+     * context). Never logged.
      */
     default String contextCredential() {
         return null;

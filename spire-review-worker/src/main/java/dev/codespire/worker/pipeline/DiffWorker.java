@@ -48,7 +48,10 @@ public class DiffWorker {
                     approximateSize(diff.files()),
                     diff.truncated(),
                     dev.codespire.context.jira.JiraTicketKeys.candidates(
-                            pr.title(), pr.sourceBranch(), pr.description())));
+                            pr.title(), pr.sourceBranch(), pr.description()),
+                    // URLs the Confluence provider narrows to its own host (Jira keys above; same sources).
+                    List.copyOf(dev.codespire.context.confluence.ConfluenceLinks.candidates(
+                            pr.title(), pr.sourceBranch(), pr.description()))));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {

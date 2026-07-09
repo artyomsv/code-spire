@@ -65,36 +65,29 @@ public class ContextProviderRegistry {
     public ContextProviderView create(ContextProviderInput in) {
         UUID id = UUID.randomUUID();
         String secret = require(in.secret(), "secret");
-        try (Connection c = dataSource.getConnection()) {
-            // First provider is auto-defaulted; else honor the flag. Only one default.
-            boolean makeDefault = Boolean.TRUE.equals(in.isDefault()) || isEmpty(c);
-            if (makeDefault) {
-                clearDefault(c);
-            }
-            try (PreparedStatement ps = c.prepareStatement("""
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO context_provider (id, name, type, base_url, auth_kind, auth_username,
                             auth_secret, project_keys, enabled, is_default)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
                     """)) {
-                ps.setObject(1, id);
-                ps.setString(2, in.name());
-                ps.setString(3, in.type());
-                ps.setString(4, in.baseUrl());
-                ps.setString(5, in.authKind());
-                ps.setString(6, in.username());
-                ps.setString(7, encryption.encryptString(secret, aad(id)));
-                ps.setString(8, blankToNull(in.projectKeys()));
-                ps.setBoolean(9, in.enabled() == null || in.enabled());
-                ps.setBoolean(10, makeDefault);
-                ps.executeUpdate();
-            }
+            // No default concept for context: every enabled provider participates, matched per reference.
+            ps.setObject(1, id);
+            ps.setString(2, in.name());
+            ps.setString(3, in.type());
+            ps.setString(4, in.baseUrl());
+            ps.setString(5, in.authKind());
+            ps.setString(6, in.username());
+            ps.setString(7, encryption.encryptString(secret, aad(id)));
+            ps.setString(8, blankToNull(in.projectKeys()));
+            ps.setBoolean(9, in.enabled() == null || in.enabled());
+            ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create context provider", e);
         }
         return get(id).orElseThrow();
     }
 
-    /** Update everything except the default flag (managed via {@link #setDefault}). */
     @Transactional
     public Optional<ContextProviderView> update(UUID id, ContextProviderInput in) {
         try (Connection c = dataSource.getConnection()) {
@@ -127,24 +120,6 @@ public class ContextProviderRegistry {
     }
 
     @Transactional
-    public Optional<ContextProviderView> setDefault(UUID id) {
-        try (Connection c = dataSource.getConnection()) {
-            if (!exists(c, id)) {
-                return Optional.empty();
-            }
-            clearDefault(c);
-            try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE context_provider SET is_default = TRUE, updated_at = now() WHERE id = ?")) {
-                ps.setObject(1, id);
-                ps.executeUpdate();
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to set default context provider " + id, e);
-        }
-        return get(id);
-    }
-
-    @Transactional
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("DELETE FROM context_provider WHERE id = ?")) {
@@ -157,16 +132,23 @@ public class ContextProviderRegistry {
 
     // ---- resolution (internal — carries the decrypted secret) --------------
 
-    /** The global default, enabled provider with its secret decrypted; empty when none is set. */
-    public Optional<ContextProviderConfig> resolveDefault() {
+    /**
+     * Every enabled provider with its secret decrypted, oldest first — the set brokered to the worker so a
+     * PR's references can be matched against ALL registered sources (no single "default"; a review can pull
+     * from Jira and Confluence at once).
+     */
+    public List<ContextProviderConfig> resolveAllEnabled() {
+        List<ContextProviderConfig> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM context_provider WHERE is_default = TRUE AND enabled = TRUE")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+                     "SELECT * FROM context_provider WHERE enabled = TRUE ORDER BY created_at");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                out.add(decrypted(rs));
             }
+            return out;
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to resolve the default context provider", e);
+            throw new IllegalStateException("Failed to resolve enabled context providers", e);
         }
     }
 
@@ -205,26 +187,12 @@ public class ContextProviderRegistry {
                 rs.getTimestamp("created_at").toInstant());
     }
 
-    private void clearDefault(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "UPDATE context_provider SET is_default = FALSE, updated_at = now() WHERE is_default = TRUE")) {
-            ps.executeUpdate();
-        }
-    }
-
     private boolean exists(Connection c, UUID id) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM context_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
-        }
-    }
-
-    private boolean isEmpty(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM context_provider LIMIT 1");
-             ResultSet rs = ps.executeQuery()) {
-            return !rs.next();
         }
     }
 

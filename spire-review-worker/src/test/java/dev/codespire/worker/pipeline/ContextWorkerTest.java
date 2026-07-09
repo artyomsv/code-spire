@@ -13,6 +13,7 @@ import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.ContribStatus;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.context.confluence.ConfluenceLinks;
 import dev.codespire.worker.adapters.PostgresBlobStore;
 import dev.codespire.worker.adapters.WorkerContextClients;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -149,6 +151,47 @@ class ContextWorkerTest {
         assertEquals(1, emitted.size(), "nothing after the failed emit");
     }
 
+    @Test
+    void secondLevelResolvesRefsInsideLevelOneButStopsAtDepthTwo() {
+        // AB-1 (from the PR) links CD-2 in its body; CD-2 links EF-3. We fetch AB-1 then CD-2, but STOP
+        // before EF-3 — the depth cap is what breaks a jira→…→jira reference chain.
+        KeyProvider jira = new KeyProvider("JIRA", Map.of(
+                "AB-1", "see CD-2 for the design", "CD-2", "deeper still: EF-3", "EF-3", "must not be fetched"));
+        clients.providers = List.of(jira);
+        GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
+                Set.of("AB-1"), List.of(), null);
+
+        worker.gatherContext(command);
+
+        assertEquals(List.of("AB-1", "CD-2"), jira.fetched, "level 2 fetches CD-2; EF-3 is beyond the cap");
+        ContextAssembled assembled = lastAssembled();
+        assertEquals(Set.of("JIRA"), assembled.contributingSources());
+        assertNotNull(assembled.contextRef(), "two items resolved → context persisted");
+    }
+
+    @Test
+    void aConfluencePageLinkedFromBothThePrAndAFetchedTicketIsFetchedOnce() {
+        // Scenario 3: the PR links Confluence page 123 AND references AB-1; AB-1's body links the SAME page.
+        // The page is fetched once at level 1 and de-duplicated at level 2 — no second call.
+        String page = "https://wiki.test/pages/123/Design";
+        KeyProvider jira = new KeyProvider("JIRA", Map.of("AB-1", "related page " + page));
+        LinkProvider confluence = new LinkProvider(Map.of("123", "the design doc"));
+        clients.providers = List.of(jira, confluence);
+        GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
+                Set.of("AB-1"), List.of(page), null);
+
+        worker.gatherContext(command);
+
+        assertEquals(List.of("123"), confluence.fetched, "the already-resolved page is not fetched again");
+        assertEquals(List.of("AB-1"), jira.fetched);
+        ContextAssembled assembled = lastAssembled();
+        assertEquals(Set.of("JIRA", "CONFLUENCE"), assembled.contributingSources());
+    }
+
+    private ContextAssembled lastAssembled() {
+        return assertInstanceOf(ContextAssembled.class, emitted.get(emitted.size() - 1));
+    }
+
     private static ContextRequest requestedOf(IntegrationEvent event) {
         return assertInstanceOf(ContextRequested.class, event).request();
     }
@@ -198,6 +241,82 @@ class ContextWorkerTest {
             return result == null
                     ? CompletableFuture.failedFuture(new IllegalStateException("provider blew up"))
                     : CompletableFuture.completedFuture(result);
+        }
+    }
+
+    /** A Jira-like provider that resolves the request's ticketKeys into items, recording every key fetched. */
+    private static final class KeyProvider implements ContextProvider {
+        private final String source;
+        private final Map<String, String> bodies; // key -> body (may itself carry the next reference)
+        final List<String> fetched = new ArrayList<>();
+
+        KeyProvider(String source, Map<String, String> bodies) {
+            this.source = source;
+            this.bodies = bodies;
+        }
+
+        @Override
+        public String source() {
+            return source;
+        }
+
+        @Override
+        public boolean supports(ContextRequest request) {
+            return request.ticketKeys() != null && !request.ticketKeys().isEmpty();
+        }
+
+        @Override
+        public CompletionStage<ContextContribution> contribute(ContextRequest request) {
+            List<ContextItem> items = new ArrayList<>();
+            for (String key : request.ticketKeys()) {
+                fetched.add(key);
+                String body = bodies.get(key);
+                if (body != null) {
+                    items.add(new ContextItem("JIRA_TICKET", key, body, "jira/" + key));
+                }
+            }
+            ContribStatus status = items.isEmpty() ? ContribStatus.EMPTY : ContribStatus.OK;
+            return CompletableFuture.completedFuture(new ContextContribution(source, status, items, 1));
+        }
+    }
+
+    /** A Confluence-like provider that resolves the page id in each link, recording every page fetched. */
+    private static final class LinkProvider implements ContextProvider {
+        private final Map<String, String> bodies; // pageId -> body
+        final List<String> fetched = new ArrayList<>();
+
+        LinkProvider(Map<String, String> bodies) {
+            this.bodies = bodies;
+        }
+
+        @Override
+        public String source() {
+            return "CONFLUENCE";
+        }
+
+        @Override
+        public boolean supports(ContextRequest request) {
+            return request.links() != null
+                    && request.links().stream().anyMatch(l -> ConfluenceLinks.pageId(l).isPresent());
+        }
+
+        @Override
+        public CompletionStage<ContextContribution> contribute(ContextRequest request) {
+            List<ContextItem> items = new ArrayList<>();
+            for (String link : request.links()) {
+                String pageId = ConfluenceLinks.pageId(link).orElse(null);
+                if (pageId == null) {
+                    continue;
+                }
+                fetched.add(pageId);
+                String body = bodies.get(pageId);
+                if (body != null) {
+                    items.add(new ContextItem("CONFLUENCE_PAGE", "page " + pageId, body,
+                            "https://wiki.test/pages/" + pageId));
+                }
+            }
+            ContribStatus status = items.isEmpty() ? ContribStatus.EMPTY : ContribStatus.OK;
+            return CompletableFuture.completedFuture(new ContextContribution("CONFLUENCE", status, items, 1));
         }
     }
 

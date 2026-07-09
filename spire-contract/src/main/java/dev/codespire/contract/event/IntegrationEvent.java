@@ -81,15 +81,18 @@ public sealed interface IntegrationEvent {
     /**
      * METADATA ONLY — no diff content (ADR-011); content is re-fetched by commit at generate time.
      * {@code ticketKeys} are the issue keys ({@code PROJ-123}) parsed from the PR title/branch when the
-     * diff is fetched, threaded into {@code GatherContext} so context providers (Jira) can resolve them.
+     * diff is fetched, threaded into {@code GatherContext} so the Jira provider can resolve them;
+     * {@code links} are the URLs parsed from the same sources, from which the Confluence provider picks
+     * the pages that live on its configured host. Both are recall-favoring candidates — providers narrow.
      */
     record DiffFetched(String reviewId, long prId, String commit, int changedFiles,
                        List<String> languages, long sizeBytes, boolean truncated,
-                       Set<String> ticketKeys) implements IntegrationEvent {
+                       Set<String> ticketKeys, List<String> links) implements IntegrationEvent {
 
         public DiffFetched {
             languages = languages == null ? null : List.copyOf(languages);
             ticketKeys = ticketKeys == null ? null : Set.copyOf(ticketKeys);
+            links = links == null ? null : List.copyOf(links);
         }
     }
 

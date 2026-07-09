@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-07-08)
+## Current status & next-up backlog (updated 2026-07-09)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -67,10 +67,33 @@ down is the original design-time roadmap (kept for reference).
   `@All`-style per-command fan-out with a bounded 20s timeout — persisting the assembled context
   encrypted (Tink, AAD=reviewId) to a **Postgres `BlobStore`** (`worker.context_blob`), threading its
   `contextRef` into `GenerateReview`, where `ReviewWorker` loads it into the prompt (untrusted-fenced).
-  Credentials live in a new encrypted **context-provider registry** (Settings → Context, `/api/context-providers`,
-  global default) brokered per-command exactly like SCM/LLM creds (ADR-015). Blob deletion is wired at
+  Credentials live in a new encrypted **context-provider registry** (Settings → Context, `/api/context-providers`)
+  brokered per-command exactly like SCM/LLM creds (ADR-015). Blob deletion is wired at
   all three sites (review delete, re-run, re-assembly) keyed by `review_id` — no orphaned blobs.
-  Unit + WireMock + REST-layer tests green. **Confluence** is the next ContextProvider (same SPI).
+  Unit + WireMock + REST-layer tests green. **Confluence** followed as the second ContextProvider — see below.
+- **Confluence context provider (`spire-context-confluence`) — second ContextProvider (B6, 2026-07-09)**:
+  the SPI proven generic by adding a second source with zero core changes to the contract, registry,
+  encryption, or aggregator. Where Jira is ticket-key-driven, Confluence is **link-driven** (EVENT-MODEL
+  S4): `DiffWorker` now also extracts candidate URLs from the PR title/branch/description onto a new
+  `DiffFetched.links`, threaded through `GatherContext` into `ContextRequest.links`; `ConfluenceContextProvider`
+  narrows them to its configured host, pulls the numeric page id out of each (`.../pages/123/…` or
+  `?pageId=123`), and fetches `/rest/api/content/{id}?expand=body.storage,space,version` — baseUrl-driven
+  Cloud (`…/wiki`) + Data Center, basic/bearer auth, SSRF-guarded like the SCM adapters. Storage-format
+  XHTML is stripped to plain text into a `ContextItem` (`kind=CONFLUENCE_PAGE`, title + space + body).
+  The registry's generic `projectKeys` column doubles as an optional Confluence **space-key** allow-list,
+  so no DB migration was needed; the worker dispatch (`case "confluence"`), the REST type allow-list,
+  the connectivity check (`/rest/api/user/current`), and the Settings preview (paste a page URL/id) all
+  gained a Confluence branch. Settings → Context now has a Jira/Confluence type selector with type-aware
+  copy. Unit + WireMock + REST-layer tests green.
+- **Context: all-provider matching + two-level collection (2026-07-09)**: context providers dropped the
+  single-"default" model (unlike LLM, where one active model is right) — **every enabled** provider is
+  brokered to the worker (`WorkerContextCredentials.packAll`, encrypted `List<ContextCredential>`), and a
+  PR's references are matched against all of them, so one review can pull Jira **and** Confluence at once.
+  `ContextWorker` now does a **bounded two-level** fetch: level 1 resolves the PR's own refs, level 2 mines
+  the retrieved text (e.g. a Jira ticket body) for NEW Jira keys / Confluence links and fetches those once —
+  then stops (`MAX_DEPTH=2`), which breaks a jira→confluence→jira cycle. A page linked from both the PR and a
+  fetched ticket is de-duplicated (keys case-insensitively, links by page id), not re-fetched. The UI lost
+  the Default column / Set-default action and the `/default` endpoint. New aggregator + credential-list tests green.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -90,9 +113,10 @@ down is the original design-time roadmap (kept for reference).
 **B. Make the reviewer genuinely useful (P2 — currently diff-only)**
 4. **`/review` command** · M. Author types `/review` in a PR comment to (re-)trigger. Parsed, inactive.
 5. **Conversational replies** · M. Answer follow-ups in a thread (`AuthorReplied` received but ignored).
-6. **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked-ticket context. Biggest lever.
+6. ✅ **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked ticket & page context. Biggest lever.
    ✅ **Jira done (2026-07-08)** — SPI made real end-to-end (`spire-context-jira`, ticket-key extraction,
-   worker-local aggregator, Postgres `BlobStore`, encrypted registry). **Confluence** next on the same SPI.
+   worker-local aggregator, Postgres `BlobStore`, encrypted registry). ✅ **Confluence done (2026-07-09)** —
+   second provider on the same SPI (`spire-context-confluence`, link-driven page resolution, `DiffFetched.links`).
 
 **C. Correctness & robustness** — ✅ done (2026-07-07)
 7. ✅ **Store provider type in the read model** · S. `review_status.provider_type` (V4); badge/label/
@@ -113,9 +137,9 @@ down is the original design-time roadmap (kept for reference).
 **Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are all done and
 verified live; native Anthropic + Gemini LLM providers landed 2026-07-08. Webhooks (3) are postponed
 (no host/tunnel), and **B4/B5** (`/review` command, conversational replies) depend on that ingress —
-also parked. **B6 Jira landed 2026-07-08** — the ContextProvider SPI is proven end-to-end. Next real
-levers with no infra blocker: **B6 Confluence** (second provider on the same SPI) or **D10** (OIDC,
-before any shared deploy). Operator decides.
+also parked. **B6 Jira landed 2026-07-08** and **B6 Confluence landed 2026-07-09** — the ContextProvider
+SPI is proven generic across two sources. Next real levers with no infra blocker: **D10** (OIDC, before
+any shared deploy), **D12** (MinIO/BlobStore), or a third ContextProvider (repo rules / RAG). Operator decides.
 
 ---
 

@@ -1,9 +1,13 @@
 package dev.codespire.orchestrator.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.context.confluence.ConfluenceConfig;
+import dev.codespire.context.confluence.ConfluenceContextProvider;
+import dev.codespire.context.confluence.ConfluenceLinks;
 import dev.codespire.context.jira.JiraConfig;
 import dev.codespire.context.jira.JiraContextProvider;
 import dev.codespire.context.jira.JiraTicketKeys;
+import dev.codespire.contract.port.ContextProvider;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
@@ -36,7 +40,7 @@ import java.util.UUID;
 public class ContextProviderResource {
 
     private static final Logger LOG = Logger.getLogger(ContextProviderResource.class);
-    private static final Set<String> TYPES = Set.of("jira");
+    private static final Set<String> TYPES = Set.of("jira", "confluence");
     private static final Set<String> AUTH_KINDS = Set.of("basic", "bearer");
 
     @Inject
@@ -82,13 +86,6 @@ public class ContextProviderResource {
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
     }
 
-    @PUT
-    @Path("/{id}/default")
-    public ContextProviderView makeDefault(@PathParam("id") String id) {
-        return registry.setDefault(uuid(id))
-                .orElseThrow(() -> new NotFoundException("No context provider " + id));
-    }
-
     @DELETE
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
@@ -126,10 +123,10 @@ public class ContextProviderResource {
     }
 
     /**
-     * Test the integration end to end: take a ticket number / key / free text, apply the provider's
-     * project-key pattern to resolve the issue key(s), fetch them live, and return exactly the
-     * {@link ContextItem}s a review would inject — so the operator can preview the context content
-     * before it ever reaches an LLM.
+     * Test the integration end to end: take the operator's input (a Jira ticket number/key or a Confluence
+     * page URL/id), resolve it the way a real review would, fetch it live, and return exactly the
+     * {@link ContextItem}s a review would inject — so the operator can preview the context content before
+     * it ever reaches an LLM.
      */
     @POST
     @Path("/{id}/preview")
@@ -139,11 +136,16 @@ public class ContextProviderResource {
         }
         ContextProviderConfig cfg = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
-        if (!"jira".equals(cfg.type())) {
-            throw new BadRequestException("Preview is only supported for Jira providers");
-        }
+        return switch (cfg.type()) {
+            case "jira" -> previewJira(cfg, body.text());
+            case "confluence" -> previewConfluence(cfg, body.text());
+            default -> throw new BadRequestException("Preview is not supported for type '" + cfg.type() + "'");
+        };
+    }
+
+    private PreviewResult previewJira(ContextProviderConfig cfg, String text) {
         Set<String> projectKeys = JiraTicketKeys.parseProjectKeys(cfg.projectKeys());
-        Set<String> keys = JiraTicketKeys.resolvePreview(body.text(), projectKeys);
+        Set<String> keys = JiraTicketKeys.resolvePreview(text, projectKeys);
         if (keys.isEmpty()) {
             // No key resolved — tell the operator why (usually a bare number with no project key set).
             return new PreviewResult(List.of(), "EMPTY", List.of(),
@@ -151,26 +153,52 @@ public class ContextProviderResource {
                             ? "No issue key found in the input. Enter a full key (PROJ-123), or set project keys to look up a bare number."
                             : "No issue key matched the configured project keys.");
         }
-        JiraContextProvider provider = new JiraContextProvider(
+        ContextProvider provider = new JiraContextProvider(
                 new JiraConfig(cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret(), projectKeys), mapper);
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
                 keys, List.of(), Set.of());
+        return runPreview(cfg, provider, req, List.copyOf(keys),
+                "Jira did not return the ticket(s) as JSON — run the connection check; the token is likely "
+                        + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
+                "Could not reach Jira to resolve the ticket(s).");
+    }
+
+    private PreviewResult previewConfluence(ContextProviderConfig cfg, String text) {
+        Set<String> pageIds = ConfluenceLinks.resolvePreview(text, cfg.baseUrl());
+        if (pageIds.isEmpty()) {
+            return new PreviewResult(List.of(), "EMPTY", List.of(),
+                    "No Confluence page found in the input. Paste a page URL (…/pages/12345/…) or a bare page id.");
+        }
+        ContextProvider provider = new ConfluenceContextProvider(
+                new ConfluenceConfig(cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret(),
+                        ConfluenceLinks.parseSpaceKeys(cfg.projectKeys())), mapper);
+        // The provider narrows links to its own host, so feed the resolved ids back as host-local page URLs.
+        String siteBase = cfg.baseUrl().replaceAll("/$", "");
+        List<String> links = pageIds.stream()
+                .map(pid -> siteBase + "/pages/viewpage.action?pageId=" + pid).toList();
+        ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
+                Set.of(), links, Set.of());
+        return runPreview(cfg, provider, req, List.copyOf(pageIds),
+                "Confluence did not return the page(s) as JSON — run the connection check; the token is likely "
+                        + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
+                "Could not reach Confluence to resolve the page(s).");
+    }
+
+    /** Run a provider's {@code contribute} for a preview and map its outcome to a {@link PreviewResult}. */
+    private PreviewResult runPreview(ContextProviderConfig cfg, ContextProvider provider, ContextRequest req,
+                                     List<String> keys, String errorOnErrorStatus, String errorOnThrow) {
         try {
             ContextContribution c = provider.contribute(req).toCompletableFuture().join();
             String status = c.status().name();
-            String detail = "ERROR".equals(status)
-                    ? "Jira did not return the ticket(s) as JSON — run the connection check; the token is likely "
-                            + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access)."
-                    : null;
-            return new PreviewResult(List.copyOf(keys), status, c.items(), detail);
+            String detail = "ERROR".equals(status) ? errorOnErrorStatus : null;
+            return new PreviewResult(keys, status, c.items(), detail);
         } catch (RuntimeException e) {
-            LOG.warnf(e, "Context preview failed for provider %s", id);
-            return new PreviewResult(List.copyOf(keys), "ERROR", List.of(),
-                    "Could not reach Jira to resolve the ticket(s).");
+            LOG.warnf(e, "Context preview failed for provider %s (%s)", cfg.id(), cfg.type());
+            return new PreviewResult(keys, "ERROR", List.of(), errorOnThrow);
         }
     }
 
-    /** Preview input: a ticket number, a full key, or free text (a PR title) to extract a key from. */
+    /** Preview input: a Jira ticket number/key, a Confluence page URL/id, or free text to resolve from. */
     public record PreviewRequest(String text) {
     }
 

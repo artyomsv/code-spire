@@ -38,7 +38,7 @@ public class ContextKeyValidator {
 
     private static final String SIGN_IN_PAGE =
             "Reachable, but the provider returned a sign-in page instead of JSON — the token was not accepted. "
-                    + "Check the base URL is the Jira site root and the token has REST API access.";
+                    + "Check the base URL is the provider's API root and the token has REST API access.";
 
     /** Result of a connectivity {@link #check}: owner display name on success; {@code detail} explains a failure. */
     public record CheckOutcome(boolean ok, String account, int status, String detail) {
@@ -73,7 +73,7 @@ public class ContextKeyValidator {
         String detail = p.status() == 0 ? "network/TLS failure (see the earlier stack)"
                 : p.status() / 100 != 2 ? "HTTP " + p.status()
                 : SIGN_IN_PAGE;
-        LOG.warnf("Jira connectivity check FAILED for %s — status=%d contentType=%s reason=%s body: %s",
+        LOG.warnf("Context connectivity check FAILED for %s — status=%d contentType=%s reason=%s body: %s",
                 p.host(), p.status(), p.contentType(), detail, bodySnippet(p.body()));
         String outcomeDetail = p.status() / 100 != 2 ? null : SIGN_IN_PAGE; // resource maps a bad status itself
         return new CheckOutcome(false, null, p.status(), outcomeDetail);
@@ -84,11 +84,13 @@ public class ContextKeyValidator {
 
     /** GET the "who am I" endpoint; {@code status}=0 signals a network/TLS failure (no HTTP status). */
     private Probe probe(String type, String baseUrl, String authKind, String username, String secret) {
-        if (!"jira".equals(type)) {
-            throw new BadRequestException("Unsupported context provider type '" + type + "'");
-        }
-        // Jira v2 "who am I" — cheap, authenticated, portable across Cloud and Data Center.
-        URI uri = URI.create(trimTrailingSlash(baseUrl) + "/rest/api/2/myself");
+        // Each provider's cheap, authenticated, Cloud+Data-Center-portable "who am I" endpoint.
+        String whoAmI = switch (type) {
+            case "jira" -> "/rest/api/2/myself";
+            case "confluence" -> "/rest/api/user/current";
+            default -> throw new BadRequestException("Unsupported context provider type '" + type + "'");
+        };
+        URI uri = URI.create(trimTrailingSlash(baseUrl) + whoAmI);
         HttpRequest req = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(10))
                 .header("Accept", "application/json")
@@ -122,14 +124,16 @@ public class ContextKeyValidator {
         }
         try {
             JsonNode me = mapper.readTree(body);
-            for (String field : new String[] {"displayName", "emailAddress", "name", "accountId"}) {
+            // Jira: displayName/emailAddress/name/accountId. Confluence: displayName/publicName/username/email/accountId.
+            for (String field : new String[] {
+                    "displayName", "publicName", "emailAddress", "email", "name", "username", "accountId"}) {
                 String value = me.path(field).asText("");
                 if (!value.isBlank()) {
                     return value;
                 }
             }
         } catch (Exception e) {
-            LOG.debugf(e, "Could not parse the Jira /myself response for the account name");
+            LOG.debugf(e, "Could not parse the context provider's who-am-I response for the account name");
         }
         return null;
     }

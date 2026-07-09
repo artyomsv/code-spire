@@ -5,7 +5,6 @@ import {
   deleteContextProvider,
   fetchContextProviders,
   previewContextProvider,
-  setDefaultContextProvider,
   updateContextProvider,
   type ContextAuthKind,
   type ContextPreviewResult,
@@ -16,7 +15,53 @@ import {
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
 
-const CONTEXT_TYPES: ContextType[] = ['jira'];
+const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence'];
+
+/** Per-type form and preview copy — Jira resolves ticket keys, Confluence resolves page links. */
+interface TypeCopy {
+  namePlaceholder: string;
+  baseUrlPlaceholder: string;
+  baseUrlHint: string;
+  narrowLabel: string;
+  narrowPlaceholder: string;
+  narrowHint: string;
+  previewLabel: string;
+  previewPlaceholder: (projectKeys: string | null) => string;
+  previewHint: string;
+}
+
+const TYPE_COPY: Record<ContextType, TypeCopy> = {
+  jira: {
+    namePlaceholder: 'Acme Jira',
+    baseUrlPlaceholder: 'https://acme.atlassian.net',
+    baseUrlHint: 'Your Jira site root — the client appends the REST paths.',
+    narrowLabel: 'Project keys',
+    narrowPlaceholder: 'ACME, PROJ',
+    narrowHint:
+      'Only issue keys for these projects are looked up (e.g. ACME matches ACME-123). Leave blank ' +
+      'to accept any key. Also lets the Test box resolve a bare ticket number.',
+    previewLabel: 'Ticket or text',
+    previewPlaceholder: (projectKeys) =>
+      projectKeys
+        ? `a ticket number (${projectKeys.split(/[,\s]+/)[0]}-123 or just 123) or a PR title`
+        : 'a full ticket key (PROJ-123) or a PR title',
+    previewHint:
+      'Resolves the key with this provider’s pattern, fetches it live, and shows exactly what a review would inject.',
+  },
+  confluence: {
+    namePlaceholder: 'Acme Confluence',
+    baseUrlPlaceholder: 'https://acme.atlassian.net/wiki',
+    baseUrlHint: 'Your Confluence wiki root (…/wiki on Cloud) — the client appends the REST paths.',
+    narrowLabel: 'Space keys',
+    narrowPlaceholder: 'ENG, DOC',
+    narrowHint:
+      'Optional: only pages in these spaces are included (e.g. ENG). Leave blank to accept any page linked ' +
+      'from the PR description.',
+    previewLabel: 'Page URL or id',
+    previewPlaceholder: () => 'a page URL (…/pages/12345/…) or a bare page id',
+    previewHint: 'Fetches the linked page live and shows exactly what a review would inject.',
+  },
+};
 
 // Per-provider connectivity status, keyed by provider id.
 type ConnState = 'checking' | 'ok' | 'fail';
@@ -91,7 +136,7 @@ export default function SettingsContextProviders() {
       <div className="card">
         <div className="head">
           <h3>Context providers</h3>
-          <span className="k">Jira · enrich reviews with linked-ticket context</span>
+          <span className="k">Jira &amp; Confluence · enrich reviews with linked ticket &amp; page context</span>
           <button
             className="iconbtn"
             style={{ marginLeft: 'auto' }}
@@ -106,8 +151,8 @@ export default function SettingsContextProviders() {
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
-            No context providers yet — add a Jira connection so reviews can pull the referenced ticket’s summary and
-            description into the prompt.
+            No context providers yet — add a Jira connection to pull a referenced ticket’s summary and description,
+            or a Confluence connection to pull linked pages, into the review prompt.
           </div>
         ) : (
           <table className="prov-table">
@@ -117,7 +162,6 @@ export default function SettingsContextProviders() {
                 <th>Type</th>
                 <th>Base URL</th>
                 <th>Connection</th>
-                <th>Default</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -132,18 +176,6 @@ export default function SettingsContextProviders() {
                     <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />
                   </td>
                   <td>
-                    {p.isDefault ? (
-                      <span className="pill completed">
-                        <span className="glyph"></span>
-                        Default
-                      </span>
-                    ) : (
-                      <button className="btn-ghost" onClick={() => act(() => setDefaultContextProvider(p.id))}>
-                        Set default
-                      </button>
-                    )}
-                  </td>
-                  <td>
                     <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
                       <span className="glyph"></span>
                       {p.enabled ? 'Enabled' : 'Disabled'}
@@ -154,7 +186,7 @@ export default function SettingsContextProviders() {
                       <IconButton
                         kind="test"
                         onClick={() => setTestProvider(p)}
-                        title="Test connection & preview a ticket"
+                        title="Test connection & preview context"
                         aria-label="Test"
                       />
                       <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
@@ -261,9 +293,9 @@ function ContextProviderForm({
   const [username, setUsername] = useState(initial?.username ?? '');
   const [projectKeys, setProjectKeys] = useState(initial?.projectKeys ?? '');
   const [secret, setSecret] = useState('');
-  const [isDefault, setIsDefault] = useState(initial?.isDefault ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const copy = TYPE_COPY[type];
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -278,7 +310,6 @@ function ContextProviderForm({
       secret: secret.trim() || undefined,
       projectKeys: projectKeys.trim() || undefined,
       enabled: initial?.enabled ?? true,
-      isDefault,
     };
     try {
       if (editing && initial) {
@@ -301,7 +332,7 @@ function ContextProviderForm({
         <form className="modal-body" onSubmit={submit}>
           <label className="field">
             <span>Name</span>
-            <input placeholder="Acme Jira" value={name} onChange={(e) => setName(e.target.value)} />
+            <input placeholder={copy.namePlaceholder} value={name} onChange={(e) => setName(e.target.value)} />
           </label>
 
           <div className="field-row-2">
@@ -328,27 +359,24 @@ function ContextProviderForm({
             <span>Base URL</span>
             <input
               className="mono"
-              placeholder="https://acme.atlassian.net"
+              placeholder={copy.baseUrlPlaceholder}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
-            <small className="field-hint">Your Jira site root — the client appends the REST paths.</small>
+            <small className="field-hint">{copy.baseUrlHint}</small>
           </label>
 
           <label className="field">
             <span>
-              Project keys <span className="field-optional">optional</span>
+              {copy.narrowLabel} <span className="field-optional">optional</span>
             </span>
             <input
               className="mono"
-              placeholder="ACME, PROJ"
+              placeholder={copy.narrowPlaceholder}
               value={projectKeys}
               onChange={(e) => setProjectKeys(e.target.value)}
             />
-            <small className="field-hint">
-              Only issue keys for these projects are looked up (e.g. ACME matches ACME-123). Leave blank
-              to accept any key. Also lets the Test box resolve a bare ticket number.
-            </small>
+            <small className="field-hint">{copy.narrowHint}</small>
           </label>
 
           {authKind === 'basic' && (
@@ -372,11 +400,6 @@ function ContextProviderForm({
                 {initial?.hasSecret ? 'A secret is stored — leave blank to keep it.' : 'No secret stored yet.'}
               </small>
             )}
-          </label>
-
-          <label className="field-check">
-            <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
-            <span>Use as the default context source</span>
           </label>
 
           {error && <div className="modal-msg modal-error">{error}</div>}
@@ -415,9 +438,8 @@ function PreviewModal({ provider, onClose }: { provider: ContextProviderView; on
     }
   }
 
-  const hint = provider.projectKeys
-    ? `a ticket number (${provider.projectKeys.split(/[,\s]+/)[0]}-123 or just 123) or a PR title`
-    : 'a full ticket key (PROJ-123) or a PR title';
+  const copy = TYPE_COPY[provider.type];
+  const hint = copy.previewPlaceholder(provider.projectKeys);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -425,12 +447,9 @@ function PreviewModal({ provider, onClose }: { provider: ContextProviderView; on
         <h3>Test context — {provider.name}</h3>
         <form className="modal-body" onSubmit={run}>
           <label className="field">
-            <span>Ticket or text</span>
+            <span>{copy.previewLabel}</span>
             <input placeholder={hint} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
-            <small className="field-hint">
-              Resolves the key with this provider’s pattern, fetches it live, and shows exactly what a review would
-              inject.
-            </small>
+            <small className="field-hint">{copy.previewHint}</small>
           </label>
 
           <div className="modal-actions" style={{ justifyContent: 'flex-start' }}>

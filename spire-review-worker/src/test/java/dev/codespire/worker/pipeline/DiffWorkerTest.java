@@ -36,6 +36,7 @@ class DiffWorkerTest {
     private DiffWorker worker;
     private List<IntegrationEvent> emitted;
     private RuntimeException failure;
+    private String prDescription = "desc";
 
     @BeforeEach
     void setUp() {
@@ -60,7 +61,7 @@ class DiffWorkerTest {
                 if (failure != null) {
                     throw failure;
                 }
-                return new PullRequest(repo, prId, "Demo PR", "desc", "feature/demo", "main",
+                return new PullRequest(repo, prId, "Demo PR", prDescription, "feature/demo", "main",
                         DiffRefs.headOnly("abc123"), Author.of("1", "bot", "bot"), "http://pr");
             }
 
@@ -94,6 +95,15 @@ class DiffWorkerTest {
         DiffFetched fetched = assertInstanceOf(DiffFetched.class, emitted.getFirst());
         assertEquals(1, fetched.changedFiles());
         assertEquals("abc123", fetched.commit());
+    }
+
+    @Test
+    void extractsCandidateLinksFromThePrText() {
+        prDescription = "context: https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design";
+        worker.fetchDiff(COMMAND);
+        DiffFetched fetched = assertInstanceOf(DiffFetched.class, emitted.getFirst());
+        assertTrue(fetched.links().contains("https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design"),
+                "Confluence provider narrows these; the worker just supplies candidate URLs");
     }
 
     @Test

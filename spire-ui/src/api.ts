@@ -343,9 +343,9 @@ export async function deleteLlmProvider(id: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
 }
 
-// --- context providers (Jira, later Confluence) --------------------------------
+// --- context providers (Jira, Confluence) --------------------------------------
 
-export type ContextType = 'jira';
+export type ContextType = 'jira' | 'confluence';
 export type ContextAuthKind = 'basic' | 'bearer';
 
 export interface ContextProviderView {
@@ -422,12 +422,6 @@ export async function updateContextProvider(id: string, input: ContextProviderIn
     body: JSON.stringify(input),
   });
   if (!res.ok) return throwResponse(res, 'Failed to update context provider');
-  return res.json();
-}
-
-export async function setDefaultContextProvider(id: string): Promise<ContextProviderView> {
-  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
-  if (!res.ok) return throwResponse(res, 'Failed to set default context provider');
   return res.json();
 }
 

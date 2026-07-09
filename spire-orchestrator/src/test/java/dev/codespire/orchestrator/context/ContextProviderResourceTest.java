@@ -71,12 +71,12 @@ class ContextProviderResourceTest {
     }
 
     @Test
-    void createsValidatesTheCredentialAndFirstIsDefault() {
+    void createsValidatesTheCredentialAndStoresIt() {
         given().contentType("application/json").body(body("jira-token"))
                 .when().post("/api/context-providers")
                 .then().statusCode(201)
                 .body("hasSecret", is(true))
-                .body("isDefault", is(true))      // first provider auto-defaults
+                .body("enabled", is(true))        // every enabled provider participates — no default concept
                 .body("secret", nullValue())      // secret never returned
                 .body("id", notNullValue());
     }
@@ -91,7 +91,7 @@ class ContextProviderResourceTest {
     @Test
     void rejectsAnUnsupportedType() {
         var b = body("jira-token");
-        b.put("type", "confluence"); // not yet a supported context provider type
+        b.put("type", "notion"); // not a supported context provider type
         given().contentType("application/json").body(b)
                 .when().post("/api/context-providers").then().statusCode(400);
     }
@@ -131,18 +131,18 @@ class ContextProviderResourceTest {
     }
 
     @Test
-    void setDefaultSwitchesTheDefault() {
-        String first = given().contentType("application/json").body(body("t-1"))
-                .when().post("/api/context-providers").then().statusCode(201)
-                .extract().path("id");
-        String second = given().contentType("application/json").body(body("t-2"))
-                .when().post("/api/context-providers").then().statusCode(201)
-                .extract().path("id");
+    void multipleProvidersCoexistWithoutADefault() {
+        given().contentType("application/json").body(body("t-1"))
+                .when().post("/api/context-providers").then().statusCode(201);
+        given().contentType("application/json").body(body("t-2"))
+                .when().post("/api/context-providers").then().statusCode(201);
 
-        given().when().put("/api/context-providers/" + second + "/default")
-                .then().statusCode(200).body("isDefault", is(true));
-        when().get("/api/context-providers/" + first)
-                .then().statusCode(200).body("isDefault", is(false));
+        // Both remain enabled and non-default — every enabled provider is brokered to the worker.
+        when().get("/api/context-providers")
+                .then().statusCode(200)
+                .body("size()", is(2))
+                .body("isDefault", org.hamcrest.Matchers.everyItem(is(false)))
+                .body("enabled", org.hamcrest.Matchers.everyItem(is(true)));
     }
 
     @Test
@@ -234,6 +234,67 @@ class ContextProviderResourceTest {
         String id = given().contentType("application/json").body(body("jira-token"))
                 .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
         given().contentType("application/json").body(java.util.Map.of("text", "12345"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200).body("status", is("EMPTY")).body("detail", notNullValue());
+    }
+
+    /** A Confluence provider body pointing at the same WireMock (validator appends /rest/api/user/current). */
+    private static Map<String, Object> confluenceBody(Object secret) {
+        var m = new java.util.HashMap<String, Object>();
+        m.put("name", "Acme Confluence");
+        m.put("type", "confluence");
+        m.put("baseUrl", jira.baseUrl());
+        m.put("authKind", "basic");
+        m.put("username", "bot@acme.com");
+        if (secret != null) {
+            m.put("secret", secret);
+        }
+        return m;
+    }
+
+    @Test
+    void createsAConfluenceProviderValidatingAgainstUserCurrent() {
+        jira.stubFor(get(urlEqualTo("/rest/api/user/current"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"accountId\": \"abc\", \"displayName\": \"Bot Account\" }")));
+        given().contentType("application/json").body(confluenceBody("conf-token"))
+                .when().post("/api/context-providers")
+                .then().statusCode(201)
+                .body("type", is("confluence"))
+                .body("hasSecret", is(true))
+                .body("secret", nullValue());
+    }
+
+    @Test
+    void previewResolvesAConfluencePageUrlAndReturnsTheItem() {
+        jira.stubFor(get(urlEqualTo("/rest/api/user/current"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"displayName\": \"Bot Account\" }")));
+        String id = given().contentType("application/json").body(confluenceBody("conf-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        jira.stubFor(get(urlPathEqualTo("/rest/api/content/999")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"id\":\"999\",\"title\":\"Design Doc\","
+                        + "\"body\":{\"storage\":{\"value\":\"<p>the plan</p>\"}}}")));
+
+        given().contentType("application/json")
+                .body(java.util.Map.of("text", jira.baseUrl() + "/spaces/ENG/pages/999/Design-Doc"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("OK"))
+                .body("keys[0]", is("999"))
+                .body("items[0].kind", is("CONFLUENCE_PAGE"))
+                .body("items[0].title", is("Design Doc"));
+    }
+
+    @Test
+    void confluencePreviewIsEmptyWhenNoPageIsFound() {
+        jira.stubFor(get(urlEqualTo("/rest/api/user/current"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"displayName\": \"Bot Account\" }")));
+        String id = given().contentType("application/json").body(confluenceBody("conf-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(java.util.Map.of("text", "not a page reference"))
                 .when().post("/api/context-providers/" + id + "/preview")
                 .then().statusCode(200).body("status", is("EMPTY")).body("detail", notNullValue());
     }
