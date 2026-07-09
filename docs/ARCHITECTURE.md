@@ -2,6 +2,12 @@
 
 > Status: design sketch. Companion to [EVENT-MODEL.md](EVENT-MODEL.md), which holds the
 > concrete slices (events/commands/read models). This doc explains the *shape* and *why*.
+>
+> **Visual board:** open [diagrams/architecture.html](diagrams/architecture.html) in a browser — a
+> swimlane-per-layer view of the deployable services, the Kafka/Redpanda bus, the shared-library SPI +
+> adapters (single row), the data stores (their own lane), and the external systems, with roadmap pieces
+> (RAG / vector index, repo-rules context, MinIO, OIDC, real webhooks) drawn dashed. The board scrolls
+> sideways.
 
 ## 1. The core idea
 

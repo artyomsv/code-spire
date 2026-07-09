@@ -1,0 +1,289 @@
+<meta charset="utf-8">
+<title>Code Spire - Architecture &amp; Dependencies</title>
+<style>
+  :root{
+    --bg:#0b0e15; --panel:#111624; --ink:#e9ecf2; --soft:#9aa3b8;
+    --line:#e8a44c;
+    --svc:#4a90d9;  --svc-fill:#12243a;  --svc-ink:#8fc0f0;
+    --lib:#55618a;  --lib-fill:#161b2b;  --lib-ink:#c3ccdd;
+    --store:#46a758;--store-fill:#14261b;--store-ink:#8fd69b;
+    --ext:#8b78d8;  --ext-fill:#1e1a2e;  --ext-ink:#c9bdf3;
+    --bus:#e8a44c;  --bus-fill:#241d10;  --bus-ink:#f0c98a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:36px 22px 8px;}
+  .eyebrow{font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:var(--line);
+    font-weight:700;margin:0 0 8px;}
+  h1{font-size:clamp(22px,3vw,31px);margin:0 0 9px;letter-spacing:-.01em;text-wrap:balance;font-weight:680;}
+  .lede{max-width:76ch;color:var(--soft);font-size:14.5px;margin:0;}
+  .lede b{color:var(--ink);font-weight:600;}
+  .lede .pl{color:var(--bus-ink);font-weight:600;}
+  .board{overflow-x:auto;padding:8px 0 28px;}
+  svg{display:block;}
+  .hint{max-width:1180px;margin:0 auto;padding:0 22px 44px;color:var(--soft);font-size:13px;line-height:1.62;}
+  .hint code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em;color:var(--ink);
+    background:var(--panel);border:1px solid #263049;border-radius:5px;padding:.05em .35em;}
+  .hint b{color:var(--ink);}
+  .hint .pl{color:var(--bus-ink);}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Code Spire / System Architecture</p>
+  <h1>The system as layers &amp; dependencies</h1>
+  <p class="lede">Reads top to bottom, one swimlane per layer: a review is <b>triggered</b>, handled by a few
+    <b style="color:var(--svc-ink)">deployable services</b> that talk only through a
+    <b style="color:var(--bus-ink)">Kafka&nbsp;/&nbsp;Redpanda</b> bus, build on a single row of
+    <b style="color:var(--lib-ink)">shared libraries</b> (the plugin SPI + adapters), persist to
+    <b style="color:var(--store-ink)">data stores</b>, and reach out to <b style="color:var(--ext-ink)">external
+    systems</b>. Solid = built today. <span class="pl">Dashed = on the roadmap, not yet built</span>
+    (RAG&nbsp;/ vector index, repo-rules context, MinIO, OIDC, real webhooks). The board scrolls sideways.</p>
+</div>
+
+<div class="board">
+<svg width="1960" height="1120" viewBox="0 0 1960 1120" role="img"
+     aria-label="Layered architecture and dependency diagram for Code Spire">
+  <defs>
+    <marker id="arw" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto-start-reverse">
+      <path d="M0,0 L9,3.2 L0,6.4 Z" fill="#e8a44c"/>
+    </marker>
+    <marker id="arwd" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto-start-reverse">
+      <path d="M0,0 L9,3.2 L0,6.4 Z" fill="#7d8ab0"/>
+    </marker>
+    <style>
+      text{font-family:"Comic Sans MS","Chalkboard SE","Bradley Hand","Marker Felt",ui-rounded,system-ui,sans-serif;
+        text-anchor:middle;fill:#e9ecf2;}
+      .lane{font-size:18px;fill:#e8a44c;text-anchor:start;font-weight:700;}
+      .lane-sub{font-size:10px;fill:#9aa3b8;text-anchor:start;}
+      .nid{font-size:13px;font-weight:600;}
+      .sub{font-size:9.5px;fill:#9aa3b8;}
+      .alab{font-size:10.5px;fill:#e8c98a;}
+      .dlab{font-size:10.5px;fill:#9fb0d8;}
+      .div{stroke:#e8a44c;stroke-width:1.2;stroke-dasharray:5 10;opacity:.20;}
+      .flow{stroke:#e8a44c;stroke-width:2;fill:none;marker-end:url(#arw);}
+      .flow2{stroke:#e8a44c;stroke-width:2;fill:none;marker-end:url(#arw);marker-start:url(#arw);}
+      .dep{stroke:#7d8ab0;stroke-width:1.8;fill:none;marker-end:url(#arwd);}
+      .plan{stroke:#c98f3e;stroke-width:1.9;fill:none;stroke-dasharray:6 6;opacity:.72;marker-end:url(#arw);}
+      .planbox{opacity:.5;}
+    </style>
+  </defs>
+
+  <!-- dedicated data-store swimlane band -->
+  <rect x="150" y="724" width="1760" height="92" rx="10" fill="#12281b" opacity="0.4"/>
+
+  <!-- band dividers -->
+  <line class="div" x1="150" y1="150" x2="1900" y2="150"/>
+  <line class="div" x1="150" y1="288" x2="1900" y2="288"/>
+  <line class="div" x1="150" y1="404" x2="1900" y2="404"/>
+  <line class="div" x1="150" y1="532" x2="1900" y2="532"/>
+  <line class="div" x1="150" y1="688" x2="1900" y2="688"/>
+  <line class="div" x1="150" y1="856" x2="1900" y2="856"/>
+
+  <!-- lane labels -->
+  <text class="lane" x="24" y="96">Triggers</text>
+  <text class="lane" x="24" y="214">Edge</text>
+  <text class="lane" x="24" y="354">Bus</text>
+  <text class="lane" x="24" y="472">Services</text>
+  <text class="lane" x="24" y="604">Libraries</text>
+  <text class="lane-sub" x="24" y="619">SPI · adapters</text>
+  <text class="lane" x="24" y="774">Data stores</text>
+  <text class="lane" x="24" y="946">External</text>
+
+  <!-- ============ CONNECTORS (behind nodes) ============ -->
+  <!-- client path -->
+  <path class="flow" d="M320,118 L320,437"/>
+  <path class="flow" d="M412,466 L491,466"/>
+  <text class="alab" x="452" y="458">REST + WS</text>
+  <!-- ingress path (planned) -->
+  <path class="plan" d="M620,118 L620,178"/>
+  <text class="alab" x="640" y="150" text-anchor="start" style="fill:#c98f3e">planned</text>
+  <!-- gateway -> bus -->
+  <path class="flow" d="M620,238 L620,318"/>
+  <text class="alab" x="628" y="285" text-anchor="start">cs.integration</text>
+  <!-- services attach to bus -->
+  <path class="flow2" d="M620,437 L620,378"/>
+  <path class="flow2" d="M1000,437 L1000,378"/>
+  <text class="alab" x="1000" y="414">cs.commands · cs.results</text>
+  <path class="plan" d="M1650,435 L1650,380"/>
+
+  <!-- dependency: all services -> contract -->
+  <path class="dep" d="M556,495 L360,579"/>
+  <text class="dlab" x="398" y="548" text-anchor="start">used by all services</text>
+
+  <!-- persistence: orchestrator + worker -> Postgres (routed down library-row gaps) -->
+  <path class="flow" d="M620,495 L780,512 L780,735"/>
+  <text class="alab" x="600" y="676" text-anchor="start">event store · read models · registries</text>
+  <path class="flow" d="M1000,495 L1012,512 L1012,700 L850,700 L850,735"/>
+  <text class="alab" x="866" y="694" text-anchor="start">context blob (Tink)</text>
+
+  <!-- adapters -> external systems (aligned columns) -->
+  <path class="flow" d="M896,639 L896,908"/>
+  <path class="flow" d="M1098,639 L1098,908"/>
+  <path class="flow" d="M1270,639 L1270,908"/>
+  <path class="flow" d="M1457,639 L1457,908"/>
+
+  <!-- planned: indexer + rag -> vector db -->
+  <path class="plan" d="M1650,495 L1735,512 L1735,712 L1700,712 L1700,735"/>
+  <text class="alab" x="1600" y="676" text-anchor="start" style="fill:#c98f3e">maintains index</text>
+  <path class="plan" d="M1808,639 L1732,735"/>
+  <text class="alab" x="1770" y="700" text-anchor="start" style="fill:#c98f3e">retrieves</text>
+
+  <!-- ============ NODES ============ -->
+  <!-- Triggers -->
+  <g><rect x="245" y="66" width="150" height="52" rx="10" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2"/>
+    <text class="nid" x="320" y="90" fill="#c9bdf3">Operator</text>
+    <text class="sub" x="320" y="106">browser</text></g>
+  <g class="planbox"><rect x="510" y="66" width="220" height="52" rx="10" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="620" y="90" fill="#c9bdf3">SCM webhook</text>
+    <text class="sub" x="620" y="106">PR opened / updated · manual today</text></g>
+
+  <!-- Edge -->
+  <g><rect x="505" y="182" width="230" height="56" rx="11" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+    <text class="nid" x="620" y="206" fill="#8fc0f0">spire-gateway</text>
+    <text class="sub" x="620" y="223">webhook ingress → 202 · OIDC edge (planned)</text></g>
+
+  <!-- Bus -->
+  <rect x="480" y="320" width="1260" height="56" rx="12" fill="#241d10" stroke="#e8a44c" stroke-width="2"/>
+  <text x="566" y="354" fill="#f0c98a" style="font-size:15px;font-weight:700">Redpanda / Kafka</text>
+  <g style="font-size:11px">
+    <rect x="780" y="334" width="120" height="28" rx="6" fill="#0b0e15" stroke="#e8a44c" stroke-width="1.3"/>
+    <text x="840" y="352" fill="#f0c98a">cs.integration</text>
+    <rect x="912" y="334" width="116" height="28" rx="6" fill="#0b0e15" stroke="#e8a44c" stroke-width="1.3"/>
+    <text x="970" y="352" fill="#f0c98a">cs.commands</text>
+    <rect x="1040" y="334" width="92" height="28" rx="6" fill="#0b0e15" stroke="#e8a44c" stroke-width="1.3"/>
+    <text x="1086" y="352" fill="#f0c98a">cs.events</text>
+    <rect x="1144" y="334" width="96" height="28" rx="6" fill="#0b0e15" stroke="#e8a44c" stroke-width="1.3"/>
+    <text x="1192" y="352" fill="#f0c98a">cs.results</text>
+    <rect x="1252" y="334" width="72" height="28" rx="6" fill="#0b0e15" stroke="#e8a44c" stroke-width="1.3"/>
+    <text x="1288" y="352" fill="#f0c98a">cs.dlq</text>
+  </g>
+
+  <!-- Services -->
+  <g><rect x="230" y="437" width="180" height="58" rx="11" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+    <text class="nid" x="320" y="462" fill="#8fc0f0">spire-ui</text>
+    <text class="sub" x="320" y="479">React / Vite dashboard</text></g>
+  <g><rect x="495" y="437" width="250" height="58" rx="11" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+    <text class="nid" x="620" y="462" fill="#8fc0f0">spire-orchestrator</text>
+    <text class="sub" x="620" y="479">decider · sagas · event store · API / WS</text></g>
+  <g><rect x="890" y="437" width="220" height="58" rx="11" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+    <text class="nid" x="1000" y="462" fill="#8fc0f0">spire-review-worker</text>
+    <text class="sub" x="1000" y="479">diff · context · review · comment</text></g>
+  <g class="planbox"><rect x="1570" y="437" width="160" height="58" rx="11" fill="#12243a" stroke="#4a90d9" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="1650" y="462" fill="#8fc0f0">spire-indexer</text>
+    <text class="sub" x="1650" y="479">repo vector index</text></g>
+
+  <!-- Libraries — single row of 9 -->
+  <g><rect x="185" y="581" width="210" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="290" y="606" fill="#c3ccdd">spire-contract</text>
+    <text class="sub" x="290" y="622">Decider/View/Saga · SPI ports</text></g>
+  <g><rect x="417" y="581" width="150" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="492" y="606" fill="#c3ccdd">spire-diff</text>
+    <text class="sub" x="492" y="622">patch · tokens · prompts</text></g>
+  <g><rect x="589" y="581" width="180" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="679" y="606" fill="#c3ccdd">spire-encryption</text>
+    <text class="sub" x="679" y="622">Tink · at rest</text></g>
+  <g><rect x="791" y="581" width="210" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="896" y="606" fill="#c3ccdd">spire-scm-*</text>
+    <text class="sub" x="896" y="622">Bitbucket · GitHub · GitLab</text></g>
+  <g><rect x="1023" y="581" width="150" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="1098" y="606" fill="#c3ccdd">spire-llm</text>
+    <text class="sub" x="1098" y="622">LangChain4j</text></g>
+  <g><rect x="1195" y="581" width="150" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="1270" y="602" fill="#c3ccdd">spire-context</text>
+    <text class="nid" x="1270" y="617" fill="#c3ccdd">-jira</text></g>
+  <g><rect x="1367" y="581" width="180" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="1457" y="602" fill="#c3ccdd">spire-context</text>
+    <text class="nid" x="1457" y="617" fill="#c3ccdd">-confluence</text></g>
+  <g class="planbox"><rect x="1569" y="581" width="155" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="1646" y="602" fill="#c3ccdd">spire-context</text>
+    <text class="nid" x="1646" y="617" fill="#c3ccdd">-rules</text></g>
+  <g class="planbox"><rect x="1746" y="581" width="150" height="58" rx="10" fill="#161b2b" stroke="#55618a" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="1821" y="602" fill="#c3ccdd">spire-context</text>
+    <text class="nid" x="1821" y="617" fill="#c3ccdd">-rag</text></g>
+
+  <!-- Data stores (dedicated swimlane; boxes sit in the adapter-column gaps) -->
+  <g><rect x="710" y="737" width="180" height="66" rx="12" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+    <text class="nid" x="800" y="763" fill="#8fd69b">Postgres</text>
+    <text class="sub" x="800" y="779">event store · read models</text>
+    <text class="sub" x="800" y="792">registries · context blob</text></g>
+  <g class="planbox"><rect x="1160" y="740" width="200" height="60" rx="12" fill="#14261b" stroke="#46a758" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="1260" y="766" fill="#8fd69b">MinIO</text>
+    <text class="sub" x="1260" y="783">object store (BlobStore)</text></g>
+  <g class="planbox"><rect x="1540" y="738" width="220" height="64" rx="12" fill="#14261b" stroke="#46a758" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="1650" y="764" fill="#8fd69b">Vector DB</text>
+    <text class="sub" x="1650" y="781">Qdrant / LanceDB</text></g>
+
+  <!-- External systems (aligned under their adapters) -->
+  <g><rect x="791" y="908" width="210" height="60" rx="11" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2"/>
+    <text class="nid" x="896" y="934" fill="#c9bdf3">SCM systems</text>
+    <text class="sub" x="896" y="951">Bitbucket · GitHub · GitLab</text></g>
+  <g><rect x="1008" y="908" width="180" height="60" rx="11" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2"/>
+    <text class="nid" x="1098" y="934" fill="#c9bdf3">LLM providers</text>
+    <text class="sub" x="1098" y="951">OpenAI · Anthropic · Gemini</text></g>
+  <g><rect x="1210" y="908" width="120" height="60" rx="11" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2"/>
+    <text class="nid" x="1270" y="942" fill="#c9bdf3">Jira</text></g>
+  <g><rect x="1372" y="908" width="170" height="60" rx="11" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2"/>
+    <text class="nid" x="1457" y="942" fill="#c9bdf3">Confluence</text></g>
+  <g class="planbox"><rect x="1565" y="908" width="170" height="60" rx="11" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2" stroke-dasharray="6 5"/>
+    <text class="nid" x="1650" y="934" fill="#c9bdf3">Keycloak</text>
+    <text class="sub" x="1650" y="951">OIDC · via spire-gateway</text></g>
+
+  <!-- note: SPI plugins loaded by the worker -->
+  <text class="dlab" x="1176" y="560">SPI plugins (DiffSource · ContextProvider · LlmProvider · CommentSink) — loaded by spire-review-worker</text>
+
+  <!-- ============ LEGEND ============ -->
+  <g transform="translate(470,1000)">
+    <rect x="0" y="0" width="1010" height="86" rx="12" fill="none" stroke="#6b56c9" stroke-width="1.6" stroke-dasharray="4 6"/>
+    <text x="52" y="47" style="font-size:16px;fill:#b9a9ff">legend</text>
+
+    <rect x="112" y="18" width="96" height="32" rx="8" fill="#12243a" stroke="#4a90d9" stroke-width="2"/>
+    <text class="nid" x="160" y="38" fill="#8fc0f0">service</text>
+    <rect x="222" y="18" width="96" height="32" rx="8" fill="#161b2b" stroke="#55618a" stroke-width="2"/>
+    <text class="nid" x="270" y="38" fill="#c3ccdd">library</text>
+    <rect x="332" y="18" width="100" height="32" rx="8" fill="#14261b" stroke="#46a758" stroke-width="2"/>
+    <text class="nid" x="382" y="38" fill="#8fd69b">datastore</text>
+    <rect x="446" y="18" width="96" height="32" rx="8" fill="#1e1a2e" stroke="#8b78d8" stroke-width="2"/>
+    <text class="nid" x="494" y="38" fill="#c9bdf3">external</text>
+    <rect x="556" y="18" width="96" height="32" rx="8" fill="#241d10" stroke="#e8a44c" stroke-width="2"/>
+    <text class="nid" x="604" y="38" fill="#f0c98a">bus</text>
+    <rect x="666" y="18" width="96" height="32" rx="8" fill="#161b2b" stroke="#55618a" stroke-width="2" stroke-dasharray="6 5" opacity="0.6"/>
+    <text class="nid" x="714" y="38" fill="#c3ccdd" opacity="0.7">planned</text>
+
+    <path class="flow" d="M786,26 L840,26"/>
+    <text class="sub" x="813" y="18" style="font-size:10px">message</text>
+    <path class="dep" d="M786,44 L840,44"/>
+    <text class="sub" x="813" y="60" style="font-size:10px">depends-on</text>
+
+    <path class="flow2" d="M876,26 L930,26"/>
+    <text class="sub" x="903" y="18" style="font-size:10px">pub / sub</text>
+    <path class="plan" d="M876,44 L930,44"/>
+    <text class="sub" x="903" y="60" style="font-size:10px">roadmap</text>
+  </g>
+</svg>
+</div>
+
+<p class="hint"><b>How to read it.</b> One swimlane per layer, top to bottom, with the
+  <b style="color:var(--store-ink)">data stores</b> on their own dedicated lane and every
+  <b style="color:var(--lib-ink)">library</b> on a single row. The three
+  <b style="color:var(--svc-ink)">services</b> never call each other directly — they publish and subscribe
+  on the <b style="color:var(--bus-ink)">Redpanda / Kafka</b> topics (<code>cs.integration</code> →
+  <code>cs.commands</code> → <code>cs.events</code> → <code>cs.results</code>, with <code>cs.dlq</code> for
+  poison messages). <b>spire-orchestrator</b> owns the append-only event store, the read models, and the
+  REST + WebSocket API the dashboard speaks to; <b>spire-review-worker</b> runs the
+  diff → context → review → comment pipeline and loads the <b style="color:var(--lib-ink)">plugin
+  libraries</b> (each an SPI port: <code>DiffSource</code>, <code>ContextProvider</code>,
+  <code>LlmProvider</code>, <code>CommentSink</code>) that call out to the
+  <b style="color:var(--ext-ink)">external systems</b> lined up directly beneath them. Every module compiles
+  against <b>spire-contract</b>, and credentials + assembled context are sealed with <b>spire-encryption</b>
+  (Tink) before they touch Postgres or the bus. <b>Today's live entry is the manual
+  <span style="color:var(--ink)">Register PR</span> call</b> on the orchestrator — the
+  <span class="pl">webhook ingress on spire-gateway is built but parked</span> until there's a public host.
+  <br><br>
+  <b class="pl">Roadmap (dashed).</b> Whole-repo RAG is the largest planned lever: a
+  <span class="pl">spire-indexer</span> maintains a <span class="pl">vector index (Qdrant / LanceDB)</span> from
+  repo pushes, and a <span class="pl">spire-context-rag</span> provider retrieves snippets into the same
+  context fan-out — added as a new subscriber with <b>zero change to the review flow</b>, exactly like Jira
+  and Confluence were. A <span class="pl">spire-context-rules</span> provider (repo <code>.codespire</code>
+  config), <span class="pl">MinIO</span> as the object BlobStore (blobs live in Postgres today), and
+  <span class="pl">Keycloak / OIDC</span> on the dashboard round out the near-term backlog.</p>
