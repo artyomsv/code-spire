@@ -15,9 +15,9 @@ import org.jboss.logging.Logger;
  * per-provider author allowlist lives in the provider registry, not here.
  *
  * <p>The mode is stored in {@code app_setting} and read fresh on every event, so
- * the Settings page can flip it WITHOUT a restart. {@code SPIRE_REVIEW_MODE} is
- * only the seed default, used until an operator sets a value in the UI; once set,
- * the stored value wins.
+ * the Settings slider flips it WITHOUT a restart — that stored value is the sole
+ * live control. The seed default is {@code observe} (first-contact safety: a
+ * fresh database posts nothing until an operator flips the slider to active).
  */
 @ApplicationScoped
 public class ReviewPolicy {
@@ -32,8 +32,8 @@ public class ReviewPolicy {
     @Inject
     AppSettingRepository settings;
 
-    /** Seed default — used only until an operator overrides the mode in the UI. */
-    @ConfigProperty(name = "spire.review.mode", defaultValue = ACTIVE)
+    /** Seed default (observe = safe first contact) — used only until the UI slider sets a stored value. */
+    @ConfigProperty(name = "spire.review.mode", defaultValue = OBSERVE)
     String defaultMode;
 
     // Eager (observes StartupEvent, fired after Flyway) so the posture is visible at boot.

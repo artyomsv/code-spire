@@ -31,10 +31,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * provider registry. The worker (a KEK holder in active mode) decrypts it and
  * builds a per-command Bitbucket client, so one worker serves many workspaces.
  *
- * <p>{@code spire.scm.provider=stub} forces the stub adapters for the local
+ * <p>{@code spire.scm.stub=true} forces the stub adapters for the local
  * end-to-end demo (SMOKE-TEST Mode A), ignoring any command credential. A
- * missing credential in bitbucket-cloud mode also falls back to stub — a safety
- * net; the orchestrator never emits an uncredentialed command in active mode.
+ * missing credential also falls back to stub — a safety net; the orchestrator
+ * never emits an uncredentialed command in active mode.
  */
 @ApplicationScoped
 public class WorkerScmClients {
@@ -43,8 +43,11 @@ public class WorkerScmClients {
     public record Clients(DiffSource diff, CommentSink comments) {
     }
 
-    @ConfigProperty(name = "spire.scm.provider")
-    String providerMode; // "stub" forces the stub SCM; any other value = active (route per-command credential)
+    // Which SCM a review targets is the UI registry (encrypted scm_provider table),
+    // routed per-command via the brokered credential — NOT a config knob. This flag
+    // only forces the canned stub adapters for the local demo (Mode A) and tests.
+    @ConfigProperty(name = "spire.scm.stub", defaultValue = "false")
+    boolean stubScm;
 
     @Inject
     EncryptionService encryption;
@@ -55,7 +58,7 @@ public class WorkerScmClients {
     private final Clients stub = new Clients(new StubScm.StubDiffSource(), new StubScm.LoggingCommentSink());
 
     public Clients forCommand(ActionCommand command) {
-        if ("stub".equals(providerMode)) {
+        if (stubScm) {
             return stub;
         }
         ScmCredential cred = unpack(command);

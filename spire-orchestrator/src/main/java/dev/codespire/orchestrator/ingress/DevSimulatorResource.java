@@ -35,13 +35,13 @@ public class DevSimulatorResource {
     IntegrationEmitter integration;
 
     /** Runtime belt-and-suspenders behind the build-time prod exclusion (security finding). */
-    @org.eclipse.microprofile.config.inject.ConfigProperty(name = "spire.scm.provider", defaultValue = "stub")
-    String scmProvider;
+    @org.eclipse.microprofile.config.inject.ConfigProperty(name = "spire.scm.stub", defaultValue = "false")
+    boolean stubScm;
 
     @POST
     @Produces(MediaType.APPLICATION_JSON)
     public Map<String, Object> simulate() {
-        if (!"stub".equals(scmProvider)) {
+        if (!stubScm) {
             // never inject synthetic events into a pipeline wired to a real SCM
             throw new jakarta.ws.rs.NotFoundException();
         }

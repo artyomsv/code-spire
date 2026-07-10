@@ -41,12 +41,21 @@ class IntegrationSagaPolicyTest {
     private boolean reviewRegistered;
 
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
+        return sagaWith(policy, provider, List.of(new DomainEvent.ReviewRequested("cafe123", "OPENED")));
+    }
+
+    /**
+     * {@code lifecycleResult} is what the (faked) decider returns — an empty list
+     * models the real idempotency no-op for a re-delivered same-commit event.
+     */
+    private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider,
+                                     List<DomainEvent> lifecycleResult) {
         IntegrationSaga saga = new IntegrationSaga();
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
                 reviewRegistered = true;
-                return List.of(new DomainEvent.ReviewRequested("cafe123", "OPENED"));
+                return lifecycleResult;
             }
         };
         saga.commands = new CommandsEmitter() {
@@ -184,6 +193,19 @@ class IntegrationSagaPolicyTest {
         saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("human-1", "alice", "Alice")));
         assertFalse(notes.contains("SelfLoopDropped"), "a human /command is not a self-loop");
+    }
+
+    @Test
+    void redeliveredSameCommit_registersHeaderButEmitsNoWork() {
+        // A GitHub re-delivery (or a duplicate `synchronize`) for the same head SHA
+        // reaches the saga again. The decider no-ops it (proven in ReviewLifecycleTest:
+        // sameCommitIsIdempotentNoOp) — modeled here by an empty lifecycle result — so
+        // the saga registers no new work: no second FetchDiff, no second review run.
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")), List.of());
+        saga.on(pr("acc-1", "alice"));
+        assertEquals(List.of("bitbucket-cloud"), headerProviderTypes,
+                "the header upsert is idempotent — the row is refreshed, not duplicated");
+        assertTrue(emitted.isEmpty(), "a re-delivered same-commit event dispatches no FetchDiff");
     }
 
     @Test

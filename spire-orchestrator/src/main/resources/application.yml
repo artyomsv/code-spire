@@ -102,14 +102,13 @@ mp:
             serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
 
 # Global review mode (see ReviewPolicy). observe = register PR events, emit no
-# work (no diff/LLM/comments). The per-provider author allowlist lives in the
-# provider registry, not here.
-# NOTE: `mode` here is only the SEED default. The live value lives in the DB
-# (app_setting, key review.mode) and is toggled from Settings -> Providers without
-# a restart; once set there, the stored value wins and this env var is ignored.
+# work (no diff/LLM/comments). The live value lives in the DB (app_setting, key
+# review.mode) and is flipped from the Settings slider without a restart — that
+# stored value is the sole control. The seed default (fresh DB, before the slider
+# is ever used) is "observe" in code — safe first contact. The per-provider author
+# allowlist lives in the provider registry, not here.
 spire:
   review:
-    mode: ${SPIRE_REVIEW_MODE:active}
     # Bounded auto-retry (C8/ADR-016): total pipeline runs before a transient
     # failure fails terminally. Tuning knob — a safe default is fine here.
     max-attempts: ${SPIRE_REVIEW_MAX_ATTEMPTS:3}
@@ -142,10 +141,14 @@ spire:
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
   spire:
+    review:
+      # Tests exercise the active pipeline — seed active (prod/dev seed observe in code).
+      mode: active
     security:
       allow-insecure-provider-urls: true   # tests register providers against http://localhost WireMocks
     encryption:
-      # Test-only AES-GCM keyset (not a secret). Prod/dev read SPIRE_ENCRYPTION_KEYSET.
+      # Test-only AES-GCM master keyset (not a secret). Prod/dev read SPIRE_ENCRYPTION_KEYSET.
+      # The webhook keyset now lives only with the gateway (it owns webhook secrets).
       keyset: eyJwcmltYXJ5S2V5SWQiOjM4NjczMjQwMjIsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaURROXlLT0R1Y25mcFM1b0JyMlpaT3RYSkV0QmRwcmFwZkFzdUtpQUh5R1lBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjozODY3MzI0MDIyLCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K
   quarkus:
     http:

@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Stub SCM adapters for dev/test (spire.scm.provider=stub): the pipeline runs
+ * Stub SCM adapters for dev/test (spire.scm.stub=true): the pipeline runs
  * end-to-end without any external SCM. Every value is self-labeling synthetic
  * (STUB/TEST) — never mistakable for real data.
  */

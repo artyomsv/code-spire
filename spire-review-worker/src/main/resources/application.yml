@@ -29,8 +29,9 @@ quarkus:
 # Providers (ADR-001 fail-fast — no defaults outside dev/test). Credentials map
 # canonically from env (SPIRE_SCM_BITBUCKET_*, SPIRE_LLM_*, see .env.example).
 spire:
-  scm:
-    provider: ${SPIRE_SCM_PROVIDER}   # stub | bitbucket-cloud
+  # scm.provider defaults to "active" in code (WorkerScmClients): the worker routes
+  # the per-command credential the orchestrator brokers. Set it to "stub" only for
+  # the local canned demo (SMOKE-TEST Mode A) — %test does so below.
   llm:
     # Mode flag only (NOT credentials): stub forces the canned dev/test LLM;
     # registry uses the per-command brokered credential from the LLM provider
@@ -80,8 +81,8 @@ mp:
       jdbc:
         url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
   spire:
-    scm:
-      provider: ${SPIRE_SCM_PROVIDER:stub}
+    # scm.stub is false in dev -> real reviews against the brokered credential.
+    # Export SPIRE_SCM_STUB=true for the canned stub demo (Mode A).
     llm:
       provider: ${SPIRE_LLM_PROVIDER:stub}
 
@@ -104,7 +105,7 @@ mp:
               reset: earliest
   spire:
     scm:
-      provider: stub
+      stub: true                       # worker tests use stub SCM adapters by default
     llm:
       provider: stub
     encryption:
