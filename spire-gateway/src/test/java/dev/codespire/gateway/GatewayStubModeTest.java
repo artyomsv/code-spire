@@ -7,9 +7,10 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 
 /**
- * QA gap #3: under the DEFAULT test profile (spire.scm.provider=stub) the
- * wired ScmIngress bean must reject every webhook through the real HTTP
- * endpoint — proving the DI wiring, not just the POJO logic.
+ * QA gap #3: with no Bitbucket webhook secret configured (the default test
+ * profile), the wired ScmIngress bean must reject every /webhooks/bitbucket
+ * request through the real HTTP endpoint — proving the DI wiring, not just the
+ * POJO logic.
  */
 @QuarkusTest
 class GatewayStubModeTest {

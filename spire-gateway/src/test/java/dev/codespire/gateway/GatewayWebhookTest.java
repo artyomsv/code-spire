@@ -37,11 +37,8 @@ class GatewayWebhookTest {
     public static class BitbucketProfile implements QuarkusTestProfile {
         @Override
         public Map<String, String> getConfigOverrides() {
-            return Map.of(
-                    "spire.scm.provider", "bitbucket-cloud",
-                    "spire.scm.bitbucket.bot-username", "e2e-bot",
-                    "spire.scm.bitbucket.bot-app-password", "e2e-app-password",
-                    "spire.scm.bitbucket.webhook-secret", SECRET);
+            // The Bitbucket edge is enabled purely by the presence of its webhook secret.
+            return Map.of("spire.scm.bitbucket.webhook-secret", SECRET);
         }
     }
 

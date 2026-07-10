@@ -24,12 +24,18 @@ dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
     implementation(project(":spire-scm-bitbucket"))
+    implementation(project(":spire-scm-github"))
+    implementation(project(":spire-encryption")) // decrypts per-repo webhook secrets (webhook keyset only)
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-messaging-kafka")
     implementation("io.quarkus:quarkus-config-yaml")
     implementation("io.quarkus:quarkus-smallrye-health")
     implementation("io.quarkus:quarkus-logging-json") // structured JSON logs in prod (plain console in dev/test)
+    // The gateway owns its webhook registry (its own schema + migrations).
+    implementation("io.quarkus:quarkus-jdbc-postgresql")
+    implementation("io.quarkus:quarkus-agroal")
+    implementation("io.quarkus:quarkus-flyway")
 
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.quarkus:quarkus-test-kafka-companion")

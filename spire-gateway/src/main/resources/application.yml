@@ -3,6 +3,18 @@ quarkus:
     name: spire-gateway
   http:
     port: ${GATEWAY_HTTP_PORT:34081}   # host-exposed port in the 34xxx project range
+  # The gateway OWNS the per-repo webhook registry (its own schema). Same Postgres
+  # as the orchestrator, but a schema-scoped role (GATEWAY_POSTGRES_*) with no access
+  # to the orchestrator schema — a compromised edge cannot read the API-token registry.
+  datasource:
+    db-kind: postgresql
+    jdbc:
+      additional-jdbc-properties:
+        currentSchema: gateway
+  flyway:
+    migrate-at-start: true
+    default-schema: gateway
+    create-schemas: true
   # Structured JSON logs in prod (observability rule); %dev/%test flip back to
   # plain console below. service/env ride on every line as static fields.
   log:
@@ -15,11 +27,10 @@ quarkus:
           env:
             value: ${quarkus.profile}
 
-# SCM provider (ADR-001 fail-fast — no default outside dev/test). Credentials
-# map canonically from env (SPIRE_SCM_BITBUCKET_*, see .env.example).
-spire:
-  scm:
-    provider: ${SPIRE_SCM_PROVIDER}   # stub | bitbucket-cloud
+# The legacy single-secret /webhooks/bitbucket edge is OFF unless its webhook secret
+# is set (SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET). No provider flag — which SCMs are
+# reviewed is the UI registry. The per-repo registry edges (/webhooks/github/{key})
+# are separate resources and need none of this.
 
 # cs.integration: keyed by reviewId, JSON-serialized IntegrationEvent
 # (CONTRACT §9). Broker address comes from KAFKA_BOOTSTRAP_SERVERS
@@ -41,12 +52,14 @@ mp:
       console:
         json:
           enabled: false   # plain console for local readability
+    datasource:
+      username: ${GATEWAY_POSTGRES_USER}
+      password: ${GATEWAY_POSTGRES_PASSWORD}
+      jdbc:
+        url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
   kafka:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
-  spire:
-    scm:
-      provider: ${SPIRE_SCM_PROVIDER:stub}
 
 "%test":
   quarkus:
@@ -58,5 +71,7 @@ mp:
         json:
           enabled: false   # plain console keeps test output readable
   spire:
-    scm:
-      provider: stub
+    encryption:
+      # Test-only webhook keyset (not a secret) — matches the orchestrator's so a
+      # secret encrypted there decrypts here. Prod/dev read SPIRE_ENCRYPTION_WEBHOOK_KEYSET.
+      webhook-keyset: eyJwcmltYXJ5S2V5SWQiOjE2NDM2MjY4ODYsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaUNBbjk3cmtuRWJsbzEyZHZFVTVxVEJOMnF6dVJvdGdiNSsvd0xjeXhBejNBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjoxNjQzNjI2ODg2LCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K

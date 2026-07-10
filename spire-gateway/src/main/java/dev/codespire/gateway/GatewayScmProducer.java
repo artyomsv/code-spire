@@ -18,18 +18,18 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Gateway-side SCM selection: only the INGRESS port lives here (the gateway
- * never reads diffs or posts comments). ADR-001 fail-fast: a selected provider
- * with missing config refuses to start, naming the exact key.
+ * Gateway-side ingress wiring: only the INGRESS port lives here (the gateway never
+ * reads diffs or posts comments). Which SCMs are reviewed is the UI registry, not
+ * config — this produces ONLY the LEGACY single-secret Bitbucket edge
+ * (/webhooks/bitbucket), which turns on iff its webhook secret is configured. The
+ * per-repo registry edges (e.g. /webhooks/github/{key}) are separate resources and
+ * depend on none of this.
  */
 @ApplicationScoped
 public class GatewayScmProducer {
 
     /** Registered manual commands (CONTRACT §10). Derived from Capability beans at P2. */
     private static final Set<String> COMMANDS = Set.of("review");
-
-    @ConfigProperty(name = "spire.scm.provider")
-    String provider;
 
     @ConfigProperty(name = "spire.scm.bitbucket.base-url", defaultValue = "https://api.bitbucket.org/2.0")
     String baseUrl;
@@ -43,32 +43,19 @@ public class GatewayScmProducer {
     @Produces
     @Singleton
     ScmIngress ingress() {
-        return switch (provider) {
-            // Least privilege (security finding): the internet-facing gateway
-            // holds ONLY the webhook secret. It never calls the Bitbucket API, so
-            // it is never handed the bot App Password — placeholders satisfy the
-            // config invariant. The self-loop guard (bot-authored events) now runs
-            // in the orchestrator against the provider registry, so the gateway no
-            // longer needs the bot account id either.
-            case "bitbucket-cloud" -> new BitbucketCloudIngress(new BitbucketCloudConfig(
-                    baseUrl,
-                    "unused-by-gateway",
-                    "unused-by-gateway",
-                    required(webhookSecret, "spire.scm.bitbucket.webhook-secret")),
-                    mapper, COMMANDS);
-            case "stub" -> new RejectingIngress();
-            default -> throw new IllegalStateException("Unknown spire.scm.provider '" + provider
-                    + "' — expected stub | bitbucket-cloud");
-        };
+        // The legacy Bitbucket edge is enabled purely by the presence of its webhook
+        // secret — no provider flag. Least privilege: the internet-facing gateway
+        // holds ONLY the webhook secret; it never calls the Bitbucket API, so it is
+        // never handed the bot App Password (placeholders satisfy the config
+        // invariant). The self-loop guard runs downstream in the orchestrator.
+        return webhookSecret.filter(s -> !s.isBlank())
+                .<ScmIngress>map(secret -> new BitbucketCloudIngress(
+                        new BitbucketCloudConfig(baseUrl, "unused-by-gateway", "unused-by-gateway", secret),
+                        mapper, COMMANDS))
+                .orElseGet(RejectingIngress::new);
     }
 
-    private static String required(Optional<String> value, String key) {
-        return value.filter(v -> !v.isBlank())
-                .orElseThrow(() -> new IllegalStateException(
-                        "Config '" + key + "' is required for spire.scm.provider=bitbucket-cloud"));
-    }
-
-    /** stub mode: webhooks are meaningless without a real SCM — reject them all. */
+    /** No legacy Bitbucket edge configured (no webhook secret) — /webhooks/bitbucket rejects everything. */
     static final class RejectingIngress implements ScmIngress {
 
         @Override
