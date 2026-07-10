@@ -25,3 +25,7 @@ credentials.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Private cross-PC handoff bundle — DB dump + notes with keyset-decryptable
+# ciphertext and plaintext infra metadata. NEVER commit; move via a secure channel.
+.handoff/

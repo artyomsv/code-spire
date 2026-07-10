@@ -39,12 +39,17 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?set in .env}
       POSTGRES_USER: ${POSTGRES_USER:?set in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      # Used only by the init script below to provision the schema-scoped gateway role.
+      GATEWAY_POSTGRES_USER: ${GATEWAY_POSTGRES_USER:?set in .env}
+      GATEWAY_POSTGRES_PASSWORD: ${GATEWAY_POSTGRES_PASSWORD:?set in .env}
     ports:
       - "${POSTGRES_PORT:-34432}:5432"
     volumes:
       # postgres:18+ convention: mount the PARENT dir (data lives in a
       # versioned subdirectory, enabling in-place pg_upgrade --link)
       - spire-pgdata:/var/lib/postgresql
+      # Runs once on a fresh volume: creates the scoped `gateway` role + schema.
+      - ./infra/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
