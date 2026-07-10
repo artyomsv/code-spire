@@ -28,3 +28,12 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+// Print a fresh base64 Tink keyset for SPIRE_ENCRYPTION_KEYSET /
+// SPIRE_ENCRYPTION_WEBHOOK_KEYSET. Run: ./gradlew -q :spire-encryption:generateKeyset
+tasks.register<JavaExec>("generateKeyset") {
+    group = "codespire"
+    description = "Print a fresh base64 Tink AES-256-GCM keyset (for the *_KEYSET env vars)."
+    mainClass.set("dev.codespire.encryption.KeysetGenerator")
+    classpath = sourceSets["main"].runtimeClasspath
+}
