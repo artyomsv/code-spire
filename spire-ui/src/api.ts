@@ -252,6 +252,60 @@ export async function checkProvider(id: string): Promise<ProviderCheck> {
   return res.json();
 }
 
+// ---- Webhook repositories (per-repo webhook registrations) ----
+
+export type WebhookScope = 'repo' | 'org';
+
+export interface WebhookRepoView {
+  id: string;
+  providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
+  scope: WebhookScope; // 'repo' (target = owner/repo) | 'org' (target = owner)
+  target: string; // owner/repo (repo scope) | owner (org scope)
+  webhookKey: string; // the (non-secret) URL path segment
+  hasSecret: boolean; // whether a secret is stored (never returned)
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface WebhookRepoInput {
+  providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
+  scope: WebhookScope;
+  target: string; // owner/repo (repo scope) | owner (org scope)
+  secret?: string; // omit/empty on edit = keep the stored secret
+  enabled: boolean;
+}
+
+export async function fetchWebhookRepos(): Promise<WebhookRepoView[]> {
+  const res = await fetch('/api/webhook-repos');
+  if (!res.ok) return throwResponse(res, 'Failed to load webhook repositories');
+  return res.json();
+}
+
+export async function createWebhookRepo(input: WebhookRepoInput): Promise<WebhookRepoView> {
+  const res = await fetch('/api/webhook-repos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to create webhook repository');
+  return res.json();
+}
+
+export async function updateWebhookRepo(id: string, input: WebhookRepoInput): Promise<WebhookRepoView> {
+  const res = await fetch(`/api/webhook-repos/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update webhook repository');
+  return res.json();
+}
+
+export async function deleteWebhookRepo(id: string): Promise<void> {
+  const res = await fetch(`/api/webhook-repos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to delete webhook repository');
+}
+
 // ---- Review mode (global observe/active toggle) ----
 
 export type ReviewMode = 'observe' | 'active';

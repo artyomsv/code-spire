@@ -9,6 +9,7 @@ import ReviewModeToggle from './components/ReviewModeToggle';
 import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
 import SettingsContextProviders from './components/SettingsContextProviders';
+import SettingsWebhookRepos from './components/SettingsWebhookRepos';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -26,7 +27,8 @@ export default function App() {
   const onProviders = location.pathname.startsWith('/settings/providers');
   const onLlm = location.pathname.startsWith('/settings/llm');
   const onContext = location.pathname.startsWith('/settings/context');
-  const onSettings = onProviders || onLlm || onContext;
+  const onWebhooks = location.pathname.startsWith('/settings/webhooks');
+  const onSettings = onProviders || onLlm || onContext || onWebhooks;
   const onReviews = location.pathname === '/';
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
@@ -36,7 +38,9 @@ export default function App() {
         ? 'LLM'
         : onContext
           ? 'Context'
-          : 'Reviews';
+          : onWebhooks
+            ? 'Webhooks'
+            : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -79,6 +83,18 @@ export default function App() {
               <path d="M12 5.4c0 3.4-3.5 3.6-6 5.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
             Repositories
+          </a>
+          <a className={onWebhooks ? 'active' : ''} href="#/settings/webhooks">
+            <svg className="ic" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M6 5.2a2.4 2.4 0 1 1 3.1 2.3l-1.4 2.4M5.2 8.1 3.4 11a2.4 2.4 0 1 0 2.2 1.3h2.9M10.9 8.2l1.7 2.9a2.4 2.4 0 1 0-1.3-.4"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Webhooks
           </a>
           <a className={onLlm ? 'active' : ''} href="#/settings/llm">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
@@ -137,6 +153,7 @@ export default function App() {
           <Route path="/" element={<ReviewsList reviews={reviews} loading={loading} error={error} />} />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/settings/providers" element={<SettingsProviders />} />
+          <Route path="/settings/webhooks" element={<SettingsWebhookRepos />} />
           <Route path="/settings/llm" element={<SettingsLlmProviders />} />
           <Route path="/settings/context" element={<SettingsContextProviders />} />
         </Routes>
