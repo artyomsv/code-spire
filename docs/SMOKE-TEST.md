@@ -11,6 +11,7 @@ Prerequisites for both: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
 
 ```bash
 cp .env.example .env            # set POSTGRES_PASSWORD to any dev-only value
+echo "SPIRE_SCM_STUB=true" >> .env   # Mode A only: stub the SCM adapters (dev otherwise defaults to real)
 docker compose up -d            # Postgres 18.4 :34432 + Redpanda v26.1.12 :34092
 # wait for health:
 docker ps --filter name=spire   # both should show (healthy)
@@ -21,7 +22,8 @@ docker ps --filter name=spire   # both should show (healthy)
 ./gradlew :spire-review-worker:quarkusDev
 ```
 
-Open **http://localhost:34080** and press **Simulate PR**.
+Open **http://localhost:34080**, flip the **Review-mode** slider in the sidebar to **active**
+(a fresh DB seeds to *observe*), then press **Simulate PR**.
 
 **Expected:** the timeline animates through
 `PullRequestEventReceived -> ReviewRequested -> FetchDiff -> DiffFetched -> GatherContext ->
@@ -38,18 +40,14 @@ That's the whole choreography over real Kafka — only the SCM and LLM are stubb
 
 Before the bot posts anything, verify the integration in a safe posture: receive
 the PR webhook, register the review, and do **nothing** else — no diff fetch, no
-LLM call, no comments. In `.env`:
-
-```bash
-SPIRE_REVIEW_MODE=observe
-SPIRE_REVIEW_AUTHOR_ALLOWLIST=<your account id or username>   # comma-separated
-```
+LLM call, no comments. No env var — a fresh DB already seeds to **observe**; the
+sidebar **Review-mode** slider is the live control.
 
 - `observe` registers each PR event — visible on the dashboard as
   `PullRequestEventReceived → ReviewRequested → ReviewObserved` — but emits no work.
-- The allowlist means only listed authors are registered; everyone else is
-  skipped with a `PullRequestSkipped` note, so colleagues unaware of the
-  prototype are never touched. Matches account id OR username; empty = everyone.
+- The **PR-author allowlist** is per-provider (Settings → Providers → Authors), so
+  only listed authors are registered; everyone else is skipped with a
+  `PullRequestSkipped` note. Matches account id OR username; empty = everyone.
 
 In observe mode the **worker never runs and no app password / LLM key is needed** —
 only the gateway + orchestrator. The orchestrator logs the posture at boot:
@@ -62,8 +60,8 @@ only the gateway + orchestrator. The orchestrator logs the posture at boot:
 
 Register the webhook (step 4 below), open a PR as an allowlisted author, and
 confirm it lands on the dashboard at `:34080` with **no** Bitbucket comment
-posted. Once that works, set `SPIRE_REVIEW_MODE=active`, add the app password +
-LLM key, start the worker, and continue with the full review below.
+posted. Once that works, flip the **Review-mode** slider to `active`, add the app
+password + LLM key, start the worker, and continue with the full review below.
 
 ### 1. Bitbucket bot account (one-time)
 
@@ -99,12 +97,11 @@ On the TEST repo: *Settings -> Webhooks -> Add*:
 
 ### 5. `.env`
 
-Append to your Mode-A `.env`:
+Append to your Mode-A `.env` (drop the `SPIRE_SCM_STUB` line — this is a real SCM):
 ```bash
-SPIRE_SCM_PROVIDER=bitbucket-cloud
 SPIRE_LLM_PROVIDER=openai-compatible
 
-SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET=<webhook-secret>     # gateway (webhook HMAC only)
+SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET=<webhook-secret>     # presence enables the /webhooks/bitbucket edge
 
 SPIRE_LLM_BASE_URL=<endpoint>/v1
 SPIRE_LLM_API_KEY=<key>
@@ -180,14 +177,14 @@ topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
    `openai`, base URL `https://api.openai.com/v1`, your API key, and pick the model from the dropdown.
    The key is validated on save and stored encrypted; mark the provider the **default**. No
    `SPIRE_LLM_*` env vars. The model's pricing is what shows the per-review **cost** on the dashboard.
-3. In `.env`, only the mode flags are needed:
+3. In `.env`, only one mode flag is needed:
    ```bash
-   SPIRE_REVIEW_MODE=active   # seed default; flip live from Settings → Providers "Review mode"
    SPIRE_LLM_PROVIDER=registry  # stub|registry mode flag (NOT credentials); registry = use the UI
    ```
-   `SPIRE_ENCRYPTION_KEYSET` must be the **same** value the orchestrator uses — the worker
-   decrypts the brokered per-command SCM + LLM credentials with it (ADR-015/ADR-018). Start in
-   `observe` and flip to `active` from the UI when ready (no restart).
+   The SCM already defaults to real (no env var). Review mode is the **sidebar slider** — a fresh
+   DB seeds to `observe`; flip it to `active` from the dashboard when ready (no restart).
+   `SPIRE_ENCRYPTION_KEYSET` must be the **same** value the orchestrator uses — the worker decrypts
+   the brokered per-command SCM + LLM credentials with it (ADR-015/ADR-018).
 4. The PR author must pass the provider's allowlist (empty allowlist = everyone).
 
 ### 2. Run the two services
@@ -227,8 +224,8 @@ gh api repos/<owner>/<repo>/issues/<number>/comments --jq 'length'    # summary 
 
 ### Cleanup
 
-Set `SPIRE_REVIEW_MODE=observe` (or stop the services) to return to a no-write posture. Bot
-comments can stay or be deleted in the PR UI.
+Flip the **Review-mode** slider to observe (or stop the services) to return to a no-write posture.
+Bot comments can stay or be deleted in the PR UI.
 
 ## Mode D — real GitLab MR, active review, **no webhook** (manual Register PR)
 
@@ -273,8 +270,86 @@ curl -s -H "PRIVATE-TOKEN: $TOKEN" \
 
 ### Cleanup
 
-Same as Mode C — set `SPIRE_REVIEW_MODE=observe` (or stop the services); MR discussions can stay
-or be resolved/deleted in the GitLab UI.
+Same as Mode C — flip the **Review-mode** slider to observe (or stop the services); MR discussions
+can stay or be resolved/deleted in the GitLab UI.
+
+## Mode E — real GitHub PR via **webhook** (Tailscale Funnel)
+
+Proves the full auto-register loop: open a PR → GitHub delivers a webhook → the gateway verifies
+it and publishes the same `PullRequestEventReceived` the manual path does → diff → LLM → inline +
+summary — **no manual Register PR**. This is Mode C plus a real webhook edge, so it needs the
+**gateway** (and a public URL for GitHub to reach it).
+
+One endpoint serves every repository; a per-repo **key** in the path routes the delivery, and a
+per-repo **HMAC secret** (stored encrypted under the dedicated webhook keyset) authenticates it.
+
+### 1. One-time prerequisites
+
+1. Provider + LLM: exactly as **Mode C**, steps 1–3 (register the GitHub provider, an LLM model +
+   provider, `SPIRE_LLM_PROVIDER=registry`). Review mode is the sidebar slider — flip to `active` when ready.
+2. **Webhook keyset (gateway only):** generate a **second** Tink keyset (distinct from the master
+   one) and set it for the **gateway** — it owns the webhook registry and encrypts/decrypts its own
+   secrets:
+   ```bash
+   SPIRE_ENCRYPTION_WEBHOOK_KEYSET=<base64 Tink keyset>   # NOT the master keyset
+   ```
+   The gateway holds **only** this keyset and a DB role scoped to its own `gateway` schema, so the
+   internet-facing edge can never decrypt (or even read) the SCM/LLM API-token registry. The
+   orchestrator never sees webhook secrets. (Also ensure the scoped `gateway` DB role exists —
+   `GATEWAY_POSTGRES_*` in `.env`; a fresh `docker compose up` provisions it.)
+3. **Register the repository webhook:** Settings → **Webhooks** → Add → choose the provider type, enter
+   `owner/repo`, and set a **secret** (any strong random string — you'll paste the same one into
+   GitHub). Save. The row shows the **Payload URL path** `/webhooks/github/<key>`.
+
+### 2. Tunnel — Tailscale Funnel (stable URL)
+
+```bash
+tailscale funnel 34081          # exposes the gateway on https://<host>.ts.net
+```
+The `https://<host>.ts.net` URL is stable across sessions, so you configure GitHub once. (Any HTTPS
+tunnel works — cloudflared, ngrok — but their URLs change per run.)
+
+### 3. Configure the GitHub webhook
+
+Repo → Settings → Webhooks → Add webhook:
+- **Payload URL:** `https://<host>.ts.net/webhooks/github/<key>` (the path from step 1.3)
+- **Content type:** `application/json`
+- **Secret:** the secret from step 1.3
+- **Events:** "Let me select" → **Pull requests** (and **Issue comments** if you want `/review`)
+
+GitHub sends a `ping` on save → the gateway returns **204** (accepted, nothing published).
+
+### 4. Run all three services
+
+```bash
+./gradlew :spire-orchestrator:quarkusDev    # :34080 dashboard + registry
+./gradlew :spire-gateway:quarkusDev         # :34081 webhook edge (behind the funnel)
+./gradlew :spire-review-worker:quarkusDev   # :34082
+```
+
+### 5. The test
+
+Open (or reopen, or push to) a PR on the repo as an allowlisted author. GitHub delivers
+`pull_request` → the gateway returns **202** and the review appears on the dashboard, then
+progresses diff → LLM → **inline + summary comments** — with no manual step.
+
+**Iterate without new PRs:** GitHub → repo → Settings → Webhooks → your hook → **Recent
+Deliveries** → **Redeliver** replays a captured delivery against your local gateway. When your
+laptop is off, deliveries fail and can be redelivered later.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| GitHub shows **401** in Recent Deliveries | the secret in Settings → Webhooks ≠ the secret in GitHub |
+| GitHub shows **404** | wrong/rotated key in the payload URL, or the webhook row is disabled |
+| GitHub shows **400** | the delivery's repo ≠ the registered `owner/repo` (wrong key pasted into another repo) |
+| **202** but nothing on the dashboard | PR author not in the provider allowlist, or the Review-mode slider is on observe |
+
+### Cleanup
+
+Delete the GitHub webhook + stop the funnel; remove the row in Settings → Webhooks (its key stops
+working immediately). Flip the **Review-mode** slider to observe to return to a no-write posture.
 
 ## Context enrichment (Jira) — add-on to any mode
 

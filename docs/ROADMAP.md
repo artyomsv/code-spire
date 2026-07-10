@@ -94,6 +94,20 @@ down is the original design-time roadmap (kept for reference).
   then stops (`MAX_DEPTH=2`), which breaks a jira→confluence→jira cycle. A page linked from both the PR and a
   fetched ticket is de-duplicated (keys case-insensitively, links by page id), not re-fetched. The UI lost
   the Default column / Set-default action and the `/default` endpoint. New aggregator + credential-list tests green.
+- **GitHub webhook ingress — first real auto-register edge (D3, 2026-07-09)**: PRs now register on their
+  own. A single endpoint `POST /webhooks/github/{key}` routes each delivery by an unguessable per-repo key
+  to its `webhook_repo` row. `GitHubIngress` verifies `X-Hub-Signature-256` (constant-time) and translates
+  `pull_request` (opened/reopened→OPENED, synchronize→UPDATED, closed→MERGED/DECLINED) and `/review`
+  issue-comments into the same `PullRequestEventReceived`/`PullRequestClosed`/`ManualCommandReceived` the
+  manual path emits — so the whole saga (incl. the decider's same-commit re-delivery no-op) is untouched.
+  **The gateway OWNS the webhook registry** (schema-per-service): its own `gateway` Postgres schema +
+  Flyway + `WebhookRepoRegistry` + `/api/webhook-repos` CRUD + Settings → **Webhooks** UI. Secrets are
+  Tink-encrypted under a **dedicated webhook keyset the gateway alone holds** (never the master keyset), and
+  the gateway's DB role is **scoped to its own schema** — so a compromised internet-facing edge can verify
+  signatures but cannot read (or reach) the SCM/LLM API-token registry, the event store, or anything else.
+  The orchestrator never sees webhook secrets; provider resolution downstream is unchanged (by PR-owner
+  against `scm_provider`). Publish tail shared with the Bitbucket edge (`IntegrationPublisher`). Ingress +
+  gateway CRUD/verify + saga-idempotency + UI tests green. Live runbook: SMOKE-TEST.md **Mode E** (Tailscale Funnel).
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -105,10 +119,17 @@ down is the original design-time roadmap (kept for reference).
    self-managed), MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths (slug parsers
    widened). Read+write over manual Register PR; WireMock + register tests green; live diff → LLM →
    inline + summary confirmed. Webhook ingress deliberately omitted — see item 3. See SMOKE-TEST.md Mode D.
-3. **Real webhooks (Phase D)** · M · ⏸ **postponed for all providers.** `/webhooks/{provider}` dispatch
-   so PRs auto-register on open/update instead of manual "Register PR". Deferred until there is a public
-   tunnel or an always-on host to receive hooks — until then the manual Register PR path is the only
-   live entry, and no provider (Bitbucket/GitHub/GitLab) wires an ingress.
+3. **Real webhooks (Phase D)** · M · **GitHub done (2026-07-09); GitLab + Bitbucket pending.** A single
+   registry-backed edge `POST /webhooks/github/{key}` auto-registers PRs on open/update/reopen (and
+   `closed` → cancel; `/review` issue-comments → force). Per-repository registrations live in a new
+   `webhook_repo` table (Settings → **Webhooks**): an unguessable routing `key` in the URL + a
+   Tink-encrypted HMAC secret under a **dedicated webhook keyset** (`SPIRE_ENCRYPTION_WEBHOOK_KEYSET`),
+   so the gateway verifies inbound signatures without ever holding the master keyset that unlocks API
+   tokens. `GitHubIngress` (X-Hub-Signature-256, constant-time) translates to the same
+   `PullRequestEventReceived` the manual path emits, so the whole downstream saga (incl. the decider's
+   same-commit idempotency for re-deliveries) is unchanged. Live via **Tailscale Funnel** — see
+   SMOKE-TEST.md **Mode E**. Next: fold GitLab (`X-Gitlab-Token`) and Bitbucket (`X-Hub-Signature`)
+   onto the same per-repo model.
 
 **B. Make the reviewer genuinely useful (P2 — currently diff-only)**
 4. **`/review` command** · M. Author types `/review` in a PR comment to (re-)trigger. Parsed, inactive.
@@ -135,11 +156,13 @@ down is the original design-time roadmap (kept for reference).
 12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
 
 **Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are all done and
-verified live; native Anthropic + Gemini LLM providers landed 2026-07-08. Webhooks (3) are postponed
-(no host/tunnel), and **B4/B5** (`/review` command, conversational replies) depend on that ingress —
-also parked. **B6 Jira landed 2026-07-08** and **B6 Confluence landed 2026-07-09** — the ContextProvider
-SPI is proven generic across two sources. Next real levers with no infra blocker: **D10** (OIDC, before
-any shared deploy), **D12** (MinIO/BlobStore), or a third ContextProvider (repo rules / RAG). Operator decides.
+verified live; native Anthropic + Gemini LLM providers landed 2026-07-08. **Webhooks (3) — GitHub done
+2026-07-09** (per-repo key + dedicated webhook keyset + Tailscale Funnel runbook); GitLab + Bitbucket
+ingress fold onto the same model next. With a real webhook edge, **B4** (`/review` command) is now
+partially live (issue-comment `/command` → force review); **B5** (conversational replies) still parked.
+**B6 Jira landed 2026-07-08** and **B6 Confluence landed 2026-07-09** — the ContextProvider SPI is proven
+generic across two sources. Other levers with no infra blocker: **D10** (OIDC, before any shared deploy),
+**D12** (MinIO/BlobStore), or a third ContextProvider (repo rules / RAG). Operator decides.
 
 ---
 

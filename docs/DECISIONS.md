@@ -22,7 +22,7 @@ The key is validated on save with a cheap authenticated call to the provider's m
 SSRF-guarded by the shared `PublicHttpsGuard` (the same guard the SCM whoami uses).
 
 `SPIRE_LLM_*` credential env vars are gone. `spire.llm.provider` survives only as a `stub|registry`
-mode flag (dev/test stub), exactly like `spire.scm.provider`. If no default LLM provider is
+mode flag (dev/test stub), like the SCM `spire.scm.stub` toggle. If no default LLM provider is
 registered, `GenerateReview` is skipped with a visible note rather than emitted uncredentialed.
 
 **Providers.** Phase 1 supports OpenAI (via LangChain4j `langchain4j-open-ai`). Anthropic and Gemini

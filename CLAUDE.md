@@ -33,8 +33,8 @@ The design is fully specified in `docs/` — **treat those files as the source o
   parse, `DiffSource`, `CommentSink` per SCM-MAPPING), `spire-llm` (LangChain4j OpenAI-compatible
   `LlmProvider`, injection-fenced review prompt, lenient findings parser), orchestrator wiring
   (`/webhooks/bitbucket` returning 202, real `ReviewWorker` with comment_idempotency
-  insert-before-post + stale-run pre-check, provider selection `spire.scm.provider` /
-  `spire.llm.provider` — stub for dev/test, fail-fast in prod). Exit criterion green:
+  insert-before-post + stale-run pre-check, dev/test stub toggles `spire.scm.stub` /
+  `spire.llm.provider` — real SCMs/LLMs are the UI registry, not config). Exit criterion green:
   `BitbucketWebhookE2ETest` — signed webhook → real adapters (WireMock Bitbucket) → inline+summary
   posted exactly once, duplicate delivery posts nothing.
 - **Phase 1 code-reviewed:** 4-agent review (security-officer, code-reviewer, rules-compliance, qa);
