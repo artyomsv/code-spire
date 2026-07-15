@@ -86,7 +86,7 @@ public class ProviderResource {
         }
         Author owner;
         try {
-            owner = identity.resolve(in);
+            owner = identity.resolveForRegistration(in);
         } catch (RuntimeException e) {
             // Generic message to the client: the adapter's root cause may reflect
             // internal/upstream responses (SSRF probe echoes). Detail stays server-side.
@@ -112,7 +112,7 @@ public class ProviderResource {
         ScmProvider provider = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
         try {
-            Author owner = identity.resolve(provider);
+            Author owner = identity.resolveForCheck(provider);
             return new CheckResult(true, owner.username(), null);
         } catch (RuntimeException e) {
             LOG.warnf(e, "Provider connectivity check failed for %s (type %s)", id, provider.type());

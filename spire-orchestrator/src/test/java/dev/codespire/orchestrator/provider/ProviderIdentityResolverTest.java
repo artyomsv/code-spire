@@ -118,6 +118,44 @@ class ProviderIdentityResolverTest {
                 () -> resolver.resolve(input("bitbucket-cloud", "bearer", null, "tok-abc")));
     }
 
+    @Test
+    void bitbucketAccessToken_cannotCallUser_isValidatedAgainstTheWorkspaceInstead() {
+        // A workspace/repository access token can't call /user (it has no user
+        // account) — Bitbucket returns 401 "not supported for this endpoint".
+        scm.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401).withBody(
+                "{\"type\":\"error\",\"error\":{\"message\":\"Token is invalid, expired, "
+                        + "or not supported for this endpoint.\"}}")));
+        // ...but it CAN list the workspace's repositories, the capability a review needs.
+        scm.stubFor(get(urlEqualTo("/repositories/ws?pagelen=1"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"values\": [], \"pagelen\": 1 }")));
+
+        Author owner = resolver.resolveForRegistration(input("bitbucket-cloud", "bearer", null, "wtok"));
+
+        assertEquals("", owner.providerUserId(), "an access token has no user account_id to auto-derive");
+        scm.verify(getRequestedFor(urlEqualTo("/repositories/ws?pagelen=1"))
+                .withHeader("Authorization", equalTo("Bearer wtok")));
+    }
+
+    @Test
+    void bitbucketBadToken_failsBothUserAndWorkspace_surfacesTheOriginalFailure() {
+        scm.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401)));
+        scm.stubFor(get(urlEqualTo("/repositories/ws?pagelen=1")).willReturn(aResponse().withStatus(401)));
+        var e = assertThrows(BitbucketApiException.class,
+                () -> resolver.resolveForRegistration(input("bitbucket-cloud", "bearer", null, "bad")));
+        assertEquals(401, e.status(), "a genuinely bad token still fails, via the /user error");
+    }
+
+    @Test
+    void github_whoamiFailureIsNotMaskedByAWorkspaceFallback() {
+        // The workspace fallback is Bitbucket-only; GitHub tokens support /user, so a
+        // failure there is real and must surface, not be retried against a workspace.
+        scm.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401)));
+        var e = assertThrows(GitHubApiException.class,
+                () -> resolver.resolveForRegistration(input("github", "bearer", null, "bad")));
+        assertEquals(401, e.status());
+    }
+
     // --- github ---
 
     @Test

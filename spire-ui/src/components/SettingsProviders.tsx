@@ -26,7 +26,7 @@ const KNOWN_DEFAULTS = new Set(Object.values(DEFAULT_BASE_URLS));
 const DEFAULT_BASE_URL = DEFAULT_BASE_URLS['bitbucket-cloud'];
 
 // Per-provider connectivity status, keyed by provider id.
-type ConnState = 'checking' | 'ok' | 'fail';
+type ConnState = 'idle' | 'checking' | 'ok' | 'fail';
 interface Conn {
   state: ConnState;
   account?: string | null;
@@ -65,9 +65,11 @@ export default function SettingsProviders() {
     try {
       const list = await fetchProviders();
       setProviders(list);
-      // Check connectivity once on load — no continuous polling, to avoid
-      // burning the provider's rate limit; re-run per row on demand.
-      list.forEach((p) => void checkOne(p.id));
+      // Check connectivity once on load, but ONLY for enabled providers — a
+      // disabled provider is intentionally inactive, so contacting the SCM for
+      // it is wasteful and confusing (it may hold a deliberately stale/revoked
+      // token). Disabled rows render an idle cell and can be re-checked on demand.
+      list.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -141,7 +143,7 @@ export default function SettingsProviders() {
                     <div className="prov-sub">{p.hasSecret ? 'token set' : 'no token'}</div>
                   </td>
                   <td>
-                    <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />
+                    <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => void checkOne(p.id)} />
                   </td>
                   <td className="cell-r mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
                     {p.authors.length}
@@ -190,22 +192,28 @@ export default function SettingsProviders() {
   );
 }
 
-function ConnCell({ conn, onRecheck }: { conn: Conn | undefined; onRecheck: () => void }) {
-  const state = conn?.state ?? 'checking';
+function ConnCell({ conn, enabled, onRecheck }: { conn: Conn | undefined; enabled: boolean; onRecheck: () => void }) {
+  // No stored result yet: an enabled provider is being auto-checked; a disabled
+  // one was skipped on purpose and sits idle until the operator clicks to check.
+  const state = conn?.state ?? (enabled ? 'checking' : 'idle');
   const label =
-    state === 'checking'
-      ? 'Checking…'
-      : state === 'ok'
-        ? conn?.account
-          ? `@${conn.account}`
-          : 'Connected'
-        : 'Failed';
+    state === 'idle'
+      ? 'Not checked'
+      : state === 'checking'
+        ? 'Checking…'
+        : state === 'ok'
+          ? conn?.account
+            ? `@${conn.account}`
+            : 'Connected'
+          : 'Failed';
   const title =
-    state === 'checking'
-      ? 'Contacting the provider…'
-      : state === 'ok'
-        ? `Connected${conn?.account ? ` as @${conn.account}` : ''} — click to re-check`
-        : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
+    state === 'idle'
+      ? 'Disabled — not checked automatically. Click to check anyway.'
+      : state === 'checking'
+        ? 'Contacting the provider…'
+        : state === 'ok'
+          ? `Connected${conn?.account ? ` as @${conn.account}` : ''} — click to re-check`
+          : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
   return (
     <div className="conn-cell">
       <button
@@ -421,6 +429,8 @@ function ProviderFormModal({
             />
             <small className="field-hint">
               Leave blank — it's resolved from the token when you save (which also validates the token).
+              A Bitbucket workspace/repo access token has no user account, so it stays blank; the token
+              is still validated against the workspace.
             </small>
           </label>
 

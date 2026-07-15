@@ -41,6 +41,20 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
         return Author.of(user.path("account_id").asText(""), username, user.path("display_name").asText(username));
     }
 
+    /**
+     * Validates a credential that can't identify a user — Bitbucket
+     * workspace/project/repository access tokens act as a synthetic bot and CANNOT
+     * call {@code /user} (they 401 "not supported for this endpoint"). Instead we
+     * confirm the token can list the workspace's repositories, which is the exact
+     * capability a review needs (read PRs/diffs). Throws the adapter's API
+     * exception if the token can't reach the workspace.
+     *
+     * @param workspace the Bitbucket workspace slug the provider is scoped to
+     */
+    public void assertWorkspaceAccess(String workspace) {
+        client.getJson("/repositories/" + workspace + "?pagelen=1");
+    }
+
     @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode pr = client.getJson(prPath(repo, prId));

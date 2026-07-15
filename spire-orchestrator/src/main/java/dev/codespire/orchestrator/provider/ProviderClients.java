@@ -52,6 +52,23 @@ public class ProviderClients {
         };
     }
 
+    /**
+     * Validates a token that can't self-identify via {@code whoami()} by checking
+     * it can reach the workspace. Only Bitbucket needs this — its access tokens
+     * can't call {@code /user} (GitHub/GitLab bearer tokens can). Throws the
+     * adapter's API exception when the token can't reach the workspace.
+     */
+    public void assertWorkspaceAccess(String type, String baseUrl, String authKind, String authUsername,
+                                      String secret, String workspace) {
+        if ("bitbucket-cloud".equals(type)) {
+            new BitbucketCloudDiffSource(
+                    new BitbucketCloudClient(bitbucketConfig(baseUrl, authKind, authUsername, secret), mapper))
+                    .assertWorkspaceAccess(workspace);
+            return;
+        }
+        throw new IllegalStateException("No workspace fallback validation for provider type: " + type);
+    }
+
     private static BitbucketCloudConfig bitbucketConfig(ScmProvider p) {
         return bitbucketConfig(p.baseUrl(), p.authKind(), p.authUsername(), p.secret());
     }
