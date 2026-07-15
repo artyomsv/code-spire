@@ -489,6 +489,13 @@
   .ev.result { --lane: var(--warn); }
   .ev .type { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text); }
   .ev .det { font-size: 11.5px; color: var(--text-3); margin-top: 1px; }
+  /* Boundary between pipeline runs (a re-run / restart) in the event stream. */
+  .ev-sep { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; }
+  .ev-sep::before, .ev-sep::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .ev-sep-label {
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--iris); white-space: nowrap;
+  }
 
   .mocknote {
     margin: 26px 26px 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
