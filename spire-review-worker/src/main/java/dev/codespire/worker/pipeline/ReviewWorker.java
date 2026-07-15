@@ -119,8 +119,8 @@ public class ReviewWorker {
         } catch (RuntimeException e) {
             Throwable cause = unwrap(e);
             if (isCommitGone(cause)) {
-                LOG.infof("Abandoning GenerateReview for %s: diff 404 — commit force-pushed away",
-                        command.reviewId());
+                LOG.infof("Abandoning GenerateReview for %s: diff 404 — commit force-pushed away (%s)",
+                        command.reviewId(), cause.getMessage());
                 return;
             }
             LOG.warnf(cause, "GenerateReview failed for %s", command.reviewId());

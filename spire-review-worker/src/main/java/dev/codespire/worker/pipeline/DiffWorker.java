@@ -56,7 +56,8 @@ public class DiffWorker {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {
                 // Commit force-pushed away: the run is superseded — abandon quietly (CONTRACT §4).
-                LOG.infof("Abandoning FetchDiff for %s: diff 404 — commit force-pushed away", command.reviewId());
+                LOG.infof("Abandoning FetchDiff for %s: diff 404 — commit force-pushed away (%s)",
+                        command.reviewId(), e.getMessage());
                 return;
             }
             fail(command, e);
