@@ -1,0 +1,11 @@
+# Pin LF ONLY for files that break when checked out with CRLF on Windows. This is
+# deliberately narrow — no repo-wide `* text=auto` renormalization — so it changes
+# exactly these file types and nothing else.
+#
+#  - gradlew       : Linux shells reject a CRLF shebang (/bin/sh^M).
+#  - *.sh          : same, for infra/ init + migration helper scripts.
+#  - db migrations : Flyway checksums the file bytes; CRLF != the LF the DB was
+#                    migrated with -> "checksum mismatch" against a restored DB.
+gradlew   text eol=lf
+*.sh      text eol=lf
+*.sql     text eol=lf
