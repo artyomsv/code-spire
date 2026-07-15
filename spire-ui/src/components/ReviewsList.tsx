@@ -178,7 +178,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                     <span className="pr">#{r.pr}</span>
                   </div>
                   <div className="sub">
-                    <span>{r.branch}</span>
+                    <CopyableValue text={r.branch} copyTitle="Copy branch" />
                   </div>
                 </div>
                 <div className="author-cell" title={r.authorId ? `@${r.author} · ${r.authorId}` : `@${r.author}`}>

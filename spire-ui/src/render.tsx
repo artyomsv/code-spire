@@ -267,13 +267,9 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
 }
 
 export function findCell(status: ReviewStatus, findings: number) {
-  if (status === 'reviewing')
-    return (
-      <span className="findcount some tnum">
-        {findings}
-        <small>so far</small>
-      </span>
-    );
+  // While a review is still running the running tally is noise (and "0 so far"
+  // reads as a result). Show a neutral placeholder until the review completes.
+  if (status === 'reviewing') return <span className="time">—</span>;
   if (status === 'failed' || status === 'cancelled') return <span className="time">—</span>;
   if (findings === 0) return <span className="findcount zero tnum">0</span>;
   return <span className="findcount some tnum">{findings}</span>;
