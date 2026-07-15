@@ -18,8 +18,11 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.output.TokenUsage;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
@@ -38,6 +41,8 @@ import java.util.function.Function;
  * + output cap only), which is all their APIs need.
  */
 public class LangChain4jLlmProvider implements LlmProvider {
+
+    private static final Logger LOG = System.getLogger(LangChain4jLlmProvider.class.getName());
 
     /**
      * Output cap applied when the caller leaves {@link ModelParams#maxTokens()}
@@ -111,23 +116,58 @@ public class LangChain4jLlmProvider implements LlmProvider {
     @Override
     public CompletionStage<Completion> complete(Prompt prompt, ModelParams params) {
         try {
-            ChatRequest request = ChatRequest.builder()
-                    .messages(List.of(
-                            SystemMessage.from(prompt.system()),
-                            UserMessage.from(prompt.user())))
-                    .parameters(paramFactory.apply(params))
-                    .build();
-            ChatResponse response = model.chat(request);
-            TokenUsage usage = response.tokenUsage();
-            return CompletableFuture.completedFuture(new Completion(
-                    response.aiMessage().text(),
-                    new ModelUsage(params.model(),
-                            usage != null && usage.inputTokenCount() != null ? usage.inputTokenCount() : 0,
-                            usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0,
-                            0L))); // cost accounting lands with the pricing table
+            return CompletableFuture.completedFuture(callModel(prompt, params));
         } catch (RuntimeException e) {
+            // Resilience: some models (newer Claude, OpenAI reasoning models) reject a
+            // non-default temperature outright. If the catalog wrongly flagged the model
+            // as supporting it, recover by retrying once WITHOUT temperature rather than
+            // failing the whole review — no tokens are billed on an invalid-request reject.
+            if (params.profile().supportsTemperature() && rejectsTemperature(e)) {
+                LOG.log(Level.WARNING, "Model " + params.model() + " rejected 'temperature' — retrying "
+                        + "without it. Set the model's supportsTemperature=false in the catalog to avoid this round-trip.");
+                try {
+                    return CompletableFuture.completedFuture(callModel(prompt, withoutTemperature(params)));
+                } catch (RuntimeException retryFailed) {
+                    return CompletableFuture.failedFuture(retryFailed);
+                }
+            }
             return CompletableFuture.failedFuture(e);
         }
+    }
+
+    private Completion callModel(Prompt prompt, ModelParams params) {
+        ChatRequest request = ChatRequest.builder()
+                .messages(List.of(
+                        SystemMessage.from(prompt.system()),
+                        UserMessage.from(prompt.user())))
+                .parameters(paramFactory.apply(params))
+                .build();
+        ChatResponse response = model.chat(request);
+        TokenUsage usage = response.tokenUsage();
+        return new Completion(
+                response.aiMessage().text(),
+                new ModelUsage(params.model(),
+                        usage != null && usage.inputTokenCount() != null ? usage.inputTokenCount() : 0,
+                        usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0,
+                        0L)); // cost accounting lands with the pricing table
+    }
+
+    /** The same params with temperature suppressed (profile.supportsTemperature = false). */
+    private static ModelParams withoutTemperature(ModelParams params) {
+        ModelParamProfile p = params.profile();
+        return new ModelParams(params.model(), params.temperature(), params.maxTokens(),
+                new ModelParamProfile(p.outputTokenParam(), false, p.reasoningEffort(), p.extraParams()));
+    }
+
+    /** True when the failure was the provider rejecting the request because {@code temperature} was sent. */
+    private static boolean rejectsTemperature(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && message.toLowerCase(Locale.ROOT).contains("temperature")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

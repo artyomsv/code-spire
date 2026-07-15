@@ -59,6 +59,48 @@ class LangChain4jLlmProviderTest {
     }
 
     @Test
+    void retriesWithoutTemperatureWhenTheModelRejectsIt() {
+        // A model whose catalog flag wrongly says supportsTemperature: newer Claude and
+        // reasoning models reject a sent temperature outright. The review must recover.
+        var temperatures = new java.util.ArrayList<Double>();
+        ChatModel model = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                temperatures.add(request.temperature());
+                if (request.temperature() != null) {
+                    throw new RuntimeException("temperature is deprecated for this model.");
+                }
+                return ChatResponse.builder().aiMessage(AiMessage.from("recovered")).build();
+            }
+        };
+        var provider = new LangChain4jLlmProvider(model, "test");
+
+        Completion c = provider.complete(PROMPT, new ModelParams("m", 0.7, 512)).toCompletableFuture().join();
+
+        assertEquals("recovered", c.text());
+        assertEquals(2, temperatures.size(), "one rejected attempt with temperature, one retry without");
+        assertEquals(0.7, temperatures.get(0));
+        assertNull(temperatures.get(1), "the retry omits temperature");
+    }
+
+    @Test
+    void aNonTemperatureFailureIsNotRetried() {
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        ChatModel model = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                calls.incrementAndGet();
+                throw new RuntimeException("rate limit exceeded");
+            }
+        };
+        var provider = new LangChain4jLlmProvider(model, "test");
+
+        assertThrows(CompletionException.class,
+                () -> provider.complete(PROMPT, new ModelParams("m", 0.7, 512)).toCompletableFuture().join());
+        assertEquals(1, calls.get(), "an unrelated failure must not trigger the temperature retry");
+    }
+
+    @Test
     void unsetMaxTokensStillEnforcesAnOutputCap() {
         var captured = new AtomicReference<ChatRequest>();
         var provider = new LangChain4jLlmProvider(capturing(captured), "test");

@@ -35,6 +35,11 @@ public final class FindingsParser {
     private FindingsParser() {
     }
 
+    /** Prefix on a degraded summary so a parse failure is never mistaken for a clean review. */
+    static final String DEGRADED_PREFIX =
+            "Note: the model's response could not be parsed into structured findings "
+                    + "(no inline comments were posted). Its raw output follows:\n\n";
+
     public static ReviewResult parse(String modelOutput, ModelUsage usage) {
         String json = extractJson(modelOutput);
         if (json != null) {
@@ -46,11 +51,14 @@ public final class FindingsParser {
                 // fall through to the degraded result
             }
         }
-        // Degraded mode: never fail the review because the model rambled —
-        // but the ramble becomes the summary, so bound it.
-        return new ReviewResult(List.of(),
-                modelOutput == null ? "" : TokenBudget.clip(modelOutput.strip(), DEGRADED_SUMMARY_MAX_TOKENS),
-                usage);
+        // Degraded mode: never fail the review because the model rambled, but a
+        // "0 findings" degraded parse must NOT look like a clean pass — mark it
+        // explicitly (a truncated/reasoning-model answer is a false negative otherwise).
+        String raw = modelOutput == null ? "" : modelOutput.strip();
+        String summary = raw.isEmpty()
+                ? "Note: the model returned no output — the review could not be produced."
+                : DEGRADED_PREFIX + TokenBudget.clip(raw, DEGRADED_SUMMARY_MAX_TOKENS);
+        return new ReviewResult(List.of(), summary, usage);
     }
 
     private static List<Finding> findings(JsonNode array) {

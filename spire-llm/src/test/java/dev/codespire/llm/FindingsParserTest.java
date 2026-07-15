@@ -67,7 +67,19 @@ class FindingsParserTest {
     void degradesGracefullyOnGarbage() {
         ReviewResult result = FindingsParser.parse("I could not produce JSON, sorry.", USAGE);
         assertTrue(result.findings().isEmpty());
-        assertEquals("I could not produce JSON, sorry.", result.summary());
+        // A parse failure must be visibly marked so it is never mistaken for a clean
+        // review, while still carrying the model's raw output.
+        assertTrue(result.summary().startsWith(FindingsParser.DEGRADED_PREFIX), result.summary());
+        assertTrue(result.summary().contains("I could not produce JSON, sorry."));
+    }
+
+    @Test
+    void cleanEmptyFindingsIsNotMarkedDegraded() {
+        // Valid JSON with no findings is a genuine clean pass — it must keep its real
+        // summary and NOT get the degraded marker (the false-negative guard).
+        ReviewResult result = FindingsParser.parse("{ \"summary\": \"No issues found.\", \"findings\": [] }", USAGE);
+        assertTrue(result.findings().isEmpty());
+        assertEquals("No issues found.", result.summary());
     }
 
     @Test
@@ -75,7 +87,8 @@ class FindingsParserTest {
         String ramble = "no json here, just endless prose. ".repeat(3_000); // ~100k chars
         ReviewResult result = FindingsParser.parse(ramble, USAGE);
         assertTrue(result.findings().isEmpty());
-        assertTrue(result.summary().length() <= 4_100, "degraded summary must be clipped");
+        assertTrue(result.summary().length() <= 4_100 + FindingsParser.DEGRADED_PREFIX.length(),
+                "degraded summary (marker + clipped raw) must stay bounded");
         assertTrue(result.summary().endsWith("...(truncated to fit the model context)"));
     }
 
