@@ -152,7 +152,7 @@ class OrchestratorChoreographyTest {
                 REPO, 78, action, "TEST: cancel flow", "TEST description",
                 "feature/TEST-cancel", "main", DiffRefs.headOnly("ccc333ccc333"),
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
-                "https://example.invalid/pr/78");
+                "https://example.invalid/pr/78", null);
     }
 
     private void produce78(IntegrationEvent event) throws Exception {
@@ -166,7 +166,7 @@ class OrchestratorChoreographyTest {
                 REPO, 77, action, "TEST: choreography", "TEST description",
                 "feature/TEST-x", "main", DiffRefs.headOnly(commit),
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
-                "https://example.invalid/pr/77");
+                "https://example.invalid/pr/77", null);
     }
 
     private void produce(String topic, IntegrationEvent event) throws Exception {

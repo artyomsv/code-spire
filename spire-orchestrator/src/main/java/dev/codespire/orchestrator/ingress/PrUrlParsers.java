@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.ingress;
 
 import dev.codespire.contract.port.PrUrlParser;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.PrCoordinates;
 import dev.codespire.scm.bitbucket.BitbucketCloudPrUrlParser;
 import dev.codespire.scm.github.GitHubPrUrlParser;
@@ -26,12 +27,16 @@ public class PrUrlParsers {
             new GitHubPrUrlParser(),
             new BitbucketCloudPrUrlParser());
 
-    public Optional<PrCoordinates> parse(String url) {
+    /** A URL that matched, with the SCM type of the parser that matched it. */
+    public record Match(ScmType type, PrCoordinates coordinates) {
+    }
+
+    public Optional<Match> parse(String url) {
         if (url == null || url.isBlank()) {
             return Optional.empty();
         }
         return PARSERS.stream()
-                .map(parser -> parser.parse(url))
+                .map(parser -> parser.parse(url).map(coords -> new Match(parser.type(), coords)))
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .findFirst();

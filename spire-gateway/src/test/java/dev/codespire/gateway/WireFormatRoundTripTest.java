@@ -33,7 +33,7 @@ class WireFormatRoundTripTest {
                 new RepoRef("sandbox", "demo-repo"), 42, IntegrationEvent.PrAction.OPENED,
                 "title", "description", "feature/x", "main",
                 DiffRefs.headOnly("abc123def456"),
-                Author.of("acc-1", "jdoe", "J. Doe"), "https://example.invalid/pr/42");
+                Author.of("acc-1", "jdoe", "J. Doe"), "https://example.invalid/pr/42", "bitbucket-cloud");
 
         // Root-level polymorphism needs writerFor — exactly what the Kafka
         // serializers do; a bare writeValueAsString(obj) drops the type field.

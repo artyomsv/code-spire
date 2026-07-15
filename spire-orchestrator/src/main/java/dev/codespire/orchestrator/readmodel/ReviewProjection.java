@@ -306,6 +306,24 @@ public class ReviewProjection {
         }
     }
 
+    /**
+     * The SCM type the review was registered under (its {@code provider_type}), used
+     * to disambiguate provider resolution when a workspace name is registered on more
+     * than one SCM. Empty if the review is gone or predates the stored type.
+     */
+    public Optional<String> providerTypeOf(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT provider_type FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the provider type for " + reviewId, e);
+        }
+    }
+
     /** Reset the row to an in-progress state for a manual re-run, clearing any prior terminal error. */
     public void markRerunStarted(String reviewId) {
         update("""

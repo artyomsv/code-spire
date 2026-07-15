@@ -6,8 +6,6 @@ import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
-import dev.codespire.orchestrator.provider.ProviderRegistry;
-import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -36,9 +34,6 @@ public class ReviewRerunService {
     ReviewProjection projection;
 
     @Inject
-    ProviderRegistry providers;
-
-    @Inject
     ReviewLifecycleService lifecycle;
 
     @Inject
@@ -58,7 +53,9 @@ public class ReviewRerunService {
         String commit = projection.commitOf(reviewId)
                 .orElseThrow(() -> new NotFoundException(
                         "No review for " + workspace + "/" + slug + "#" + pr));
-        ScmProvider provider = providers.resolveByWorkspace(workspace)
+        // Broker the credential by REVIEW so a workspace shared across SCMs resolves the
+        // right provider (the review's stored SCM type), not just the oldest by name.
+        String scmCredential = workerCredentials.packForReview(reviewId)
                 .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
                         + workspace + "'. Add one under Settings -> Providers."));
 
@@ -72,7 +69,7 @@ public class ReviewRerunService {
             return false;
         }
         projection.markRerunStarted(reviewId);
-        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, workerCredentials.pack(provider)));
+        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential));
         LOG.infof("Re-run requested for %s on commit %s", reviewId, commit);
         return true;
     }

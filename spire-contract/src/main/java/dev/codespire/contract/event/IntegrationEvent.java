@@ -48,11 +48,18 @@ public sealed interface IntegrationEvent {
 
     // --- ingress (produced by spire-gateway / ScmIngress) ---
 
+    /**
+     * {@code providerType} is the {@code scm_provider.type} that produced this event
+     * (from the webhook adapter or the manual-register URL), so the saga resolves the
+     * exact provider by (type, workspace) — a GitHub org and a Bitbucket workspace can
+     * share a name. Nullable for backward compatibility with events serialized before
+     * this field existed; the saga then falls back to workspace-only resolution.
+     */
     record PullRequestEventReceived(RepoRef repo, long prId, PrAction action,
                                     String title, String description,
                                     String sourceBranch, String targetBranch,
                                     DiffRefs diffRefs, Author author,
-                                    String htmlUrl) implements IntegrationEvent {
+                                    String htmlUrl, String providerType) implements IntegrationEvent {
     }
 
     /** Triggers the cancel saga (ADR-013). */

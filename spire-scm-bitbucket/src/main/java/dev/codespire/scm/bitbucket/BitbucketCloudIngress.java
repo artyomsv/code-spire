@@ -110,7 +110,8 @@ public class BitbucketCloudIngress implements ScmIngress {
                 pr.path("destination").path("branch").path("name").asText(""),
                 DiffRefs.headOnly(pr.path("source").path("commit").path("hash").asText("")),
                 author(pr.path("author")),
-                pr.path("links").path("html").path("href").asText("")));
+                pr.path("links").path("html").path("href").asText(""),
+                type().providerType()));
     }
 
     private List<IntegrationEvent> closed(JsonNode payload, CloseReason reason) {

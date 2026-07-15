@@ -2,8 +2,11 @@ package dev.codespire.orchestrator.provider;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.event.ReviewIds;
+import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmCredential;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -23,6 +26,9 @@ public class WorkerCredentials {
     ProviderRegistry providers;
 
     @Inject
+    ReviewProjection projection;
+
+    @Inject
     EncryptionService encryption;
 
     @Inject
@@ -40,11 +46,23 @@ public class WorkerCredentials {
     }
 
     /**
-     * Resolve the enabled provider for a workspace and pack its credential
-     * (ResultSaga path). Empty if the provider was disabled/removed mid-review —
-     * the caller then skips the command rather than emit an uncredentialed one.
+     * Resolve the enabled provider for a REVIEW and pack its credential (ResultSaga /
+     * rerun / retry path). The provider is disambiguated by the SCM type persisted with
+     * the review, so a workspace name registered on more than one SCM still brokers the
+     * right provider — unlike resolving by workspace alone. Empty if the provider was
+     * disabled/removed mid-review, so the caller skips rather than emit uncredentialed.
      */
-    public Optional<String> packForWorkspace(String workspace) {
-        return providers.resolveByWorkspace(workspace).map(this::pack);
+    public Optional<String> packForReview(String reviewId) {
+        return resolveForReview(reviewId).map(this::pack);
+    }
+
+    private Optional<ScmProvider> resolveForReview(String reviewId) {
+        RepoRef repo = ReviewIds.parse(reviewId).repo();
+        // Prefer the review's stored SCM type (registered header); fall back to
+        // workspace-only for reviews that predate a stored type.
+        String type = projection.providerTypeOf(reviewId).filter(t -> !t.isBlank()).orElse(null);
+        return type == null
+                ? providers.resolveByWorkspace(repo.workspace())
+                : providers.resolve(type, repo.workspace());
     }
 }

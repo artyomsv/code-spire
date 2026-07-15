@@ -160,7 +160,7 @@ public class ResultSaga {
         int attempt = projection.currentAttempt(e.reviewId());
 
         if (e.retryable() && attempt < maxAttempts) {
-            java.util.Optional<String> cred = workerCredentials.packForWorkspace(parsed.repo().workspace());
+            java.util.Optional<String> cred = workerCredentials.packForReview(e.reviewId());
             if (cred.isPresent()) {
                 int next = attempt + 1;
                 LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d (error: %s)",
@@ -206,7 +206,7 @@ public class ResultSaga {
     private void emitWithCredential(String reviewId, String phase,
                                     java.util.function.Function<String, ActionCommand> build) {
         String workspace = ReviewIds.parse(reviewId).repo().workspace();
-        java.util.Optional<String> cred = workerCredentials.packForWorkspace(workspace);
+        java.util.Optional<String> cred = workerCredentials.packForReview(reviewId);
         if (cred.isEmpty()) {
             timeline.record("result", "skipped:" + phase, reviewId,
                     "provider unavailable for workspace " + workspace + " — cannot issue " + phase);

@@ -122,8 +122,13 @@ public class IntegrationSaga {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
         String commit = e.diffRefs().headSha();
 
-        // Only PRs from a registered provider are reviewed.
-        Optional<ScmProvider> provider = providers.resolveByWorkspace(e.repo().workspace());
+        // Only PRs from a registered provider are reviewed. Resolve by (type,
+        // workspace) when the event names its SCM — a GitHub org and a Bitbucket
+        // workspace can share a name; fall back to workspace alone for events
+        // serialized before providerType existed (or the dev simulator).
+        Optional<ScmProvider> provider = e.providerType() == null
+                ? providers.resolveByWorkspace(e.repo().workspace())
+                : providers.resolve(e.providerType(), e.repo().workspace());
         if (provider.isEmpty()) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
                     "no provider registered for workspace " + e.repo().workspace());

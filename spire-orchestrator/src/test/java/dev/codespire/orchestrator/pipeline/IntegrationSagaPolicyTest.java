@@ -118,12 +118,42 @@ class IntegrationSagaPolicyTest {
     }
 
     private static PullRequestEventReceived pr(String accountId, String username) {
+        return pr(accountId, username, null);
+    }
+
+    private static PullRequestEventReceived pr(String accountId, String username, String providerType) {
         return new PullRequestEventReceived(
                 new RepoRef("acme", "web"), 412L, PrAction.OPENED,
                 "Refactor checkout", "desc", "feature", "main",
                 DiffRefs.headOnly("cafe123"),
                 Author.of(accountId, username, "Display Name"),
-                "https://example/pr/412");
+                "https://example/pr/412", providerType);
+    }
+
+    @Test
+    void eventWithProviderType_resolvesByTypeNotWorkspaceAlone() {
+        // Two SCMs can share a workspace name; when the event names its type the saga
+        // MUST resolve by (type, workspace). resolveByWorkspace throwing proves it isn't
+        // used as the fallback here.
+        IntegrationSaga saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.providers = new ProviderRegistry() {
+            @Override
+            public Optional<ScmProvider> resolve(String type, String workspace) {
+                return Optional.of(new ScmProvider(UUID.randomUUID(), "BB", type, "https://x", workspace,
+                        "bearer", null, "secret", "acct", true, List.of()));
+            }
+
+            @Override
+            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+                throw new AssertionError("must resolve by (type, workspace), not workspace alone");
+            }
+        };
+
+        saga.on(pr("acct", "user", "bitbucket-cloud"));
+
+        assertTrue(headerProviderTypes.contains("bitbucket-cloud"), "resolved by the event's SCM type");
+        assertTrue(emitted.stream().anyMatch(ActionCommand.FetchDiff.class::isInstance),
+                "an active review dispatched FetchDiff via the type-resolved provider");
     }
 
     @Test

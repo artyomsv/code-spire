@@ -126,7 +126,8 @@ public class GitHubIngress implements ScmIngress {
                 pr.path("base").path("ref").asText(""),
                 DiffRefs.headOnly(pr.path("head").path("sha").asText("")),
                 author(pr.path("user")),
-                pr.path("html_url").asText("")));
+                pr.path("html_url").asText(""),
+                type().providerType()));
     }
 
     /**

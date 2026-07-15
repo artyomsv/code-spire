@@ -121,6 +121,9 @@ export async function registerPr(body: {
   workspace?: string;
   slug?: string;
   pr?: number;
+  // The SCM type resolved from the URL, so a workspace name shared across SCMs
+  // resolves the right provider when registering by fields. Omitted when unknown.
+  providerType?: string;
 }): Promise<RegisterResult> {
   const res = await fetch('/api/reviews/register', {
     method: 'POST',

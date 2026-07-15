@@ -55,8 +55,13 @@ public class ManualRegisterResource {
     @Inject
     IntegrationEmitter integration;
 
-    /** Either {@code url}, or {@code workspace} + {@code slug} + {@code pr}. */
-    public record RegisterRequest(String url, String workspace, String slug, Long pr) {
+    /**
+     * Either {@code url}, or {@code workspace} + {@code slug} + {@code pr}. When the
+     * caller registers by fields (the UI fills them from a resolved URL), it passes
+     * {@code providerType} so a workspace name shared across SCMs still resolves the
+     * right provider; null/blank falls back to workspace-only resolution.
+     */
+    public record RegisterRequest(String url, String workspace, String slug, Long pr, String providerType) {
     }
 
     @POST
@@ -66,12 +71,16 @@ public class ManualRegisterResource {
         Target target = resolve(req);
         RepoRef repo = new RepoRef(target.workspace, target.slug);
 
-        // Resolve the registered provider for this workspace and use ITS
-        // (decrypted) credentials — no .env token needed. The provider's own type
-        // (bitbucket-cloud | github | …) selects the adapter.
-        ScmProvider provider = providers.resolveByWorkspace(target.workspace)
+        // Resolve the registered provider and use ITS (decrypted) credentials — no
+        // .env token needed. When the PR URL named a provider type (bitbucket-cloud |
+        // github | gitlab) we resolve by (type, workspace) so a GitHub org and a
+        // Bitbucket workspace of the same name don't collide; the provider's own type
+        // selects the adapter.
+        ScmProvider provider = resolveProvider(target)
                 .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
-                        + target.workspace + "'. Add one under Settings -> Providers."));
+                        + target.workspace + "'"
+                        + (target.providerType == null ? "" : " on " + target.providerType)
+                        + ". Add one under Settings -> Providers."));
         DiffSource diffSource = clients.diffSource(provider);
 
         PullRequest pr;
@@ -91,7 +100,8 @@ public class ManualRegisterResource {
 
         IntegrationEvent event = new PullRequestEventReceived(
                 pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),
-                pr.sourceBranch(), pr.targetBranch(), pr.diffRefs(), pr.author(), pr.htmlUrl());
+                pr.sourceBranch(), pr.targetBranch(), pr.diffRefs(), pr.author(), pr.htmlUrl(),
+                provider.type());
         integration.send(event);
 
         String reviewId = ReviewIds.reviewId(repo, pr.prId());
@@ -101,7 +111,15 @@ public class ManualRegisterResource {
                 "slug", target.slug, "pr", pr.prId());
     }
 
-    private record Target(String workspace, String slug, long pr) {
+    /** {@code providerType} is set when the target came from a URL (which names the SCM), else null. */
+    private record Target(String workspace, String slug, long pr, String providerType) {
+    }
+
+    /** The enabled provider for a target — by (type, workspace) when the URL named an SCM, else workspace alone. */
+    private Optional<ScmProvider> resolveProvider(Target target) {
+        return target.providerType == null
+                ? providers.resolveByWorkspace(target.workspace)
+                : providers.resolve(target.providerType, target.workspace);
     }
 
     /** Request + result of the URL-preview endpoint (parse without registering). */
@@ -127,7 +145,7 @@ public class ManualRegisterResource {
             throw new BadRequestException("url is required");
         }
         Target target = parseUrl(req.url().trim());
-        Optional<ScmProvider> provider = providers.resolveByWorkspace(target.workspace);
+        Optional<ScmProvider> provider = resolveProvider(target);
         return new ResolvedUrl(target.workspace, target.slug, target.pr,
                 provider.isPresent(),
                 provider.map(ScmProvider::type).orElse(null),
@@ -141,25 +159,28 @@ public class ManualRegisterResource {
         if (req == null || req.workspace() == null || req.slug() == null || req.pr() == null) {
             throw new BadRequestException("Provide a pull request 'url', or 'workspace' + 'slug' + 'pr'.");
         }
-        return validated(req.workspace().trim(), req.slug().trim(), req.pr());
+        return validated(req.workspace().trim(), req.slug().trim(), req.pr(), req.providerType());
     }
 
-    /** Delegate URL parsing to the per-provider parsers; the first match wins. */
+    /** Delegate URL parsing to the per-provider parsers; the first match wins and names the SCM type. */
     private Target parseUrl(String url) {
         return urlParsers.parse(url)
-                .map(c -> new Target(c.repo().workspace(), c.repo().slug(), c.prId()))
+                .map(m -> new Target(m.coordinates().repo().workspace(), m.coordinates().repo().slug(),
+                        m.coordinates().prId(), m.type().providerType()))
                 .orElseThrow(() -> new BadRequestException("Unrecognised pull request URL — expected "
                         + ".../pull-requests/<id>, .../pull/<id>, or .../-/merge_requests/<id>"));
     }
 
-    private Target validated(String workspace, String slug, long pr) {
+    private Target validated(String workspace, String slug, long pr, String providerType) {
         if (!SLUG.matcher(workspace).matches() || !validSlug(slug)) {
             throw new BadRequestException("Invalid workspace or repository slug.");
         }
         if (pr <= 0) {
             throw new BadRequestException("Pull request number must be positive.");
         }
-        return new Target(workspace, slug, pr);
+        // A blank type (hand-typed fields with no resolved URL) means workspace-only resolution.
+        String type = providerType == null || providerType.isBlank() ? null : providerType;
+        return new Target(workspace, slug, pr, type);
     }
 
     /** A repo slug is one or more path segments (GitLab nested groups); each must be a valid segment. */

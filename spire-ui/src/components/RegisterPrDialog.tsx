@@ -85,7 +85,14 @@ export default function RegisterPrDialog({
     setError(null);
     setOk(null);
     try {
-      const result = await registerPr({ workspace: workspace.trim(), slug: slug.trim(), pr: prNumber });
+      // Pass the SCM type resolved from the URL so a workspace name shared across
+      // SCMs resolves the right provider — but only if the fields still match what
+      // was resolved (the user may have edited them after pasting a URL).
+      const providerType =
+        resolved && resolved.workspace === workspace.trim() && resolved.slug === slug.trim()
+          ? (resolved.providerType ?? undefined)
+          : undefined;
+      const result = await registerPr({ workspace: workspace.trim(), slug: slug.trim(), pr: prNumber, providerType });
       setOk(result.reviewId);
       onRegistered?.();
       // let the live list show the new row, then close

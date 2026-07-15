@@ -55,7 +55,8 @@ public class DevSimulatorResource {
                 "feature/TEST-demo", "main",
                 DiffRefs.headOnly(commit),
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
-                "https://example.invalid/sandbox/demo-repo/pull-requests/" + prId);
+                "https://example.invalid/sandbox/demo-repo/pull-requests/" + prId,
+                null); // synthetic event — no registered provider; resolves by workspace
         integration.send(event);
 
         return Map.of(

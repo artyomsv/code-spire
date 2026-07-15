@@ -93,7 +93,7 @@ class ResultSagaRetryTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public Optional<String> packForWorkspace(String workspace) {
+            public Optional<String> packForReview(String reviewId) {
                 return credential;
             }
         };
