@@ -1,0 +1,183 @@
+# Live-coding overlay: runs the three Quarkus services (quarkusDev) and the Vite
+# UI (npm run dev) IN containers, with source hot-sync + attachable debuggers.
+# Layered on top of the base file (Postgres + Redpanda):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --watch --build
+#
+# Host ports are all in the 392xx range (never 808x): HTTP 3928x, JDWP/inspector
+# 3929x. `--watch` streams source edits into each container; Quarkus live-reload
+# and Vite HMR apply them WITHOUT a container restart, so an attached debugger
+# survives across edits. Changing settings.gradle.kts / gradle.properties (Java) or
+# package.json (UI) triggers an image rebuild; a per-module dependency change needs
+# a manual `docker compose ... restart <service>`.
+#
+# The three Java services share ONE image (Dockerfile.dev) and differ only by their
+# `command` (module + debug port) and `environment`. Each runs its own Gradle from
+# its own container copy of the source — never a shared bind mount (three Gradle
+# processes on one project dir would deadlock on the project cache).
+
+x-java-build: &java-build
+  context: .
+  dockerfile: Dockerfile.dev
+
+# Sync the whole repo into /workspace on change (each Java container holds its own
+# copy). build/, .gradle/, node_modules/ and the UI dir are excluded — they are
+# either container-owned or irrelevant to the JVM services.
+x-java-watch: &java-watch
+  - action: sync
+    path: .
+    target: /workspace
+    ignore:
+      - .git/
+      - "**/build/"
+      - .gradle/
+      - "**/.gradle/"
+      - "**/node_modules/"
+      - spire-ui/
+      - .handoff/
+  - action: rebuild
+    path: ./settings.gradle.kts
+  - action: rebuild
+    path: ./gradle.properties
+
+services:
+  orchestrator:
+    build: *java-build
+    image: spire-service-dev:latest
+    container_name: spire-orchestrator-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    # quarkusDev with the app-JVM debugger listening on all interfaces so the host
+    # can attach through the published port (suspend off — attach any time).
+    command: >
+      ./gradlew --console=plain --no-daemon :spire-orchestrator:quarkusDev
+      -Ddebug=39290 -DdebugHost=0.0.0.0
+    env_file: .env
+    environment:
+      # Quarkus HTTP inside the container (off 8080, per project rule). Published 1:1.
+      ORCHESTRATOR_HTTP_PORT: "39280"
+      # %dev config points at localhost; redirect to the compose services.
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # The restored DB was migrated before the identifier scrub edited two migration
+      # comments; repair reconciles the benign checksum drift (data untouched).
+      QUARKUS_FLYWAY_REPAIR_AT_START: "true"
+      # quarkusDev binds HTTP to localhost by default; bind all interfaces so the
+      # published host port reaches the app inside the container.
+      QUARKUS_HTTP_HOST: 0.0.0.0
+    ports:
+      - "39280:39280"   # HTTP: dashboard + REST + WebSocket timeline
+      - "39290:39290"   # JDWP debug (attach your IDE here)
+    volumes:
+      - gradle-cache-orchestrator:/root/.gradle
+    develop:
+      watch: *java-watch
+
+  gateway:
+    build: *java-build
+    image: spire-service-dev:latest
+    container_name: spire-gateway-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    command: >
+      ./gradlew --console=plain --no-daemon :spire-gateway:quarkusDev
+      -Ddebug=39291 -DdebugHost=0.0.0.0
+    env_file: .env
+    environment:
+      GATEWAY_HTTP_PORT: "39281"
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # The restored DB was migrated before the identifier scrub edited two migration
+      # comments; repair reconciles the benign checksum drift (data untouched).
+      QUARKUS_FLYWAY_REPAIR_AT_START: "true"
+      # quarkusDev binds HTTP to localhost by default; bind all interfaces so the
+      # published host port reaches the app inside the container.
+      QUARKUS_HTTP_HOST: 0.0.0.0
+    ports:
+      - "39281:39281"   # HTTP: webhook edge + webhook-repo registry API
+      - "39291:39291"   # JDWP debug
+    volumes:
+      - gradle-cache-gateway:/root/.gradle
+    develop:
+      watch: *java-watch
+
+  worker:
+    build: *java-build
+    image: spire-service-dev:latest
+    container_name: spire-review-worker-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    command: >
+      ./gradlew --console=plain --no-daemon :spire-review-worker:quarkusDev
+      -Ddebug=39292 -DdebugHost=0.0.0.0
+    env_file: .env
+    environment:
+      WORKER_HTTP_PORT: "39282"
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      # The restored DB was migrated before the identifier scrub edited two migration
+      # comments; repair reconciles the benign checksum drift (data untouched).
+      QUARKUS_FLYWAY_REPAIR_AT_START: "true"
+      # quarkusDev binds HTTP to localhost by default; bind all interfaces so the
+      # published host port reaches the app inside the container.
+      QUARKUS_HTTP_HOST: 0.0.0.0
+    ports:
+      - "39282:39282"   # HTTP: health endpoint
+      - "39292:39292"   # JDWP debug
+    volumes:
+      - gradle-cache-worker:/root/.gradle
+    develop:
+      watch: *java-watch
+
+  ui:
+    build:
+      context: ./spire-ui
+      dockerfile: Dockerfile.dev
+    image: spire-ui-dev:latest
+    container_name: spire-ui-dev
+    depends_on:
+      - orchestrator
+      - gateway
+    environment:
+      UI_PORT: "39285"
+      # Vite dev-server proxy targets -> the in-network Quarkus services.
+      ORCHESTRATOR_URL: http://orchestrator:39280
+      GATEWAY_URL: http://gateway:39281
+      ORCHESTRATOR_WS_URL: ws://orchestrator:39280
+      # Synced source needs polling to be seen reliably inside the container.
+      VITE_USE_POLLING: "true"
+      # Node inspector for the dev-server process (avoids the forbidden 9229).
+      NODE_OPTIONS: --inspect=0.0.0.0:39295
+    ports:
+      - "39285:39285"   # Vite dev server (dashboard)
+      - "39295:39295"   # Node inspector (attach your IDE / chrome://inspect here)
+    develop:
+      watch:
+        - action: sync
+          path: ./spire-ui/src
+          target: /app/src
+        - action: sync
+          path: ./spire-ui/index.html
+          target: /app/index.html
+        - action: sync
+          path: ./spire-ui/vite.config.ts
+          target: /app/vite.config.ts
+        - action: rebuild
+          path: ./spire-ui/package.json
+
+volumes:
+  # One Gradle cache PER service — a shared GRADLE_USER_HOME deadlocks on the journal
+  # lock when three quarkusDev processes start together. First `up` populates each
+  # (deps download once per service), later starts are fast.
+  gradle-cache-orchestrator:
+  gradle-cache-gateway:
+  gradle-cache-worker:

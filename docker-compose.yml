@@ -1,6 +1,8 @@
 # Local development infrastructure for Code Spire (P1 split: Postgres +
 # Redpanda; Keycloak/MinIO arrive with P2). Copy .env.example -> .env first.
 # Host ports live in the 34xxx project range.
+name: spire-dev
+
 services:
   redpanda:
     image: redpandadata/redpanda:v26.1.12
@@ -14,11 +16,16 @@ services:
       - --reserve-memory=0M
       - --node-id=0
       - --check=false
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
-      # dev services run on the host (quarkusDev) and reach the broker here:
-      - --advertise-kafka-addr=PLAINTEXT://localhost:${KAFKA_PORT:-34092}
+      # Dual listener so BOTH run modes reach the broker:
+      #  - EXTERNAL: host quarkusDev connects to localhost:${KAFKA_PORT} (published).
+      #  - INTERNAL: containerised dev services (docker-compose.dev.yml) connect to
+      #    redpanda:9092 on the compose network. A client is handed back the
+      #    advertised address of the listener it bootstrapped through, so each mode
+      #    needs its own advertised host.
+      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://localhost:${KAFKA_PORT:-34092}
     ports:
-      - "${KAFKA_PORT:-34092}:9092"
+      - "${KAFKA_PORT:-34092}:19092"
     volumes:
       - spire-redpanda:/var/lib/redpanda/data
     healthcheck:

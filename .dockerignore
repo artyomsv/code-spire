@@ -1,0 +1,31 @@
+# Build context hygiene for Dockerfile.dev (the Quarkus services image, context = .).
+# Keep the image lean and NEVER bake secrets or host build output into it.
+
+.git
+.gitignore
+
+# Host build output / Gradle project cache — the container builds fresh.
+.gradle
+**/.gradle
+build
+**/build
+
+# Node / UI — the UI has its own image (context ./spire-ui); not needed here.
+spire-ui
+**/node_modules
+
+# Secrets and the private cross-PC handoff bundle — must never enter an image.
+.env
+.env.*
+.handoff
+*.dump
+
+# IDE / OS noise.
+.idea
+*.iml
+.vscode
+.DS_Store
+
+# The dev compose/Dockerfiles themselves don't need to be inside the image.
+docker-compose*.yml
+Dockerfile*

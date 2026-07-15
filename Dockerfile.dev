@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+#
+# Live-coding image for the three Quarkus services (orchestrator, gateway,
+# review-worker). ONE image, parameterised entirely by docker-compose: the
+# `command` picks the Gradle module + quarkusDev debug flags, and `environment`
+# supplies the HTTP port plus the Postgres/Kafka coordinates. Source edits are
+# streamed in by `docker compose watch`; Quarkus live-reload recompiles in place,
+# so an attached debugger survives across edits (no container restart).
+#
+# Base image is JDK 25 (matches the Gradle toolchain languageVersion = 25).
+FROM eclipse-temurin:25-jdk
+
+WORKDIR /workspace
+
+# The whole multi-module Gradle build. .dockerignore keeps build/, .gradle/,
+# node_modules/, the spire-ui/ dir, secrets (.env) and the DB dump out of the
+# image. The Gradle dependency cache lives in a mounted volume (/root/.gradle),
+# so the first `up` downloads deps once and later starts are fast.
+COPY . .
+
+# A Windows checkout gives text files CRLF line endings. Two concrete breakages:
+#  - gradlew: Linux /bin/sh rejects the CRLF shebang ("bad interpreter: /bin/sh^M").
+#  - Flyway migrations: the checksum is a CRC over file bytes, so CRLF yields a
+#    different checksum than the LF the DB was migrated with -> "checksum mismatch".
+# Normalise both to LF so the image runs regardless of the host's git autocrlf.
+RUN sed -i 's/\r$//' gradlew && chmod +x gradlew \
+ && find . -path '*/db/migration/*.sql' -exec sed -i 's/\r$//' {} +
+
+# Quarkus dev HTTP + JDWP; real per-service values are published by compose. Listed
+# here only for documentation (the 392xx project range, never 808x).
+EXPOSE 39280 39290
+
+# Overridden per service in docker-compose.dev.yml. Kept runnable so a bare
+# `docker run` still does something sane.
+CMD ["./gradlew", "--console=plain", "projects"]
