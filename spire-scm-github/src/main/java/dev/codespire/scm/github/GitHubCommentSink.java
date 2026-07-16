@@ -3,6 +3,7 @@ package dev.codespire.scm.github;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
@@ -10,8 +11,12 @@ import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
+import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.contract.scm.ThreadTranscript;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,7 +26,7 @@ import java.util.Map;
  * LEFT = OLD). {@link ThreadRef} carries the review-comment id — replies POST to
  * {@code .../comments/{id}/replies}.
  */
-public class GitHubCommentSink implements CommentSink {
+public class GitHubCommentSink implements CommentSink, ThreadSource {
 
     private final GitHubClient client;
 
@@ -88,5 +93,31 @@ public class GitHubCommentSink implements CommentSink {
 
     private String issueCommentsPath(RepoRef repo, long prId) {
         return "/repos/" + repo.workspace() + "/" + repo.slug() + "/issues/" + prId + "/comments";
+    }
+
+    @Override
+    public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
+        String botLogin = client.getJson("/user").path("login").asText("");
+        JsonNode all = client.getJson(reviewCommentsPath(repo, prId));
+        String root = thread.value();
+        String path = "";
+        int line = 0;
+        String commit = "";
+        List<ThreadMessage> messages = new ArrayList<>();
+        for (JsonNode c : all) {
+            String id = c.path("id").asText();
+            String inReplyTo = c.path("in_reply_to_id").asText("");
+            if (!root.equals(id) && !root.equals(inReplyTo)) {
+                continue; // a different thread
+            }
+            if (root.equals(id)) {                      // the root carries the anchor
+                path = c.path("path").asText("");
+                line = c.path("original_line").asInt(c.path("line").asInt(0));
+                commit = c.path("commit_id").asText("");
+            }
+            String login = c.path("user").path("login").asText("");
+            messages.add(new ThreadMessage(login, c.path("body").asText("").trim(), login.equals(botLogin)));
+        }
+        return new ThreadTranscript(thread, path, line, commit, messages);
     }
 }

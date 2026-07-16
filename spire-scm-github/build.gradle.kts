@@ -24,8 +24,12 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.wiremock:wiremock:3.13.2")
+    testImplementation("org.mockito:mockito-core:5.14.2")
 }
 
 tasks.test {
     useJUnitPlatform()
+    // Mockito 5.14.2's bundled Byte Buddy predates official Java 25 support;
+    // this flag tells it to proceed on the (newer, compatible-in-practice) class format.
+    systemProperty("net.bytebuddy.experimental", "true")
 }
