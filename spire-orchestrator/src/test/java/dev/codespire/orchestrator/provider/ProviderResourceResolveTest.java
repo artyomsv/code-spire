@@ -36,7 +36,7 @@ class ProviderResourceResolveTest {
 
     private static ProviderInput input(String secret, String botAccountId) {
         return new ProviderInput("GitHub", "github", "https://api.github.com", "artyomsv",
-                "bearer", null, secret, botAccountId, true, List.of());
+                "bearer", null, secret, botAccountId, true, List.of(), null, null);
     }
 
     @Test

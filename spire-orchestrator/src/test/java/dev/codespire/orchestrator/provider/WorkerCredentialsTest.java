@@ -37,7 +37,7 @@ class WorkerCredentialsTest {
     private static ScmProvider provider() {
         return new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud",
                 "https://api.bitbucket.org/2.0", "acme", "bearer", null,
-                "sk-secret-token", "acct-1", true, List.of());
+                "sk-secret-token", "acct-1", true, List.of(), null, null);
     }
 
     @Test

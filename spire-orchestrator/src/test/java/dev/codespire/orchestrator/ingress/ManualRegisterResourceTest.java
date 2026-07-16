@@ -71,7 +71,7 @@ class ManualRegisterResourceTest {
     @Test
     void registersUsingTheProvidersToken() {
         providers.create(new ProviderInput("CF", "bitbucket-cloud", wm.baseUrl(), "mrx-ws",
-                "bearer", null, "provider-tok", "acct", true, List.of()));
+                "bearer", null, "provider-tok", "acct", true, List.of(), null, null));
         wm.stubFor(get(urlEqualTo("/repositories/mrx-ws/repo/pullrequests/5"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
                         { "id": 5, "title": "T", "description": "",
@@ -94,7 +94,7 @@ class ManualRegisterResourceTest {
     void registersGitLabMergeRequestByUrlWithNestedGroup() {
         // workspace = top group; slug = the rest of the nested namespace + project.
         providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp",
-                "bearer", null, "gl-tok", "botid", true, List.of()));
+                "bearer", null, "gl-tok", "botid", true, List.of(), null, null));
         // The project path is addressed URL-encoded (group/subgroup/project -> one segment).
         wm.stubFor(get(urlEqualTo("/projects/grp%2Fsub%2Fproj/merge_requests/9"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
@@ -118,7 +118,7 @@ class ManualRegisterResourceTest {
     @Test
     void resolveParsesGitLabUrlAndReportsTheRegisteredProvider() {
         providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp2",
-                "bearer", null, "gl-tok", "botid", true, List.of()));
+                "bearer", null, "gl-tok", "botid", true, List.of(), null, null));
         // No SCM call — the resolve endpoint only parses + looks up the provider.
         given().contentType("application/json")
                 .body(Map.of("url", "https://gitlab.com/grp2/sub/proj/-/merge_requests/9"))

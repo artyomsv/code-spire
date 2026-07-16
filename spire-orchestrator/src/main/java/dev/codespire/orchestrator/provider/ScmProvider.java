@@ -18,5 +18,7 @@ public record ScmProvider(
         String secret,
         String botAccountId,
         boolean enabled,
-        List<String> authors) {
+        List<String> authors,
+        String botUsername,
+        String conversationLevel) {
 }

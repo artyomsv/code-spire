@@ -95,8 +95,10 @@ public class ProviderResource {
         }
         boolean hasBotId = in.botAccountId() != null && !in.botAccountId().isBlank();
         String botId = hasBotId ? in.botAccountId() : owner.providerUserId();
+        String botUsername = owner.username(); // resolved login for @-mention matching ("" for synthetic bots)
         return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
-                in.authUsername(), in.secret(), botId, in.enabled(), in.authors());
+                in.authUsername(), in.secret(), botId, in.enabled(), in.authors(),
+                botUsername, in.conversationLevel());
     }
 
     /**

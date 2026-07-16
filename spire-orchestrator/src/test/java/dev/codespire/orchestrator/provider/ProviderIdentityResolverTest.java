@@ -59,7 +59,7 @@ class ProviderIdentityResolverTest {
 
     private static ProviderInput input(String type, String authKind, String authUsername, String secret) {
         return new ProviderInput("P", type, scm.baseUrl(), "ws", authKind, authUsername, secret,
-                "", true, List.of());
+                "", true, List.of(), null, null);
     }
 
     private void stubUser(String body) {

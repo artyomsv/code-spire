@@ -16,5 +16,7 @@ public record ProviderInput(
         String secret,
         String botAccountId,
         Boolean enabled,
-        List<String> authors) {
+        List<String> authors,
+        String botUsername,
+        String conversationLevel) {
 }

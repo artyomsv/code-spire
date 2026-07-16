@@ -28,7 +28,7 @@ class ProviderRegistryTest {
 
     private static ProviderInput bearer(String workspace, String secret, List<String> authors) {
         return new ProviderInput("CF Bitbucket", "bitbucket-cloud", "https://api.bitbucket.org/2.0",
-                workspace, "bearer", null, secret, "acct-1", true, authors);
+                workspace, "bearer", null, secret, "acct-1", true, authors, null, null);
     }
 
     @Test
@@ -49,7 +49,7 @@ class ProviderRegistryTest {
         ProviderView created = registry.create(bearer("ws-keep", "tok-keep", List.of("alice")));
         UUID id = UUID.fromString(created.id());
         registry.update(id, new ProviderInput("Renamed", "bitbucket-cloud", "https://api.bitbucket.org/2.0",
-                "ws-keep", "bearer", null, null, "acct-1", true, List.of("carol")));
+                "ws-keep", "bearer", null, null, "acct-1", true, List.of("carol"), null, null));
 
         assertEquals("tok-keep", registry.resolve("bitbucket-cloud", "ws-keep").orElseThrow().secret());
         ProviderView view = registry.get(id).orElseThrow();
@@ -76,7 +76,7 @@ class ProviderRegistryTest {
     @Test
     void disabledProviderIsNotResolved() {
         registry.create(new ProviderInput("Off", "bitbucket-cloud", "https://api.bitbucket.org/2.0",
-                "ws-disabled", "bearer", null, "tok", "acct-1", false, List.of()));
+                "ws-disabled", "bearer", null, "tok", "acct-1", false, List.of(), null, null));
         assertTrue(registry.resolve("bitbucket-cloud", "ws-disabled").isEmpty());
     }
 

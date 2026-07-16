@@ -70,8 +70,8 @@ public class ProviderRegistry {
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind,
-                            auth_username, auth_secret, bot_account_id, enabled)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            auth_username, auth_secret, bot_account_id, bot_username, conversation_level, enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """)) {
                 ps.setObject(1, id);
                 ps.setString(2, in.name());
@@ -82,7 +82,9 @@ public class ProviderRegistry {
                 ps.setString(7, blankToNull(in.authUsername()));
                 ps.setString(8, encryption.encryptString(secret, aad(id)));
                 ps.setString(9, in.botAccountId() == null ? "" : in.botAccountId());
-                ps.setBoolean(10, in.enabled() == null || in.enabled());
+                ps.setString(10, blankToNull(in.botUsername()));
+                ps.setString(11, blankToNull(in.conversationLevel()));
+                ps.setBoolean(12, in.enabled() == null || in.enabled());
                 ps.executeUpdate();
             }
             replaceAuthors(c, id, in.authors());
@@ -99,9 +101,14 @@ public class ProviderRegistry {
                 return Optional.empty();
             }
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
+            // bot_username is refreshed only when the token was (re)validated; a token-less
+            // update leaves the stored login intact (mirrors the rotateSecret conditional).
+            boolean updateBotUsername = in.botUsername() != null && !in.botUsername().isBlank();
             String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, workspace=?, auth_kind=?, "
-                    + "auth_username=?, bot_account_id=?, enabled=?, updated_at=now()"
-                    + (rotateSecret ? ", auth_secret=?" : "") + " WHERE id=?";
+                    + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, updated_at=now()"
+                    + (rotateSecret ? ", auth_secret=?" : "")
+                    + (updateBotUsername ? ", bot_username=?" : "")
+                    + " WHERE id=?";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, in.name());
                 ps.setString(2, in.type());
@@ -110,10 +117,14 @@ public class ProviderRegistry {
                 ps.setString(5, in.authKind());
                 ps.setString(6, blankToNull(in.authUsername()));
                 ps.setString(7, in.botAccountId() == null ? "" : in.botAccountId());
-                ps.setBoolean(8, in.enabled() == null || in.enabled());
-                int idx = 9;
+                ps.setString(8, blankToNull(in.conversationLevel()));
+                ps.setBoolean(9, in.enabled() == null || in.enabled());
+                int idx = 10;
                 if (rotateSecret) {
                     ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));
+                }
+                if (updateBotUsername) {
+                    ps.setString(idx++, in.botUsername());
                 }
                 ps.setObject(idx, id);
                 ps.executeUpdate();
@@ -200,7 +211,8 @@ public class ProviderRegistry {
                 rs.getString("base_url"), rs.getString("workspace"), rs.getString("auth_kind"),
                 rs.getString("auth_username"),
                 encryption.decryptString(rs.getString("auth_secret"), aad(id)),
-                rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id));
+                rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id),
+                rs.getString("bot_username"), rs.getString("conversation_level"));
     }
 
     // ---- helpers -----------------------------------------------------------
@@ -232,7 +244,8 @@ public class ProviderRegistry {
                 rs.getString("workspace"), rs.getString("auth_kind"), rs.getString("auth_username"),
                 secret != null && !secret.isBlank(),
                 rs.getString("bot_account_id"), rs.getBoolean("enabled"), authors,
-                rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getString("bot_username"), rs.getString("conversation_level"));
     }
 
     private List<String> authorsOf(Connection c, UUID id) throws SQLException {

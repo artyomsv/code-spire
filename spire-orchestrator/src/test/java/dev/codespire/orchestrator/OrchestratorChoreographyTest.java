@@ -69,7 +69,7 @@ class OrchestratorChoreographyTest {
         try {
             providers.create(new dev.codespire.orchestrator.provider.ProviderInput(
                     "test", "bitbucket-cloud", "http://localhost", "sandbox",
-                    "bearer", null, "tok", "acct", true, List.of()));
+                    "bearer", null, "tok", "acct", true, List.of(), null, null));
         } catch (RuntimeException alreadyRegistered) {
             // fine — one provider per (type, workspace)
         }

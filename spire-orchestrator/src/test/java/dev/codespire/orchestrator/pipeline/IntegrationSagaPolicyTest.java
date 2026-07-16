@@ -104,7 +104,7 @@ class IntegrationSagaPolicyTest {
 
     private static Optional<ScmProvider> provider(List<String> authors) {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x", "acme",
-                "bearer", null, "secret", "acct", true, authors));
+                "bearer", null, "secret", "acct", true, authors, null, null));
     }
 
     /** A ReviewPolicy fake with a fixed mode — the saga only reads observeOnly(). */
@@ -140,7 +140,7 @@ class IntegrationSagaPolicyTest {
             @Override
             public Optional<ScmProvider> resolve(String type, String workspace) {
                 return Optional.of(new ScmProvider(UUID.randomUUID(), "BB", type, "https://x", workspace,
-                        "bearer", null, "secret", "acct", true, List.of()));
+                        "bearer", null, "secret", "acct", true, List.of(), null, null));
             }
 
             @Override

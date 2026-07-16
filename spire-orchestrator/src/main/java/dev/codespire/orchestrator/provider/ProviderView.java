@@ -19,5 +19,7 @@ public record ProviderView(
         String botAccountId,
         boolean enabled,
         List<String> authors,
-        Instant createdAt) {
+        Instant createdAt,
+        String botUsername,
+        String conversationLevel) {
 }
