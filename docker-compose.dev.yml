@@ -174,6 +174,35 @@ services:
         - action: rebuild
           path: ./spire-ui/package.json
 
+  # Inbound webhook tunnel — gives the SCMs a public HTTPS URL that forwards to the
+  # gateway's /webhooks/* edges (Bitbucket/GitHub call US when a PR event fires; the
+  # gateway sits on a private compose network they can't reach).
+  #
+  # QUICK tunnel: no Cloudflare account, no domain. Every start mints a FRESH
+  # https://<random>.trycloudflare.com and the previous one dies — so grab the URL
+  # and (re-)register it in each SCM's webhook config after every (re)start:
+  #   Bitbucket:  https://<random>.trycloudflare.com/webhooks/bitbucket
+  #   GitHub:     https://<random>.trycloudflare.com/webhooks/github/<registry-key>
+  #
+  # Opt-in via the `tunnel` profile so a plain `up` never exposes the gateway:
+  #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile tunnel up --watch --build
+  # Read the current URL back from the logs:
+  #   docker compose -f docker-compose.yml -f docker-compose.dev.yml logs tunnel | grep -i trycloudflare
+  tunnel:
+    image: cloudflare/cloudflared:2026.7.2
+    container_name: spire-tunnel-dev
+    profiles: ["tunnel"]
+    depends_on:
+      - gateway
+    # --no-autoupdate: the pinned image tag is the version of record (no self-update).
+    command: tunnel --no-autoupdate --url http://gateway:39281
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   # One Gradle cache PER service — a shared GRADLE_USER_HOME deadlocks on the journal
   # lock when three quarkusDev processes start together. First `up` populates each
