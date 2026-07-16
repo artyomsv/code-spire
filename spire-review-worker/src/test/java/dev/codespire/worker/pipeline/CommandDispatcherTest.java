@@ -105,7 +105,7 @@ class CommandDispatcherTest {
     @Test
     void answerFollowUpHasNoWorkerYetAndIsIgnoredSafely() {
         dispatcher.on(new AnswerFollowUp(REVIEW_ID, REPO, 7,
-                new ThreadRef("comment-1"), "why?"));
+                new ThreadRef("comment-1"), "comment-1", "why?", null, null));
         assertTrue(calls.isEmpty(), "no worker handles AnswerFollowUp in P1 — must not throw");
     }
 

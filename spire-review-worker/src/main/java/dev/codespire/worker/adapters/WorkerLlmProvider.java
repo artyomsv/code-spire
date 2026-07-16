@@ -2,6 +2,7 @@ package dev.codespire.worker.adapters;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.llm.Completion;
@@ -49,9 +50,20 @@ public class WorkerLlmProvider {
         if ("stub".equals(mode)) {
             return stub;
         }
-        LlmCredential cred = unpack(command);
+        LlmCredential cred = unpack(command.reviewId(), command.llmCredential());
         if (cred == null) {
             return stub; // no credential brokered — safe fallback (shouldn't happen in active mode)
+        }
+        return clientFor(cred);
+    }
+
+    public LlmClient forCommand(AnswerFollowUp command) {
+        if ("stub".equals(mode)) {
+            return stub;
+        }
+        LlmCredential cred = unpack(command.reviewId(), command.llmCredential());
+        if (cred == null) {
+            return stub;
         }
         return clientFor(cred);
     }
@@ -69,15 +81,14 @@ public class WorkerLlmProvider {
                 new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()));
     }
 
-    private LlmCredential unpack(GenerateReview command) {
-        String cipher = command.llmCredential();
-        if (cipher == null || cipher.isBlank()) {
+    private LlmCredential unpack(String reviewId, String llmCredential) {
+        if (llmCredential == null || llmCredential.isBlank()) {
             return null;
         }
-        String workspace = ReviewIds.parse(command.reviewId()).repo().workspace();
+        String workspace = ReviewIds.parse(reviewId).repo().workspace();
         try {
             return mapper.readValue(
-                    encryption.decryptString(cipher, LlmCredential.aad(workspace)), LlmCredential.class);
+                    encryption.decryptString(llmCredential, LlmCredential.aad(workspace)), LlmCredential.class);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to unpack LLM credential for " + workspace, e);
         }

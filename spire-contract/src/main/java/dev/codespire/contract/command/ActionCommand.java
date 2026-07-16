@@ -85,8 +85,14 @@ public sealed interface ActionCommand {
                         ReviewResult findings, String scmCredential) implements ActionCommand {
     }
 
-    /** Worker fetches thread history from the SCM on demand — no blob (CONTRACT §5). */
+    /**
+     * Worker fetches thread history from the SCM on demand — no blob (CONTRACT §5).
+     * Carries the triggering comment id (for a per-question idempotency claim) and the brokered,
+     * encrypted SCM + LLM credentials (ADR-015/ADR-018) — without them the worker would use the stub
+     * adapters. The credential fields override the {@link ActionCommand} defaults.
+     */
     record AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
-                          String question) implements ActionCommand {
+                          String triggeringCommentId, String question,
+                          String scmCredential, String llmCredential) implements ActionCommand {
     }
 }
