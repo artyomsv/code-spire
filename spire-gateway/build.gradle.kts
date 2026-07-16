@@ -25,6 +25,7 @@ dependencies {
     implementation(project(":spire-contract"))
     implementation(project(":spire-scm-bitbucket"))
     implementation(project(":spire-scm-github"))
+    implementation(project(":spire-scm-gitlab"))
     implementation(project(":spire-encryption")) // decrypts per-repo webhook secrets (webhook keyset only)
 
     implementation("io.quarkus:quarkus-rest-jackson")

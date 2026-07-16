@@ -68,6 +68,11 @@ public class GitHubIngress implements ScmIngress {
 
     @Override
     public boolean verifySignature(RawWebhook raw) {
+        // Defense in depth: a blank configured secret must never verify — an empty HMAC
+        // key is a known key an attacker could sign with.
+        if (webhookSecret == null || webhookSecret.isBlank()) {
+            return false;
+        }
         String header = header(raw, "x-hub-signature-256");
         if (header == null || !header.startsWith("sha256=")) {
             return false;

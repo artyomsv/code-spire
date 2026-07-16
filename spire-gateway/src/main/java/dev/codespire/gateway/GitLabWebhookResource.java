@@ -2,7 +2,7 @@ package dev.codespire.gateway;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.gateway.RegistryWebhookEdge.IngressFactory;
-import dev.codespire.scm.github.GitHubIngress;
+import dev.codespire.scm.gitlab.GitLabIngress;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -14,18 +14,18 @@ import jakarta.ws.rs.core.Response;
 import java.util.Set;
 
 /**
- * GitHub webhook edge: one endpoint for every registered repository, routed by the
- * {@code {key}} path segment. Verification and translation are GitHub-specific
- * (HMAC-SHA256 over the body, {@code pull_request}/{@code issue_comment} events); the
- * resolve → verify → translate → scope → publish tail is shared in
- * {@link RegistryWebhookEdge}.
+ * GitLab webhook edge: one endpoint per registered repository, routed by the
+ * {@code {key}} path segment. Verification is a constant-time {@code X-Gitlab-Token}
+ * compare (GitLab does not sign the body) and translation handles Merge Request /
+ * Note hooks (see {@link GitLabIngress}); the resolve → verify → translate → scope →
+ * publish tail is shared in {@link RegistryWebhookEdge}.
  */
-@Path("/webhooks/github/{key}")
-public class GitHubWebhookResource {
+@Path("/webhooks/gitlab/{key}")
+public class GitLabWebhookResource {
 
-    private static final String PROVIDER = "github";
+    private static final String PROVIDER = "gitlab";
 
-    /** Registered manual commands (CONTRACT §10); mirrors the Bitbucket edge. */
+    /** Registered manual commands (CONTRACT §10); mirrors the other edges. */
     private static final Set<String> COMMANDS = Set.of("review");
 
     @Inject
@@ -36,7 +36,7 @@ public class GitHubWebhookResource {
 
     @POST
     public Response receive(@PathParam("key") String key, @Context HttpHeaders headers, byte[] body) {
-        IngressFactory ingress = secret -> new GitHubIngress(secret, mapper, COMMANDS);
+        IngressFactory ingress = secret -> new GitLabIngress(secret, mapper, COMMANDS);
         return edge.handle(PROVIDER, key, ingress, headers, body);
     }
 }
