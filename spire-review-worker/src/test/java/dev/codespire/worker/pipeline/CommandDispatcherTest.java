@@ -68,6 +68,12 @@ class CommandDispatcherTest {
                 record("postComments");
             }
         };
+        dispatcher.followUpWorker = new FollowUpWorker() {
+            @Override
+            public void answer(AnswerFollowUp command) {
+                record("answerFollowUp");
+            }
+        };
     }
 
     private void record(String call) {
@@ -103,10 +109,10 @@ class CommandDispatcherTest {
     }
 
     @Test
-    void answerFollowUpHasNoWorkerYetAndIsIgnoredSafely() {
+    void answerFollowUpRoutesToTheFollowUpWorker() {
         dispatcher.on(new AnswerFollowUp(REVIEW_ID, REPO, 7,
                 new ThreadRef("comment-1"), "comment-1", "why?", null, null));
-        assertTrue(calls.isEmpty(), "no worker handles AnswerFollowUp in P1 — must not throw");
+        assertEquals(List.of("answerFollowUp"), calls);
     }
 
     @Test

@@ -28,6 +28,9 @@ import java.util.Map;
  */
 public class GitHubCommentSink implements CommentSink, ThreadSource {
 
+    // Bounds thread re-fetch on a pathological PR (100 comments/page × pages).
+    private static final int MAX_THREAD_PAGES = 20;
+
     private final GitHubClient client;
 
     public GitHubCommentSink(GitHubClient client) {
@@ -98,25 +101,34 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     @Override
     public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
         String botLogin = client.getJson("/user").path("login").asText("");
-        JsonNode all = client.getJson(reviewCommentsPath(repo, prId));
         String root = thread.value();
         String path = "";
         int line = 0;
         String commit = "";
         List<ThreadMessage> messages = new ArrayList<>();
-        for (JsonNode c : all) {
-            String id = c.path("id").asText();
-            String inReplyTo = c.path("in_reply_to_id").asText("");
-            if (!root.equals(id) && !root.equals(inReplyTo)) {
-                continue; // a different thread
+        // The review-comments endpoint paginates (100/page max); a thread's replies can span pages, so walk
+        // pages until a short/empty one. MAX_THREAD_PAGES bounds a pathological PR.
+        for (int page = 1; page <= MAX_THREAD_PAGES; page++) {
+            JsonNode pageComments = client.getJson(reviewCommentsPath(repo, prId) + "?per_page=100&page=" + page);
+            int count = 0;
+            for (JsonNode c : pageComments) {
+                count++;
+                String id = c.path("id").asText();
+                String inReplyTo = c.path("in_reply_to_id").asText("");
+                if (!root.equals(id) && !root.equals(inReplyTo)) {
+                    continue; // a different thread
+                }
+                if (root.equals(id)) {                      // the root carries the anchor
+                    path = c.path("path").asText("");
+                    line = c.path("original_line").asInt(c.path("line").asInt(0));
+                    commit = c.path("commit_id").asText("");
+                }
+                String login = c.path("user").path("login").asText("");
+                messages.add(new ThreadMessage(login, c.path("body").asText("").trim(), login.equals(botLogin)));
             }
-            if (root.equals(id)) {                      // the root carries the anchor
-                path = c.path("path").asText("");
-                line = c.path("original_line").asInt(c.path("line").asInt(0));
-                commit = c.path("commit_id").asText("");
+            if (count < 100) {
+                break; // last page reached
             }
-            String login = c.path("user").path("login").asText("");
-            messages.add(new ThreadMessage(login, c.path("body").asText("").trim(), login.equals(botLogin)));
         }
         return new ThreadTranscript(thread, path, line, commit, messages);
     }

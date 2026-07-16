@@ -94,7 +94,13 @@ public class FollowUpWorker {
         Prompt prompt = FollowUpPrompt.render(transcript, diffText);
         Completion completion = llmProvider.complete(prompt, params).toCompletableFuture().join();
         FollowUpAnswer parsed = FollowUpAnswer.of(completion.text());
-        CommentRef ref = sink.replyInThread(repo, prId, thread, parsed.text());
+        // Sanitize model output before posting (SECURITY.md, mirrors ReviewWorker): raw HTML escaped so an
+        // injection-influenced answer can't render active markup in the thread. Posted as markdown TEXT.
+        CommentRef ref = sink.replyInThread(repo, prId, thread, escapeHtml(parsed.text()));
         return new FollowUpResult(parsed.text(), ref.commentId());
+    }
+
+    private static String escapeHtml(String text) {
+        return text == null ? "" : text.replace("<", "&lt;");
     }
 }

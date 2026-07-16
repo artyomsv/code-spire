@@ -17,8 +17,8 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Conversational-reply policy (spec §4): decides whether an {@code AuthorReplied} warrants a bot answer
@@ -88,10 +88,16 @@ public class ConversationSaga {
                 workerCredentials.pack(provider), llmCred.get()));
     }
 
-    /** Scope B: a human explicitly @-mentions the bot's login. Case-insensitive; blank login never matches. */
+    /**
+     * Scope B: a human explicitly @-mentions the bot's login. Case-insensitive and word-bounded, so
+     * {@code @code-spire} matches but {@code @code-spireworks} does not; blank login never matches.
+     */
     static boolean mentionsBot(String text, String botUsername) {
-        return text != null && botUsername != null && !botUsername.isBlank()
-                && text.toLowerCase(Locale.ROOT).contains("@" + botUsername.toLowerCase(Locale.ROOT));
+        if (text == null || botUsername == null || botUsername.isBlank()) {
+            return false;
+        }
+        return Pattern.compile("@" + Pattern.quote(botUsername) + "(?![A-Za-z0-9_-])",
+                Pattern.CASE_INSENSITIVE).matcher(text).find();
     }
 
     /** An empty allowlist answers everyone; else match by account id or username (mirrors the PR gate). */

@@ -3,6 +3,7 @@ package dev.codespire.llm;
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadTranscript;
+import dev.codespire.diff.TokenBudget;
 
 /**
  * Renders the follow-up (in-thread reply) prompt. Prompt-injection posture mirrors
@@ -23,6 +24,10 @@ public final class FollowUpPrompt {
 
             Respond with ONLY the plain-text reply to post in the thread — no markdown fences, no JSON.""";
 
+    // A follow-up embeds the diff on EVERY turn alongside the conversation, so the diff gets a tighter
+    // budget than the full review (ReviewPromptBuilder's 24k) to bound per-turn cost and context overflow.
+    private static final int MAX_DIFF_TOKENS = 12_000;
+
     private FollowUpPrompt() {
     }
 
@@ -34,7 +39,9 @@ public final class FollowUpPrompt {
                 .append(" line ").append(thread.line())
                 .append(" (commit ").append(ReviewPromptBuilder.neutralizeSentinels(thread.commit()))
                 .append(")\n\n");
-        user.append("Diff:\n").append(ReviewPromptBuilder.neutralizeSentinels(diffText)).append("\n\n");
+        user.append("Diff:\n")
+                .append(ReviewPromptBuilder.neutralizeSentinels(TokenBudget.clip(diffText, MAX_DIFF_TOKENS)))
+                .append("\n\n");
         user.append("Thread:\n");
         for (ThreadMessage m : thread.messages()) {
             user.append(m.fromBot() ? "[bot] " : "[reviewer] ")

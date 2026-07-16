@@ -18,7 +18,7 @@ class GitHubThreadFetchTest {
     void fetchThreadFiltersToTheThreadAndReadsTheAnchor() throws Exception {
         GitHubClient client = mock(GitHubClient.class);
         when(client.getJson("/user")).thenReturn(mapper.readTree("{\"login\":\"code-spire\"}"));
-        when(client.getJson("/repos/artyomsv/spire-test/pulls/5/comments")).thenReturn(mapper.readTree("""
+        when(client.getJson("/repos/artyomsv/spire-test/pulls/5/comments?per_page=100&page=1")).thenReturn(mapper.readTree("""
                 [ { "id": 100, "in_reply_to_id": null, "path": "src/App.java", "original_line": 42,
                     "commit_id": "abc123", "body": "possible NPE", "user": { "login": "code-spire" },
                     "created_at": "2026-07-16T10:00:00Z" },

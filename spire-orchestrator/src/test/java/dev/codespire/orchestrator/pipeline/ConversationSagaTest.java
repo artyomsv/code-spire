@@ -17,6 +17,8 @@ class ConversationSagaTest {
         assertTrue(ConversationSaga.mentionsBot("HEY @Code-Spire", "code-spire"));
         assertFalse(ConversationSaga.mentionsBot("code-spire without the at sign", "code-spire"));
         assertFalse(ConversationSaga.mentionsBot("hi there", "code-spire"));
+        assertFalse(ConversationSaga.mentionsBot("@code-spireworks contribute", "code-spire")); // word-bounded
+
     }
 
     @Test
