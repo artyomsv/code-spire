@@ -3,17 +3,20 @@ package dev.codespire.scm.github;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
+import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.RawWebhook;
 import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -103,6 +106,7 @@ public class GitHubIngress implements ScmIngress {
         return switch (event) {
             case "pull_request" -> pullRequest(payload);
             case "issue_comment" -> issueComment(payload);
+            case "pull_request_review_comment" -> reviewCommentReply(payload);
             default -> List.of(); // ping and everything else are no-ops
         };
     }
@@ -159,6 +163,29 @@ public class GitHubIngress implements ScmIngress {
         }
         return List.of(new ManualCommandReceived(repo(payload), issueNumber(payload),
                 command, parts.length > 1 ? parts[1] : "", author(payload.path("comment").path("user"))));
+    }
+
+    /**
+     * A reply on a review (inline) comment thread (SCM-MAPPING §6). Emits AuthorReplied keyed to the
+     * thread ROOT so the orchestrator can match it to a posted finding; the bot-self drop runs
+     * downstream (ADR-013). Only handles the review-comment API surface — top-level PR (issue) comments
+     * are intentionally NOT conversational here (their ids don't address the review-comment endpoints).
+     */
+    private List<IntegrationEvent> reviewCommentReply(JsonNode payload) {
+        if (!"created".equals(payload.path("action").asText(""))) {
+            return List.of();
+        }
+        JsonNode comment = payload.path("comment");
+        RepoRef repo = repo(payload);
+        long prId = prNumber(payload);
+        JsonNode replyTo = comment.path("in_reply_to_id");
+        String threadRoot = replyTo.isMissingNode() || replyTo.isNull()
+                ? comment.path("id").asText()
+                : replyTo.asText();
+        return List.of(new AuthorReplied(
+                repo, prId, ReviewIds.reviewId(repo, prId),
+                new ThreadRef(threadRoot), comment.path("id").asText(),
+                comment.path("body").asText("").trim(), author(comment.path("user"))));
     }
 
     private RepoRef repo(JsonNode payload) {
