@@ -51,15 +51,23 @@ public class WebhookRepoResource {
 
     @POST
     public Response create(WebhookRepoInput in) {
-        validate(in, true);
+        validate(in);
         return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
     }
 
     @PUT
     @Path("/{id}")
     public WebhookRepoView update(@PathParam("id") String id, WebhookRepoInput in) {
-        validate(in, false);
+        validate(in);
         return registry.update(uuid(id), in)
+                .orElseThrow(() -> new NotFoundException("No webhook repo " + id));
+    }
+
+    /** Mint and return a fresh secret for this registration — the one time it is visible. */
+    @POST
+    @Path("/{id}/rotate-secret")
+    public WebhookRepoSecret rotateSecret(@PathParam("id") String id) {
+        return registry.rotateSecret(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No webhook repo " + id));
     }
 
@@ -72,7 +80,7 @@ public class WebhookRepoResource {
         return Response.noContent().build();
     }
 
-    private void validate(WebhookRepoInput in, boolean creating) {
+    private void validate(WebhookRepoInput in) {
         if (in == null) {
             throw new BadRequestException("Webhook repo body is required");
         }
@@ -93,9 +101,6 @@ public class WebhookRepoResource {
                 }
             }
             default -> throw new BadRequestException("scope must be 'repo' or 'org'");
-        }
-        if (creating && (in.secret() == null || in.secret().isBlank())) {
-            throw new BadRequestException("secret (webhook HMAC/token secret) is required");
         }
     }
 

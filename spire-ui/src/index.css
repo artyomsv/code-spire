@@ -678,6 +678,30 @@
     color: var(--text-3); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 2px;
   }
   .field-hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); text-transform: none; letter-spacing: 0; }
+  /* Stored-secret row paired with a rotate control. */
+  .secret-row { display: flex; align-items: center; gap: 8px; }
+  .secret-row input,
+  .secret-row .field-static { flex: 1; min-width: 0; }
+  .secret-row .btn-ghost { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+  /* One-time secret reveal panel (shown once after create / rotate). */
+  .reveal-warn {
+    padding: 10px 12px; margin-bottom: 14px; border-radius: 8px;
+    font-size: 12.5px; line-height: 1.5; color: var(--text);
+    background: var(--iris-soft); border: 1px solid color-mix(in srgb, var(--iris) 26%, transparent);
+  }
+  .reveal-value {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
+  }
+  .reveal-value .mono { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; color: var(--text); }
+  .copy-btn {
+    display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: pointer;
+    padding: 6px 11px; border-radius: 7px; font-size: 12px; font-weight: 500;
+    color: var(--text-2); background: var(--panel); border: 1px solid var(--border);
+  }
+  .copy-btn:hover { color: var(--text); background: var(--hover); }
+  .copy-btn.copied { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
   .field-static {
     font-size: 12px; color: var(--text-2); background: var(--panel-2);
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; word-break: break-all;

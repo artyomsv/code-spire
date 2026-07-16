@@ -278,8 +278,16 @@ export interface WebhookRepoInput {
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope;
   target: string; // owner/repo (repo scope) | owner (org scope)
-  secret?: string; // omit/empty on edit = keep the stored secret
   enabled: boolean;
+}
+
+/**
+ * Create/rotate response: the saved registration plus its secret in plaintext — shown
+ * exactly ONCE. The secret is minted server-side; list/get never return it (hasSecret only).
+ */
+export interface WebhookRepoSecret {
+  repo: WebhookRepoView;
+  secret: string;
 }
 
 export async function fetchWebhookRepos(): Promise<WebhookRepoView[]> {
@@ -288,7 +296,7 @@ export async function fetchWebhookRepos(): Promise<WebhookRepoView[]> {
   return res.json();
 }
 
-export async function createWebhookRepo(input: WebhookRepoInput): Promise<WebhookRepoView> {
+export async function createWebhookRepo(input: WebhookRepoInput): Promise<WebhookRepoSecret> {
   const res = await fetch('/api/webhook-repos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -305,6 +313,13 @@ export async function updateWebhookRepo(id: string, input: WebhookRepoInput): Pr
     body: JSON.stringify(input),
   });
   if (!res.ok) return throwResponse(res, 'Failed to update webhook repository');
+  return res.json();
+}
+
+/** Mint a fresh secret for an existing registration — returned once (never on list/get). */
+export async function rotateWebhookSecret(id: string): Promise<WebhookRepoSecret> {
+  const res = await fetch(`/api/webhook-repos/${encodeURIComponent(id)}/rotate-secret`, { method: 'POST' });
+  if (!res.ok) return throwResponse(res, 'Failed to rotate webhook secret');
   return res.json();
 }
 

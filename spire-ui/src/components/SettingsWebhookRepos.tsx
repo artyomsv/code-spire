@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Copy, RotateCw } from 'lucide-react';
 import {
   createWebhookRepo,
   deleteWebhookRepo,
   fetchWebhookRepos,
+  rotateWebhookSecret,
   updateWebhookRepo,
   type WebhookRepoInput,
+  type WebhookRepoSecret,
   type WebhookRepoView,
   type WebhookScope,
 } from '../api';
@@ -199,11 +202,12 @@ function WebhookRepoFormModal({
   const [providerType, setProviderType] = useState(initial?.providerType ?? PROVIDER_TYPES[0]);
   const [scope, setScope] = useState<WebhookScope>(initial?.scope ?? 'repo');
   const [target, setTarget] = useState(initial?.target ?? '');
-  const [secret, setSecret] = useState('');
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set after create/rotate — the one time the secret is visible; swaps the form for the reveal panel.
+  const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
 
   const scopeMeta = SCOPES.find((s) => s.value === scope)!;
   const valid = scope === 'org' ? /^[^/\s]+$/.test(target.trim()) : /^[^/\s]+\/[^/\s]+$/.test(target.trim());
@@ -214,28 +218,39 @@ function WebhookRepoFormModal({
       setError(scope === 'org' ? 'Organization must be an owner (no slash).' : 'Repository must be owner/repo.');
       return;
     }
-    if (!editing && !secret.trim()) {
-      setError('A webhook secret is required.');
-      return;
-    }
-
     const input: WebhookRepoInput = { providerType, scope, target: target.trim(), enabled };
-    if (secret.trim()) input.secret = secret;
-
     setBusy(true);
     setError(null);
     try {
       if (editing && initial) {
         await updateWebhookRepo(initial.id, input);
+        onSaved();
       } else {
-        await createWebhookRepo(input);
+        // The server mints the secret; reveal it once instead of closing.
+        setRevealed(await createWebhookRepo(input));
       }
-      onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function rotate() {
+    if (!initial) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setRevealed(await rotateWebhookSecret(initial.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (revealed) {
+    return <SecretRevealModal result={revealed} rotated={editing} onDone={onSaved} />;
   }
 
   return (
@@ -283,21 +298,22 @@ function WebhookRepoFormModal({
             <small className="field-hint">{scopeMeta.hint}</small>
           </label>
 
-          <label className="field">
-            <span>Webhook secret</span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              placeholder={editing ? 'leave blank to keep current' : 'the HMAC secret you set on the provider'}
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-            />
-            {editing && (
+          {editing && initial && (
+            <div className="field">
+              <span>Webhook secret</span>
+              <div className="secret-row">
+                <div className="mono field-static">Stored — write-only</div>
+                <button type="button" className="btn-ghost" onClick={rotate} disabled={busy}>
+                  <RotateCw size={14} />
+                  Rotate
+                </button>
+              </div>
               <small className="field-hint">
-                {initial?.hasSecret ? 'A secret is stored — leave blank to keep it.' : 'No secret stored yet.'}
+                The secret is never shown after creation. Rotate to mint a new one — paste it into the provider’s
+                webhook settings (the old value stops working).
               </small>
-            )}
-          </label>
+            </div>
+          )}
 
           {editing && initial && (
             <label className="field">
@@ -323,6 +339,78 @@ function WebhookRepoFormModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/** A read-only value with an always-visible, labelled Copy button that confirms on click. */
+function CopyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function copy() {
+    void navigator.clipboard?.writeText(value);
+    setCopied(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div className="field">
+      <span>{label}</span>
+      <div className="reveal-value">
+        <span className="mono">{value}</span>
+        <button type="button" className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copy}>
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      {hint && <small className="field-hint">{hint}</small>}
+    </div>
+  );
+}
+
+/** One-time reveal of a freshly minted secret + its payload URL — the only time the secret is visible. */
+function SecretRevealModal({
+  result,
+  rotated,
+  onDone,
+}: {
+  result: WebhookRepoSecret;
+  rotated: boolean;
+  onDone: () => void;
+}) {
+  const path = webhookPath(result.repo);
+  return (
+    <div className="modal-overlay" onClick={onDone}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <h3>{rotated ? 'New secret generated' : 'Webhook created'}</h3>
+          <button className="iconbtn" onClick={onDone} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="reveal-warn">
+            Copy the secret now — it won’t be shown again. Add both values to the provider’s webhook settings,
+            prefixing the path with your public webhook base (e.g. your Cloudflare tunnel URL).
+          </div>
+
+          <CopyField
+            label="Payload URL (path)"
+            value={path}
+            hint="Prefix with your public webhook base (e.g. your Cloudflare tunnel URL)."
+          />
+          <CopyField label="Secret" value={result.secret} />
+
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={onDone}>
+              Done
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

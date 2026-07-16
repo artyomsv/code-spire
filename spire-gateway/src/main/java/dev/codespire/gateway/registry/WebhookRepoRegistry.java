@@ -4,7 +4,6 @@ import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
-import jakarta.ws.rs.BadRequestException;
 
 import javax.sql.DataSource;
 import java.security.SecureRandom;
@@ -92,9 +91,9 @@ public class WebhookRepoRegistry {
     }
 
     @Transactional
-    public WebhookRepoView create(WebhookRepoInput in) {
+    public WebhookRepoSecret create(WebhookRepoInput in) {
         UUID id = UUID.randomUUID();
-        String secret = require(in.secret(), "secret");
+        String secret = newSecret(); // minted server-side, returned once (never client-supplied)
         String key = newWebhookKey();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
@@ -112,34 +111,50 @@ public class WebhookRepoRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create webhook repo", e);
         }
-        return get(id).orElseThrow();
+        return new WebhookRepoSecret(get(id).orElseThrow(), secret);
     }
 
     @Transactional
     public Optional<WebhookRepoView> update(UUID id, WebhookRepoInput in) {
+        // The secret is never touched here — it is rotated only via rotateSecret().
         try (Connection c = dataSource.getConnection()) {
             if (!exists(c, id)) {
                 return Optional.empty();
             }
-            boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
-            String sql = "UPDATE webhook_repo SET provider_type=?, scope=?, target=?, enabled=?, updated_at=now()"
-                    + (rotateSecret ? ", webhook_secret=?" : "") + " WHERE id=?";
-            try (PreparedStatement ps = c.prepareStatement(sql)) {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE webhook_repo SET provider_type=?, scope=?, target=?, enabled=?, updated_at=now() "
+                            + "WHERE id=?")) {
                 ps.setString(1, in.providerType());
                 ps.setString(2, in.scope());
                 ps.setString(3, in.target().trim());
                 ps.setBoolean(4, in.enabled() == null || in.enabled());
-                int idx = 5;
-                if (rotateSecret) {
-                    ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));
-                }
-                ps.setObject(idx, id);
+                ps.setObject(5, id);
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update webhook repo " + id, e);
         }
         return get(id);
+    }
+
+    /** Mint a fresh secret for an existing registration and return it once. Empty if unknown. */
+    @Transactional
+    public Optional<WebhookRepoSecret> rotateSecret(UUID id) {
+        String secret = newSecret();
+        try (Connection c = dataSource.getConnection()) {
+            if (!exists(c, id)) {
+                return Optional.empty();
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE webhook_repo SET webhook_secret=?, updated_at=now() WHERE id=?")) {
+                ps.setString(1, encryption.encryptString(secret, aad(id)));
+                ps.setObject(2, id);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to rotate webhook secret " + id, e);
+        }
+        return get(id).map(view -> new WebhookRepoSecret(view, secret));
     }
 
     @Transactional
@@ -184,14 +199,14 @@ public class WebhookRepoRegistry {
         return KEY_ENCODER.encodeToString(buf);
     }
 
-    private static String aad(UUID id) {
-        return "webhook:" + id;
+    /** A fresh 32-byte HMAC/token secret (base64url, unpadded), minted server-side and shown once. */
+    private static String newSecret() {
+        byte[] buf = new byte[32];
+        RANDOM.nextBytes(buf);
+        return KEY_ENCODER.encodeToString(buf);
     }
 
-    private static String require(String value, String field) {
-        if (value == null || value.isBlank()) {
-            throw new BadRequestException("Webhook repo '" + field + "' is required");
-        }
-        return value;
+    private static String aad(UUID id) {
+        return "webhook:" + id;
     }
 }
