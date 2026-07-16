@@ -581,6 +581,21 @@
     color: var(--text-3); font-size: 13.5px;
   }
 
+  /* Rich empty state for the webhooks card: icon badge + heading + guidance + CTA. */
+  .wh-empty {
+    padding: 48px 24px 44px; display: flex; flex-direction: column; align-items: center;
+    text-align: center; gap: 9px;
+  }
+  .wh-empty-icon {
+    width: 46px; height: 46px; margin-bottom: 6px; border-radius: 13px;
+    display: flex; align-items: center; justify-content: center; color: var(--iris);
+    background: var(--iris-soft);
+    border: 1px solid color-mix(in srgb, var(--iris) 26%, transparent);
+  }
+  .wh-empty-title { font-size: 14px; font-weight: 650; color: var(--text); letter-spacing: 0.01em; }
+  .wh-empty-text { margin: 0; max-width: 46ch; font-size: 12.5px; line-height: 1.6; color: var(--text-3); }
+  .wh-empty .btn { margin-top: 12px; }
+
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 18px; border-bottom: 1px solid var(--border);
@@ -618,7 +633,7 @@
   .prov-table .cell-r { text-align: right; }
   .prov-name { font-weight: 600; }
   .prov-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
-  .prov-note { margin: 0 0 14px; padding: 0 2px; font-size: 12.5px; line-height: 1.5; color: var(--text-3); max-width: 68ch; }
+  .prov-note { margin: 0; padding: 15px 18px 4px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); max-width: 76ch; }
   .prov-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
   .btn-danger { background: var(--crit); }

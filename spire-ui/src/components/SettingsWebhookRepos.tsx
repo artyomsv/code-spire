@@ -64,22 +64,42 @@ export default function SettingsWebhookRepos() {
           </Tooltip>
         </div>
 
-        <p className="prov-note">
-          One endpoint per registration, routed by its key. Scope it to a single{' '}
-          <strong>repository</strong> or a whole <strong>organization</strong> (one hook for every repo in
-          the org). Paste the shown <strong>Payload URL</strong> + <strong>Secret</strong> into the matching
-          webhook settings on the provider, prefixing the path with your public webhook base (e.g. your
-          Tailscale Funnel URL). The owner must match a provider you've registered under Settings →
-          Repositories.
-        </p>
+        {repos.length > 0 && (
+          <p className="prov-note">
+            Paste each row’s <strong>Payload URL</strong> + <strong>Secret</strong> into that repository or
+            organization’s webhook settings, prefixing the path with your public webhook base (e.g. your
+            Cloudflare tunnel URL). The owner must match a provider registered under Settings →
+            Repositories.
+          </p>
+        )}
 
         {error ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading && repos.length === 0 ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : repos.length === 0 ? (
-          <div className="prov-empty">
-            <span>No webhooks yet.</span>
+          <div className="wh-empty">
+            <div className="wh-empty-icon">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+            </div>
+            <div className="wh-empty-title">No webhooks yet</div>
+            <p className="wh-empty-text">
+              Register a repository or organization to get a unique payload URL and secret. Paste them
+              into the provider’s webhook settings and every pull request flows in automatically — no
+              per-repo setup after that.
+            </p>
             <button className="btn" onClick={() => setForm('new')}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                 <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
