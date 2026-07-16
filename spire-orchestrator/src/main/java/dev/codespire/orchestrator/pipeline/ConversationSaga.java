@@ -14,7 +14,6 @@ import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.util.List;
 import java.util.Optional;
@@ -47,10 +46,6 @@ public class ConversationSaga {
     @Inject
     TimelineBroadcaster timeline;
 
-    /** Max bot replies per thread before deferring to the team (spec §8). Tuning knob; safe default. */
-    @ConfigProperty(name = "spire.conversation.turn-cap", defaultValue = "4")
-    int turnCap;
-
     /** The AnswerFollowUp to emit for a non-bot reply, or empty when policy says stay quiet. */
     public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
         Optional<ScmProvider> providerOpt = providers.resolveByWorkspace(e.repo().workspace());
@@ -67,7 +62,7 @@ public class ConversationSaga {
 
         // botIsAuthor is already false here — IntegrationSaga drops bot-authored replies before calling.
         ConversationPolicy.ConversationDecision decision = ConversationPolicy.decide(
-                level, authorAllowed, false, threadIsOurs, botMentioned, priorTurns, turnCap);
+                level, authorAllowed, false, threadIsOurs, botMentioned, priorTurns, levels.turnCap());
         if (decision.capReached()) {
             timeline.record("integration", "conversation:cap", e.reviewId(),
                     "turn cap reached — deferring to the team");
@@ -85,7 +80,8 @@ public class ConversationSaga {
         }
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), e.threadRef(), e.commentId(), e.text(),
-                workerCredentials.pack(provider), llmCred.get(), botMentioned));
+                workerCredentials.pack(provider), llmCred.get(), botMentioned,
+                levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor()));
     }
 
     /**

@@ -24,7 +24,6 @@ import dev.codespire.worker.adapters.WorkerLlmProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.io.IOException;
@@ -54,15 +53,12 @@ public class FollowUpWorker {
     @Inject
     ResultsEmitter results;
 
-    /** In-worker attempts on a transient SCM/LLM failure before the command is dead-lettered to cs.dlq. */
-    @ConfigProperty(name = "spire.conversation.max-attempts", defaultValue = "3")
-    int maxAttempts;
-
     /** The parsed answer + the id of the reply the bot posted. */
     public record FollowUpResult(String answerText, String postedCommentId) {
     }
 
     public void answer(AnswerFollowUp command) {
+        int maxAttempts = Math.max(1, command.maxAttempts());
         RuntimeException lastFailure = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
@@ -74,7 +70,7 @@ public class FollowUpWorker {
                 if (attempt < maxAttempts && isTransient(cause)) {
                     LOG.warnf("Follow-up attempt %d/%d for %s failed transiently (%s) — retrying",
                             attempt, maxAttempts, command.reviewId(), cause.getMessage());
-                    backoff(attempt);
+                    backoff(attempt, command.backoffBaseMs(), command.backoffFactor());
                     continue;
                 }
                 break; // non-retryable, or attempts exhausted
@@ -119,9 +115,12 @@ public class FollowUpWorker {
         results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId()));
     }
 
-    private static void backoff(int attempt) {
+    /** {@code min(cap, base * factor^(attempt-1))} — the base/factor are the command's runtime-configured
+     * retry policy (ADR: conversation settings), packed by the orchestrator from {@code app_setting}. */
+    private static void backoff(int attempt, long backoffBaseMs, double backoffFactor) {
+        long sleepMs = (long) Math.min(60_000L, backoffBaseMs * Math.pow(backoffFactor, attempt - 1));
         try {
-            Thread.sleep(Math.min(4_000L, 500L * (1L << (attempt - 1)))); // 500ms, 1s, 2s … capped at 4s
+            Thread.sleep(sleepMs);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }

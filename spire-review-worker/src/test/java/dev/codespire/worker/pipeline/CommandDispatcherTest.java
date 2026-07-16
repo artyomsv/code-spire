@@ -111,7 +111,7 @@ class CommandDispatcherTest {
     @Test
     void answerFollowUpRoutesToTheFollowUpWorker() {
         dispatcher.on(new AnswerFollowUp(REVIEW_ID, REPO, 7,
-                new ThreadRef("comment-1"), "comment-1", "why?", null, null, false));
+                new ThreadRef("comment-1"), "comment-1", "why?", null, null, false, 3, 500L, 2.0));
         assertEquals(List.of("answerFollowUp"), calls);
     }
 
