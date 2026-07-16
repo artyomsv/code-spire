@@ -9,8 +9,26 @@ import {
   type ProviderInput,
   type ProviderView,
 } from '../api';
+import ConversationLevelSetting from './ConversationLevelSetting';
 import IconButton from './IconButton';
 import Tooltip from './Tooltip';
+
+// Options for the per-provider conversation-level override ('' = inherit the global default).
+const CONVERSATION_OPTIONS = ['', 'REPORT_ONLY', 'EXPLAIN', 'INTERACTIVE'] as const;
+
+/** Human label for a conversation level; '' / null / unknown = inherit the global default. */
+export function conversationLabel(level: string | null | undefined): string {
+  switch (level) {
+    case 'REPORT_ONLY':
+      return 'Report-only';
+    case 'EXPLAIN':
+      return 'Explain';
+    case 'INTERACTIVE':
+      return 'Interactive';
+    default:
+      return 'Inherit (global)';
+  }
+}
 
 // Provider types and their default API base URLs. When a user switches type
 // without having customised the base URL, we swap in the matching default.
@@ -83,6 +101,9 @@ export default function SettingsProviders() {
 
   return (
     <section className="content">
+      <div className="card">
+        <ConversationLevelSetting />
+      </div>
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">Repositories</h2>
@@ -250,6 +271,7 @@ function ProviderFormModal({
   const [authUsername, setAuthUsername] = useState(initial?.authUsername ?? '');
   const [secret, setSecret] = useState('');
   const [botAccountId, setBotAccountId] = useState(initial?.botAccountId ?? '');
+  const [conversationLevel, setConversationLevel] = useState(initial?.conversationLevel ?? '');
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [authors, setAuthors] = useState<string[]>(initial?.authors ?? []);
   const [authorDraft, setAuthorDraft] = useState('');
@@ -312,6 +334,7 @@ function ProviderFormModal({
       botAccountId: botAccountId.trim(),
       enabled,
       authors: finalAuthors,
+      conversationLevel: conversationLevel || undefined,
     };
     if (secret.trim()) input.secret = secret;
 
@@ -406,6 +429,20 @@ function ProviderFormModal({
               )}
             </label>
           </div>
+
+          <label className="field">
+            <span>Conversation level</span>
+            <select value={conversationLevel} onChange={(e) => setConversationLevel(e.target.value)}>
+              {CONVERSATION_OPTIONS.map((lvl) => (
+                <option key={lvl || 'inherit'} value={lvl}>
+                  {conversationLabel(lvl)}
+                </option>
+              ))}
+            </select>
+            <small className="field-hint">
+              How deeply the bot converses in this provider&apos;s review threads. Inherit uses the global default.
+            </small>
+          </label>
 
           {authKind === 'basic' && (
             <label className="field">
