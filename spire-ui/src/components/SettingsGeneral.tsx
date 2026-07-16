@@ -1,6 +1,6 @@
-import ConversationLevelSetting from './ConversationLevelSetting';
+import ConversationSettings from './ConversationSettings';
 
-/** General preferences — small global options (conversation level; future toggles land here). */
+/** General preferences — small global options (conversation tuning; future toggles land here). */
 export default function SettingsGeneral() {
   return (
     <section className="content">
@@ -9,7 +9,7 @@ export default function SettingsGeneral() {
           <h2 className="prov-title">General</h2>
         </div>
         <div style={{ padding: '4px 18px 18px' }}>
-          <ConversationLevelSetting />
+          <ConversationSettings />
         </div>
       </div>
     </section>

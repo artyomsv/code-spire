@@ -354,27 +354,31 @@ export async function setReviewMode(mode: ReviewMode): Promise<ReviewModeView> {
   return res.json();
 }
 
-// ---- conversation level (global default) ----
+// ---- conversation settings (global default level + turn cap + retry/backoff) ----
 
 export type ConversationLevel = 'REPORT_ONLY' | 'EXPLAIN' | 'INTERACTIVE';
 
-export interface ConversationLevelView {
+export interface ConversationSettings {
   level: ConversationLevel;
+  turnCap: number;
+  maxAttempts: number;
+  backoffBaseMs: number;
+  backoffFactor: number;
 }
 
-export async function getConversationDefault(): Promise<ConversationLevelView> {
-  const res = await fetch('/api/settings/conversation-level');
-  if (!res.ok) return throwResponse(res, 'Failed to load conversation level');
+export async function getConversationSettings(): Promise<ConversationSettings> {
+  const res = await fetch('/api/settings/conversation');
+  if (!res.ok) return throwResponse(res, 'Failed to load conversation settings');
   return res.json();
 }
 
-export async function setConversationDefault(level: ConversationLevel): Promise<ConversationLevelView> {
-  const res = await fetch('/api/settings/conversation-level', {
+export async function setConversationSettings(settings: ConversationSettings): Promise<ConversationSettings> {
+  const res = await fetch('/api/settings/conversation', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ level }),
+    body: JSON.stringify(settings),
   });
-  if (!res.ok) return throwResponse(res, 'Failed to update conversation level');
+  if (!res.ok) return throwResponse(res, 'Failed to update conversation settings');
   return res.json();
 }
 
