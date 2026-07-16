@@ -4,6 +4,8 @@ import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.event.ReviewIds;
@@ -150,6 +152,12 @@ public class ResultSaga {
                     threads.markOurThread(e.reviewId(), new ThreadRef(inline.commentId()));
                 }
             }
+            case FollowUpGenerated e -> projection.appendEvent(e.reviewId(), "result",
+                    "FollowUpGenerated", "follow-up answered");
+            case FollowUpPosted e -> {
+                threads.bumpTurn(e.reviewId(), e.threadRef(), e.commentId());
+                lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
+            }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -272,6 +280,8 @@ public class ResultSaga {
             case ContextAssembled e -> e.reviewId();
             case ReviewGenerated e -> e.reviewId();
             case CommentsPosted e -> e.reviewId();
+            case FollowUpGenerated e -> e.reviewId();
+            case FollowUpPosted e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             default -> "";
         };

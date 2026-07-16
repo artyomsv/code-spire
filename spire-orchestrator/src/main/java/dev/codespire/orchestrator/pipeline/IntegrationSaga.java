@@ -58,6 +58,9 @@ public class IntegrationSaga {
     @Inject
     WorkerCredentials workerCredentials;
 
+    @Inject
+    ConversationSaga conversation;
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -91,7 +94,7 @@ public class IntegrationSaga {
                 if (isBotAuthored(e.repo().workspace(), e.author())) {
                     dropSelfLoop(e.reviewId(), "reply");
                 } else {
-                    LOG.debugf("Author reply received on %s — handled in P2", e.reviewId());
+                    conversation.planFollowUp(e).ifPresent(commands::emit);
                 }
             }
             default -> LOG.debugf("No integration reaction for %s", event.getClass().getSimpleName());
