@@ -1,6 +1,7 @@
 package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
@@ -32,6 +33,9 @@ public class CommandDispatcher {
     @Inject
     ReviewWorker reviewWorker;
 
+    @Inject
+    FollowUpWorker followUpWorker;
+
     @Incoming("commands-in")
     // ordered (default): redelivered/interleaved same-review commands must not
     // race each other (finding H3). Cross-PR concurrency comes from topic
@@ -51,6 +55,7 @@ public class CommandDispatcher {
                 case GatherContext c -> contextWorker.gatherContext(c);
                 case GenerateReview c -> reviewWorker.generateReview(c);
                 case PostComments c -> reviewWorker.postComments(c);
+                case AnswerFollowUp c -> followUpWorker.answer(c);
                 default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
             }
         } finally {

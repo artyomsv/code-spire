@@ -44,10 +44,14 @@ dependencies {
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
     testImplementation("org.wiremock:wiremock:3.13.2")
+    testImplementation("org.mockito:mockito-core") // version managed by the Quarkus platform BOM
 }
 
 tasks.test {
     useJUnitPlatform()
+    // Mockito's bundled Byte Buddy predates JDK 25 bytecode (class-file 69) support; the
+    // experimental flag lets it mock under the JDK-25 toolchain. Test-only, no runtime effect.
+    systemProperty("net.bytebuddy.experimental", "true")
 }
 
 // quarkusDev runs with the module dir as CWD, but the single dev-env .env lives
