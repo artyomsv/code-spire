@@ -85,7 +85,7 @@ public class ConversationSaga {
         }
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), e.threadRef(), e.commentId(), e.text(),
-                workerCredentials.pack(provider), llmCred.get()));
+                workerCredentials.pack(provider), llmCred.get(), botMentioned));
     }
 
     /**

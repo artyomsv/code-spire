@@ -39,4 +39,24 @@ class GitHubThreadFetchTest {
         assertFalse(t.messages().get(1).fromBot());
         assertEquals("why?", t.messages().get(1).text());
     }
+
+    @Test
+    void aTransientFailureResolvingTheBotLoginStillReturnsTheThread() throws Exception {
+        GitHubClient client = mock(GitHubClient.class);
+        // GitHub 503s on the non-essential /user lookup — the follow-up must still be answerable.
+        when(client.getJson("/user")).thenThrow(new GitHubApiException(503, "GET", "/user", "Unicorn"));
+        when(client.getJson("/repos/artyomsv/spire-test/pulls/5/comments?per_page=100&page=1")).thenReturn(mapper.readTree("""
+                [ { "id": 100, "in_reply_to_id": null, "path": "src/App.java", "original_line": 42,
+                    "commit_id": "abc123", "body": "@code-spire what about this?", "user": { "login": "octocat" },
+                    "created_at": "2026-07-16T10:00:00Z" } ]
+                """));
+
+        GitHubCommentSink sink = new GitHubCommentSink(client);
+        ThreadTranscript t = sink.fetchThread(new RepoRef("artyomsv", "spire-test"), 5, new ThreadRef("100"));
+
+        assertEquals("src/App.java", t.path());
+        assertEquals("abc123", t.commit());
+        assertEquals(1, t.messages().size());
+        assertFalse(t.messages().get(0).fromBot());           // login unknown -> best-effort, not the bot
+    }
 }

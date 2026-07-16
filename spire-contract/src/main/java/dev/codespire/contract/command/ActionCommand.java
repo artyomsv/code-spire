@@ -93,6 +93,6 @@ public sealed interface ActionCommand {
      */
     record AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String triggeringCommentId, String question,
-                          String scmCredential, String llmCredential) implements ActionCommand {
+                          String scmCredential, String llmCredential, boolean mentioned) implements ActionCommand {
     }
 }

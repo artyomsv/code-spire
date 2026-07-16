@@ -98,9 +98,22 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         return "/repos/" + repo.workspace() + "/" + repo.slug() + "/issues/" + prId + "/comments";
     }
 
+    /**
+     * Best-effort token-owner login, used only to label the bot's OWN turns in the follow-up prompt. A
+     * transient GitHub failure here (e.g. a 503) must not sink the whole reply, so it degrades to "" — the
+     * conversation is still answered, the prompt just doesn't distinguish the bot's prior messages.
+     */
+    private String botLogin() {
+        try {
+            return client.getJson("/user").path("login").asText("");
+        } catch (RuntimeException transientFailure) {
+            return "";
+        }
+    }
+
     @Override
     public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
-        String botLogin = client.getJson("/user").path("login").asText("");
+        String botLogin = botLogin();
         String root = thread.value();
         String path = "";
         int line = 0;
