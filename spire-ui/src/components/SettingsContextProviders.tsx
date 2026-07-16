@@ -216,7 +216,7 @@ export default function SettingsContextProviders() {
       {testProvider && <PreviewModal provider={testProvider} onClose={() => setTestProvider(null)} />}
 
       {confirmDelete && (
-        <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Delete “{confirmDelete.name}”?</h3>
             <p style={{ color: 'var(--text-3)', fontSize: 13 }}>This cannot be undone.</p>
@@ -323,7 +323,7 @@ function ContextProviderForm({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{editing ? 'Edit context provider' : 'Add context provider'}</h3>
         <form className="modal-body" onSubmit={submit}>
@@ -439,7 +439,7 @@ function PreviewModal({ provider, onClose }: { provider: ContextProviderView; on
   const hint = copy.previewPlaceholder(provider.projectKeys);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>Test context — {provider.name}</h3>
         <form className="modal-body" onSubmit={run}>

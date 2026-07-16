@@ -6,6 +6,7 @@ import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
 import ReviewModeToggle from './components/ReviewModeToggle';
+import SettingsGeneral from './components/SettingsGeneral';
 import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
 import SettingsContextProviders from './components/SettingsContextProviders';
@@ -24,23 +25,26 @@ export default function App() {
   const { reviews, loading, error } = useLiveReviews();
   const location = useLocation();
   const navigate = useNavigate();
+  const onGeneral = location.pathname.startsWith('/settings/general');
   const onProviders = location.pathname.startsWith('/settings/providers');
   const onLlm = location.pathname.startsWith('/settings/llm');
   const onContext = location.pathname.startsWith('/settings/context');
   const onWebhooks = location.pathname.startsWith('/settings/webhooks');
-  const onSettings = onProviders || onLlm || onContext || onWebhooks;
+  const onSettings = onGeneral || onProviders || onLlm || onContext || onWebhooks;
   const onReviews = location.pathname === '/';
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
-    : onProviders
-      ? 'Repositories'
-      : onLlm
-        ? 'LLM'
-        : onContext
-          ? 'Context'
-          : onWebhooks
-            ? 'Webhooks'
-            : 'Reviews';
+    : onGeneral
+      ? 'General'
+      : onProviders
+        ? 'Repositories'
+        : onLlm
+          ? 'LLM'
+          : onContext
+            ? 'Context'
+            : onWebhooks
+              ? 'Webhooks'
+              : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -66,6 +70,14 @@ export default function App() {
             Reviews
           </a>
           <div className="label">Configure</div>
+          <a className={onGeneral ? 'active' : ''} href="#/settings/general">
+            <svg className="ic" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4h9M2 8h12M2 12h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <circle cx="13" cy="4" r="1.6" stroke="currentColor" strokeWidth="1.4" />
+              <circle cx="9" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.4" />
+            </svg>
+            General
+          </a>
           <a className={onContext ? 'active' : ''} href="#/settings/context">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <ellipse cx="8" cy="3.6" rx="5" ry="2.1" stroke="currentColor" strokeWidth="1.4" />
@@ -161,6 +173,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ReviewsList reviews={reviews} loading={loading} error={error} />} />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
+          <Route path="/settings/general" element={<SettingsGeneral />} />
           <Route path="/settings/providers" element={<SettingsProviders />} />
           <Route path="/settings/webhooks" element={<SettingsWebhookRepos />} />
           <Route path="/settings/llm" element={<SettingsLlmProviders />} />

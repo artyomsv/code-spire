@@ -254,7 +254,7 @@ function WebhookRepoFormModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3>{editing ? 'Edit webhook' : 'Add webhook'}</h3>
@@ -384,7 +384,7 @@ function SecretRevealModal({
 }) {
   const path = webhookPath(result.repo);
   return (
-    <div className="modal-overlay" onClick={onDone}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3>{rotated ? 'New secret generated' : 'Webhook created'}</h3>
@@ -442,7 +442,7 @@ function DeleteConfirmModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3>Delete webhook</h3>

@@ -633,7 +633,7 @@
   .prov-table .cell-r { text-align: right; }
   .prov-name { font-weight: 600; }
   .prov-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
-  .prov-note { margin: 0; padding: 15px 18px 4px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); max-width: 76ch; }
+  .prov-note { margin: 0; padding: 15px 18px 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
   .prov-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
   .btn-danger { background: var(--crit); }

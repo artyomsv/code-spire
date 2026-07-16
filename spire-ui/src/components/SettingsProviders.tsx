@@ -9,7 +9,6 @@ import {
   type ProviderInput,
   type ProviderView,
 } from '../api';
-import ConversationLevelSetting from './ConversationLevelSetting';
 import IconButton from './IconButton';
 import Tooltip from './Tooltip';
 
@@ -102,9 +101,6 @@ export default function SettingsProviders() {
   return (
     <section className="content">
       <div className="card">
-        <ConversationLevelSetting />
-      </div>
-      <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">Repositories</h2>
           <Tooltip label="Add provider">
@@ -140,6 +136,7 @@ export default function SettingsProviders() {
                 <th>Connection</th>
                 <th className="cell-r">Authors</th>
                 <th>Enabled</th>
+                <th>Conversation</th>
                 <th></th>
               </tr>
             </thead>
@@ -174,6 +171,9 @@ export default function SettingsProviders() {
                       <span className="glyph"></span>
                       {p.enabled ? 'Enabled' : 'Disabled'}
                     </span>
+                  </td>
+                  <td>
+                    <span className="prov-sub">{conversationLabel(p.conversationLevel)}</span>
                   </td>
                   <td>
                     <div className="prov-actions">
@@ -355,7 +355,7 @@ function ProviderFormModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3>{editing ? 'Edit provider' : 'Add provider'}</h3>
@@ -551,7 +551,7 @@ function DeleteConfirmModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3>Delete provider</h3>
