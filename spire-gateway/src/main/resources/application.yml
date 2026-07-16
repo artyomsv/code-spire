@@ -27,10 +27,10 @@ quarkus:
           env:
             value: ${quarkus.profile}
 
-# The legacy single-secret /webhooks/bitbucket edge is OFF unless its webhook secret
-# is set (SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET). No provider flag — which SCMs are
-# reviewed is the UI registry. The per-repo registry edges (/webhooks/github/{key})
-# are separate resources and need none of this.
+# Every SCM webhook is a per-repo registry edge routed by key
+# (/webhooks/{provider}/{key}) — the secret is resolved per registration from the
+# gateway's own webhook_repo table. Which SCMs are reviewed is the UI registry; no
+# provider flag or global webhook secret exists.
 
 # cs.integration: keyed by reviewId, JSON-serialized IntegrationEvent
 # (CONTRACT §9). Broker address comes from KAFKA_BOOTSTRAP_SERVERS

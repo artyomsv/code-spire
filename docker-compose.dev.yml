@@ -181,8 +181,9 @@ services:
   # QUICK tunnel: no Cloudflare account, no domain. Every start mints a FRESH
   # https://<random>.trycloudflare.com and the previous one dies — so grab the URL
   # and (re-)register it in each SCM's webhook config after every (re)start:
-  #   Bitbucket:  https://<random>.trycloudflare.com/webhooks/bitbucket
-  #   GitHub:     https://<random>.trycloudflare.com/webhooks/github/<registry-key>
+  # Every provider is a keyed registry edge — register under Settings -> Webhooks to
+  # mint the <key>, then paste https://<random>.trycloudflare.com/webhooks/<provider>/<key>
+  # (provider = bitbucket-cloud | github | gitlab) into that provider's webhook config.
   #
   # Opt-in via the `tunnel` profile so a plain `up` never exposes the gateway:
   #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile tunnel up --watch --build

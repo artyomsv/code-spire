@@ -67,8 +67,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 - **Provider registry + multi-SCM delivered:** encrypted provider registry with Settings ->
   Providers CRUD (`ProviderResource`; secrets never returned — `hasSecret` only), bot identity
   auto-resolved from the token on save (`IdentitySource` / `ProviderIdentityResolver`),
-  `spire-scm-github` adapter (client, diff source, comment sink — manual-register pull mode;
-  webhook ingress not built yet, tracked in `techdebt/spire-scm-github/`), review modes
+  `spire-scm-github` adapter (client, diff source, comment sink), review modes
   `SPIRE_REVIEW_MODE=active|observe`, bounded auto-retry per review
   (`SPIRE_REVIEW_MAX_ATTEMPTS`, ADR-016), per-provider PR-author allowlist in the DB.
 - **`spire-ui` delivered:** React/Vite dashboard (reviews list/detail with live WebSocket
@@ -96,6 +95,16 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Per-instance **project keys** (`ACME`) narrow candidate keys; a live **connectivity check**
   (`/{id}/check`) and a **preview/test** endpoint (`/{id}/preview` — resolve a ticket number via the
   pattern and show the exact `ContextItem` a review would inject) back the Settings → Context UI.
+- **Unified keyed webhook ingress (2026-07-16):** all three SCMs now share the gateway's
+  per-repo registry edge `/webhooks/{provider}/{key}` (key resolves the encrypted per-repo
+  secret + scope from `webhook_repo`). `GitLabIngress` added (`X-Gitlab-Token` constant-time
+  compare — GitLab does not sign the body — + Merge Request / Note translation; `update`⇒UPDATED
+  only when `oldrev` is present) with `GitLabWebhookResource`; the shared `RegistryWebhookEdge`
+  (resolve→verify→translate→scope→publish) backs the GitHub, GitLab and Bitbucket resources. The
+  **legacy single-secret `/webhooks/bitbucket` edge was removed** (`WebhookResource` +
+  `GatewayScmProducer` + `SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET`) — Bitbucket now registers like the
+  others (`bitbucket-cloud` provider). Dev webhook exposure: opt-in Cloudflare quick-tunnel
+  service (`--profile tunnel`) forwarding to `gateway:39281`.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 

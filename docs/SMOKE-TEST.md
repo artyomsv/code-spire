@@ -88,11 +88,16 @@ cloudflared tunnel --url http://localhost:34081     # or: ngrok http 34081
 ```
 Note the public https URL it prints.
 
-### 4. Repo webhook
+### 4. Register the webhook
 
-On the TEST repo: *Settings -> Webhooks -> Add*:
-- URL: `https://<tunnel-host>/webhooks/bitbucket`
-- Secret: generate one (e.g. `openssl rand -hex 24`) — you'll put the same value in `.env`
+First in Code Spire (*Settings -> Webhooks -> Add*): provider `bitbucket-cloud`,
+scope `Repository`, target `workspace/repo`, and a secret you generate
+(e.g. `openssl rand -hex 24`). Save — it shows the routing path
+`/webhooks/bitbucket-cloud/<key>`.
+
+Then on the TEST repo (*Settings -> Webhooks -> Add*):
+- URL: `https://<tunnel-host>/webhooks/bitbucket-cloud/<key>`
+- Secret: the **same** value you entered in the UI above
 - Triggers: Pull request **Created**, **Updated**, **Comment created**, **Merged**, **Declined**
 
 ### 5. `.env`
@@ -100,8 +105,6 @@ On the TEST repo: *Settings -> Webhooks -> Add*:
 Append to your Mode-A `.env` (drop the `SPIRE_SCM_STUB` line — this is a real SCM):
 ```bash
 SPIRE_LLM_PROVIDER=openai-compatible
-
-SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET=<webhook-secret>     # presence enables the /webhooks/bitbucket edge
 
 SPIRE_LLM_BASE_URL=<endpoint>/v1
 SPIRE_LLM_API_KEY=<key>
