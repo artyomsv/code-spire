@@ -85,11 +85,18 @@ export default function App() {
             Repositories
           </a>
           <a className={onWebhooks ? 'active' : ''} href="#/settings/webhooks">
-            <svg className="ic" viewBox="0 0 16 16" fill="none">
+            <svg className="ic" viewBox="0 0 24 24" fill="none">
               <path
-                d="M6 5.2a2.4 2.4 0 1 1 3.1 2.3l-1.4 2.4M5.2 8.1 3.4 11a2.4 2.4 0 1 0 2.2 1.3h2.9M10.9 8.2l1.7 2.9a2.4 2.4 0 1 0-1.3-.4"
+                d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
                 stroke="currentColor"
-                strokeWidth="1.4"
+                strokeWidth="2.1"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+                stroke="currentColor"
+                strokeWidth="2.1"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -97,19 +104,21 @@ export default function App() {
             Webhooks
           </a>
           <a className={onLlm ? 'active' : ''} href="#/settings/llm">
-            <svg className="ic" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M7.6 2.2 8.7 5.4 11.9 6.5 8.7 7.6 7.6 10.8 6.5 7.6 3.3 6.5 6.5 5.4z"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M12 9.6 12.55 11.05 14 11.6 12.55 12.15 12 13.6 11.45 12.15 10 11.6 11.45 11.05z"
-                stroke="currentColor"
-                strokeWidth="1.1"
-                strokeLinejoin="round"
-              />
+            <svg
+              className="ic"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 8V4H8" />
+              <rect width="16" height="12" x="4" y="8" rx="2" />
+              <path d="M2 14h2" />
+              <path d="M20 14h2" />
+              <path d="M15 13v2" />
+              <path d="M9 13v2" />
             </svg>
             LLM
           </a>
