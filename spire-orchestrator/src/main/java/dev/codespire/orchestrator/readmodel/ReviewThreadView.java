@@ -48,6 +48,20 @@ public class ReviewThreadView {
         }
     }
 
+    public void markOurThread(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO review_thread (review_id, thread_ref, is_ours) VALUES (?, ?, TRUE)
+                     ON CONFLICT (review_id, thread_ref) DO UPDATE SET is_ours = TRUE
+                     """)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to mark owned thread", e);
+        }
+    }
+
     public boolean isOurThread(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(

@@ -12,6 +12,7 @@ import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
@@ -52,6 +53,9 @@ public class ResultSaga {
 
     @Inject
     ReviewProjection projection;
+
+    @Inject
+    dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
 
     @Inject
     dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
@@ -141,6 +145,10 @@ public class ResultSaga {
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_POSTING);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordCommentsPosted(
                         e.commit(), e.summaryCommentId(), e.inline().size()));
+                // Scope A: every inline finding's comment id is a thread we own — a reply there engages the bot.
+                for (CommentsPosted.PostedInline inline : e.inline()) {
+                    threads.markOurThread(e.reviewId(), new ThreadRef(inline.commentId()));
+                }
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());

@@ -21,4 +21,13 @@ class ReviewThreadViewIT {
         threads.bumpTurn(reviewId, t, "203");
         assertEquals(2, threads.turnCount(reviewId, t));
     }
+
+    @Test
+    void markingAThreadOwnedMakesItOurs() {
+        String reviewId = "review::artyomsv/spire-test#9";
+        ThreadRef t = new ThreadRef("777");
+        assertFalse(threads.isOurThread(reviewId, t));
+        threads.markOurThread(reviewId, t);
+        assertTrue(threads.isOurThread(reviewId, t));
+    }
 }
