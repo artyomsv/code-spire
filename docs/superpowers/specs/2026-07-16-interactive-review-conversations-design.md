@@ -42,6 +42,14 @@ The bot engages in a thread when **either** holds (scope "A+B"):
 Triggers inside those threads are **both**: plain natural-language replies **and** explicit inline
 `/commands` (e.g. `/explain`, `/why`, `/resolve`). Anything outside A+B is ignored.
 
+> **Plan-1 deferral.** At level 2 (Explain) an inline command and a plain reply are behaviorally
+> identical — both mean "answer this thread" — so **Plan 1 answers every in-scope reply as natural
+> language and gives `/commands` no distinct handling** (a `/explain` reply is still answered; it is
+> simply treated as text). Explicit command *semantics* are introduced with **Plan 2**, where they map
+> to distinct verdict actions (`/resolve` collapses the thread, `/dismiss`/`/withdraw` changes the
+> verdict) — the only point at which a command means something a reply does not. This defers the
+> A/command *split*, not the capability: no in-scope reply is ignored in the meantime.
+
 ## 4. Event flow — the orchestrator holds all policy
 
 The internet-facing gateway stays **stateless and dumb**: each `ScmIngress` emits `AuthorReplied` for any
