@@ -130,16 +130,7 @@ export async function registerPr(body: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    let msg = `Register failed (${res.status})`;
-    try {
-      const text = await res.text();
-      if (text) msg = text;
-    } catch {
-      /* keep default */
-    }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw new Error(await errorMessage(res, 'Register failed'));
   return res.json();
 }
 
@@ -199,16 +190,29 @@ export interface ProviderInput {
   authors: string[];
 }
 
-/** Read the response body as text and throw it as an error (falls back to status). */
-async function throwResponse(res: Response, fallback: string): Promise<never> {
-  let msg = `${fallback} (${res.status})`;
+/**
+ * Build a concise error message from a failed response. An app error body (plain
+ * text / JSON — e.g. "Repository must be owner/repo") is surfaced as-is; an HTML body
+ * (a Quarkus dev-error page, a 502 from a down service, a proxy page) is NOT a
+ * user-facing message, so it collapses to the fallback + status instead of dumping a
+ * wall of markup into the UI.
+ */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  const withStatus = `${fallback} (${res.status})`;
   try {
-    const text = await res.text();
-    if (text) msg = text;
+    const contentType = res.headers.get('content-type') ?? '';
+    const text = (await res.text()).trim();
+    if (!text) return withStatus;
+    if (contentType.includes('text/html') || text.startsWith('<')) return withStatus;
+    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
   } catch {
-    /* keep default */
+    return withStatus;
   }
-  throw new Error(msg);
+}
+
+/** Read the response body and throw a concise error (HTML pages collapse to status). */
+async function throwResponse(res: Response, fallback: string): Promise<never> {
+  throw new Error(await errorMessage(res, fallback));
 }
 
 export async function fetchProviders(): Promise<ProviderView[]> {
