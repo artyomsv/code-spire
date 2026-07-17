@@ -153,7 +153,7 @@ public class ResultSaga {
                 }
             }
             case FollowUpGenerated e -> projection.appendEvent(e.reviewId(), "result",
-                    "FollowUpGenerated", "follow-up answered");
+                    "FollowUpGenerated", Previews.of(e.answerText()));
             case FollowUpPosted e -> {
                 threads.bumpTurn(e.reviewId(), e.threadRef(), e.commentId());
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));

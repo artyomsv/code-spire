@@ -94,7 +94,12 @@ public class IntegrationSaga {
                 if (isBotAuthored(e.repo().workspace(), e.author())) {
                     dropSelfLoop(e.reviewId(), "reply");
                 } else {
-                    conversation.planFollowUp(e).ifPresent(commands::emit);
+                    conversation.planFollowUp(e).ifPresent(cmd -> {
+                        String author = e.author() == null ? "unknown" : e.author().username();
+                        projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
+                                "@" + author + ": " + Previews.of(e.text()));
+                        commands.emit(cmd);
+                    });
                 }
             }
             default -> LOG.debugf("No integration reaction for %s", event.getClass().getSimpleName());

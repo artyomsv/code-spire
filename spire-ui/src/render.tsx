@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Cpu } from 'lucide-react';
+import { Bot, Cpu } from 'lucide-react';
 import { RiOpenaiFill } from 'react-icons/ri';
 import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
@@ -433,6 +433,44 @@ export function metaCard(r: ReviewDetail) {
           <dt>Attempt</dt>
           <dd>{r.attempt}</dd>
         </dl>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The bot's thread conversation, reshaped from the timeline into a threaded exchange: an
+ * `AuthorReplied` reads as a reply from the PR author, a `FollowUpGenerated` as the bot's
+ * answer. ADR-011 — only the ≤160-char preview persisted on each event is shown; the full
+ * thread stays on the SCM. Renders nothing when the review has no conversation turns yet.
+ */
+export function conversationCard(r: ReviewDetail) {
+  const turns = r.events.filter((e: ReviewEvent) => e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated');
+  if (!turns.length) return null;
+  return (
+    <div className="card">
+      <div className="head">
+        <span className="k">//</span>
+        <h3>Conversation</h3>
+        <span className="badge">{turns.length}</span>
+      </div>
+      <div className="body">
+        <div className="convo">
+          {turns.map((e: ReviewEvent, i: number) => {
+            const isBot = e.type === 'FollowUpGenerated';
+            return (
+              <div key={i} className={`convo-turn ${isBot ? 'bot' : 'reply'}`}>
+                <span className="convo-glyph" aria-hidden="true">
+                  {isBot ? <Bot size={13} /> : '↩'}
+                </span>
+                <div className="convo-body">
+                  <div className="convo-det">{e.det}</div>
+                  <div className="convo-at">{e.at}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
