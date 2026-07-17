@@ -558,8 +558,29 @@ public class ReviewProjection {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, blockerCount(r),
                 r.updatedAt, r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                parseFindings(r.findingsJson, r.id), usageView(r), llmCalls, r.note,
+                parseFindings(r.findingsJson, r.id), usageView(r), withReviewCall(r, llmCalls), r.note,
                 decryptError(r.errorDetail, r.id), events);
+    }
+
+    /**
+     * Guarantee the review's own generation call leads the cost breakdown. Reviews created before
+     * per-call tracking ({@code review_llm_call}) existed hold their usage only on the review_status
+     * row; once follow-ups add rows, the breakdown would render those but silently drop the initial
+     * review. Synthesize the missing {@code review} call from the stored review usage — the same real
+     * figures already surfaced as the legacy single-usage view — and put it first (it ran first).
+     */
+    private List<ReviewDetail.LlmCall> withReviewCall(ReviewRow r, List<ReviewDetail.LlmCall> calls) {
+        boolean hasReview = calls.stream().anyMatch(c -> "review".equals(c.kind()));
+        if (hasReview || r.model == null) {
+            return calls;
+        }
+        ReviewDetail.LlmCall reviewCall = new ReviewDetail.LlmCall("review", r.model,
+                r.tokensIn == null ? 0 : r.tokensIn, r.tokensOut == null ? 0 : r.tokensOut,
+                r.costMillicents == null ? 0L : r.costMillicents);
+        List<ReviewDetail.LlmCall> merged = new ArrayList<>(calls.size() + 1);
+        merged.add(reviewCall);
+        merged.addAll(calls);
+        return merged;
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
