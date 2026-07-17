@@ -37,8 +37,9 @@ public record ReviewDetail(
         String errorDetail,
         List<EventView> events) {
 
-    /** A finding as the UI renders it: severity slug, "path:line" location, message. */
-    public record FindingView(String sev, String loc, String msg) {
+    /** A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM
+     *  thread it owns ({@code threadRef}, null when it has no conversation / predates thread linking). */
+    public record FindingView(String sev, String loc, String msg, String threadRef) {
     }
 
     /** Model usage as display strings (tokens formatted, cost as dollars). */
@@ -53,10 +54,11 @@ public record ReviewDetail(
     }
 
     /**
-     * One line of the review's scoped event stream. {@code ts} is the absolute instant (ISO-8601,
-     * UTC — the UI renders it in the viewer's locale); {@code at} is a friendly delta from review
-     * start, e.g. "+0.8s", "+2m 3s", "+23h 57m".
+     * One line of the review's scoped event stream. {@code ts}/{@code at}: see above. {@code threadRef}
+     * is the SCM thread a conversation turn belongs to (null otherwise); {@code threadKind} classifies it
+     * as "finding" | "summary" | "mention" for the UI (null for non-conversation turns).
      */
-    public record EventView(String ts, String at, String lane, String type, String det) {
+    public record EventView(String ts, String at, String lane, String type, String det,
+                            String threadRef, String threadKind) {
     }
 }

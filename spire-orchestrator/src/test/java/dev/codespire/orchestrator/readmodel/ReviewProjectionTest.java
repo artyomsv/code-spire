@@ -7,6 +7,7 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,9 @@ class ReviewProjectionTest {
 
     @Inject
     DataSource dataSource;
+
+    @Inject
+    ReviewThreadView threads;
 
     private static final RepoRef REPO = new RepoRef("acme", "web");
 
@@ -351,5 +355,43 @@ class ReviewProjectionTest {
         // and it decrypts back through the read API
         assertEquals("SECRET-MARKER-XYZ",
                 projection.loadDetail("acme", "web", pr).orElseThrow().findingsList().get(0).msg());
+    }
+
+    @Test
+    void detailLinksFindingConversationsAndClassifiesTurns() {
+        long pr = 4108L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "Fib", "jlee", "acc-9",
+                "fix", "main", "beef999", "https://x/pr/4108", "github", "reviewing",
+                ReviewProjection.STAGE_DIFF);
+
+        var result = new ReviewResult(
+                List.of(new Finding("src/App.java", new LineRange(9, 9), Severity.BLOCKER, "no compile", null)),
+                "One blocker.", new ModelUsage("gpt-x", 10, 5, 100));
+        projection.recordOutcome(id, result, ReviewProjection.STAGE_COMMENTS);
+
+        // finding thread c1 (matches src/App.java:9), summary thread sum1
+        threads.markFindingThread(id, new ThreadRef("c1"), "src/App.java", 9);
+        threads.markSummaryThread(id, new ThreadRef("sum1"));
+
+        projection.appendEvent(id, "integration", "AuthorReplied", "@jlee: why?", "c1");
+        projection.appendEvent(id, "result", "FollowUpGenerated", "Because …", "c1");
+        projection.appendEvent(id, "integration", "AuthorReplied", "@jlee: overall?", "sum1");
+        projection.appendEvent(id, "integration", "AuthorReplied", "@jlee: @bot look here", "m1");
+        projection.appendEvent(id, "result", "FollowUpGenerated", "legacy turn"); // 4-arg → null thread_ref
+
+        ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
+
+        assertEquals("c1", d.findingsList().get(0).threadRef(), "finding adopts its thread by path:line");
+        assertEquals("finding", kindOf(d, "c1"));
+        assertEquals("summary", kindOf(d, "sum1"));
+        assertEquals("mention", kindOf(d, "m1"), "an @-mention thread on no finding is general");
+        assertTrue(d.events().stream().anyMatch(e -> e.threadRef() == null && e.threadKind() == null),
+                "a pre-migration turn (null thread_ref) has no kind and falls to General");
+    }
+
+    private static String kindOf(ReviewDetail d, String threadRef) {
+        return d.events().stream().filter(e -> threadRef.equals(e.threadRef()))
+                .map(ReviewDetail.EventView::threadKind).findFirst().orElseThrow();
     }
 }

@@ -21,8 +21,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The reviews read model (DATA-MODEL §5) — the single writer to
@@ -427,7 +431,43 @@ public class ReviewProjection {
             if (row == null) {
                 return Optional.empty();
             }
-            return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt), llmCalls(reviewId)));
+            List<ThreadRow> threadRows = loadThreadRows(c, reviewId);
+
+            // loc "path:line" -> threadRef (first wins on a same-line collision).
+            Map<String, String> threadByLoc = new HashMap<>();
+            Set<String> summaryRefs = new HashSet<>();
+            for (ThreadRow t : threadRows) {
+                if (t.isSummary()) {
+                    summaryRefs.add(t.threadRef());
+                }
+                if (t.path() != null && t.line() != null) {
+                    threadByLoc.putIfAbsent(t.path() + ":" + t.line(), t.threadRef());
+                }
+            }
+
+            // Attach each finding's thread, and collect the threadRefs a CURRENT finding claims.
+            List<ReviewDetail.FindingView> findings = new ArrayList<>();
+            Set<String> findingRefs = new HashSet<>();
+            for (ReviewDetail.FindingView f : parseFindings(row.findingsJson, row.id)) {
+                String ref = threadByLoc.get(f.loc());
+                if (ref != null) {
+                    findingRefs.add(ref);
+                }
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref));
+            }
+
+            java.util.function.Function<String, String> classifier = threadRef -> {
+                if (threadRef == null) {
+                    return null;
+                }
+                if (findingRefs.contains(threadRef)) {
+                    return "finding";
+                }
+                return summaryRefs.contains(threadRef) ? "summary" : "mention";
+            };
+
+            return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt, classifier),
+                    llmCalls(reviewId), findings));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
@@ -561,11 +601,11 @@ public class ReviewProjection {
     }
 
     private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
-                                  List<ReviewDetail.LlmCall> llmCalls) {
+                                  List<ReviewDetail.LlmCall> llmCalls, List<ReviewDetail.FindingView> findings) {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, blockerCount(r),
                 r.updatedAt, r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                parseFindings(r.findingsJson, r.id), usageView(r), withReviewCall(r, llmCalls), r.note,
+                findings, usageView(r), withReviewCall(r, llmCalls), r.note,
                 decryptError(r.errorDetail, r.id), events);
     }
 
@@ -602,16 +642,35 @@ public class ReviewProjection {
         }
     }
 
-    private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0) throws SQLException {
+    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary) {}
+
+    private List<ThreadRow> loadThreadRows(Connection c, String reviewId) throws SQLException {
+        List<ThreadRow> out = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT thread_ref, path, line, is_summary FROM review_thread WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new ThreadRow(rs.getString("thread_ref"), rs.getString("path"),
+                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary")));
+                }
+            }
+        }
+        return out;
+    }
+
+    private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0,
+            java.util.function.Function<String, String> threadKind) throws SQLException {
         List<ReviewDetail.EventView> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT lane, type, detail, at FROM review_event WHERE review_id = ? ORDER BY seq")) {
+                "SELECT lane, type, detail, at, thread_ref FROM review_event WHERE review_id = ? ORDER BY seq")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Instant at = rs.getTimestamp("at").toInstant();
+                    String threadRef = rs.getString("thread_ref");
                     out.add(new ReviewDetail.EventView(at.toString(), relative(t0, at), rs.getString("lane"),
-                            rs.getString("type"), rs.getString("detail")));
+                            rs.getString("type"), rs.getString("detail"), threadRef, threadKind.apply(threadRef)));
                 }
             }
         }
@@ -728,7 +787,7 @@ public class ReviewProjection {
 
     private ReviewDetail.FindingView toView(Finding f) {
         String loc = f.range() == null ? f.path() : f.path() + ":" + f.range().startLine();
-        return new ReviewDetail.FindingView(severitySlug(f.severity()), loc, f.message());
+        return new ReviewDetail.FindingView(severitySlug(f.severity()), loc, f.message(), null);
     }
 
     private static String severitySlug(Severity severity) {
