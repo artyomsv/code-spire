@@ -603,7 +603,7 @@ public class ReviewProjection {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Instant at = rs.getTimestamp("at").toInstant();
-                    out.add(new ReviewDetail.EventView(relative(t0, at), rs.getString("lane"),
+                    out.add(new ReviewDetail.EventView(at.toString(), relative(t0, at), rs.getString("lane"),
                             rs.getString("type"), rs.getString("detail")));
                 }
             }
@@ -648,12 +648,35 @@ public class ReviewProjection {
         return List.of(s);
     }
 
+    /**
+     * A friendly elapsed-since-start delta. Sub-10s keeps one decimal ("+8.0s"); beyond that it
+     * steps up units so a day-later follow-up reads "+23h 57m" instead of an opaque "+86260s".
+     * Zero remainders are dropped ("+5m", not "+5m 0s").
+     */
     private static String relative(Instant t0, Instant at) {
-        double secs = (at.toEpochMilli() - t0.toEpochMilli()) / 1000.0;
-        if (secs < 0) {
-            secs = 0;
+        long ms = at.toEpochMilli() - t0.toEpochMilli();
+        if (ms < 0) {
+            ms = 0;
         }
-        return secs < 10 ? String.format(java.util.Locale.ROOT, "+%.1fs", secs) : "+" + Math.round(secs) + "s";
+        double secs = ms / 1000.0;
+        if (secs < 10) {
+            return String.format(java.util.Locale.ROOT, "+%.1fs", secs);
+        }
+        long total = Math.round(secs);
+        if (total < 60) {
+            return "+" + total + "s";
+        }
+        if (total < 3600) {
+            return withRemainder(total / 60, total % 60, "m", "s");
+        }
+        if (total < 86_400) {
+            return withRemainder(total / 3600, (total % 3600) / 60, "h", "m");
+        }
+        return withRemainder(total / 86_400, (total % 86_400) / 3600, "d", "h");
+    }
+
+    private static String withRemainder(long major, long minor, String majorUnit, String minorUnit) {
+        return minor == 0 ? "+" + major + majorUnit : "+" + major + majorUnit + " " + minor + minorUnit;
     }
 
     private ReviewDetail.UsageView usageView(ReviewRow r) {

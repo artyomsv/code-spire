@@ -52,7 +52,11 @@ public record ReviewDetail(
     public record LlmCall(String kind, String model, int tokensIn, int tokensOut, long costMillicents) {
     }
 
-    /** One line of the review's scoped event stream. {@code at} is relative, e.g. "+0.8s". */
-    public record EventView(String at, String lane, String type, String det) {
+    /**
+     * One line of the review's scoped event stream. {@code ts} is the absolute instant (ISO-8601,
+     * UTC — the UI renders it in the viewer's locale); {@code at} is a friendly delta from review
+     * start, e.g. "+0.8s", "+2m 3s", "+23h 57m".
+     */
+    public record EventView(String ts, String at, String lane, String type, String det) {
     }
 }

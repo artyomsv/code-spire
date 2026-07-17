@@ -480,9 +480,11 @@
 
   /* event timeline (scoped) */
   .events { display: flex; flex-direction: column; }
-  .ev { display: grid; grid-template-columns: 66px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--border); }
+  .ev { display: grid; grid-template-columns: 104px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--border); }
   .ev:last-child { border-bottom: none; }
-  .ev .at { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); text-align: right; padding-top: 1px; }
+  .ev .at { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-family: var(--font-mono); text-align: right; padding-top: 1px; }
+  .ev .at .at-abs { font-size: 10.5px; color: var(--text-2); white-space: nowrap; }
+  .ev .at .at-rel { font-size: 10px; color: var(--text-3); }
   .ev .what { display: flex; align-items: center; gap: 9px; }
   .ev .lane { width: 3px; align-self: stretch; border-radius: 2px; background: var(--lane); }
   .ev.integration { --lane: #6b8afd; }
@@ -516,7 +518,9 @@
   .convo-who { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
   .convo-turn.bot .convo-who { color: var(--good); }
   .convo-det { font-size: 12.5px; color: var(--text); line-height: 1.5; word-break: break-word; }
-  .convo-at { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
+  .convo-at { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-2); margin-top: 3px; }
+  .convo-at-rel { color: var(--text-3); }
+  .convo-at-rel::before { content: '·'; margin: 0 5px; }
 
   .mocknote {
     margin: 26px 26px 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-3);

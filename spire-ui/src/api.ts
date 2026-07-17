@@ -56,7 +56,8 @@ export interface LlmCall {
 }
 
 export interface ReviewEvent {
-  at: string;
+  ts: string; // absolute ISO-8601 instant (UTC) — rendered in the viewer's locale
+  at: string; // friendly delta from review start, e.g. "+2m 3s", "+23h 57m"
   lane: 'integration' | 'command' | 'domain' | 'result';
   type: string;
   det: string;

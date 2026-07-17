@@ -19,6 +19,22 @@ export function stageLabel(stage: number): string {
   return STAGES[Math.min(stage, STAGES.length - 1)];
 }
 
+/** Format an ISO-8601 instant as a compact local timestamp, e.g. "Jul 18, 00:22:40". Falls
+ * back to the raw value if it doesn't parse (older rows may carry a pre-formatted delta). */
+export function formatEventTime(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
 /**
  * Returns the URL only when it parses as http(s); undefined otherwise. Server-provided
  * URLs (e.g. `htmlUrl`) must pass through this before landing in an <a href> — React
@@ -479,7 +495,8 @@ export function metaCard(r: ReviewDetail) {
 interface ConversationTurn {
   who: string; // the author handle for a human reply; '' for the bot
   text: string; // the message body (author handle stripped)
-  at: string; // relative timestamp, as stored on the event
+  ts: string; // absolute ISO-8601 instant
+  at: string; // friendly delta from review start
   isBot: boolean;
 }
 
@@ -493,12 +510,12 @@ interface ConversationExchange {
 /** Parse a conversation event into a turn. `AuthorReplied` details read "@handle: message". */
 function toConversationTurn(e: ReviewEvent): ConversationTurn {
   if (e.type === 'FollowUpGenerated') {
-    return { who: '', text: e.det, at: e.at, isBot: true };
+    return { who: '', text: e.det, ts: e.ts, at: e.at, isBot: true };
   }
   const sep = e.det.indexOf(': ');
   const who = sep > 0 ? e.det.slice(0, sep) : '';
   const text = sep > 0 ? e.det.slice(sep + 2) : e.det;
-  return { who, text, at: e.at, isBot: false };
+  return { who, text, ts: e.ts, at: e.at, isBot: false };
 }
 
 /** Group ordered turns into question→answer exchanges: a human reply opens an exchange, the next
@@ -532,7 +549,10 @@ function conversationTurnRow(turn: ConversationTurn, nested: boolean, key: strin
       <div className="convo-body">
         <div className="convo-who">{turn.isBot ? 'Code Spire' : turn.who}</div>
         <div className="convo-det">{turn.text}</div>
-        <div className="convo-at">{turn.at}</div>
+        <div className="convo-at">
+          {formatEventTime(turn.ts)}
+          <span className="convo-at-rel">{turn.at}</span>
+        </div>
       </div>
     </div>
   );
@@ -596,7 +616,10 @@ export function eventsCard(r: ReviewDetail) {
                     </div>
                   )}
                   <div className={`ev ${e.lane}`}>
-                    <div className="at">{e.at}</div>
+                    <div className="at">
+                      <span className="at-abs">{formatEventTime(e.ts)}</span>
+                      <span className="at-rel">{e.at}</span>
+                    </div>
                     <div className="what">
                       <span className="lane"></span>
                       <div>
