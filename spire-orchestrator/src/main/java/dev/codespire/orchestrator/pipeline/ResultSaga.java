@@ -160,7 +160,8 @@ public class ResultSaga {
                 threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryCommentId()));
             }
             case FollowUpGenerated e -> {
-                projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated", Previews.of(e.answerText()));
+                projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
+                        Previews.of(e.answerText()), e.threadRef().value());
                 // Price + record the follow-up's LLM call for the cost breakdown (roadmap 11).
                 if (e.usage() != null) {
                     projection.recordLlmCall(e.reviewId(), "followup", priceUsage(e.usage()));

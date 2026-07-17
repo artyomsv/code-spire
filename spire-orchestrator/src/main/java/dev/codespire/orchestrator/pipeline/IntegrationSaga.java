@@ -97,7 +97,7 @@ public class IntegrationSaga {
                     conversation.planFollowUp(e).ifPresent(cmd -> {
                         String author = e.author() == null ? "unknown" : e.author().username();
                         projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
-                                "@" + author + ": " + Previews.of(e.text()));
+                                "@" + author + ": " + Previews.of(e.text()), e.threadRef().value());
                         commands.emit(cmd);
                     });
                 }

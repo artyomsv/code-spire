@@ -369,9 +369,15 @@ public class ReviewProjection {
      * a fresh MAX — timeline order stays deterministic.
      */
     public void appendEvent(String reviewId, String lane, String type, String detail) {
+        appendEvent(reviewId, lane, type, detail, null);
+    }
+
+    /** As above, tagging the row with the SCM {@code threadRef} it belongs to (null for
+     *  non-conversation events) so the detail projection can group turns by thread. */
+    public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
         String sql = """
-                INSERT INTO review_event (review_id, seq, lane, type, detail)
-                SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM review_event WHERE review_id = ?
+                INSERT INTO review_event (review_id, seq, lane, type, detail, thread_ref)
+                SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM review_event WHERE review_id = ?
                 """;
         for (int attempt = 1; attempt <= SEQ_RETRY_LIMIT; attempt++) {
             try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -379,7 +385,8 @@ public class ReviewProjection {
                 ps.setString(2, lane);
                 ps.setString(3, type);
                 ps.setString(4, detail == null ? "" : detail);
-                ps.setString(5, reviewId);
+                ps.setString(5, threadRef);
+                ps.setString(6, reviewId);
                 ps.executeUpdate();
                 return;
             } catch (SQLException e) {
