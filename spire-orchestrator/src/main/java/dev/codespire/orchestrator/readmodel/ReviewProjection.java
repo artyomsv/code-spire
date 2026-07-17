@@ -441,6 +441,9 @@ public class ReviewProjection {
                     summaryRefs.add(t.threadRef());
                 }
                 if (t.path() != null && t.line() != null) {
+                    // Deterministic tie-break by thread_ref order (loadThreadRows' ORDER BY) for the rare
+                    // same-line collision — either thread is a valid nesting; what matters is that a
+                    // review renders the same way every load.
                     threadByLoc.putIfAbsent(t.path() + ":" + t.line(), t.threadRef());
                 }
             }
@@ -647,7 +650,8 @@ public class ReviewProjection {
     private List<ThreadRow> loadThreadRows(Connection c, String reviewId) throws SQLException {
         List<ThreadRow> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT thread_ref, path, line, is_summary FROM review_thread WHERE review_id = ?")) {
+                "SELECT thread_ref, path, line, is_summary FROM review_thread WHERE review_id = ? "
+                        + "ORDER BY thread_ref")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
