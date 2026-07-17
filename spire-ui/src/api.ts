@@ -46,6 +46,15 @@ export interface Usage {
   latency: string;
 }
 
+/** One LLM call in a review's lifetime — the initial review generation, or a conversation follow-up. */
+export interface LlmCall {
+  kind: string; // 'review' | 'followup'
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  costMillicents: number;
+}
+
 export interface ReviewEvent {
   at: string;
   lane: 'integration' | 'command' | 'domain' | 'result';
@@ -59,6 +68,7 @@ export interface ReviewDetail extends ReviewSummary {
   timings: string[]; // length 6, e.g. "0.8s" or ""
   findingsList: Finding[];
   usage: Usage | null;
+  llmCalls: LlmCall[]; // every LLM call for this review, in call order (review generation + follow-ups)
   note: string | null; // observe/stalled/superseded explanation, may be empty
   errorDetail: string | null; // technical error behind a terminal failure (e.g. the LLM provider's message)
   events: ReviewEvent[];

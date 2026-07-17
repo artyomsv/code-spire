@@ -4,11 +4,13 @@ import { RiOpenaiFill } from 'react-icons/ri';
 import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
   Finding,
+  LlmCall,
   ReviewDetail,
   ReviewEvent,
   ReviewStatus,
   Usage,
 } from './api';
+import { formatCost } from './money';
 
 export const STAGES = ['Received', 'Diff', 'Context', 'Review', 'Comments', 'Done'];
 
@@ -383,7 +385,42 @@ export function findingsCard(r: ReviewDetail) {
 
 const EMPTY_USAGE: Usage = { model: '—', prompt: '—', completion: '—', cost: '—', latency: '—' };
 
+const LLM_CALL_KIND_LABEL: Record<string, string> = { review: 'Review', followup: 'Follow-up' };
+
+function llmCallRow(call: LlmCall, i: number) {
+  const kind = LLM_CALL_KIND_LABEL[call.kind] ?? call.kind;
+  return (
+    <Fragment key={i}>
+      <dt>
+        {kind} · {call.model} · {call.tokensIn.toLocaleString()}→{call.tokensOut.toLocaleString()} tok
+      </dt>
+      <dd>{formatCost(call.costMillicents)}</dd>
+    </Fragment>
+  );
+}
+
 export function usageCard(r: ReviewDetail) {
+  if (r.llmCalls?.length) {
+    const total = r.llmCalls.reduce((sum, call) => sum + call.costMillicents, 0);
+    return (
+      <div className="card">
+        <div className="head">
+          <span className="k">//</span>
+          <h3>Model usage</h3>
+          <span className="badge">
+            {r.llmCalls.length} request{r.llmCalls.length === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className="body">
+          <dl className="kv">
+            {r.llmCalls.map(llmCallRow)}
+            <dt className="total">Total</dt>
+            <dd className="accent total">{formatCost(total)}</dd>
+          </dl>
+        </div>
+      </div>
+    );
+  }
   const u = r.usage ?? EMPTY_USAGE;
   return (
     <div className="card">
