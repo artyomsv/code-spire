@@ -461,6 +461,15 @@
   .finding .loc { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); margin-left: auto; }
   .finding .msg { font-size: 13px; color: var(--text); margin-top: 8px; }
   .finding .msg code { font-family: var(--font-mono); font-size: 12px; background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+  .finding-convo { margin-top: 10px; }
+  .finding-convo > summary {
+    cursor: pointer; list-style: none; user-select: none;
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+    padding: 3px 0; width: fit-content;
+  }
+  .finding-convo > summary:hover { color: var(--text-2); }
+  .finding-convo[open] > summary { margin-bottom: 6px; }
+  .finding-convo .convo { padding-left: 4px; }
 
   .clean { text-align: center; padding: 26px; color: var(--good); font-weight: 600; font-size: 13.5px; }
   .clean .em { font-family: var(--font-mono); font-size: 22px; display: block; margin-bottom: 6px; }

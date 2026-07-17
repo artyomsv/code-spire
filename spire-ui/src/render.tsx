@@ -381,18 +381,32 @@ export function findingsCard(r: ReviewDetail) {
         </span>
       </div>
       <div className="body">
-        {r.findingsList.map((f: Finding, i: number) => (
-          <div key={i} className={`finding ${f.sev}`}>
-            <div className="stripe"></div>
-            <div className="fbody">
-              <div className="frow">
-                <span className="sev">{f.sev}</span>
-                <span className="loc">{f.loc}</span>
+        {r.findingsList.map((f: Finding, i: number) => {
+          const turns = f.threadRef
+            ? r.events.filter(
+                (e: ReviewEvent) =>
+                  e.threadRef === f.threadRef && (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated'),
+              )
+            : [];
+          return (
+            <div key={i} className={`finding ${f.sev}`}>
+              <div className="stripe"></div>
+              <div className="fbody">
+                <div className="frow">
+                  <span className="sev">{f.sev}</span>
+                  <span className="loc">{f.loc}</span>
+                </div>
+                <div className="msg">{f.msg}</div>
+                {turns.length > 0 && (
+                  <details className="finding-convo">
+                    <summary>💬 {turns.length}</summary>
+                    {conversationExchangesBody(turns)}
+                  </details>
+                )}
               </div>
-              <div className="msg">{f.msg}</div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {more}
       </div>
     </div>
