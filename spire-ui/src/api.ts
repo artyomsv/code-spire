@@ -612,3 +612,36 @@ export async function deleteLlmModel(id: string): Promise<void> {
   const res = await fetch(`/api/llm-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM model');
 }
+
+// ---- dead-letter queue (cs.dlq) ----
+
+export interface DlqEntry {
+  id: string;
+  kafkaKey: string | null;
+  messageType: string;
+  originalTopic: string;
+  reason: string | null;
+  payload: string; // may contain long encrypted ciphertext — truncate before rendering
+  status: string;
+  createdAt: string;
+}
+
+/** List dead-letter entries, newest first. `pending = false` returns replayed/discarded ones too. */
+export async function getDlqEntries(pending = true): Promise<DlqEntry[]> {
+  const res = await fetch(`/api/dlq?pending=${pending}`);
+  if (!res.ok) return throwResponse(res, 'Failed to load dead-letter entries');
+  return res.json();
+}
+
+/** Re-publish a dead-lettered message to its original topic and mark it replayed. */
+export async function replayDlqEntry(id: string): Promise<DlqEntry> {
+  const res = await fetch(`/api/dlq/${encodeURIComponent(id)}/replay`, { method: 'POST' });
+  if (!res.ok) return throwResponse(res, 'Failed to replay dead-letter entry');
+  return res.json();
+}
+
+/** Mark a dead-lettered message discarded — it will not be replayed. */
+export async function discardDlqEntry(id: string): Promise<void> {
+  const res = await fetch(`/api/dlq/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to discard dead-letter entry');
+}
