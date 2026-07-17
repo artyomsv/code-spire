@@ -475,15 +475,79 @@ export function metaCard(r: ReviewDetail) {
   );
 }
 
+/** One message in the conversation, reshaped from a timeline event. */
+interface ConversationTurn {
+  who: string; // the author handle for a human reply; '' for the bot
+  text: string; // the message body (author handle stripped)
+  at: string; // relative timestamp, as stored on the event
+  isBot: boolean;
+}
+
+/** A question and the bot answer it drew — either side may be absent (a trailing question, or an
+ * orphan answer whose question predates conversation persistence). */
+interface ConversationExchange {
+  question?: ConversationTurn;
+  answer?: ConversationTurn;
+}
+
+/** Parse a conversation event into a turn. `AuthorReplied` details read "@handle: message". */
+function toConversationTurn(e: ReviewEvent): ConversationTurn {
+  if (e.type === 'FollowUpGenerated') {
+    return { who: '', text: e.det, at: e.at, isBot: true };
+  }
+  const sep = e.det.indexOf(': ');
+  const who = sep > 0 ? e.det.slice(0, sep) : '';
+  const text = sep > 0 ? e.det.slice(sep + 2) : e.det;
+  return { who, text, at: e.at, isBot: false };
+}
+
+/** Group ordered turns into question→answer exchanges: a human reply opens an exchange, the next
+ * bot answer closes it. A bot answer with no open question stands alone (its question predates
+ * persistence). */
+function toConversationExchanges(events: ReviewEvent[]): ConversationExchange[] {
+  const exchanges: ConversationExchange[] = [];
+  let open: ConversationExchange | null = null;
+  for (const e of events) {
+    const turn = toConversationTurn(e);
+    if (!turn.isBot) {
+      open = { question: turn };
+      exchanges.push(open);
+    } else if (open && !open.answer) {
+      open.answer = turn;
+      open = null;
+    } else {
+      exchanges.push({ answer: turn });
+    }
+  }
+  return exchanges;
+}
+
+/** One message row; `nested` indents + connects a bot answer under its question. */
+function conversationTurnRow(turn: ConversationTurn, nested: boolean, key: string) {
+  return (
+    <div key={key} className={`convo-turn ${turn.isBot ? 'bot' : 'reply'}${nested ? ' nested' : ''}`}>
+      <span className="convo-glyph" aria-hidden="true">
+        {turn.isBot ? <Bot size={13} /> : '↩'}
+      </span>
+      <div className="convo-body">
+        <div className="convo-who">{turn.isBot ? 'Code Spire' : turn.who}</div>
+        <div className="convo-det">{turn.text}</div>
+        <div className="convo-at">{turn.at}</div>
+      </div>
+    </div>
+  );
+}
+
 /**
- * The bot's thread conversation, reshaped from the timeline into a threaded exchange: an
- * `AuthorReplied` reads as a reply from the PR author, a `FollowUpGenerated` as the bot's
- * answer. ADR-011 — only the ≤160-char preview persisted on each event is shown; the full
- * thread stays on the SCM. Renders nothing when the review has no conversation turns yet.
+ * The bot's thread conversation, reshaped from the timeline into threaded exchanges: an
+ * `AuthorReplied` reads as a reply from the PR author, the `FollowUpGenerated` that follows as the
+ * bot's answer nested beneath it. ADR-011 — only the ≤160-char preview persisted on each event is
+ * shown; the full thread stays on the SCM. Renders nothing when there are no conversation turns yet.
  */
 export function conversationCard(r: ReviewDetail) {
   const turns = r.events.filter((e: ReviewEvent) => e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated');
   if (!turns.length) return null;
+  const exchanges = toConversationExchanges(turns);
   return (
     <div className="card">
       <div className="head">
@@ -493,20 +557,12 @@ export function conversationCard(r: ReviewDetail) {
       </div>
       <div className="body">
         <div className="convo">
-          {turns.map((e: ReviewEvent, i: number) => {
-            const isBot = e.type === 'FollowUpGenerated';
-            return (
-              <div key={i} className={`convo-turn ${isBot ? 'bot' : 'reply'}`}>
-                <span className="convo-glyph" aria-hidden="true">
-                  {isBot ? <Bot size={13} /> : '↩'}
-                </span>
-                <div className="convo-body">
-                  <div className="convo-det">{e.det}</div>
-                  <div className="convo-at">{e.at}</div>
-                </div>
-              </div>
-            );
-          })}
+          {exchanges.map((ex: ConversationExchange, i: number) => (
+            <div key={i} className="convo-exchange">
+              {ex.question && conversationTurnRow(ex.question, false, 'q')}
+              {ex.answer && conversationTurnRow(ex.answer, !!ex.question, 'a')}
+            </div>
+          ))}
         </div>
       </div>
     </div>
