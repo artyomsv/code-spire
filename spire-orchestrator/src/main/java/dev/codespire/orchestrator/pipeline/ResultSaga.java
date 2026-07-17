@@ -150,9 +150,14 @@ public class ResultSaga {
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordCommentsPosted(
                         e.commit(), e.summaryCommentId(), e.inline().size()));
                 // Scope A: every inline finding's comment id is a thread we own — a reply there engages the bot.
+                // Record its (path, line) too so the review detail can nest that finding's conversation.
+                // (The partial-retry reconstruction branch in the worker emits (anchorKey, 0); such a row simply
+                //  won't match a finding loc and its thread falls to General discussion — never lost.)
                 for (CommentsPosted.PostedInline inline : e.inline()) {
-                    threads.markOurThread(e.reviewId(), new ThreadRef(inline.commentId()));
+                    threads.markFindingThread(e.reviewId(), new ThreadRef(inline.commentId()), inline.path(), inline.line());
                 }
+                // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
+                threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryCommentId()));
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated", Previews.of(e.answerText()));

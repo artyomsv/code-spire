@@ -62,6 +62,40 @@ public class ReviewThreadView {
         }
     }
 
+    public void markFindingThread(String reviewId, ThreadRef thread, String path, int line) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO review_thread (review_id, thread_ref, is_ours, path, line)
+                     VALUES (?, ?, TRUE, ?, ?)
+                     ON CONFLICT (review_id, thread_ref)
+                     DO UPDATE SET is_ours = TRUE, path = EXCLUDED.path, line = EXCLUDED.line
+                     """)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            ps.setString(3, path);
+            ps.setInt(4, line);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to mark finding thread", e);
+        }
+    }
+
+    /** Flag the summary comment's thread. Display-only: does NOT set is_ours, so conversation
+     *  scope (which threads the bot answers) is unchanged. */
+    public void markSummaryThread(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO review_thread (review_id, thread_ref, is_summary) VALUES (?, ?, TRUE)
+                     ON CONFLICT (review_id, thread_ref) DO UPDATE SET is_summary = TRUE
+                     """)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to mark summary thread", e);
+        }
+    }
+
     public boolean isOurThread(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
