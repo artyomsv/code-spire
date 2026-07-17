@@ -50,6 +50,8 @@ class FollowUpWorkerTest {
         verify(sink).replyInThread(eq(repo), eq(5L), eq(thread), contains("caller can pass null"));
         assertEquals("900", r.postedCommentId());
         assertEquals("Because the caller can pass null.", r.answerText());
+        assertNotNull(r.usage(), "the follow-up LLM call's usage is captured for the cost breakdown");
+        assertEquals("m", r.usage().model());
     }
 
     // --- scope "smart 1:1" gate (shouldAnswer) ---

@@ -131,7 +131,9 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
                 // Price the token usage against the model catalog (roadmap 11) before recording.
-                projection.recordOutcome(e.reviewId(), priced(e.result()), ReviewProjection.STAGE_COMMENTS);
+                ReviewResult pricedResult = priced(e.result());
+                projection.recordOutcome(e.reviewId(), pricedResult, ReviewProjection.STAGE_COMMENTS);
+                projection.recordLlmCall(e.reviewId(), "review", pricedResult.usage());
                 if (e.result().truncated()) {
                     projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
                             + "(changes beyond the token limit were not reviewed).");
@@ -152,8 +154,13 @@ public class ResultSaga {
                     threads.markOurThread(e.reviewId(), new ThreadRef(inline.commentId()));
                 }
             }
-            case FollowUpGenerated e -> projection.appendEvent(e.reviewId(), "result",
-                    "FollowUpGenerated", Previews.of(e.answerText()));
+            case FollowUpGenerated e -> {
+                projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated", Previews.of(e.answerText()));
+                // Price + record the follow-up's LLM call for the cost breakdown (roadmap 11).
+                if (e.usage() != null) {
+                    projection.recordLlmCall(e.reviewId(), "followup", priceUsage(e.usage()));
+                }
+            }
             case FollowUpPosted e -> {
                 threads.bumpTurn(e.reviewId(), e.threadRef(), e.commentId());
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
@@ -272,6 +279,15 @@ public class ResultSaga {
         // Preserve the truncated flag when re-pricing (4-arg constructor).
         return new ReviewResult(result.findings(), result.summary(),
                 new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(), cost), result.truncated());
+    }
+
+    /** Price a follow-up call's token usage against the model catalog (mirrors {@link #priced(ReviewResult)}). */
+    private ModelUsage priceUsage(ModelUsage u) {
+        if (u == null || u.model() == null) {
+            return u;
+        }
+        return new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(),
+                llmModels.costMillicents(u.model(), u.tokensIn(), u.tokensOut()));
     }
 
     private String reviewIdOf(IntegrationEvent event) {

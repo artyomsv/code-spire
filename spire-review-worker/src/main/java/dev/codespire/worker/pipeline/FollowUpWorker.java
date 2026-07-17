@@ -10,6 +10,7 @@ import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.port.ThreadSource;
+import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.RepoRef;
@@ -53,8 +54,9 @@ public class FollowUpWorker {
     @Inject
     ResultsEmitter results;
 
-    /** The parsed answer + the id of the reply the bot posted. */
-    public record FollowUpResult(String answerText, String postedCommentId) {
+    /** The parsed answer, the id of the reply the bot posted, and the LLM call's usage (cost breakdown,
+     * roadmap 11). */
+    public record FollowUpResult(String answerText, String postedCommentId, ModelUsage usage) {
     }
 
     public void answer(AnswerFollowUp command) {
@@ -111,7 +113,8 @@ public class FollowUpWorker {
         FollowUpResult result = answer(command.repo(), command.prId(), command.threadRef(),
                 transcript, clients.diff(), client.provider(), client.params(), clients.comments());
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
-        results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText()));
+        results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
+                result.usage()));
         results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId()));
     }
 
@@ -175,6 +178,6 @@ public class FollowUpWorker {
         // executes), and the injection defense is the prompt fence — NOT output escaping. Escaping "<" here
         // would corrupt code the answer includes, e.g. "if (n < 2)" inside a ``` block rendering as "n &lt; 2".
         CommentRef ref = sink.replyInThread(repo, prId, thread, parsed.text());
-        return new FollowUpResult(parsed.text(), ref.commentId());
+        return new FollowUpResult(parsed.text(), ref.commentId(), completion.usage());
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
@@ -204,6 +205,29 @@ public class ReviewProjection {
     }
 
     /**
+     * Record one LLM call in the review's lifetime — the review generation ({@code kind = "review"}) or
+     * a conversation follow-up ({@code kind = "followup"}) — for the cost-breakdown UI (roadmap 11).
+     * Null-usage safe: a call with no usage (e.g. a legacy follow-up event) records nothing.
+     */
+    public void recordLlmCall(String reviewId, String kind, ModelUsage usage) {
+        if (usage == null) {
+            return;
+        }
+        update("""
+                INSERT INTO review_llm_call (id, review_id, kind, model, tokens_in, tokens_out, cost_millicents)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, ps -> {
+            ps.setObject(1, java.util.UUID.randomUUID());
+            ps.setString(2, reviewId);
+            ps.setString(3, kind);
+            ps.setString(4, usage.model());
+            ps.setInt(5, usage.tokensIn());
+            ps.setInt(6, usage.tokensOut());
+            ps.setLong(7, usage.costMillicents());
+        });
+    }
+
+    /**
      * Permanently delete a review and everything derived from it: the read-model
      * row, its scoped timeline ({@code review_event}) and the underlying event
      * stream ({@code event_log}, keyed by stream_id = reviewId). Done in one
@@ -396,10 +420,31 @@ public class ReviewProjection {
             if (row == null) {
                 return Optional.empty();
             }
-            return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt)));
+            return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt), llmCalls(reviewId)));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
+    }
+
+    /** Every LLM call recorded for a review (the generation + each follow-up), oldest first — the raw
+     * material for the cost-breakdown UI (roadmap 11). */
+    public List<ReviewDetail.LlmCall> llmCalls(String reviewId) {
+        List<ReviewDetail.LlmCall> out = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT kind, model, tokens_in, tokens_out, cost_millicents FROM review_llm_call "
+                             + "WHERE review_id = ? ORDER BY created_at")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new ReviewDetail.LlmCall(rs.getString("kind"), rs.getString("model"),
+                            rs.getInt("tokens_in"), rs.getInt("tokens_out"), rs.getLong("cost_millicents")));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to load LLM calls for " + reviewId, e);
+        }
+        return out;
     }
 
     // ---- broadcast ---------------------------------------------------------
@@ -508,11 +553,13 @@ public class ReviewProjection {
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 
-    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events) {
+    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
+                                  List<ReviewDetail.LlmCall> llmCalls) {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, blockerCount(r),
                 r.updatedAt, r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                parseFindings(r.findingsJson, r.id), usageView(r), r.note, decryptError(r.errorDetail, r.id), events);
+                parseFindings(r.findingsJson, r.id), usageView(r), llmCalls, r.note,
+                decryptError(r.errorDetail, r.id), events);
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */

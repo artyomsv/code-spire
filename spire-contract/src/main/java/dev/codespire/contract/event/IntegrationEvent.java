@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
+import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.DiffRefs;
@@ -139,7 +140,10 @@ public sealed interface IntegrationEvent {
         }
     }
 
-    record FollowUpGenerated(String reviewId, ThreadRef threadRef, String answerText) implements IntegrationEvent {
+    /** {@code usage} is the follow-up LLM call's token/cost accounting (cost breakdown, roadmap 11);
+     * null when deserializing a legacy event recorded before this field existed. */
+    record FollowUpGenerated(String reviewId, ThreadRef threadRef, String answerText,
+                             ModelUsage usage) implements IntegrationEvent {
     }
 
     record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId) implements IntegrationEvent {

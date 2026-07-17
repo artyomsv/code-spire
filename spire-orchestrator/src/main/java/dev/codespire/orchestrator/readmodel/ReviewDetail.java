@@ -32,6 +32,7 @@ public record ReviewDetail(
         List<String> timings,
         List<FindingView> findingsList,
         UsageView usage,
+        List<LlmCall> llmCalls,
         String note,
         String errorDetail,
         List<EventView> events) {
@@ -42,6 +43,13 @@ public record ReviewDetail(
 
     /** Model usage as display strings (tokens formatted, cost as dollars). */
     public record UsageView(String model, String prompt, String completion, String cost, String latency) {
+    }
+
+    /**
+     * One LLM call in the review's lifetime — the review generation ({@code kind = "review"}) or a
+     * conversation follow-up ({@code kind = "followup"}) — for the cost-breakdown UI (roadmap 11).
+     */
+    public record LlmCall(String kind, String model, int tokensIn, int tokensOut, long costMillicents) {
     }
 
     /** One line of the review's scoped event stream. {@code at} is relative, e.g. "+0.8s". */
