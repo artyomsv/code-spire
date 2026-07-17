@@ -100,6 +100,21 @@ mp:
           # name — reuse the envelope serializer events-out publishes with
           value:
             serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      dlq-in:
+        connector: smallrye-kafka
+        topic: cs.dlq
+        group:
+          id: spire-orchestrator-dlq
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        # DLQ viewer (Step 2): persists every dead-lettered record for inspection +
+        # manual replay/discard. A storage hiccup here must never re-loop into the
+        # DLQ, so failures are ignored (never dead-letter-queue) — the consumer
+        # itself never throws (DlqConsumer).
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: ignore
 
 # Global review mode (see ReviewPolicy). observe = register PR events, emit no
 # work (no diff/LLM/comments). The live value lives in the DB (app_setting, key
