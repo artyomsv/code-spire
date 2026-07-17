@@ -36,6 +36,7 @@ export interface Finding {
   sev: 'critical' | 'warning' | 'suggestion' | 'nit';
   loc: string;
   msg: string;
+  threadRef?: string; // the SCM thread this finding owns (present when it has a conversation)
 }
 
 export interface Usage {
@@ -61,6 +62,8 @@ export interface ReviewEvent {
   lane: 'integration' | 'command' | 'domain' | 'result';
   type: string;
   det: string;
+  threadRef?: string; // the SCM thread a conversation turn belongs to
+  threadKind?: 'finding' | 'summary' | 'mention'; // classification for nesting; absent for non-turns
 }
 
 export interface ReviewDetail extends ReviewSummary {

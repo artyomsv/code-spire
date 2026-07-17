@@ -558,33 +558,38 @@ function conversationTurnRow(turn: ConversationTurn, nested: boolean, key: strin
   );
 }
 
-/**
- * The bot's thread conversation, reshaped from the timeline into threaded exchanges: an
- * `AuthorReplied` reads as a reply from the PR author, the `FollowUpGenerated` that follows as the
- * bot's answer nested beneath it. ADR-011 — only the ≤160-char preview persisted on each event is
- * shown; the full thread stays on the SCM. Renders nothing when there are no conversation turns yet.
- */
-export function conversationCard(r: ReviewDetail) {
-  const turns = r.events.filter((e: ReviewEvent) => e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated');
-  if (!turns.length) return null;
+/** The `<div className="convo">` body: ordered turns grouped into question→answer exchanges.
+ *  Reused by the per-finding nested panel (findingsCard) and generalDiscussionCard. */
+export function conversationExchangesBody(turns: ReviewEvent[]) {
   const exchanges = toConversationExchanges(turns);
+  return (
+    <div className="convo">
+      {exchanges.map((ex: ConversationExchange, i: number) => (
+        <div key={i} className="convo-exchange">
+          {ex.question && conversationTurnRow(ex.question, false, 'q')}
+          {ex.answer && conversationTurnRow(ex.answer, !!ex.question, 'a')}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Conversations NOT tied to a finding — summary-comment replies, @-mentions, and orphan bot
+ *  answers (threadKind !== 'finding', including null). Hidden when empty. */
+export function generalDiscussionCard(r: ReviewDetail) {
+  const turns = r.events.filter(
+    (e: ReviewEvent) =>
+      (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated') && e.threadKind !== 'finding',
+  );
+  if (!turns.length) return null;
   return (
     <div className="card">
       <div className="head">
         <span className="k">//</span>
-        <h3>Conversation</h3>
+        <h3>General discussion</h3>
         <span className="badge">{turns.length}</span>
       </div>
-      <div className="body">
-        <div className="convo">
-          {exchanges.map((ex: ConversationExchange, i: number) => (
-            <div key={i} className="convo-exchange">
-              {ex.question && conversationTurnRow(ex.question, false, 'q')}
-              {ex.answer && conversationTurnRow(ex.answer, !!ex.question, 'a')}
-            </div>
-          ))}
-        </div>
-      </div>
+      <div className="body">{conversationExchangesBody(turns)}</div>
     </div>
   );
 }
