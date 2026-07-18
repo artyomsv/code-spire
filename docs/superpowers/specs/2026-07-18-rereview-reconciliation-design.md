@@ -77,6 +77,9 @@ When `GenerateReview` carries prior findings:
    - `unchanged` — the changes do not touch or affect this finding at all; a deterministic backstop
      also downgrades any `still-open` verdict to `unchanged` when its finding's path is absent from
      the incremental diff's touched paths (skipped when the incremental diff is unavailable).
+   - Before any of this, prior findings are deterministically remapped through the incremental
+     diff's file renames (old path -> new path) so a renamed/moved file's finding is judged,
+     excluded, and re-carried at its new path, never the stale old one.
 2. **Review call.** Today's full-diff prompt (24k-token clip) plus one new section: "already
    reported — do not re-report" listing the prior findings. Output: new findings via the existing
    lenient parser.

@@ -95,6 +95,11 @@ class ReviewWorkerTest {
             +    int change = 1;
              }
             """;
+    private static final String RENAME_DIFF = """
+            diff --git a/src/Old.java b/src/New.java
+            rename from src/Old.java
+            rename to src/New.java
+            """;
 
     private ReviewWorker worker;
     private List<IntegrationEvent> emitted;
@@ -511,6 +516,45 @@ class ReviewWorkerTest {
         ReviewGenerated emitted = lastReviewGenerated();
         assertEquals(1, emitted.result().findings().size());
         assertEquals("src/Other.java", emitted.result().findings().getFirst().path());
+    }
+
+    // --- rename handling: prior findings follow the renamed path (defect fix) ---
+
+    @Test
+    void renamedFileFindingsAreRemappedInPromptsAndVerdicts() {
+        compareDiff = RENAME_DIFF; // src/Old.java -> src/New.java, no content change
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"not fixed\"}]}";
+        PriorRun prior = new PriorRun("aaa111", "sum-1",
+                List.of(new PriorFinding("src/Old.java", 5, Severity.MAJOR, "leak", "t-1")));
+
+        worker.generateReview(generateCommand(prior));
+
+        assertTrue(llmCalls.get(0).user().contains("src/New.java:5"), "reconcile prompt uses the renamed path");
+        assertFalse(llmCalls.get(0).user().contains("src/Old.java:5"),
+                "the stale old-path:line must not leak into the reconcile prompt");
+        assertTrue(llmCalls.get(1).user().contains("src/New.java:5"), "review-call exclusion list uses the renamed path");
+
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertEquals("src/New.java", emitted.verdicts().getFirst().path(), "emitted verdict follows the rename");
+    }
+
+    @Test
+    void anchorFilterCatchesReFindsAtTheRenamedPath() {
+        compareDiff = RENAME_DIFF; // src/Old.java -> src/New.java
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"not fixed\"}]}";
+        reviewResponse = """
+                {"summary":"s","findings":[
+                  {"path":"src/New.java","line":5,"endLine":5,"severity":"MAJOR","message":"leak","suggestion":null}
+                ]}
+                """;
+        PriorRun prior = new PriorRun("aaa111", "sum-1",
+                List.of(new PriorFinding("src/Old.java", 5, Severity.MAJOR, "leak", "t-1")));
+
+        worker.generateReview(generateCommand(prior));
+
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertTrue(emitted.result().findings().isEmpty(),
+                "a re-find at the renamed path collides with the still-open verdict and is dropped");
     }
 
     @Test

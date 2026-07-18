@@ -482,17 +482,25 @@ public class ReviewProjection {
         });
     }
 
-    /** Every prior finding this round's verdicts leave open: STILL_OPEN/UNCHANGED, or unmatched
-     *  (no corresponding verdict — treated as still open, safer than dropping it silently). */
+    /**
+     * Every prior finding this round's verdicts leave open: STILL_OPEN/UNCHANGED, or unmatched
+     * (no corresponding verdict — treated as still open, safer than dropping it silently). A
+     * MATCHED entry's loc comes from the VERDICT, not the prior finding — the verdict's path/line
+     * is fresher (already remapped through any incremental-diff rename the worker followed, ADR-019
+     * rename fix), while severity/message/threadRef still come from the prior finding, which the
+     * verdict does not carry. An unmatched prior finding keeps its own loc, as before.
+     */
     private List<ReviewDetail.FindingView> stillOpenPriorFindings(List<FindingVerdict> verdicts,
                                                                    List<PriorFinding> priorFindings) {
         List<ReviewDetail.FindingView> carried = new ArrayList<>();
         for (PriorFinding pf : priorFindings) {
-            FindingVerdict.Status status = matchVerdict(pf, verdicts).map(FindingVerdict::status).orElse(null);
+            Optional<FindingVerdict> matched = matchVerdict(pf, verdicts);
+            FindingVerdict.Status status = matched.map(FindingVerdict::status).orElse(null);
             if (status == null || status == FindingVerdict.Status.STILL_OPEN
                     || status == FindingVerdict.Status.UNCHANGED) {
+                String loc = matched.map(v -> v.path() + ":" + v.line()).orElse(pf.path() + ":" + pf.line());
                 carried.add(new ReviewDetail.FindingView(severitySlug(pf.severity()),
-                        pf.path() + ":" + pf.line(), pf.message(), pf.threadRef()));
+                        loc, pf.message(), pf.threadRef()));
             }
         }
         return carried;

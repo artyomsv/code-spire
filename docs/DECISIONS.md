@@ -64,6 +64,12 @@ and the worker stateless across runs — exactly the shape ADR-015 established f
 - Findings untouched by the follow-up (verdict `UNCHANGED`, with a deterministic path-based downgrade
   of `STILL_OPEN` when the incremental diff is available) stay silent on the SCM — the reviewer only
   speaks in threads the author's changes actually affect.
+- A follow-up commit that renames or moves a file is followed, not lost: prior findings are remapped
+  through the incremental diff's renames before either LLM call, so the reconcile prompt, the review
+  call's exclusion list, and the emitted verdicts all carry the finding's NEW path — closing the gap
+  where a rename used to re-report the same issue as "new" at the new path while the stale old-path
+  entry sat un-reconciled. The read model's carry-forward baseline likewise takes a matched verdict's
+  (fresher) path/line over the prior finding's, so the next round's `PriorRun` also has the new path.
 
 **Baseline carry-forward (refinement).** The initial cut stamped `posted_findings_json` as a verbatim
 copy of `findings_json`, which holds only the current round's NEW findings — so a still-open prior

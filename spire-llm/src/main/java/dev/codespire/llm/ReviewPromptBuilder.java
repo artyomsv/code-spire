@@ -111,7 +111,8 @@ public final class ReviewPromptBuilder {
         }
         user.append("\n## Already reported — do not re-report\n")
                 .append("These findings are already tracked in existing review threads; do not "
-                        + "raise them again even if still present:\n");
+                        + "raise them again even if still present, even if the file was renamed "
+                        + "or the code moved since they were reported:\n");
 
         StringBuilder lines = new StringBuilder();
         for (PriorFinding f : alreadyReported) {

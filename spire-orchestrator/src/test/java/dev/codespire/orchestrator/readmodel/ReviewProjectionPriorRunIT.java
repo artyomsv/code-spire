@@ -178,6 +178,33 @@ class ReviewProjectionPriorRunIT {
     }
 
     @Test
+    void carryForwardUsesTheVerdictsFresherRenamedLocation() {
+        String reviewId = "review::ws/prior-run-it#10";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 10L,
+                "t", "a", "aid", "src", "dst", "c9", "http://x", "github", "reviewing", 0);
+        ReviewResult result = new ReviewResult(List.of(), "summary", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result, 4);
+
+        // Old.java was renamed to New.java by the follow-up commit; the reconcile call's verdict
+        // carries the NEW (remapped) path/line, matched to the prior finding by threadRef.
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict("t-old", "src/New.java", 5, FindingVerdict.Status.STILL_OPEN, "still there"));
+        List<PriorFinding> priorFindings = List.of(
+                new PriorFinding("src/Old.java", 5, Severity.MAJOR, "old issue", "t-old"));
+        projection.recordOpenFindings(reviewId, result, verdicts, priorFindings);
+        projection.recordPosted(reviewId, "c9", "sum");
+
+        Optional<PriorRun> prior = projection.priorRunFor(reviewId);
+        assertTrue(prior.isPresent());
+        assertEquals(1, prior.get().findings().size());
+        PriorFinding carried = prior.get().findings().getFirst();
+        assertEquals("src/New.java", carried.path(), "carried entry takes the verdict's fresher (renamed) path");
+        assertEquals(5, carried.line());
+        assertEquals("t-old", carried.threadRef(), "threadRef is preserved from the prior finding");
+        assertEquals("old issue", carried.message(), "message is preserved from the prior finding");
+    }
+
+    @Test
     void resolvedPriorFindingsExitTheBaseline() {
         String reviewId = "review::ws/prior-run-it#7";
         projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 7L,

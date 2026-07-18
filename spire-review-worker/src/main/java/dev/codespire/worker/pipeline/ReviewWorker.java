@@ -25,6 +25,7 @@ import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
+import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.ScmApiException;
@@ -104,6 +105,16 @@ public class ReviewWorker {
     private record ReconcileOutcome(List<FindingVerdict> verdicts, ModelUsage usage) {
     }
 
+    /**
+     * The reconcile call's outcome (null when there is no prior run) plus the prior findings
+     * remapped through the incremental diff's renames — computed ONCE and reused for the reconcile
+     * prompt, the review call's exclusion list, and the verdicts (so a renamed file's finding
+     * carries its NEW path everywhere downstream, including on a redelivered/replayed run).
+     */
+    private record Reconciliation(List<PriorFinding> exclusions, ReconcileOutcome outcome) {
+        private static final Reconciliation NONE = new Reconciliation(List.of(), null);
+    }
+
     public void generateReview(GenerateReview command) {
         try {
             WorkerScmClients.Clients clients = scm.forCommand(command);
@@ -123,20 +134,20 @@ public class ReviewWorker {
             // verdicts, so paying for it would be pure waste (the summary-update path doesn't
             // depend on verdicts either, so skipping here is otherwise a no-op).
             PriorRun prior = command.priorRun();
-            ReconcileOutcome reconcile = prior == null || prior.findings().isEmpty()
-                    ? null : reconcile(command, clients, diff, prior, client);
+            Reconciliation reconciliation = prior == null || prior.findings().isEmpty()
+                    ? Reconciliation.NONE : reconcile(command, clients, diff, prior, client);
 
             // Command-level dedup (finding H4): a redelivered GenerateReview for a
             // commit whose LLM call already completed must not pay twice. A
             // crashed claim (NULL) stays reclaimable — same semantics as comments.
             switch (idempotency.claim(command.reviewId(), command.commit(), LLM_KEY)) {
                 case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                    reEmitPersistedResult(command, already.commentId(), reconcile);
+                    reEmitPersistedResult(command, already.commentId(), reconciliation.outcome());
                     return;
                 }
                 case CommentIdempotencyStore.Claim.Post ignored -> { }
             }
-            runReviewCall(command, pr, diff, context, prior, client, reconcile);
+            runReviewCall(command, pr, diff, context, reconciliation, client);
         } catch (RuntimeException e) {
             Throwable cause = unwrap(e);
             if (isCommitGone(cause)) {
@@ -156,9 +167,9 @@ public class ReviewWorker {
      * keep that method within the method-length budget.
      */
     private void runReviewCall(GenerateReview command, PullRequest pr, Diff diff, List<ContextItem> context,
-                               PriorRun prior, WorkerLlmProvider.LlmClient client, ReconcileOutcome reconcile) {
-        List<PriorFinding> exclusions = prior == null ? List.of() : prior.findings();
-        ReviewPromptBuilder.Built built = ReviewPromptBuilder.build(pr, diff.files(), context, exclusions);
+                               Reconciliation reconciliation, WorkerLlmProvider.LlmClient client) {
+        ReviewPromptBuilder.Built built =
+                ReviewPromptBuilder.build(pr, diff.files(), context, reconciliation.exclusions());
         Completion completion = client.provider().complete(built.prompt(), client.params())
                 .toCompletableFuture().join();
 
@@ -168,6 +179,7 @@ public class ReviewWorker {
         ReviewResult truncatedAware = built.truncated()
                 ? new ReviewResult(parsed.findings(), parsed.summary(), parsed.usage(), true)
                 : parsed;
+        ReconcileOutcome reconcile = reconciliation.outcome();
         ReviewResult result = reconcile == null
                 ? truncatedAware
                 : dropAnchorCollisions(truncatedAware, reconcile.verdicts());
@@ -186,26 +198,70 @@ public class ReviewWorker {
      * The reconcile call (ADR-019): its own claim-guarded, paid LLM call judging each prior
      * finding against the incremental diff (or the full diff on a compare failure) plus its
      * thread transcript. Runs before the review call so a crash between the two replays cleanly.
+     *
+     * <p>The prior findings are remapped through the incremental diff's renames BEFORE anything
+     * else touches them (defect fix): a follow-up commit that renames a reviewed file must not
+     * have its findings judged, excluded, or re-carried at the stale old path. Remapping happens
+     * once here and the result — {@link Reconciliation#exclusions()} — is reused verbatim for the
+     * review call's exclusion list, so a redelivered/replayed run stays consistent.
      */
-    private ReconcileOutcome reconcile(GenerateReview command, WorkerScmClients.Clients clients,
-                                       Diff diff, PriorRun prior, WorkerLlmProvider.LlmClient client) {
+    private Reconciliation reconcile(GenerateReview command, WorkerScmClients.Clients clients,
+                                     Diff diff, PriorRun prior, WorkerLlmProvider.LlmClient client) {
+        String incremental = compareOrNull(clients.diff(), command, prior);
+        List<PriorFinding> remapped = remapRenames(prior.findings(), renameMap(incremental));
+
         switch (idempotency.claim(command.reviewId(), command.commit(), RECONCILE_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                return readReconcileOutcome(already.commentId());
+                return new Reconciliation(remapped, readReconcileOutcome(already.commentId()));
             }
             case CommentIdempotencyStore.Claim.Post ignored -> { }
         }
-        String incremental = compareOrNull(clients.diff(), command, prior);
         String diffText = incremental != null ? incremental : DiffRenderer.render(diff.files());
-        Map<String, ThreadTranscript> transcripts = fetchTranscripts(clients, command, prior);
-        Prompt prompt = ReconcilePrompt.render(prior.findings(), transcripts, diffText, incremental != null);
+        Map<String, ThreadTranscript> transcripts = fetchTranscripts(clients, command, remapped);
+        Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText, incremental != null);
         Completion completion = client.provider().complete(prompt, client.params())
                 .toCompletableFuture().join();
         List<FindingVerdict> verdicts = downgradeUntouched(
-                VerdictsParser.parse(completion.text(), prior.findings()), incremental);
+                VerdictsParser.parse(completion.text(), remapped), incremental);
         ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage());
         idempotency.markPosted(command.reviewId(), command.commit(), RECONCILE_KEY, writeReconcileOutcome(outcome));
-        return outcome;
+        return new Reconciliation(remapped, outcome);
+    }
+
+    /** Old path -> new path for files the incremental diff renamed/moved; empty when there is no
+     *  incremental diff (force-push fallback) or nothing was renamed. */
+    private static Map<String, String> renameMap(String incrementalDiff) {
+        if (incrementalDiff == null) {
+            return Map.of();
+        }
+        Map<String, String> renames = new HashMap<>();
+        for (FilePatch patch : UnifiedDiffParser.parse(incrementalDiff)) {
+            String oldPath = patch.oldPath();
+            String newPath = patch.newPath();
+            if (oldPath != null && !oldPath.isBlank() && newPath != null && !newPath.isBlank()
+                    && !oldPath.equals(newPath)) {
+                renames.put(oldPath, newPath);
+            }
+        }
+        return renames;
+    }
+
+    /**
+     * Follows each finding's path through {@code renames} — a no-op (same list) when nothing was
+     * renamed, so first-review and non-rename follow-ups pay zero cost. A remapped finding keeps
+     * its line/severity/message/threadRef; only the path changes.
+     */
+    private static List<PriorFinding> remapRenames(List<PriorFinding> findings, Map<String, String> renames) {
+        if (renames.isEmpty()) {
+            return findings;
+        }
+        return findings.stream()
+                .map(f -> {
+                    String renamed = renames.get(f.path());
+                    return renamed == null ? f
+                            : new PriorFinding(renamed, f.line(), f.severity(), f.message(), f.threadRef());
+                })
+                .toList();
     }
 
     /**
@@ -254,12 +310,12 @@ public class ReviewWorker {
 
     /** Best-effort per-finding thread transcripts: a fetch failure never aborts the reconcile call. */
     private Map<String, ThreadTranscript> fetchTranscripts(WorkerScmClients.Clients clients,
-                                                           GenerateReview command, PriorRun prior) {
+                                                           GenerateReview command, List<PriorFinding> findings) {
         if (!(clients.comments() instanceof ThreadSource threadSource)) {
             return Map.of(); // transcripts are best-effort; reconcile still runs on findings + diff
         }
         Map<String, ThreadTranscript> transcripts = new HashMap<>();
-        for (PriorFinding finding : prior.findings()) {
+        for (PriorFinding finding : findings) {
             if (finding.threadRef() == null) {
                 continue;
             }

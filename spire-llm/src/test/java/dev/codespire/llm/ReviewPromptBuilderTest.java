@@ -98,6 +98,8 @@ class ReviewPromptBuilderTest {
         String user = withExclusions.prompt().user();
         assertTrue(user.contains("do not re-report"));
         assertTrue(user.contains("src/A.java:7"));
+        assertTrue(user.contains("even if the file was renamed or the code moved"),
+                "exclusion instruction must survive a rename/move since the last review");
 
         // the prior-finding messages are model-originated (untrusted) — must sit inside the fence,
         // in order: section header, then the fence open, then the finding line.
