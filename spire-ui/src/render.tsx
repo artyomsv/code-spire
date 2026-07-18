@@ -413,12 +413,25 @@ const LLM_CALL_KIND_LABEL: Record<string, string> = { review: 'Review', followup
 function llmCallRow(call: LlmCall, i: number) {
   const kind = LLM_CALL_KIND_LABEL[call.kind] ?? call.kind;
   return (
-    <Fragment key={i}>
-      <dt>
-        {kind} · {call.model} · {call.tokensIn.toLocaleString()}→{call.tokensOut.toLocaleString()} tok
-      </dt>
-      <dd>{formatCost(call.costMillicents)}</dd>
-    </Fragment>
+    <div key={i} className={`usage-call ${call.kind}`}>
+      <div className="usage-call-top">
+        <span className="usage-kind">{kind}</span>
+        <span className="usage-cost">{formatCost(call.costMillicents)}</span>
+      </div>
+      <div className="usage-call-meta">
+        <span>{call.model}</span>
+        <span className="usage-sep">·</span>
+        <span>
+          {call.tokensIn.toLocaleString()} → {call.tokensOut.toLocaleString()} tok
+        </span>
+        {call.createdAt && (
+          <>
+            <span className="usage-sep">·</span>
+            <span className="usage-time">{formatEventTime(call.createdAt)}</span>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -435,11 +448,13 @@ export function usageCard(r: ReviewDetail) {
           </span>
         </div>
         <div className="body">
-          <dl className="kv">
+          <div className="usage-calls">
             {r.llmCalls.map(llmCallRow)}
-            <dt className="total">Total</dt>
-            <dd className="accent total">{formatCost(total)}</dd>
-          </dl>
+            <div className="usage-total">
+              <span>Total</span>
+              <span className="accent">{formatCost(total)}</span>
+            </div>
+          </div>
         </div>
       </div>
     );

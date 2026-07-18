@@ -50,7 +50,8 @@ public record ReviewDetail(
      * One LLM call in the review's lifetime — the review generation ({@code kind = "review"}) or a
      * conversation follow-up ({@code kind = "followup"}) — for the cost-breakdown UI (roadmap 11).
      */
-    public record LlmCall(String kind, String model, int tokensIn, int tokensOut, long costMillicents) {
+    public record LlmCall(String kind, String model, int tokensIn, int tokensOut, long costMillicents,
+                          String createdAt) {
     }
 
     /**

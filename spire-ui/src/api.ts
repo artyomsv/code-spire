@@ -79,6 +79,7 @@ export interface LlmCall {
   tokensIn: number;
   tokensOut: number;
   costMillicents: number;
+  createdAt?: string; // ISO-8601 timestamp of when the call happened
 }
 
 export interface ReviewEvent {

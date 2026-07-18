@@ -506,13 +506,14 @@ public class ReviewProjection {
         List<ReviewDetail.LlmCall> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT kind, model, tokens_in, tokens_out, cost_millicents FROM review_llm_call "
+                     "SELECT kind, model, tokens_in, tokens_out, cost_millicents, created_at FROM review_llm_call "
                              + "WHERE review_id = ? ORDER BY created_at")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new ReviewDetail.LlmCall(rs.getString("kind"), rs.getString("model"),
-                            rs.getInt("tokens_in"), rs.getInt("tokens_out"), rs.getLong("cost_millicents")));
+                            rs.getInt("tokens_in"), rs.getInt("tokens_out"), rs.getLong("cost_millicents"),
+                            rs.getTimestamp("created_at").toInstant().toString()));
                 }
             }
         } catch (SQLException e) {
@@ -650,7 +651,8 @@ public class ReviewProjection {
         }
         ReviewDetail.LlmCall reviewCall = new ReviewDetail.LlmCall("review", r.model,
                 r.tokensIn == null ? 0 : r.tokensIn, r.tokensOut == null ? 0 : r.tokensOut,
-                r.costMillicents == null ? 0L : r.costMillicents);
+                r.costMillicents == null ? 0L : r.costMillicents,
+                r.createdAt == null ? null : r.createdAt.toString());
         List<ReviewDetail.LlmCall> merged = new ArrayList<>(calls.size() + 1);
         merged.add(reviewCall);
         merged.addAll(calls);
