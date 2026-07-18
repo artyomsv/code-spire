@@ -112,6 +112,14 @@
   no LLM spend completes, no comment lands on a closed PR.
 - Manual re-review: `ManualCommandReceived{review}` → (saga) → `RequestReview{force=true}` (FR-12).
 
+### S10 — (later) Memory & analytics
+- **View `MemoryView`:** projects `ReviewCompleted` + `AuthorReplied` (accepted/rejected findings)
+  into learned per-repo preferences.
+- **Plugin `MemoryContextProvider`:** on `ContextRequested`, contributes learned preferences as
+  another `ContextContributed` — closing the loop with zero change to S4.
+- **View `MetricsView`:** per-author / per-repo stats from the same log (author is on every event
+  since S1 — the "collect per-user later" hook is free).
+
 ### S11 — Reconciliation review
 - **Trigger:** `ReviewRequested` for a PR that already has a posted prior run
   (`review_status.last_posted_commit` set) — the same S3–S5 fetch/context path runs first.
@@ -138,14 +146,6 @@
   reconciliation card (closed/still-open counts, verdict rows, resolved-thread check icons).
 - **Note:** a first review (no prior posted run) takes the untouched S3–S6 path — `priorRun` is null
   and the exclusion/verdict machinery never engages.
-
-### S10 — (later) Memory & analytics
-- **View `MemoryView`:** projects `ReviewCompleted` + `AuthorReplied` (accepted/rejected findings)
-  into learned per-repo preferences.
-- **Plugin `MemoryContextProvider`:** on `ContextRequested`, contributes learned preferences as
-  another `ContextContributed` — closing the loop with zero change to S4.
-- **View `MetricsView`:** per-author / per-repo stats from the same log (author is on every event
-  since S1 — the "collect per-user later" hook is free).
 
 ## Given / When / Then (a couple of examples)
 
