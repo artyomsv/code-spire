@@ -40,13 +40,14 @@ describe('findingsCard nested conversation', () => {
       { ...ev('AuthorReplied', '@a: why?', 'finding'), threadRef: 'c1' },
       { ...ev('FollowUpGenerated', 'Because …', 'finding'), threadRef: 'c1' },
     ]))}</>);
-    expect(html).toContain('💬 2');
+    expect(html).toContain('2 replies');
+    expect(html).toContain('finding-convo');
     expect(html).toContain('why?');
   });
 
   it('shows no panel for a finding without a thread', () => {
     const finding = { sev: 'nit', loc: 'src/App.java:1', msg: 'x' } as Finding;
     const html = renderToStaticMarkup(<>{findingsCard(detailWith([finding], []))}</>);
-    expect(html).not.toContain('💬');
+    expect(html).not.toContain('finding-convo');
   });
 });
