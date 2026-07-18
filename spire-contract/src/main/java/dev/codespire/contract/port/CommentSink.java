@@ -24,4 +24,21 @@ public interface CommentSink {
     CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd);
 
     Author getPullRequestAuthor(RepoRef repo, long prId);
+
+    /** Outcome of a resolve attempt — ALREADY_RESOLVED means a human beat us to it. */
+    enum ThreadResolution { RESOLVED_NOW, ALREADY_RESOLVED, UNSUPPORTED }
+
+    /**
+     * Resolve a review thread where the provider supports it (GitHub, GitLab).
+     * Bitbucket Cloud has no thread-resolve for PR comments — the default UNSUPPORTED
+     * degrades the caller to reply-only.
+     */
+    default ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
+        return ThreadResolution.UNSUPPORTED;
+    }
+
+    /** Rewrite an existing comment's body (in-place summary update on re-reviews). */
+    default CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+        throw new UnsupportedOperationException(type() + " cannot update comments");
+    }
 }

@@ -120,5 +120,18 @@ public final class StubScm {
         public Author getPullRequestAuthor(RepoRef repo, long prId) {
             return Author.of("TEST-account-id", "test-author", "TEST Author");
         }
+
+        @Override
+        public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
+            LOG.infof("[stub] resolveThread %s pr=%d thread=%s", repo.full(), prId, thread.value());
+            return ThreadResolution.RESOLVED_NOW;
+        }
+
+        @Override
+        public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+            LOG.infof("[stub] updateComment %s pr=%d comment=%s (%d chars)",
+                    repo.full(), prId, commentId, bodyMd.length());
+            return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
+        }
     }
 }
