@@ -54,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -75,6 +76,16 @@ class ReviewWorkerTest {
             +    int added = 1;
              }
             """;
+    private static final String NEW_FILE_DIFF = """
+            diff --git a/src/New.java b/src/New.java
+            new file mode 100644
+            --- /dev/null
+            +++ b/src/New.java
+            @@ -0,0 +1,3 @@
+            +class New {
+            +    int x = 1;
+            +}
+            """;
 
     private ReviewWorker worker;
     private List<IntegrationEvent> emitted;
@@ -82,6 +93,7 @@ class ReviewWorkerTest {
     private InMemoryIdempotency idempotency;
     private List<Prompt> llmCalls;
     private RuntimeException diffFailure;
+    private String diffText;
     private String compareDiff;
     private RuntimeException compareFailure;
     private String reconcileResponse;
@@ -94,6 +106,7 @@ class ReviewWorkerTest {
         idempotency = new InMemoryIdempotency();
         llmCalls = new ArrayList<>();
         diffFailure = null;
+        diffText = DIFF;
         compareDiff = "diff --git a/inc b/inc";
         compareFailure = null;
         reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"fixed\"}]}";
@@ -125,7 +138,7 @@ class ReviewWorkerTest {
                 if (diffFailure != null) {
                     throw diffFailure;
                 }
-                return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(DIFF), false);
+                return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(diffText), false);
             }
 
             @Override
@@ -178,6 +191,46 @@ class ReviewWorkerTest {
                 new ReviewResult(findings, "summary", new ModelUsage("m", 0, 0, 0)), null);
     }
 
+    /** Follow-up PostComments: verdicts drive thread actions, newFindings post fresh (ADR-019). */
+    private PostComments postCommand(List<FindingVerdict> verdicts, List<Finding> newFindings,
+                                     String priorSummaryRef) {
+        return new PostComments(REVIEW_ID, REPO, 9, COMMIT,
+                new ReviewResult(newFindings, "summary", new ModelUsage("m", 0, 0, 0)), null,
+                verdicts, priorSummaryRef);
+    }
+
+    private static FindingVerdict verdict(String threadRef, FindingVerdict.Status status) {
+        String note = status == FindingVerdict.Status.STILL_OPEN ? null : "note";
+        return new FindingVerdict(threadRef, "src/A.java", 1, status, note);
+    }
+
+    private List<FindingVerdict> verdictsRSA() {
+        return List.of(
+                verdict("t-1", FindingVerdict.Status.RESOLVED),
+                verdict("t-2", FindingVerdict.Status.STILL_OPEN),
+                verdict("t-3", FindingVerdict.Status.ACKNOWLEDGED));
+    }
+
+    private List<FindingVerdict> oneResolvedVerdict(String threadRef) {
+        return List.of(verdict(threadRef, FindingVerdict.Status.RESOLVED));
+    }
+
+    private List<FindingVerdict> oneStillOpenVerdict(String threadRef) {
+        return List.of(verdict(threadRef, FindingVerdict.Status.STILL_OPEN));
+    }
+
+    private List<Finding> oneNewFinding() {
+        return List.of(finding("src/New.java", 3));
+    }
+
+    private List<Finding> noNewFindings() {
+        return List.of();
+    }
+
+    private CommentsPosted lastCommentsPosted() {
+        return assertInstanceOf(CommentsPosted.class, emitted.getLast());
+    }
+
     @Test
     void truncatedReviewMarksThePostedSummary() {
         var review = new ReviewResult(List.of(finding("src/A.java", 2)), "ok",
@@ -205,7 +258,7 @@ class ReviewWorkerTest {
 
         CommentsPosted posted = assertInstanceOf(CommentsPosted.class, emitted.getLast());
         assertTrue(posted.inline().isEmpty(), "no detached inline comment");
-        assertEquals(0, sink.inlinePosts, "postInline never attempted for unanchorable line");
+        assertEquals(0, sink.inlinePosts.size(), "postInline never attempted for unanchorable line");
         assertTrue(sink.summaryBody.contains("Not anchorable"), "folded into the summary");
     }
 
@@ -233,6 +286,75 @@ class ReviewWorkerTest {
         assertEquals(1, posted.inline().size(), "only the real finding is posted — the LLM claim is not leaked");
         assertTrue(posted.inline().stream().noneMatch(p -> "LLM".equals(p.path())),
                 "no inline comment carries the LLM claim key as its path");
+    }
+
+    // --- follow-up postComments: verdict-driven delta posting (ADR-019) ---
+
+    @Test
+    void verdictsDriveThreadActionsNotDuplicateComments() {
+        diffText = DIFF + NEW_FILE_DIFF; // src/New.java:3 is a genuinely new finding
+        worker.postComments(postCommand(verdictsRSA(), oneNewFinding(), "sum-1"));
+
+        assertEquals(List.of("t-1", "t-2", "t-3"), sink.repliedThreads);
+        assertEquals(List.of("t-1", "t-3"), sink.resolvedThreads, "STILL_OPEN is never resolved");
+        assertEquals(1, sink.inlinePosts.size(), "only the genuinely new finding posts fresh");
+        assertEquals(List.of("sum-1"), sink.updatedComments, "summary updated in place");
+        assertTrue(sink.summaryPosts.isEmpty());
+
+        CommentsPosted emitted = lastCommentsPosted();
+        assertEquals(3, emitted.threadOutcomes().size());
+        assertTrue(emitted.threadOutcomes().stream()
+                .filter(o -> o.threadRef().equals("t-1")).findFirst().orElseThrow().resolved());
+    }
+
+    @Test
+    void humanResolvedThreadSkipsTheReply() {
+        sink.resolveResult = CommentSink.ThreadResolution.ALREADY_RESOLVED;
+        worker.postComments(postCommand(oneResolvedVerdict("t-1"), noNewFindings(), "sum-1"));
+
+        assertTrue(sink.repliedThreads.isEmpty(), "nothing to add when a human already resolved");
+        CommentsPosted emitted = lastCommentsPosted();
+        assertNull(emitted.threadOutcomes().getFirst().replyCommentId());
+        assertTrue(emitted.threadOutcomes().getFirst().resolved());
+    }
+
+    @Test
+    void stillOpenRepliesEvenOnAHumanResolvedThread() {
+        // resolve is never attempted for STILL_OPEN, even though the sink would report ALREADY_RESOLVED
+        sink.resolveResult = CommentSink.ThreadResolution.ALREADY_RESOLVED;
+        worker.postComments(postCommand(oneStillOpenVerdict("t-2"), noNewFindings(), "sum-1"));
+
+        assertEquals(List.of("t-2"), sink.repliedThreads);
+        assertTrue(sink.resolvedThreads.isEmpty(), "resolve is never attempted for STILL_OPEN");
+    }
+
+    @Test
+    void unsupportedResolveDegradesToReplyOnly() {
+        sink.resolveResult = CommentSink.ThreadResolution.UNSUPPORTED; // Bitbucket shape
+        worker.postComments(postCommand(oneResolvedVerdict("t-1"), noNewFindings(), "sum-1"));
+
+        assertEquals(List.of("t-1"), sink.repliedThreads);
+        assertFalse(lastCommentsPosted().threadOutcomes().getFirst().resolved());
+    }
+
+    @Test
+    void redeliveredDeltaPostRepeatsNothing() {
+        diffText = DIFF + NEW_FILE_DIFF;
+        worker.postComments(postCommand(verdictsRSA(), oneNewFinding(), "sum-1"));
+        int replies = sink.repliedThreads.size();
+        int resolves = sink.resolvedThreads.size();
+
+        worker.postComments(postCommand(verdictsRSA(), oneNewFinding(), "sum-1"));
+        assertEquals(replies, sink.repliedThreads.size());
+        assertEquals(resolves, sink.resolvedThreads.size());
+        assertEquals(3, lastCommentsPosted().threadOutcomes().size(), "outcomes reconstructed from claims");
+    }
+
+    @Test
+    void deletedSummaryFallsBackToAFreshPost() {
+        sink.failUpdateComment = true; // fake sink: updateComment throws
+        worker.postComments(postCommand(List.of(), noNewFindings(), "gone-1"));
+        assertEquals(1, sink.summaryPosts.size());
     }
 
     @Test
@@ -423,9 +545,17 @@ class ReviewWorkerTest {
 
     private static final class RecordingSink implements CommentSink, ThreadSource {
 
-        int inlinePosts;
+        final List<String> repliedThreads = new ArrayList<>();
+        final List<String> resolvedThreads = new ArrayList<>();
+        final List<String> updatedComments = new ArrayList<>();
+        final List<String> summaryPosts = new ArrayList<>();
+        final List<String> inlinePosts = new ArrayList<>();
+
+        int inlineAttempts; // 1-based count of postInline calls, including the one that fails
         int failOnInline; // 1-based index of the inline post that throws; 0 = never
         boolean failSummary;
+        boolean failUpdateComment;
+        CommentSink.ThreadResolution resolveResult = CommentSink.ThreadResolution.RESOLVED_NOW;
         String summaryBody = "";
         private int ids = 100;
 
@@ -440,23 +570,42 @@ class ReviewWorkerTest {
                 throw new BitbucketApiException(503, "POST", "/comments");
             }
             summaryBody = bodyMd;
+            summaryPosts.add(bodyMd);
             String id = "c-" + ids++;
             return new CommentRef(id, new ThreadRef(id), CommentKind.SUMMARY);
         }
 
         @Override
         public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
-            inlinePosts++;
-            if (inlinePosts == failOnInline) {
+            inlineAttempts++;
+            if (inlineAttempts == failOnInline) {
                 throw new BitbucketApiException(500, "POST", "/comments");
             }
             String id = "c-" + ids++;
+            inlinePosts.add(id);
             return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
         }
 
         @Override
         public CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
-            throw new UnsupportedOperationException();
+            repliedThreads.add(thread.value());
+            String id = "r-" + ids++;
+            return new CommentRef(id, thread, CommentKind.REPLY);
+        }
+
+        @Override
+        public CommentSink.ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
+            resolvedThreads.add(thread.value());
+            return resolveResult;
+        }
+
+        @Override
+        public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+            updatedComments.add(commentId);
+            if (failUpdateComment) {
+                throw new RuntimeException("404");
+            }
+            return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
         }
 
         @Override

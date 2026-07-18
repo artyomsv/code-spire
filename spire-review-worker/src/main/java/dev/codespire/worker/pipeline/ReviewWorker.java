@@ -345,6 +345,11 @@ public class ReviewWorker {
             ReviewResult review = command.findings();
             Map<String, String> previouslyPosted = idempotency.postedFor(command.reviewId(), command.commit());
 
+            // Reconciliation (ADR-019): reply into (and where supported, resolve) each
+            // verdict's existing thread BEFORE posting genuinely new findings. Idempotent
+            // per-thread, so redelivery reconstructs outcomes from the claim map for free.
+            List<CommentsPosted.ThreadOutcome> outcomes = actOnVerdicts(commentSink, command);
+
             List<CommentsPosted.PostedInline> posted = new ArrayList<>();
             List<Finding> unanchored = new ArrayList<>();
             List<Finding> failed = new ArrayList<>();
@@ -358,22 +363,111 @@ public class ReviewWorker {
                 return; // summary failure already emitted ReviewFailed
             }
             // Recover inline comment ids from a previous partially-completed attempt. Skip the
-            // non-inline claims (SUMMARY, LLM) — they are not posted comments (the LLM claim's value
-            // is the findings-result blob), so they must never leak into the inline list.
+            // non-inline claims (SUMMARY, LLM[:reconcile], reply:, resolve:) — none of those are
+            // posted inline comments, so they must never leak into the inline list.
             previouslyPosted.forEach((key, id) -> {
-                if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key)
+                if (!SUMMARY_KEY.equals(key) && !key.startsWith(LLM_KEY)
+                        && !key.startsWith("reply:") && !key.startsWith("resolve:")
                         && posted.stream().noneMatch(p -> p.commentId().equals(id))) {
                     posted.add(new CommentsPosted.PostedInline(id, key, 0));
                 }
             });
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
-                    summaryCommentId, posted));
+                    summaryCommentId, posted, outcomes));
         } catch (RuntimeException e) {
             Throwable cause = unwrap(e);
             LOG.warnf(cause, "PostComments failed for %s", command.reviewId());
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
                     cause.getMessage(), isRetryable(cause), 1));
         }
+    }
+
+    // --- reconciliation thread actions (ADR-019) ---
+
+    private List<CommentsPosted.ThreadOutcome> actOnVerdicts(CommentSink sink, PostComments command) {
+        List<CommentsPosted.ThreadOutcome> outcomes = new ArrayList<>();
+        for (FindingVerdict verdict : command.verdicts()) {
+            if (verdict.threadRef() != null) {
+                outcomes.add(actOnVerdict(sink, command, verdict));
+            }
+        }
+        return outcomes;
+    }
+
+    /**
+     * One verdict's thread action: a closing verdict (anything but STILL_OPEN) first tries to
+     * resolve the thread — a human who beat us to it (ALREADY_RESOLVED) means we stay quiet and
+     * skip the reply entirely; otherwise (resolved-by-us or unsupported) a reply always follows.
+     * STILL_OPEN never resolves and always replies.
+     */
+    private CommentsPosted.ThreadOutcome actOnVerdict(CommentSink sink, PostComments command,
+                                                      FindingVerdict verdict) {
+        ThreadRef thread = new ThreadRef(verdict.threadRef());
+        boolean closing = verdict.status() != FindingVerdict.Status.STILL_OPEN;
+        boolean resolvedByBot = false;
+        boolean humanResolved = false;
+        if (closing) {
+            String resolveKey = "resolve:" + verdict.threadRef();
+            switch (idempotency.claim(command.reviewId(), command.commit(), resolveKey)) {
+                case CommentIdempotencyStore.Claim.AlreadyPosted a -> {
+                    resolvedByBot = "bot".equals(a.commentId());
+                    humanResolved = "human".equals(a.commentId());
+                }
+                case CommentIdempotencyStore.Claim.Post ignored -> {
+                    CommentSink.ThreadResolution resolution = resolveQuietly(sink, command, thread);
+                    resolvedByBot = resolution == CommentSink.ThreadResolution.RESOLVED_NOW;
+                    humanResolved = resolution == CommentSink.ThreadResolution.ALREADY_RESOLVED;
+                    idempotency.markPosted(command.reviewId(), command.commit(), resolveKey,
+                            humanResolved ? "human" : resolvedByBot ? "bot" : "unsupported");
+                }
+            }
+            if (humanResolved) {
+                // A human closed it first — nothing to add (skip the reply on closing verdicts).
+                return new CommentsPosted.ThreadOutcome(verdict.threadRef(), verdict.status(), null, true);
+            }
+        }
+        String replyId = postReply(sink, command, thread, verdict);
+        return new CommentsPosted.ThreadOutcome(verdict.threadRef(), verdict.status(), replyId, resolvedByBot);
+    }
+
+    private CommentSink.ThreadResolution resolveQuietly(CommentSink sink, PostComments command, ThreadRef thread) {
+        try {
+            return sink.resolveThread(command.repo(), command.prId(), thread);
+        } catch (RuntimeException e) {
+            LOG.warnf(unwrap(e), "resolve %s failed — continuing reply-only", thread.value());
+            return CommentSink.ThreadResolution.UNSUPPORTED;
+        }
+    }
+
+    private String postReply(CommentSink sink, PostComments command, ThreadRef thread, FindingVerdict verdict) {
+        String replyKey = "reply:" + thread.value();
+        switch (idempotency.claim(command.reviewId(), command.commit(), replyKey)) {
+            case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
+                return already.commentId();
+            }
+            case CommentIdempotencyStore.Claim.Post ignored -> {
+                try {
+                    CommentRef reply = sink.replyInThread(command.repo(), command.prId(), thread,
+                            renderVerdictReply(verdict, command.commit()));
+                    idempotency.markPosted(command.reviewId(), command.commit(), replyKey, reply.commentId());
+                    return reply.commentId();
+                } catch (RuntimeException e) {
+                    LOG.warnf(unwrap(e), "reply in %s failed", thread.value());
+                    return null;   // claim stays NULL -> reclaimable on redelivery
+                }
+            }
+        }
+    }
+
+    private String renderVerdictReply(FindingVerdict verdict, String commit) {
+        String sha = commit.length() > 7 ? commit.substring(0, 7) : commit;
+        String note = verdict.note() == null || verdict.note().isBlank() ? "" : " " + escapeHtml(verdict.note());
+        return switch (verdict.status()) {
+            case RESOLVED -> "**Fixed in `" + sha + "`.**" + note;
+            case STILL_OPEN -> "**Still open after `" + sha + "`:**" + note;
+            case ACKNOWLEDGED -> "**Acknowledged** — closing this thread." + note;
+            case SUPERSEDED -> "**The flagged code changed in `" + sha + "`** — this finding no longer applies." + note;
+        };
     }
 
     private void postOneInline(CommentSink commentSink, PostComments command, Diff diff, Finding finding,
@@ -419,8 +513,9 @@ public class ReviewWorker {
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
-                    CommentRef summary = commentSink.postSummary(command.repo(), command.prId(),
-                            renderSummary(review, unanchored, failed, command.commit()));
+                    String body = renderSummary(review, unanchored, failed, command.commit())
+                            + renderReconciliationSection(command.verdicts());
+                    CommentRef summary = updateOrPost(commentSink, command, body);
                     idempotency.markPosted(command.reviewId(), command.commit(), SUMMARY_KEY, summary.commentId());
                     yield summary.commentId();
                 } catch (RuntimeException e) {
@@ -432,6 +527,28 @@ public class ReviewWorker {
                 }
             }
         };
+    }
+
+    /** Update the prior summary in place on a follow-up review; a vanished/edited comment falls back to a fresh post. */
+    private CommentRef updateOrPost(CommentSink sink, PostComments command, String body) {
+        if (command.priorSummaryRef() != null) {
+            try {
+                return sink.updateComment(command.repo(), command.prId(), command.priorSummaryRef(), body);
+            } catch (RuntimeException e) {
+                LOG.infof("summary %s update failed (%s) — posting fresh",
+                        command.priorSummaryRef(), unwrap(e).getMessage());
+            }
+        }
+        return sink.postSummary(command.repo(), command.prId(), body);
+    }
+
+    private String renderReconciliationSection(List<FindingVerdict> verdicts) {
+        if (verdicts.isEmpty()) {
+            return "";
+        }
+        long resolved = verdicts.stream().filter(v -> v.status() != FindingVerdict.Status.STILL_OPEN).count();
+        long open = verdicts.size() - resolved;
+        return "\n\n---\n**Reconciliation:** " + resolved + " closed · " + open + " still open.";
     }
 
     // --- rendering (model output sanitized: raw HTML escaped, SECURITY.md) ---
