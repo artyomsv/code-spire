@@ -1,5 +1,5 @@
 import { useState, type ReactNode, type SyntheticEvent } from 'react';
-import { Bot, ChevronDown, MessagesSquare } from 'lucide-react';
+import { Bot, CheckCircle2, ChevronDown, MessagesSquare } from 'lucide-react';
 import { fetchThreadMessages, type ReviewEvent, type ThreadMessage } from '../api';
 import { formatEventTime } from '../format';
 import { MessageText } from './MessageText';
@@ -11,6 +11,7 @@ interface FindingConversationProps {
   threadRef: string;
   previewTurns: ReviewEvent[]; // stored events for this thread — count the toggle and supply timestamps
   previewBody: ReactNode; // the ≤160-char preview exchanges, shown until (or unless) the full thread loads
+  resolved?: boolean; // re-review reconciliation says this thread's finding was closed out
 }
 
 type LoadState =
@@ -32,6 +33,7 @@ export function FindingConversation({
   threadRef,
   previewTurns,
   previewBody,
+  resolved,
 }: FindingConversationProps) {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const replyCount = previewTurns.length;
@@ -49,9 +51,13 @@ export function FindingConversation({
   }
 
   return (
-    <details className="finding-convo" onToggle={handleToggle}>
+    <details className={`finding-convo${resolved ? ' convo-resolved' : ''}`} onToggle={handleToggle}>
       <summary>
-        <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
+        {resolved ? (
+          <CheckCircle2 size={14} className="finding-convo-icon" aria-hidden="true" />
+        ) : (
+          <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
+        )}
         <span>
           {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
         </span>

@@ -39,6 +39,23 @@ export interface Finding {
   threadRef?: string; // the SCM thread this finding owns (present when it has a conversation)
 }
 
+/**
+ * A re-review's verdict on a prior finding, matched back to the original by location/message.
+ * `sev` reuses the findings' own display slugs (not enum names). `status` is one of
+ * 'resolved' | 'still open' | 'acknowledged' | 'superseded' (lower-case with spaces).
+ * `threadRef` (when present) links back to the finding's SCM conversation thread;
+ * `resolvedThread` is whether that thread was actually closed out.
+ */
+export interface ReconciliationItem {
+  sev: Finding['sev'];
+  loc: string;
+  msg: string;
+  status: string;
+  note?: string;
+  threadRef?: string;
+  resolvedThread?: boolean;
+}
+
 /** One message in a re-fetched SCM thread (full text, not the persisted preview). */
 export interface ThreadMessage {
   author: string;
@@ -72,9 +89,10 @@ export interface Usage {
   latency: string;
 }
 
-/** One LLM call in a review's lifetime — the initial review generation, or a conversation follow-up. */
+/** One LLM call in a review's lifetime — the initial review generation, a conversation follow-up,
+ *  or a re-review reconciliation pass. */
 export interface LlmCall {
-  kind: string; // 'review' | 'followup'
+  kind: string; // 'review' | 'followup' | 'reconcile'
   model: string;
   tokensIn: number;
   tokensOut: number;
@@ -97,6 +115,7 @@ export interface ReviewDetail extends ReviewSummary {
   stages: StageState[]; // length 6, aligns to the 6 pipeline steps
   timings: string[]; // length 6, e.g. "0.8s" or ""
   findingsList: Finding[];
+  reconciliation?: ReconciliationItem[]; // re-review verdicts against the prior run's findings
   usage: Usage | null;
   llmCalls: LlmCall[]; // every LLM call for this review, in call order (review generation + follow-ups)
   note: string | null; // observe/stalled/superseded explanation, may be empty

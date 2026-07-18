@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Bot, Cpu } from 'lucide-react';
+import { Bot, CheckCircle2, CircleDot, Cpu } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -7,6 +7,7 @@ import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
   Finding,
   LlmCall,
+  ReconciliationItem,
   ReviewDetail,
   ReviewEvent,
   ReviewStatus,
@@ -304,6 +305,59 @@ export function stepper(r: ReviewDetail) {
   );
 }
 
+/** CSS-safe slug for a status string ('still open' -> 'still-open'). */
+function statusSlug(status: string): string {
+  return status.replace(/\s+/g, '-');
+}
+
+/**
+ * A re-review's verdicts against the prior run's findings, shown directly above the findings
+ * card. A verdict is "closed" whenever its status isn't the open one — resolved, acknowledged,
+ * and superseded all read as closed; only "still open" keeps counting as open.
+ */
+export function reconciliationCard(items: ReconciliationItem[]) {
+  if (!items.length) return null;
+  const closed = items.filter((i) => i.status !== 'still open').length;
+  const open = items.length - closed;
+  return (
+    <div className="card reconciliation-card">
+      <div className="head">
+        <span className="k">//</span>
+        <h3>Reconciliation</h3>
+        <span className="badge">
+          {closed} closed · {open} still open
+        </span>
+      </div>
+      <div className="body">
+        {items.map((i, idx) => (
+          <div
+            key={`${i.loc}-${i.threadRef ?? idx}`}
+            className={`finding recon-item recon-${statusSlug(i.status)} ${i.sev}`}
+          >
+            <div className="stripe"></div>
+            <div className="fbody">
+              <div className="frow">
+                <span className="sev">{i.sev}</span>
+                <span className="loc">{i.loc}</span>
+                <span className="recon-verdict">
+                  {i.resolvedThread ? <CheckCircle2 size={13} /> : <CircleDot size={13} />}
+                  {i.status}
+                </span>
+              </div>
+              <div className="msg">{i.msg}</div>
+              {i.note ? (
+                <div className="recon-note">
+                  <MessageText>{i.note}</MessageText>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function findingsCard(r: ReviewDetail) {
   if (r.status === 'failed' || r.status === 'cancelled') {
     return (
@@ -377,6 +431,9 @@ export function findingsCard(r: ReviewDetail) {
                   e.threadRef === f.threadRef && (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated'),
               )
             : [];
+          const resolvedThread = f.threadRef
+            ? r.reconciliation?.find((item) => item.threadRef === f.threadRef)?.resolvedThread
+            : undefined;
           return (
             <div key={i} className={`finding ${f.sev}`}>
               <div className="stripe"></div>
@@ -394,6 +451,7 @@ export function findingsCard(r: ReviewDetail) {
                     threadRef={f.threadRef}
                     previewTurns={turns}
                     previewBody={conversationExchangesBody(turns)}
+                    resolved={resolvedThread}
                   />
                 )}
               </div>
@@ -408,7 +466,11 @@ export function findingsCard(r: ReviewDetail) {
 
 const EMPTY_USAGE: Usage = { model: '—', prompt: '—', completion: '—', cost: '—', latency: '—' };
 
-const LLM_CALL_KIND_LABEL: Record<string, string> = { review: 'Review', followup: 'Follow-up' };
+const LLM_CALL_KIND_LABEL: Record<string, string> = {
+  review: 'Review',
+  followup: 'Follow-up',
+  reconcile: 'Reconcile',
+};
 
 function llmCallRow(call: LlmCall, i: number) {
   const kind = LLM_CALL_KIND_LABEL[call.kind] ?? call.kind;

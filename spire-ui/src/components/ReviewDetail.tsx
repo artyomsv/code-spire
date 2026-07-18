@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';
-import { eventsCard, findingsCard, generalDiscussionCard, metaCard, openInLabel, outcomeBadge, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
+import { eventsCard, findingsCard, generalDiscussionCard, metaCard, openInLabel, outcomeBadge, reconciliationCard, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 
 interface Props {
@@ -215,6 +215,7 @@ export default function ReviewDetail({ reviews }: Props) {
 
       <div className="grid2" style={{ marginTop: 18 }}>
         <div>
+          {reconciliationCard(r.reconciliation ?? [])}
           {findingsCard(r)}
           {generalDiscussionCard(r)}
           {eventsCard(r)}
