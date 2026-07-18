@@ -104,7 +104,7 @@ public final class ReviewPromptBuilder {
         return new Built(new Prompt(SYSTEM, user.toString()), truncated);
     }
 
-    /** Trusted text (WE wrote these finding messages) — still neutralized since the message originated from a model. */
+    /** The finding messages are model-originated text from a prior review — untrusted, so fenced and clipped. */
     private static void appendAlreadyReported(StringBuilder user, List<PriorFinding> alreadyReported) {
         if (alreadyReported.isEmpty()) {
             return;
@@ -112,9 +112,14 @@ public final class ReviewPromptBuilder {
         user.append("\n## Already reported — do not re-report\n")
                 .append("These findings are already tracked in existing review threads; do not "
                         + "raise them again even if still present:\n");
+
+        StringBuilder lines = new StringBuilder();
         for (PriorFinding f : alreadyReported) {
-            user.append("- ").append(f.path()).append(':').append(f.line())
-                    .append(" — ").append(neutralizeSentinels(f.message())).append('\n');
+            lines.append("- ").append(f.path()).append(':').append(f.line())
+                    .append(" — ").append(f.message()).append('\n');
         }
+        user.append("BEGIN_UNTRUSTED_DATA\n");
+        user.append(neutralizeSentinels(TokenBudget.clip(lines.toString(), MAX_CONTEXT_TOKENS)));
+        user.append("\nEND_UNTRUSTED_DATA\n");
     }
 }

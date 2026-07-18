@@ -95,8 +95,17 @@ class ReviewPromptBuilderTest {
     void exclusionSectionListsPriorFindingsAndOldOverloadOmitsIt() {
         var withExclusions = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(DIFF), List.of(),
                 List.of(new PriorFinding("src/A.java", 7, Severity.MAJOR, "resource leak", "thread-1")));
-        assertTrue(withExclusions.prompt().user().contains("do not re-report"));
-        assertTrue(withExclusions.prompt().user().contains("src/A.java:7"));
+        String user = withExclusions.prompt().user();
+        assertTrue(user.contains("do not re-report"));
+        assertTrue(user.contains("src/A.java:7"));
+
+        // the prior-finding messages are model-originated (untrusted) — must sit inside the fence,
+        // in order: section header, then the fence open, then the finding line.
+        int headerIdx = user.indexOf("do not re-report");
+        int fenceIdx = user.indexOf("BEGIN_UNTRUSTED_DATA", headerIdx);
+        int findingIdx = user.indexOf("src/A.java:7", fenceIdx);
+        assertTrue(headerIdx >= 0 && fenceIdx > headerIdx && findingIdx > fenceIdx,
+                "expected header before BEGIN_UNTRUSTED_DATA before the finding line");
 
         var without = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(DIFF), List.of());
         assertFalse(without.prompt().user().contains("do not re-report"));
