@@ -7,5 +7,5 @@ package dev.codespire.contract.review;
  */
 public record FindingVerdict(String threadRef, String path, int line, Status status, String note) {
 
-    public enum Status { RESOLVED, STILL_OPEN, ACKNOWLEDGED, SUPERSEDED }
+    public enum Status { RESOLVED, STILL_OPEN, ACKNOWLEDGED, SUPERSEDED, UNCHANGED }
 }

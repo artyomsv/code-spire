@@ -42,7 +42,9 @@ export interface Finding {
 /**
  * A re-review's verdict on a prior finding, matched back to the original by location/message.
  * `sev` reuses the findings' own display slugs (not enum names). `status` is one of
- * 'resolved' | 'still open' | 'acknowledged' | 'superseded' (lower-case with spaces).
+ * 'resolved' | 'still open' | 'acknowledged' | 'superseded' | 'unchanged' (lower-case with
+ * spaces). 'unchanged' means the follow-up commit never touched or affected this finding — no
+ * thread interaction ever happened for it, so `resolvedThread` is always falsy for that status.
  * `threadRef` (when present) links back to the finding's SCM conversation thread;
  * `resolvedThread` is whether that thread was actually closed out.
  */

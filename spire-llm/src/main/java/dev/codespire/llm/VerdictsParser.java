@@ -48,6 +48,7 @@ public final class VerdictsParser {
             case "STILL_OPEN", "OPEN", "UNRESOLVED" -> FindingVerdict.Status.STILL_OPEN;
             case "ACKNOWLEDGED", "WONT_FIX", "CONCEDED" -> FindingVerdict.Status.ACKNOWLEDGED;
             case "SUPERSEDED", "OBSOLETE" -> FindingVerdict.Status.SUPERSEDED;
+            case "UNCHANGED", "UNTOUCHED", "NOT_ADDRESSED" -> FindingVerdict.Status.UNCHANGED;
             default -> null;
         };
     }

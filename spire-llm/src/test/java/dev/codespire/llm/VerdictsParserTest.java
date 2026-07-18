@@ -41,6 +41,15 @@ class VerdictsParserTest {
     }
 
     @Test
+    void unchangedAndNotAddressedMapToUnchanged() {
+        String output = "{\"verdicts\":[{\"id\":1,\"status\":\"unchanged\",\"note\":\"x\"},"
+                + "{\"id\":2,\"status\":\"NOT_ADDRESSED\",\"note\":\"y\"}]}";
+        List<FindingVerdict> verdicts = VerdictsParser.parse(output, findings);
+        assertEquals(FindingVerdict.Status.UNCHANGED, verdicts.get(0).status());
+        assertEquals(FindingVerdict.Status.UNCHANGED, verdicts.get(1).status());
+    }
+
+    @Test
     void unknownIdsAndBadStatusesAreDropped() {
         String output = "{\"verdicts\":[{\"id\":9,\"status\":\"resolved\"},{\"id\":1,\"status\":\"maybe\"}]}";
         assertTrue(VerdictsParser.parse(output, findings).isEmpty());

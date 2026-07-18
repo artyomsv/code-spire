@@ -475,6 +475,7 @@
   .recon-item.recon-resolved { --rv: var(--good); }
   .recon-item.recon-still-open { --rv: var(--warn); }
   .recon-item.recon-acknowledged, .recon-item.recon-superseded { --rv: var(--muted); }
+  .recon-item.recon-unchanged { --rv: var(--text-3, var(--muted)); opacity: 0.75; }
   .recon-note { margin-top: 8px; }
   .finding-convo { margin-top: 12px; }
   .finding-convo > summary {

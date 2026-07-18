@@ -55,4 +55,17 @@ describe('reconciliationCard', () => {
     expect(html).toContain('2 closed');
     expect(html).toContain('1 still open');
   });
+
+  it('counts unchanged as open, not closed', () => {
+    const html = renderToStaticMarkup(
+      <>
+        {reconciliationCard([
+          { sev: 'nit', loc: 'x:1', msg: 'm', status: 'resolved' },
+          { sev: 'nit', loc: 'y:1', msg: 'm', status: 'unchanged' },
+        ])}
+      </>,
+    );
+    expect(html).toContain('1 closed');
+    expect(html).toContain('1 still open');
+  });
 });

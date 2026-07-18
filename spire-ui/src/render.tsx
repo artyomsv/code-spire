@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Bot, CheckCircle2, CircleDot, Cpu } from 'lucide-react';
+import { Bot, CheckCircle2, CircleDashed, CircleDot, Cpu } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -310,14 +310,23 @@ function statusSlug(status: string): string {
   return status.replace(/\s+/g, '-');
 }
 
+const RECON_CLOSED_STATUSES = new Set(['resolved', 'acknowledged', 'superseded']);
+
+/** The verdict icon: a dashed circle for 'unchanged' (no thread action ever taken), a filled
+ *  check for a thread actually resolved, otherwise a plain dot (open / reply-only). */
+function reconciliationIcon(item: ReconciliationItem) {
+  if (item.status === 'unchanged') return <CircleDashed size={13} />;
+  return item.resolvedThread ? <CheckCircle2 size={13} /> : <CircleDot size={13} />;
+}
+
 /**
  * A re-review's verdicts against the prior run's findings, shown directly above the findings
- * card. A verdict is "closed" whenever its status isn't the open one — resolved, acknowledged,
- * and superseded all read as closed; only "still open" keeps counting as open.
+ * card. A verdict is "closed" only when it's resolved/acknowledged/superseded; 'still open' and
+ * 'unchanged' (the follow-up never touched that finding) both keep counting as open.
  */
 export function reconciliationCard(items: ReconciliationItem[]) {
   if (!items.length) return null;
-  const closed = items.filter((i) => i.status !== 'still open').length;
+  const closed = items.filter((i) => RECON_CLOSED_STATUSES.has(i.status)).length;
   const open = items.length - closed;
   return (
     <div className="card reconciliation-card">
@@ -340,7 +349,7 @@ export function reconciliationCard(items: ReconciliationItem[]) {
                 <span className="sev">{i.sev}</span>
                 <span className="loc">{i.loc}</span>
                 <span className="recon-verdict">
-                  {i.resolvedThread ? <CheckCircle2 size={13} /> : <CircleDot size={13} />}
+                  {reconciliationIcon(i)}
                   {i.status}
                 </span>
               </div>

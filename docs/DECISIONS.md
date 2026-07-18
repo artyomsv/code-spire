@@ -61,6 +61,9 @@ and the worker stateless across runs — exactly the shape ADR-015 established f
   degrades it to reply-only, so a closing verdict there gets a reply but the thread stays visibly
   "open" in Bitbucket's UI. GitHub (GraphQL `resolveReviewThread`) and GitLab (discussion `PUT`) get
   real resolution.
+- Findings untouched by the follow-up (verdict `UNCHANGED`, with a deterministic path-based downgrade
+  of `STILL_OPEN` when the incremental diff is available) stay silent on the SCM — the reviewer only
+  speaks in threads the author's changes actually affect.
 
 ---
 

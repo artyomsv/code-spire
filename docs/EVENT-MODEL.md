@@ -129,21 +129,27 @@
 - **Worker:** two claim-guarded LLM calls. A **reconcile call** (`LLM:reconcile` claim; prior findings
   + best-effort thread transcripts + the incremental diff via `DiffSource.fetchCompareDiff`, full-diff
   fallback on a force-push/compare failure) produces one `FindingVerdict{RESOLVED|STILL_OPEN|
-  ACKNOWLEDGED|SUPERSEDED}` per prior finding. Then the standard **review call** (`LLM` claim) runs
-  with an "already reported" exclusion section built from the same prior findings, followed by a
-  deterministic filter that drops any new finding whose anchor collides with a `STILL_OPEN` verdict.
+  ACKNOWLEDGED|SUPERSEDED|UNCHANGED}` per prior finding — `UNCHANGED` means the follow-up commit does
+  not touch or affect that finding at all; a deterministic backstop also downgrades any `STILL_OPEN`
+  verdict to `UNCHANGED` when its finding's path isn't among the incremental diff's touched paths (no
+  downgrade when the incremental diff is unavailable). Then the standard **review call** (`LLM` claim)
+  runs with an "already reported" exclusion section built from the same prior findings, followed by a
+  deterministic filter that drops any new finding whose anchor collides with a `STILL_OPEN` or
+  `UNCHANGED` verdict.
 - **Event:** `ReviewGenerated {..., verdicts, reconcileUsage}`.
 - **Saga:** on `ReviewGenerated` → `PostComments {..., verdicts, priorSummaryRef}`.
 - **Plugin (`CommentSink`):** acts per verdict — closing verdicts resolve-first (`resolveThread`;
   GitHub GraphQL, GitLab discussion PUT, Bitbucket Cloud `UNSUPPORTED` → reply-only); a thread a human
   already resolved (`ALREADY_RESOLVED`) skips the reply; `STILL_OPEN` always replies without resolving;
-  genuinely new findings post fresh inline comments; the summary is rewritten in place
-  (`updateComment`, fresh-post fallback). Every reply/resolve holds its own `comment_idempotency` claim
-  (`reply:<threadRef>`, `resolve:<threadRef>`) so redelivery repeats zero external calls.
+  `UNCHANGED` findings get no thread interaction at all — no claim, no reply, no resolve; genuinely new
+  findings post fresh inline comments; the summary is rewritten in place (`updateComment`, fresh-post
+  fallback). Every reply/resolve holds its own `comment_idempotency` claim (`reply:<threadRef>`,
+  `resolve:<threadRef>`) so redelivery repeats zero external calls.
 - **Event:** `CommentsPosted {..., threadOutcomes}` → Decider → `ReviewCompleted`.
 - **View:** `ReviewThreadView` marks resolved threads; `review_status` re-snapshots
   `posted_findings_json` (commit-guarded) for the *next* follow-up; the detail API/UI render a
-  reconciliation card (closed/still-open counts, verdict rows, resolved-thread check icons).
+  reconciliation card (closed/still-open counts, verdict rows, resolved-thread check icons; `UNCHANGED`
+  renders as a muted dashed-circle badge, counted as open, with no thread affordance since none exists).
 - **Note:** a first review (no prior posted run) takes the untouched S3–S6 path — `priorRun` is null
   and the exclusion/verdict machinery never engages.
 

@@ -86,6 +86,15 @@ class ReviewWorkerTest {
             +    int x = 1;
             +}
             """;
+    private static final String INCREMENTAL_DIFF_TOUCHED_ONLY = """
+            diff --git a/src/Touched.java b/src/Touched.java
+            --- a/src/Touched.java
+            +++ b/src/Touched.java
+            @@ -1,2 +1,3 @@
+             class Touched {
+            +    int change = 1;
+             }
+            """;
 
     private ReviewWorker worker;
     private List<IntegrationEvent> emitted;
@@ -359,6 +368,33 @@ class ReviewWorkerTest {
     }
 
     @Test
+    void unchangedVerdictTouchesNothing() {
+        List<FindingVerdict> verdicts = List.of(
+                verdict("t-1", FindingVerdict.Status.RESOLVED),
+                new FindingVerdict("t-2", "src/A.java", 1, FindingVerdict.Status.UNCHANGED, "note"));
+        worker.postComments(postCommand(verdicts, noNewFindings(), "sum-1"));
+
+        assertEquals(List.of("t-1"), sink.repliedThreads, "UNCHANGED never replies");
+        assertEquals(List.of("t-1"), sink.resolvedThreads, "UNCHANGED never attempts to resolve");
+        CommentsPosted posted = lastCommentsPosted();
+        assertEquals(1, posted.threadOutcomes().size(), "no ThreadOutcome emitted for the UNCHANGED verdict");
+        assertEquals("t-1", posted.threadOutcomes().getFirst().threadRef());
+    }
+
+    @Test
+    void reconciliationFooterCountsUnchangedAsOpenNotClosed() {
+        List<FindingVerdict> verdicts = List.of(
+                verdict("t-1", FindingVerdict.Status.RESOLVED),
+                new FindingVerdict("t-2", "src/A.java", 1, FindingVerdict.Status.UNCHANGED, "note"));
+        // priorSummaryRef null -> fresh postSummary (whose body the fake sink actually records;
+        // updateComment doesn't capture the body).
+        worker.postComments(postCommand(verdicts, noNewFindings(), null));
+
+        assertTrue(sink.summaryBody.contains("1 closed"), "only the RESOLVED verdict counts as closed");
+        assertTrue(sink.summaryBody.contains("1 still open"), "UNCHANGED counts as open, not closed");
+    }
+
+    @Test
     void deletedSummaryFallsBackToAFreshPost() {
         sink.failUpdateComment = true; // fake sink: updateComment throws
         worker.postComments(postCommand(List.of(), noNewFindings(), "gone-1"));
@@ -460,6 +496,53 @@ class ReviewWorkerTest {
         ReviewGenerated emitted = lastReviewGenerated();
         assertEquals(1, emitted.result().findings().size());
         assertEquals("src/Other.java", emitted.result().findings().getFirst().path());
+    }
+
+    @Test
+    void unchangedAnchorCollisionsAreAlsoDroppedFromNewFindings() {
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"unchanged\",\"note\":\"not touched\"}]}";
+        reviewResponse = """
+                {"summary":"s","findings":[
+                  {"path":"src/Demo.java","line":5,"endLine":5,"severity":"MAJOR","message":"leak","suggestion":null},
+                  {"path":"src/Other.java","line":9,"endLine":9,"severity":"MINOR","message":"new issue","suggestion":null}
+                ]}
+                """;
+        worker.generateReview(generateCommand(priorStillOpenAtDemo5()));
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertEquals(1, emitted.result().findings().size());
+        assertEquals("src/Other.java", emitted.result().findings().getFirst().path());
+    }
+
+    @Test
+    void stillOpenDowngradedWhenPathUntouched() {
+        compareDiff = INCREMENTAL_DIFF_TOUCHED_ONLY; // only src/Touched.java is touched
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"x\"},"
+                + "{\"id\":2,\"status\":\"still-open\",\"note\":\"y\"}]}";
+        PriorRun prior = new PriorRun("aaa111", "sum-1", List.of(
+                new PriorFinding("src/Touched.java", 5, Severity.MAJOR, "leak", "t-1"),
+                new PriorFinding("src/Untouched.java", 9, Severity.MINOR, "naming", "t-2")));
+
+        worker.generateReview(generateCommand(prior));
+
+        ReviewGenerated emitted = lastReviewGenerated();
+        FindingVerdict touched = emitted.verdicts().stream()
+                .filter(v -> v.path().equals("src/Touched.java")).findFirst().orElseThrow();
+        FindingVerdict untouched = emitted.verdicts().stream()
+                .filter(v -> v.path().equals("src/Untouched.java")).findFirst().orElseThrow();
+        assertEquals(FindingVerdict.Status.STILL_OPEN, touched.status(), "the touched path stays STILL_OPEN");
+        assertEquals(FindingVerdict.Status.UNCHANGED, untouched.status(),
+                "the untouched path is deterministically downgraded to UNCHANGED");
+    }
+
+    @Test
+    void noDowngradeWhenIncrementalDiffUnavailable() {
+        compareFailure = new RuntimeException("404"); // force-push: no incremental diff
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"x\"}]}";
+        worker.generateReview(generateCommand(priorStillOpenAtDemo5()));
+
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertEquals(FindingVerdict.Status.STILL_OPEN, emitted.verdicts().getFirst().status(),
+                "no downgrade possible without an incremental diff — stay with the LLM's verdict");
     }
 
     @Test

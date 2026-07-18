@@ -62,14 +62,18 @@ When `GenerateReview` carries prior findings:
    (re-fetched live via `fetchThread` — ADR-011, nothing persisted), and the **incremental diff**
    (`priorHead → head`, new SPI below). Output — one verdict per prior finding:
    - `resolved` — the fix addresses it,
-   - `still-open` — with *what is still missing*,
+   - `still-open` — the author attempted something relevant but the issue remains, with *what is
+     still missing*,
    - `acknowledged` — human pushback conceded,
-   - `superseded` — the flagged code was deleted/rewritten so the finding no longer applies.
+   - `superseded` — the flagged code was deleted/rewritten so the finding no longer applies,
+   - `unchanged` — the changes do not touch or affect this finding at all; a deterministic backstop
+     also downgrades any `still-open` verdict to `unchanged` when its finding's path is absent from
+     the incremental diff's touched paths (skipped when the incremental diff is unavailable).
 2. **Review call.** Today's full-diff prompt (24k-token clip) plus one new section: "already
    reported — do not re-report" listing the prior findings. Output: new findings via the existing
    lenient parser.
 3. **Merge (plain code, no LLM):** drop any new finding whose `path:line` anchor collides with a
-   still-open prior finding — the safety net against semantic re-finds at the same spot.
+   still-open or unchanged prior finding — the safety net against semantic re-finds at the same spot.
 
 Each call has its own LLM idempotency claim (`LLM:reconcile`, `LLM:review` — extending today's
 single `LLM` claim, same mark-before-emit + persisted-result re-emit semantics). No duplicate spend
@@ -84,6 +88,7 @@ carries both. Posting acts per verdict:
 | `acknowledged` | Short concession reply + resolve |
 | `still-open` | Reply in the existing thread ("Still open after `<sha>`: …") — never a new top-level comment |
 | `superseded` | Reply noting the code changed + resolve |
+| `unchanged` | No reply, no resolve — no thread interaction at all; counted as open, badge-only in the dashboard |
 | new finding | Fresh inline comment (today's path) |
 
 Summary: `updateComment` on `priorSummaryRef` with resolved / still-open / new counts; fresh post

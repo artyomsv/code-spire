@@ -32,6 +32,7 @@ import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.Anchors;
 import dev.codespire.diff.DiffRenderer;
+import dev.codespire.diff.UnifiedDiffParser;
 import dev.codespire.llm.FindingsParser;
 import dev.codespire.llm.ReconcilePrompt;
 import dev.codespire.llm.ReviewPromptBuilder;
@@ -45,10 +46,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * The review worker: GenerateReview (re-fetch diff by commit -> prompt -> LLM
@@ -198,10 +201,33 @@ public class ReviewWorker {
         Prompt prompt = ReconcilePrompt.render(prior.findings(), transcripts, diffText, incremental != null);
         Completion completion = client.provider().complete(prompt, client.params())
                 .toCompletableFuture().join();
-        List<FindingVerdict> verdicts = VerdictsParser.parse(completion.text(), prior.findings());
+        List<FindingVerdict> verdicts = downgradeUntouched(
+                VerdictsParser.parse(completion.text(), prior.findings()), incremental);
         ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage());
         idempotency.markPosted(command.reviewId(), command.commit(), RECONCILE_KEY, writeReconcileOutcome(outcome));
         return outcome;
+    }
+
+    /**
+     * Deterministic backstop: the LLM sometimes marks a finding STILL_OPEN even though the
+     * follow-up commit never touched its file. When the incremental diff is available, downgrade
+     * any such verdict to UNCHANGED so the reviewer stays silent on threads the author's changes
+     * couldn't possibly have affected. No incremental diff (force-push/blank fallback) means we
+     * can't tell what was touched, so the LLM's verdicts stand as-is.
+     */
+    private static List<FindingVerdict> downgradeUntouched(List<FindingVerdict> verdicts, String incrementalDiff) {
+        if (incrementalDiff == null) {
+            return verdicts;
+        }
+        Set<String> touchedPaths = UnifiedDiffParser.parse(incrementalDiff).stream()
+                .flatMap(patch -> Stream.of(patch.oldPath(), patch.newPath()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return verdicts.stream()
+                .map(v -> v.status() == FindingVerdict.Status.STILL_OPEN && !touchedPaths.contains(v.path())
+                        ? new FindingVerdict(v.threadRef(), v.path(), v.line(), FindingVerdict.Status.UNCHANGED, v.note())
+                        : v)
+                .toList();
     }
 
     /**
@@ -247,17 +273,22 @@ public class ReviewWorker {
         return transcripts;
     }
 
-    /** Drops new findings whose anchor collides with a STILL_OPEN verdict — it is already tracked in its thread. */
+    /**
+     * Drops new findings whose anchor collides with a STILL_OPEN or UNCHANGED verdict — that code
+     * is already tracked (in its thread, or deliberately left untouched) so a fresh finding there
+     * would be a duplicate.
+     */
     private static ReviewResult dropAnchorCollisions(ReviewResult result, List<FindingVerdict> verdicts) {
-        Set<String> stillOpen = verdicts.stream()
-                .filter(v -> v.status() == FindingVerdict.Status.STILL_OPEN)
+        Set<String> stillPresent = verdicts.stream()
+                .filter(v -> v.status() == FindingVerdict.Status.STILL_OPEN
+                        || v.status() == FindingVerdict.Status.UNCHANGED)
                 .map(v -> v.path() + ":" + v.line())
                 .collect(Collectors.toSet());
-        if (stillOpen.isEmpty()) {
+        if (stillPresent.isEmpty()) {
             return result;
         }
         List<Finding> kept = result.findings().stream()
-                .filter(f -> !stillOpen.contains(f.path() + ":" + f.range().startLine()))
+                .filter(f -> !stillPresent.contains(f.path() + ":" + f.range().startLine()))
                 .toList();
         return new ReviewResult(kept, result.summary(), result.usage(), result.truncated());
     }
@@ -402,6 +433,12 @@ public class ReviewWorker {
     private List<CommentsPosted.ThreadOutcome> actOnVerdicts(CommentSink sink, PostComments command) {
         List<CommentsPosted.ThreadOutcome> outcomes = new ArrayList<>();
         for (FindingVerdict verdict : command.verdicts()) {
+            // UNCHANGED means the follow-up never touched this finding — no reply, no resolve,
+            // no thread interaction at all. The dashboard badge comes from reconciliation_json
+            // (written from ALL verdicts at ReviewGenerated), not from ThreadOutcome.
+            if (verdict.status() == FindingVerdict.Status.UNCHANGED) {
+                continue;
+            }
             if (verdict.threadRef() != null) {
                 outcomes.add(actOnVerdict(sink, command, verdict));
             }
@@ -413,7 +450,9 @@ public class ReviewWorker {
      * One verdict's thread action: a closing verdict (anything but STILL_OPEN) first tries to
      * resolve the thread — a human who beat us to it (ALREADY_RESOLVED) means we stay quiet and
      * skip the reply entirely; otherwise (resolved-by-us or unsupported) a reply always follows.
-     * STILL_OPEN never resolves and always replies.
+     * STILL_OPEN never resolves and always replies. UNCHANGED never reaches this method — the
+     * caller (actOnVerdicts) skips it before dispatch, so "closing" here is only ever computed
+     * over {@code RESOLVED, ACKNOWLEDGED, SUPERSEDED, STILL_OPEN}.
      */
     private CommentsPosted.ThreadOutcome actOnVerdict(CommentSink sink, PostComments command,
                                                       FindingVerdict verdict) {
@@ -482,6 +521,7 @@ public class ReviewWorker {
             case STILL_OPEN -> "**Still open after `" + sha + "`:**" + note;
             case ACKNOWLEDGED -> "**Acknowledged** — closing this thread." + note;
             case SUPERSEDED -> "**The flagged code changed in `" + sha + "`** — this finding no longer applies." + note;
+            case UNCHANGED -> throw new IllegalStateException("UNCHANGED verdicts never reply");
         };
     }
 
@@ -561,9 +601,11 @@ public class ReviewWorker {
         if (verdicts.isEmpty()) {
             return "";
         }
-        long resolved = verdicts.stream().filter(v -> v.status() != FindingVerdict.Status.STILL_OPEN).count();
-        long open = verdicts.size() - resolved;
-        return "\n\n---\n**Reconciliation:** " + resolved + " closed · " + open + " still open.";
+        long closed = verdicts.stream().filter(v -> v.status() == FindingVerdict.Status.RESOLVED
+                || v.status() == FindingVerdict.Status.ACKNOWLEDGED
+                || v.status() == FindingVerdict.Status.SUPERSEDED).count();
+        long open = verdicts.size() - closed; // STILL_OPEN + UNCHANGED
+        return "\n\n---\n**Reconciliation:** " + closed + " closed · " + open + " still open.";
     }
 
     // --- rendering (model output sanitized: raw HTML escaped, SECURITY.md) ---
