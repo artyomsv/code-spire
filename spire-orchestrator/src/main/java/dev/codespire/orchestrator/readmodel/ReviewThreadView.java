@@ -97,6 +97,21 @@ public class ReviewThreadView {
         }
     }
 
+    /** Flag a thread resolved (ADR-019 — a follow-up review confirmed the finding is fixed). */
+    public void markResolved(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO review_thread (review_id, thread_ref, resolved) VALUES (?, ?, TRUE)
+                     ON CONFLICT (review_id, thread_ref) DO UPDATE SET resolved = TRUE
+                     """)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to mark thread resolved", e);
+        }
+    }
+
     public boolean isOurThread(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(

@@ -4,7 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
@@ -230,6 +233,130 @@ public class ReviewProjection {
             ps.setInt(6, usage.tokensOut());
             ps.setLong(7, usage.costMillicents());
         });
+    }
+
+    /**
+     * Snapshot the run that actually reached the SCM — the source for the next
+     * follow-up's {@link PriorRun} (ADR-019). Copies {@code findings_json} verbatim
+     * (already encrypted with AAD = reviewId) rather than re-encrypting.
+     */
+    public void recordPosted(String reviewId, String commit, String summaryCommentId) {
+        update("""
+                UPDATE review_status SET last_posted_commit = ?, last_summary_comment_id = ?,
+                       posted_findings_json = findings_json, updated_at = now()
+                 WHERE review_id = ?
+                """, ps -> {
+            ps.setString(1, commit);
+            ps.setString(2, summaryCommentId);
+            ps.setString(3, reviewId);
+        });
+    }
+
+    /**
+     * The last POSTED run's snapshot a follow-up review reconciles against
+     * (ADR-019) — empty when the PR has never been posted to. Never throws: a
+     * read/decrypt/parse failure degrades to empty, same posture as {@link #parseFindings}.
+     */
+    public Optional<PriorRun> priorRunFor(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT last_posted_commit, last_summary_comment_id, posted_findings_json "
+                             + "FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next() || rs.getString("last_posted_commit") == null) {
+                    return Optional.empty();
+                }
+                ThreadIndex index = buildThreadIndex(loadThreadRows(c, reviewId));
+                List<PriorFinding> findings = toPriorFindings(
+                        parseFindings(rs.getString("posted_findings_json"), reviewId), index);
+                return Optional.of(new PriorRun(
+                        rs.getString("last_posted_commit"), rs.getString("last_summary_comment_id"), findings));
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "priorRunFor read failed for %s", reviewId);
+            return Optional.empty();
+        }
+    }
+
+    /** Skips (with a WARN) any finding whose loc doesn't parse — never lets a malformed
+     *  row throw into the saga. */
+    private List<PriorFinding> toPriorFindings(List<ReviewDetail.FindingView> views, ThreadIndex index) {
+        List<PriorFinding> out = new ArrayList<>();
+        for (ReviewDetail.FindingView f : views) {
+            try {
+                out.add(toPriorFinding(f, index));
+            } catch (RuntimeException e) {
+                LOG.warnf("Skipping malformed posted finding for prior-run projection: %s", f.loc());
+            }
+        }
+        return out;
+    }
+
+    /** loc is "path:line" (existing format) split at the LAST ':'. */
+    private PriorFinding toPriorFinding(ReviewDetail.FindingView f, ThreadIndex index) {
+        int splitAt = f.loc().lastIndexOf(':');
+        String path = f.loc().substring(0, splitAt);
+        int line = Integer.parseInt(f.loc().substring(splitAt + 1));
+        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), index.threadByLoc().get(f.loc()));
+    }
+
+    /** Reverse of {@link #severitySlug} — lossy for NIT/INFO (both slug to "nit");
+     *  an unrecognized slug falls back to INFO rather than throwing. */
+    private static Severity severityFromSlug(String slug) {
+        return switch (slug) {
+            case "critical" -> Severity.BLOCKER;
+            case "warning" -> Severity.MAJOR;
+            case "suggestion" -> Severity.MINOR;
+            case "nit" -> Severity.NIT;
+            default -> Severity.INFO;
+        };
+    }
+
+    /**
+     * Merge each verdict with its originating prior finding (matched by threadRef,
+     * falling back to path+line — a prior finding whose inline post failed has no
+     * threadRef) into one encrypted JSON array (AAD = reviewId). A serialization
+     * failure logs and skips the write rather than throwing into the saga.
+     */
+    public void recordReconciliation(String reviewId, List<FindingVerdict> verdicts,
+                                     List<PriorFinding> priorFindings) {
+        List<ReconciliationEntry> entries = verdicts.stream()
+                .map(v -> toReconciliationEntry(v, matchPriorFinding(v, priorFindings)))
+                .toList();
+        String json;
+        try {
+            json = mapper.writeValueAsString(entries);
+        } catch (JsonProcessingException e) {
+            LOG.warn("Failed to serialize reconciliation verdicts", e);
+            return;
+        }
+        String encrypted = encryption.encryptString(json, reviewId);
+        update("UPDATE review_status SET reconciliation_json = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, encrypted);
+            ps.setString(2, reviewId);
+        });
+    }
+
+    private PriorFinding matchPriorFinding(FindingVerdict v, List<PriorFinding> priorFindings) {
+        return priorFindings.stream()
+                .filter(f -> v.threadRef() != null && v.threadRef().equals(f.threadRef()))
+                .findFirst()
+                .or(() -> priorFindings.stream()
+                        .filter(f -> f.path().equals(v.path()) && f.line() == v.line())
+                        .findFirst())
+                .orElse(null);
+    }
+
+    private ReconciliationEntry toReconciliationEntry(FindingVerdict v, PriorFinding match) {
+        String sev = severitySlug(match == null ? Severity.INFO : match.severity());
+        String msg = match == null ? "" : match.message();
+        return new ReconciliationEntry(sev, v.path() + ":" + v.line(), msg, v.status().name(), v.note(), v.threadRef());
+    }
+
+    /** Wire shape for {@code reconciliation_json}: one entry per verdict, merged with its finding. */
+    private record ReconciliationEntry(String sev, String loc, String msg, String status, String note,
+                                       String threadRef) {
     }
 
     /**

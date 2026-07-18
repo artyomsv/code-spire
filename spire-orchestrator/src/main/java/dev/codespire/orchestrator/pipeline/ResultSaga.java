@@ -13,6 +13,7 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
@@ -123,9 +124,10 @@ public class ResultSaga {
                     LOG.warnf("Skipping GenerateReview for %s — no default LLM provider set", e.reviewId());
                     return;
                 }
+                PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
                 emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.contextRef(), 1, null, scmCred, llmCred.get()));
+                        e.contextRef(), 1, null, scmCred, llmCred.get(), prior));
             });
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
@@ -134,6 +136,16 @@ public class ResultSaga {
                 ReviewResult pricedResult = priced(e.result());
                 projection.recordOutcome(e.reviewId(), pricedResult, ReviewProjection.STAGE_COMMENTS);
                 projection.recordLlmCall(e.reviewId(), "review", pricedResult.usage());
+                if (e.reconcileUsage() != null) {
+                    projection.recordLlmCall(e.reviewId(), "reconcile", priceUsage(e.reconcileUsage()));
+                }
+                String priorSummaryRef = null;
+                if (!e.verdicts().isEmpty()) {
+                    java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
+                    projection.recordReconciliation(e.reviewId(), e.verdicts(),
+                            prior.map(PriorRun::findings).orElse(List.of()));
+                    priorSummaryRef = prior.map(PriorRun::summaryCommentId).orElse(null);
+                }
                 if (e.result().truncated()) {
                     projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
                             + "(changes beyond the token limit were not reviewed).");
@@ -141,8 +153,10 @@ public class ResultSaga {
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                         e.commit(), e.result().findings().size(),
                         Integer.toHexString(e.result().summary().hashCode())));
+                String finalPriorSummaryRef = priorSummaryRef;
                 emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred));
+                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
+                        e.verdicts(), finalPriorSummaryRef));
             });
             case CommentsPosted e -> {
                 projection.appendEvent(e.reviewId(), "result", "CommentsPosted", e.inline().size() + " inline comments");
@@ -158,6 +172,20 @@ public class ResultSaga {
                 }
                 // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
                 threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryCommentId()));
+                // ADR-019: a reconciled thread's outcome lands on the timeline and, when the finding
+                // is confirmed fixed, flags the thread resolved for the detail view.
+                for (var outcome : e.threadOutcomes()) {
+                    if (outcome.resolved()) {
+                        threads.markResolved(e.reviewId(), new ThreadRef(outcome.threadRef()));
+                    }
+                    projection.appendEvent(e.reviewId(), "result",
+                            outcome.resolved() ? "ThreadResolved" : "ThreadReplied",
+                            outcome.status().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' '),
+                            outcome.threadRef());
+                }
+                // Snapshot AFTER the thread outcomes so a superseded mid-flight run never stamps a
+                // posted snapshot inconsistent with the commit it actually reached the SCM at.
+                projection.recordPosted(e.reviewId(), e.commit(), e.summaryCommentId());
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",

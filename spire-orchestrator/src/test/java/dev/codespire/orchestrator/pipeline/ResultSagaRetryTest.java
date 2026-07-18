@@ -94,6 +94,21 @@ class ResultSagaRetryTest {
             public void setError(String reviewId, String error) {
                 terminalErrors.add(error);
             }
+
+            @Override
+            public Optional<dev.codespire.contract.review.PriorRun> priorRunFor(String reviewId) {
+                return Optional.empty();
+            }
+
+            @Override
+            public void recordPosted(String reviewId, String commit, String summaryCommentId) {
+            }
+
+            @Override
+            public void recordReconciliation(String reviewId,
+                    List<dev.codespire.contract.review.FindingVerdict> verdicts,
+                    List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
