@@ -62,6 +62,7 @@ public class ReviewThreadView {
         }
     }
 
+    /** Record a finding's owned thread together with its {@code (path, line)}. */
     public void markFindingThread(String reviewId, ThreadRef thread, String path, int line) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""

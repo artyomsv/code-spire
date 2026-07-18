@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * The reviews read model (DATA-MODEL §5) — the single writer to
@@ -431,49 +432,72 @@ public class ReviewProjection {
             if (row == null) {
                 return Optional.empty();
             }
-            List<ThreadRow> threadRows = loadThreadRows(c, reviewId);
-
-            // loc "path:line" -> threadRef (first wins on a same-line collision).
-            Map<String, String> threadByLoc = new HashMap<>();
-            Set<String> summaryRefs = new HashSet<>();
-            for (ThreadRow t : threadRows) {
-                if (t.isSummary()) {
-                    summaryRefs.add(t.threadRef());
-                }
-                if (t.path() != null && t.line() != null) {
-                    // Deterministic tie-break by thread_ref order (loadThreadRows' ORDER BY) for the rare
-                    // same-line collision — either thread is a valid nesting; what matters is that a
-                    // review renders the same way every load.
-                    threadByLoc.putIfAbsent(t.path() + ":" + t.line(), t.threadRef());
-                }
-            }
-
-            // Attach each finding's thread, and collect the threadRefs a CURRENT finding claims.
-            List<ReviewDetail.FindingView> findings = new ArrayList<>();
-            Set<String> findingRefs = new HashSet<>();
-            for (ReviewDetail.FindingView f : parseFindings(row.findingsJson, row.id)) {
-                String ref = threadByLoc.get(f.loc());
-                if (ref != null) {
-                    findingRefs.add(ref);
-                }
-                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref));
-            }
-
-            java.util.function.Function<String, String> classifier = threadRef -> {
-                if (threadRef == null) {
-                    return null;
-                }
-                if (findingRefs.contains(threadRef)) {
-                    return "finding";
-                }
-                return summaryRefs.contains(threadRef) ? "summary" : "mention";
-            };
+            ThreadIndex threadIndex = buildThreadIndex(loadThreadRows(c, reviewId));
+            FindingsWithThreads attached = attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex);
+            Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
 
             return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt, classifier),
-                    llmCalls(reviewId), findings));
+                    llmCalls(reviewId), attached.findings()));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
+    }
+
+    /** loc "path:line" -> threadRef (first wins on a same-line collision), plus which threadRefs
+     *  belong to a summary comment — both derived once per {@link #loadDetail} call. */
+    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs) {}
+
+    private ThreadIndex buildThreadIndex(List<ThreadRow> threadRows) {
+        Map<String, String> threadByLoc = new HashMap<>();
+        Set<String> summaryRefs = new HashSet<>();
+        for (ThreadRow t : threadRows) {
+            if (t.isSummary()) {
+                summaryRefs.add(t.threadRef());
+            }
+            if (t.path() != null && t.line() != null) {
+                // Deterministic tie-break by thread_ref order (loadThreadRows' ORDER BY) for the rare
+                // same-line collision — either thread is a valid nesting; what matters is that a
+                // review renders the same way every load.
+                threadByLoc.putIfAbsent(t.path() + ":" + t.line(), t.threadRef());
+            }
+        }
+        return new ThreadIndex(threadByLoc, summaryRefs);
+    }
+
+    /** Findings with their owned threadRefs attached, plus the set of threadRefs a CURRENT finding
+     *  claims (drives the timeline's "finding" classification). */
+    private record FindingsWithThreads(List<ReviewDetail.FindingView> findings, Set<String> findingRefs) {}
+
+    /** Attach each finding's thread. Only the FIRST finding at a given loc claims the thread — two
+     *  issues on the same line must not nest the same conversation under both. */
+    private FindingsWithThreads attachThreadRefs(List<ReviewDetail.FindingView> raw, ThreadIndex threadIndex) {
+        List<ReviewDetail.FindingView> findings = new ArrayList<>();
+        Set<String> findingRefs = new HashSet<>();
+        Set<String> claimedRefs = new HashSet<>();
+        for (ReviewDetail.FindingView f : raw) {
+            String ref = threadIndex.threadByLoc().get(f.loc());
+            if (ref != null && claimedRefs.add(ref)) {
+                findingRefs.add(ref);
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref));
+            } else {
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), null));
+            }
+        }
+        return new FindingsWithThreads(findings, findingRefs);
+    }
+
+    /** Classify a timeline turn's thread as the finding it nests under, the summary comment, or a
+     *  bare mention/reply — null passes through untouched (non-conversation events). */
+    private Function<String, String> threadClassifier(Set<String> findingRefs, Set<String> summaryRefs) {
+        return threadRef -> {
+            if (threadRef == null) {
+                return null;
+            }
+            if (findingRefs.contains(threadRef)) {
+                return "finding";
+            }
+            return summaryRefs.contains(threadRef) ? "summary" : "mention";
+        };
     }
 
     /** Every LLM call recorded for a review (the generation + each follow-up), oldest first — the raw
@@ -664,7 +688,7 @@ public class ReviewProjection {
     }
 
     private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0,
-            java.util.function.Function<String, String> threadKind) throws SQLException {
+            Function<String, String> threadKind) throws SQLException {
         List<ReviewDetail.EventView> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT lane, type, detail, at, thread_ref FROM review_event WHERE review_id = ? ORDER BY seq")) {

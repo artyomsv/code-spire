@@ -67,6 +67,10 @@ class ResultSagaRetryTest {
             }
 
             @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
+            }
+
+            @Override
             public int currentAttempt(String reviewId) {
                 return storedAttempt;
             }

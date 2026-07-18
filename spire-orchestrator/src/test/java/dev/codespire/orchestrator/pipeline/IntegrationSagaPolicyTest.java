@@ -83,6 +83,10 @@ class IntegrationSagaPolicyTest {
             }
 
             @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
+            }
+
+            @Override
             public void setNote(String reviewId, String note) {
             }
         };

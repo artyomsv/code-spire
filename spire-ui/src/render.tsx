@@ -589,7 +589,7 @@ export function conversationExchangesBody(turns: ReviewEvent[]) {
 }
 
 /** Conversations NOT tied to a finding — summary-comment replies, @-mentions, and orphan bot
- *  answers (threadKind !== 'finding', including null). Hidden when empty. */
+ *  answers (threadKind !== 'finding', including undefined). Hidden when empty. */
 export function generalDiscussionCard(r: ReviewDetail) {
   const turns = r.events.filter(
     (e: ReviewEvent) =>
