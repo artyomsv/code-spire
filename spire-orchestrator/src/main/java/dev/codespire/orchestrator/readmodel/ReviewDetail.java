@@ -31,6 +31,7 @@ public record ReviewDetail(
         List<String> stages,
         List<String> timings,
         List<FindingView> findingsList,
+        List<ReconciliationView> reconciliation,
         UsageView usage,
         List<LlmCall> llmCalls,
         String note,
@@ -40,6 +41,14 @@ public record ReviewDetail(
     /** A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM
      *  thread it owns ({@code threadRef}, null when it has no conversation / predates thread linking). */
     public record FindingView(String sev, String loc, String msg, String threadRef) {
+    }
+
+    /** One reconciliation verdict (ADR-019) as the UI renders it: the prior finding's severity/
+     *  location/message, the verdict {@code status} ("still open" | "resolved" | "acknowledged" |
+     *  "superseded"), the LLM's {@code note}, the owning SCM thread ({@code threadRef}, null when the
+     *  prior finding was never posted), and whether that thread is now resolved on the SCM side. */
+    public record ReconciliationView(String sev, String loc, String msg, String status, String note,
+                                     String threadRef, boolean resolvedThread) {
     }
 
     /** Model usage as display strings (tokens formatted, cost as dollars). */

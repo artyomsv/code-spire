@@ -573,24 +573,31 @@ public class ReviewProjection {
             ThreadIndex threadIndex = buildThreadIndex(loadThreadRows(c, reviewId));
             FindingsWithThreads attached = attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex);
             Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
+            List<ReviewDetail.ReconciliationView> reconciliation =
+                    parseReconciliation(row.reconciliationJson, row.id, threadIndex.resolvedRefs());
 
             return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt, classifier),
-                    llmCalls(reviewId), attached.findings()));
+                    llmCalls(reviewId), attached.findings(), reconciliation));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
     }
 
-    /** loc "path:line" -> threadRef (first wins on a same-line collision), plus which threadRefs
-     *  belong to a summary comment — both derived once per {@link #loadDetail} call. */
-    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs) {}
+    /** loc "path:line" -> threadRef (first wins on a same-line collision), which threadRefs belong
+     *  to a summary comment, and which threadRefs are resolved on the SCM side — all derived once
+     *  per {@link #loadDetail} / {@link #priorRunFor} call. */
+    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs, Set<String> resolvedRefs) {}
 
     private ThreadIndex buildThreadIndex(List<ThreadRow> threadRows) {
         Map<String, String> threadByLoc = new HashMap<>();
         Set<String> summaryRefs = new HashSet<>();
+        Set<String> resolvedRefs = new HashSet<>();
         for (ThreadRow t : threadRows) {
             if (t.isSummary()) {
                 summaryRefs.add(t.threadRef());
+            }
+            if (t.resolved()) {
+                resolvedRefs.add(t.threadRef());
             }
             if (t.path() != null && t.line() != null) {
                 // Deterministic tie-break by thread_ref order (loadThreadRows' ORDER BY) for the rare
@@ -599,7 +606,7 @@ public class ReviewProjection {
                 threadByLoc.putIfAbsent(t.path() + ":" + t.line(), t.threadRef());
             }
         }
-        return new ThreadIndex(threadByLoc, summaryRefs);
+        return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs);
     }
 
     /** Findings with their owned threadRefs attached, plus the set of threadRefs a CURRENT finding
@@ -708,8 +715,9 @@ public class ReviewProjection {
     private record ReviewRow(String id, String workspace, String slug, long pr, String title, String author,
                              String authorId, String branch, String base, String sha, String htmlUrl,
                              String providerType, String status, int stage, int findings, String findingsJson,
-                             String model, Integer tokensIn, Integer tokensOut, Long costMillicents, String note,
-                             String errorDetail, int attempt, Instant createdAt, Instant updatedAt) {
+                             String reconciliationJson, String model, Integer tokensIn, Integer tokensOut,
+                             Long costMillicents, String note, String errorDetail, int attempt, Instant createdAt,
+                             Instant updatedAt) {
         ReviewSummary toSummary(String llmType, int blockerCount) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, findings, blockerCount,
@@ -759,19 +767,20 @@ public class ReviewProjection {
                 rs.getString("source_branch"), rs.getString("dest_branch"), rs.getString("commit_sha"),
                 rs.getString("html_url"), rs.getString("provider_type"),
                 rs.getString("status"), rs.getInt("stage"), rs.getInt("findings_count"),
-                rs.getString("findings_json"), rs.getString("model"),
+                rs.getString("findings_json"), rs.getString("reconciliation_json"), rs.getString("model"),
                 (Integer) rs.getObject("tokens_in"), (Integer) rs.getObject("tokens_out"),
                 (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getString("error_detail"),
                 rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 
-    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
-                                  List<ReviewDetail.LlmCall> llmCalls, List<ReviewDetail.FindingView> findings) {
+    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events, List<ReviewDetail.LlmCall> llmCalls,
+                                  List<ReviewDetail.FindingView> findings,
+                                  List<ReviewDetail.ReconciliationView> reconciliation) {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, blockerCount(r),
                 r.updatedAt, r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                findings, usageView(r), withReviewCall(r, llmCalls), r.note,
+                findings, reconciliation, usageView(r), withReviewCall(r, llmCalls), r.note,
                 decryptError(r.errorDetail, r.id), events);
     }
 
@@ -809,18 +818,18 @@ public class ReviewProjection {
         }
     }
 
-    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary) {}
+    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary, boolean resolved) {}
 
     private List<ThreadRow> loadThreadRows(Connection c, String reviewId) throws SQLException {
         List<ThreadRow> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT thread_ref, path, line, is_summary FROM review_thread WHERE review_id = ? "
+                "SELECT thread_ref, path, line, is_summary, resolved FROM review_thread WHERE review_id = ? "
                         + "ORDER BY thread_ref")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new ThreadRow(rs.getString("thread_ref"), rs.getString("path"),
-                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary")));
+                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary"), rs.getBoolean("resolved")));
                 }
             }
         }
@@ -951,6 +960,41 @@ public class ReviewProjection {
             LOG.debugf("Failed to parse findings_json: %s", e.getMessage());
             return List.of();
         }
+    }
+
+    /**
+     * loadDetail's lenient reader for {@code reconciliation_json} — same posture as {@link
+     * #parseFindings}: a null column, decrypt failure, or parse failure all degrade to an empty
+     * list rather than throwing. Renders {@code status} lower-case with spaces ("still open") and
+     * sets {@code resolvedThread} from the thread index (false when the entry has no threadRef,
+     * since {@code Set.contains(null)} is a safe false rather than a match).
+     */
+    private List<ReviewDetail.ReconciliationView> parseReconciliation(String stored, String reviewId,
+                                                                       Set<String> resolvedRefs) {
+        if (stored == null || stored.isBlank()) {
+            return List.of();
+        }
+        String json;
+        try {
+            json = encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException notEncrypted) {
+            json = stored; // legacy plaintext row
+        }
+        try {
+            List<ReconciliationEntry> entries = mapper.readerForListOf(ReconciliationEntry.class).readValue(json);
+            return entries.stream()
+                    .map(e -> new ReviewDetail.ReconciliationView(e.sev(), e.loc(), e.msg(),
+                            statusDisplay(e.status()), e.note(), e.threadRef(), resolvedRefs.contains(e.threadRef())))
+                    .toList();
+        } catch (Exception e) {
+            LOG.debugf("Failed to parse reconciliation_json: %s", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** Reverse of storing {@code status.name()} in {@link #toReconciliationEntry}: "STILL_OPEN" -> "still open". */
+    private static String statusDisplay(String status) {
+        return status.toLowerCase(java.util.Locale.ROOT).replace('_', ' ');
     }
 
     private ReviewDetail.FindingView toView(Finding f) {

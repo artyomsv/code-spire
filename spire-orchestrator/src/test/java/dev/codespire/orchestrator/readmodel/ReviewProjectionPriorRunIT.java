@@ -1,5 +1,7 @@
 package dev.codespire.orchestrator.readmodel;
 
+import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Finding;
@@ -76,5 +78,28 @@ class ReviewProjectionPriorRunIT {
         threads.markFindingThread(reviewId, new ThreadRef("t-r"), "a.java", 1);
         threads.markResolved(reviewId, new ThreadRef("t-r"));
         // loadThreadRows exposure is asserted via Task 10's detail test; here the write must not throw.
+    }
+
+    @Test
+    void loadDetailExposesReconciliationWithResolvedFlags() {
+        String reviewId = "review::ws/prior-run-it#4";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 4L,
+                "t", "a", "aid", "src", "dst", "ccc333", "http://x", "github", "completed", 6);
+        threads.markFindingThread(reviewId, new ThreadRef("t-4"), "src/A.java", 7);
+        threads.markResolved(reviewId, new ThreadRef("t-4"));
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-4", "src/A.java", 7,
+                        FindingVerdict.Status.RESOLVED, "fixed")),
+                List.of(new PriorFinding("src/A.java", 7, Severity.MAJOR, "leak", "t-4")));
+
+        ReviewDetail detail = projection.loadDetail("ws", "prior-run-it", 4L).orElseThrow();
+        assertEquals(1, detail.reconciliation().size());
+        ReviewDetail.ReconciliationView view = detail.reconciliation().getFirst();
+        assertEquals("resolved", view.status());
+        assertEquals("src/A.java:7", view.loc());
+        // recordReconciliation stores sev as the display slug (severitySlug), matching FindingView's
+        // convention, not the raw Severity enum name — Severity.MAJOR -> "warning".
+        assertEquals("warning", view.sev());
+        assertTrue(view.resolvedThread());
     }
 }
