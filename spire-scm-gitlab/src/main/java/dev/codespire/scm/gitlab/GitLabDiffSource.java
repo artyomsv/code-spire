@@ -74,6 +74,25 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
     }
 
     /**
+     * The reconciliation lens (prior head -> new head). GitLab's compare endpoint
+     * returns per-file {@code diffs[]} the same header-less shape as {@code /changes},
+     * so each entry is wrapped with a minimal {@code ---}/{@code +++} pair rather than
+     * the full {@code diff --git} header — enough for the shared parser's hunk reader.
+     */
+    @Override
+    public String fetchCompareDiff(RepoRef repo, String base, String head) {
+        String path = "/projects/" + encodedProject(repo) + "/repository/compare?from=" + base + "&to=" + head;
+        JsonNode response = client.getJson(path);
+        StringBuilder unified = new StringBuilder();
+        for (JsonNode d : response.path("diffs")) {
+            unified.append("--- a/").append(d.path("old_path").asText("")).append('\n')
+                    .append("+++ b/").append(d.path("new_path").asText("")).append('\n')
+                    .append(d.path("diff").asText(""));
+        }
+        return unified.toString();
+    }
+
+    /**
      * GitLab's {@code changes[].diff} is a header-less unified-diff fragment plus
      * out-of-band path/flags fields. Re-attach a {@code diff --git} header (and
      * the add/delete/rename markers) so the shared parser recognises each file
@@ -119,7 +138,11 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
 
     /** {@code /projects/{url-encoded namespace/project}/merge_requests/{iid}}. */
     static String mrPath(RepoRef repo, long prId) {
-        String project = URLEncoder.encode(repo.full(), StandardCharsets.UTF_8);
-        return "/projects/" + project + "/merge_requests/" + prId;
+        return "/projects/" + encodedProject(repo) + "/merge_requests/" + prId;
+    }
+
+    /** GitLab addresses a project by its URL-encoded {@code namespace/project} path. */
+    private static String encodedProject(RepoRef repo) {
+        return URLEncoder.encode(repo.full(), StandardCharsets.UTF_8);
     }
 }

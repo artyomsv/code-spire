@@ -74,6 +74,36 @@ public class GitLabCommentSink implements CommentSink {
         return new CommentRef(requireId(created.path("id"), path), thread, CommentKind.REPLY);
     }
 
+    /**
+     * A discussion's notes each carry {@code resolvable}/{@code resolved} flags. If every
+     * resolvable note is already resolved, a human beat us to it (ALREADY_RESOLVED, no PUT);
+     * otherwise resolve the whole discussion in one call.
+     */
+    @Override
+    public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
+        String path = GitLabDiffSource.mrPath(repo, prId) + "/discussions/" + thread.value();
+        JsonNode discussion = client.getJson(path);
+        boolean anyUnresolved = false;
+        for (JsonNode note : discussion.path("notes")) {
+            if (note.path("resolvable").asBoolean(false) && !note.path("resolved").asBoolean(false)) {
+                anyUnresolved = true;
+            }
+        }
+        if (!anyUnresolved) {
+            return ThreadResolution.ALREADY_RESOLVED;
+        }
+        client.putJson(path, Map.of("resolved", true));
+        return ThreadResolution.RESOLVED_NOW;
+    }
+
+    /** In-place summary rewrite on a re-review — the summary is a merge-request note. */
+    @Override
+    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+        String path = GitLabDiffSource.mrPath(repo, prId) + "/notes/" + commentId;
+        client.putJson(path, Map.of("body", bodyMd));
+        return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
+    }
+
     @Override
     public Author getPullRequestAuthor(RepoRef repo, long prId) {
         JsonNode user = client.getJson(GitLabDiffSource.mrPath(repo, prId)).path("author");

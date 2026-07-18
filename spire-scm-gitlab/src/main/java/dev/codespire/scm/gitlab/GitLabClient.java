@@ -54,6 +54,14 @@ public class GitLabClient {
         }
     }
 
+    public JsonNode putJson(String path, Object body) {
+        try {
+            return parse(send("PUT", path, mapper.writeValueAsString(body)));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private String send(String method, String path, String jsonBody) {
         URI target = URI.create(baseUri + path);
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
