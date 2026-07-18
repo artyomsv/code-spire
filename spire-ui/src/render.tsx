@@ -416,14 +416,14 @@ function llmCallRow(call: LlmCall, i: number) {
     <div key={i} className={`usage-call ${call.kind}`}>
       <div className="usage-call-top">
         <span className="usage-kind">{kind}</span>
+        {call.createdAt && <span className="usage-time">{formatEventTime(call.createdAt)}</span>}
         <span className="usage-cost">{formatCost(call.costMillicents)}</span>
       </div>
       <div className="usage-call-meta">
         <div className="usage-model">{call.model}</div>
         <div className="usage-tokens">
-          {call.tokensIn.toLocaleString()} → {call.tokensOut.toLocaleString()} tok
+          {call.tokensIn.toLocaleString()} input → {call.tokensOut.toLocaleString()} output tokens
         </div>
-        {call.createdAt && <div className="usage-time">{formatEventTime(call.createdAt)}</div>}
       </div>
     </div>
   );

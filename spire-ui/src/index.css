@@ -498,21 +498,22 @@
   .usage-calls { display: flex; flex-direction: column; }
   .usage-call { padding: 9px 0; border-bottom: 1px dashed var(--border); }
   .usage-call:first-child { padding-top: 0; }
-  .usage-call-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .usage-kind { position: relative; padding-left: 13px; font-size: 13px; font-weight: 600; color: var(--text); }
+  .usage-call-top { display: flex; align-items: baseline; gap: 8px; }
+  .usage-kind { position: relative; padding-left: 13px; font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
   .usage-kind::before {
     content: ''; position: absolute; left: 0; top: 6px;
     width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
   }
   .usage-call.review .usage-kind::before { background: var(--iris); }
   .usage-call.followup .usage-kind::before { background: var(--blue); }
-  .usage-cost { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
+  .usage-time { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+  .usage-cost { margin-left: auto; font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
   .usage-call-meta {
     margin-top: 4px; padding-left: 13px;
     font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); line-height: 1.65;
   }
   .usage-model { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .usage-time { color: var(--text-3); }
+  .usage-tokens { word-break: break-word; }
   .usage-total {
     display: flex; align-items: baseline; justify-content: space-between;
     padding-top: 11px; margin-top: 3px; border-top: 1px solid var(--border);
