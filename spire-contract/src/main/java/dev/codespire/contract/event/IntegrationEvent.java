@@ -146,6 +146,7 @@ public sealed interface IntegrationEvent {
                           List<PostedInline> inline, List<ThreadOutcome> threadOutcomes) implements IntegrationEvent {
 
         public CommentsPosted {
+            inline = inline == null ? null : List.copyOf(inline);
             threadOutcomes = threadOutcomes == null ? List.of() : List.copyOf(threadOutcomes);
         }
 
