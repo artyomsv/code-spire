@@ -1,5 +1,6 @@
 package dev.codespire.scm.github;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -12,6 +13,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Map;
 
 /**
  * Thin HTTP layer over the GitHub REST API (api.github.com). As in the Bitbucket
@@ -61,8 +63,59 @@ public class GitHubClient {
         }
     }
 
+    public JsonNode patchJson(String path, Object body) {
+        try {
+            return parse(send("PATCH", path, JSON_MEDIA, mapper.writeValueAsString(body)));
+        } catch (JsonProcessingException e) {
+            throw new GitHubApiException(0, "PATCH", path, "request serialization failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * GraphQL entry point — thread resolution has no REST equivalent. Returns the
+     * {@code data} node; throws {@link GitHubApiException} when the response carries
+     * top-level {@code errors}.
+     */
+    public JsonNode postGraphQl(String query, Map<String, Object> variables) {
+        URI target = graphQlTarget();
+        String path = target.getRawPath();
+        try {
+            String body = mapper.writeValueAsString(Map.of("query", query, "variables", variables));
+            JsonNode response = parse(send("POST", path, target, JSON_MEDIA, body));
+            if (response.has("errors") && !response.path("errors").isEmpty()) {
+                throw new GitHubApiException(200, "POST", path,
+                        "GraphQL errors: " + response.path("errors").toString());
+            }
+            return response.path("data");
+        } catch (JsonProcessingException e) {
+            throw new GitHubApiException(0, "POST", path, "request serialization failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * The GraphQL endpoint does not live under the REST {@code baseUri + path}
+     * convention every other call uses. For github.com the API base is
+     * {@code https://api.github.com} and GraphQL is the sibling {@code /graphql}.
+     * For GitHub Enterprise Server the REST base is {@code https://<host>/api/v3};
+     * its GraphQL endpoint is the sibling {@code https://<host>/api/graphql} — NOT
+     * a path under {@code /api/v3} — so the {@code /v3} segment is swapped for
+     * {@code /graphql} rather than appended to it.
+     */
+    private URI graphQlTarget() {
+        String base = baseUri.toString();
+        if (base.endsWith("/api/v3")) {
+            return URI.create(base.substring(0, base.length() - "/v3".length()) + "/graphql");
+        }
+        return URI.create(base + "/graphql");
+    }
+
     private String send(String method, String path, String accept, String jsonBody) {
-        URI target = URI.create(baseUri + path);
+        return send(method, path, URI.create(baseUri + path), accept, jsonBody);
+    }
+
+    /** Overload for targets outside the baseUri+path convention (e.g. {@link #postGraphQl}). */
+    private String send(String method, String path, URI initialTarget, String accept, String jsonBody) {
+        URI target = initialTarget;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             HttpResponse<String> response = execute(method, path, target, accept, jsonBody);
             int status = response.statusCode();

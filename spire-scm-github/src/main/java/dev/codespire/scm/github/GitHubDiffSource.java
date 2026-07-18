@@ -66,6 +66,12 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
         return new Diff(DiffRefs.headOnly(commit), files, false);
     }
 
+    /** The reconciliation lens (prior head -> new head), same diff media type as the PR diff. */
+    @Override
+    public String fetchCompareDiff(RepoRef repo, String base, String head) {
+        return client.getDiff("/repos/" + repo.full() + "/compare/" + base + "..." + head);
+    }
+
     private String prPath(RepoRef repo, long prId) {
         return "/repos/" + repo.workspace() + "/" + repo.slug() + "/pulls/" + prId;
     }

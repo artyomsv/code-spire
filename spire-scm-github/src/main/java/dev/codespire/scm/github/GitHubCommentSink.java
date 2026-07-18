@@ -16,6 +16,7 @@ import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -30,6 +31,19 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
 
     // Bounds thread re-fetch on a pathological PR (100 comments/page × pages).
     private static final int MAX_THREAD_PAGES = 20;
+
+    // GraphQL is the only way to reach review-thread resolution state (no REST equivalent).
+    // Paginated by review thread (not comment) — a PR with many threads walks pages the
+    // same way fetchThread walks REST comment pages.
+    private static final String THREADS_QUERY = """
+            query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+              repository(owner:$owner,name:$name){ pullRequest(number:$pr){
+                reviewThreads(first:100,after:$cursor){
+                  pageInfo{hasNextPage endCursor}
+                  nodes{id isResolved comments(first:1){nodes{databaseId}}}}}}}""";
+
+    private static final String RESOLVE_MUTATION = """
+            mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}""";
 
     private final GitHubClient client;
 
@@ -68,6 +82,67 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         String path = reviewCommentsPath(repo, prId) + "/" + thread.value() + "/replies";
         JsonNode created = client.postJson(path, Map.of("body", bodyMd));
         return new CommentRef(requireCommentId(created, path), thread, CommentKind.REPLY);
+    }
+
+    /** In-place summary rewrite on a re-review — the summary is an issue comment (PATCH, not POST). */
+    @Override
+    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+        client.patchJson(issueCommentByIdPath(repo, commentId), Map.of("body", bodyMd));
+        return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
+    }
+
+    /**
+     * Walks review threads by GraphQL cursor looking for the one whose FIRST (root)
+     * comment's {@code databaseId} equals {@code thread}'s value. A human may have
+     * already resolved it (ALREADY_RESOLVED, no mutation) or it may be gone entirely —
+     * the root comment was deleted, so there is nothing left to act on (also
+     * ALREADY_RESOLVED, not an error).
+     */
+    @Override
+    public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
+        String cursor = null;
+        for (int page = 0; page < MAX_THREAD_PAGES; page++) {
+            JsonNode threads = client.postGraphQl(THREADS_QUERY, threadsQueryVariables(repo, prId, cursor))
+                    .path("repository").path("pullRequest").path("reviewThreads");
+            ThreadResolution found = resolveInPage(threads.path("nodes"), thread);
+            if (found != null) {
+                return found;
+            }
+            if (!threads.path("pageInfo").path("hasNextPage").asBoolean(false)) {
+                break;
+            }
+            cursor = threads.path("pageInfo").path("endCursor").asText(null);
+        }
+        return ThreadResolution.ALREADY_RESOLVED; // thread gone (comment deleted) — nothing to resolve
+    }
+
+    private ThreadResolution resolveInPage(JsonNode nodes, ThreadRef thread) {
+        for (JsonNode node : nodes) {
+            String rootCommentId = node.path("comments").path("nodes").path(0).path("databaseId").asText("");
+            if (!thread.value().equals(rootCommentId)) {
+                continue;
+            }
+            if (node.path("isResolved").asBoolean(false)) {
+                return ThreadResolution.ALREADY_RESOLVED;
+            }
+            client.postGraphQl(RESOLVE_MUTATION, Map.of("id", node.path("id").asText()));
+            return ThreadResolution.RESOLVED_NOW;
+        }
+        return null;
+    }
+
+    private static Map<String, Object> threadsQueryVariables(RepoRef repo, long prId, String cursor) {
+        Map<String, Object> vars = new HashMap<>();
+        vars.put("owner", repo.workspace());
+        vars.put("name", repo.slug());
+        vars.put("pr", (int) prId);
+        vars.put("cursor", cursor);
+        return vars;
+    }
+
+    /** PATCH target for a single existing issue comment (no {@code prId} segment — ids are repo-global). */
+    private String issueCommentByIdPath(RepoRef repo, String commentId) {
+        return "/repos/" + repo.full() + "/issues/comments/" + commentId;
     }
 
     /** A 2xx without an id must not flow an empty key into the idempotency store. */
