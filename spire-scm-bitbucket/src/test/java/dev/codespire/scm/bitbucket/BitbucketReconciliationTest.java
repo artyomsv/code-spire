@@ -39,7 +39,7 @@ class BitbucketReconciliationTest {
 
     @Test
     void fetchCompareDiffUsesTheTwoDotSpec() {
-        wireMock.stubFor(get(urlEqualTo("/2.0/repositories/ws/repo/diff/bbb..aaa"))
+        wireMock.stubFor(get(urlEqualTo("/repositories/ws/repo/diff/bbb..aaa"))
                 .willReturn(aResponse().withStatus(200).withBody("diff --git a/x b/x")));
         assertEquals("diff --git a/x b/x",
                 new BitbucketCloudDiffSource(client).fetchCompareDiff(repo, "aaa", "bbb"));
@@ -47,7 +47,7 @@ class BitbucketReconciliationTest {
 
     @Test
     void updateCommentPutsRawContent() {
-        wireMock.stubFor(put(urlEqualTo("/2.0/repositories/ws/repo/pullrequests/1/comments/42"))
+        wireMock.stubFor(put(urlEqualTo("/repositories/ws/repo/pullrequests/1/comments/42"))
                 .withRequestBody(equalToJson("{\"content\":{\"raw\":\"new body\"}}"))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")

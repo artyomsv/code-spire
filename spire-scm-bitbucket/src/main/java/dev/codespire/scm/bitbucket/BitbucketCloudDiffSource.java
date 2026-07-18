@@ -87,7 +87,7 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
      */
     @Override
     public String fetchCompareDiff(RepoRef repo, String base, String head) {
-        return client.getText("/2.0/repositories/" + repo.full() + "/diff/" + head + ".." + base);
+        return client.getText("/repositories/" + repo.full() + "/diff/" + head + ".." + base);
     }
 
     private String prPath(RepoRef repo, long prId) {
