@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Bot, Cpu } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
+import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
 import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
@@ -12,28 +13,15 @@ import type {
   Usage,
 } from './api';
 import { formatCost } from './money';
+import { formatEventTime } from './format';
+
+export { formatEventTime };
 
 export const STAGES = ['Received', 'Diff', 'Context', 'Review', 'Comments', 'Done'];
 
 /** Label for a stage index, clamped — the backend can report stage 6 ("past Done"). */
 export function stageLabel(stage: number): string {
   return STAGES[Math.min(stage, STAGES.length - 1)];
-}
-
-/** Format an ISO-8601 instant as a compact local timestamp, e.g. "Jul 18, 00:22:40". Falls
- * back to the raw value if it doesn't parse (older rows may carry a pre-formatted delta). */
-export function formatEventTime(iso: string | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
 }
 
 /**
@@ -404,7 +392,7 @@ export function findingsCard(r: ReviewDetail) {
                     slug={r.slug}
                     pr={r.pr}
                     threadRef={f.threadRef}
-                    replyCount={turns.length}
+                    previewTurns={turns}
                     previewBody={conversationExchangesBody(turns)}
                   />
                 )}
@@ -567,7 +555,9 @@ function conversationTurnRow(turn: ConversationTurn, nested: boolean, key: strin
       </span>
       <div className="convo-body">
         <div className="convo-who">{turn.isBot ? 'Code Spire' : turn.who}</div>
-        <div className="convo-det">{turn.text}</div>
+        <div className="convo-det">
+          <MessageText>{turn.text}</MessageText>
+        </div>
         <div className="convo-at">
           {formatEventTime(turn.ts)}
           <span className="convo-at-rel">{turn.at}</span>
