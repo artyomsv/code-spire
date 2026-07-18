@@ -183,8 +183,10 @@ public class ResultSaga {
                             outcome.status().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' '),
                             outcome.threadRef());
                 }
-                // Snapshot AFTER the thread outcomes so a superseded mid-flight run never stamps a
-                // posted snapshot inconsistent with the commit it actually reached the SCM at.
+                // Guarded by recordPosted's commit match: a superseded run's CommentsPosted
+                // (possible only through the worker's head-re-check race) cannot stamp a
+                // snapshot inconsistent with findings_json, which may already hold the
+                // newer run's findings.
                 projection.recordPosted(e.reviewId(), e.commit(), e.summaryCommentId());
             }
             case FollowUpGenerated e -> {

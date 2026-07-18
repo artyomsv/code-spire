@@ -239,16 +239,25 @@ public class ReviewProjection {
      * Snapshot the run that actually reached the SCM — the source for the next
      * follow-up's {@link PriorRun} (ADR-019). Copies {@code findings_json} verbatim
      * (already encrypted with AAD = reviewId) rather than re-encrypting.
+     *
+     * <p>Guarded by {@code commit_sha}: the UPDATE only applies when {@code commit}
+     * still matches the review's current commit. A superseded run's CommentsPosted
+     * — reachable only through the worker's head-re-check race — carries a stale
+     * commit that can no longer match (a newer run's header/outcome write has since
+     * advanced {@code commit_sha}), so the write no-ops and the prior, consistent
+     * snapshot is left in place instead of being paired with {@code findings_json}
+     * that may already hold the newer run's findings.
      */
     public void recordPosted(String reviewId, String commit, String summaryCommentId) {
         update("""
                 UPDATE review_status SET last_posted_commit = ?, last_summary_comment_id = ?,
                        posted_findings_json = findings_json, updated_at = now()
-                 WHERE review_id = ?
+                 WHERE review_id = ? AND commit_sha = ?
                 """, ps -> {
             ps.setString(1, commit);
             ps.setString(2, summaryCommentId);
             ps.setString(3, reviewId);
+            ps.setString(4, commit);
         });
     }
 
@@ -316,8 +325,10 @@ public class ReviewProjection {
     /**
      * Merge each verdict with its originating prior finding (matched by threadRef,
      * falling back to path+line — a prior finding whose inline post failed has no
-     * threadRef) into one encrypted JSON array (AAD = reviewId). A serialization
-     * failure logs and skips the write rather than throwing into the saga.
+     * threadRef) into one encrypted JSON array (AAD = reviewId). Only the
+     * serialization step is lenient: a JSON encoding failure logs and skips the
+     * write rather than throwing into the saga. A SQLException from the UPDATE
+     * itself still propagates, like every other write in this class.
      */
     public void recordReconciliation(String reviewId, List<FindingVerdict> verdicts,
                                      List<PriorFinding> priorFindings) {

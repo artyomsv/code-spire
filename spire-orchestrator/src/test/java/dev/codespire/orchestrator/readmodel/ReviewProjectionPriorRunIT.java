@@ -45,6 +45,24 @@ class ReviewProjectionPriorRunIT {
     }
 
     @Test
+    void recordPostedIgnoresAStaleCommit() {
+        String reviewId = "review::ws/prior-run-it#4";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 4L,
+                "t", "a", "aid", "src", "dst", "new111", "http://x", "github", "reviewing", 0);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
+                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+
+        projection.recordPosted(reviewId, "stale00", "sum-X");
+        assertTrue(projection.priorRunFor(reviewId).isEmpty());
+
+        projection.recordPosted(reviewId, "new111", "sum-1");
+        Optional<PriorRun> prior = projection.priorRunFor(reviewId);
+        assertTrue(prior.isPresent());
+        assertEquals("new111", prior.get().headCommit());
+    }
+
+    @Test
     void neverPostedReviewHasNoPriorRun() {
         String reviewId = "review::ws/prior-run-it#2";
         projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 2L,
