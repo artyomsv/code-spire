@@ -41,15 +41,10 @@ public final class FindingsParser {
                     + "(no inline comments were posted). Its raw output follows:\n\n";
 
     public static ReviewResult parse(String modelOutput, ModelUsage usage) {
-        String json = extractJson(modelOutput);
-        if (json != null) {
-            try {
-                JsonNode root = LENIENT.readTree(json);
-                return new ReviewResult(findings(root.path("findings")),
-                        root.path("summary").asText("").trim(), usage);
-            } catch (Exception ignored) {
-                // fall through to the degraded result
-            }
+        JsonNode root = readLenient(modelOutput);
+        if (root != null) {
+            return new ReviewResult(findings(root.path("findings")),
+                    root.path("summary").asText("").trim(), usage);
         }
         // Degraded mode: never fail the review because the model rambled, but a
         // "0 findings" degraded parse must NOT look like a clean pass — mark it
@@ -87,6 +82,19 @@ public final class FindingsParser {
             return Severity.valueOf(raw.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             return Severity.INFO;
+        }
+    }
+
+    /** Package-private: lenient extract+parse shared with VerdictsParser. Null when unusable. */
+    static JsonNode readLenient(String output) {
+        String json = extractJson(output);
+        if (json == null) {
+            return null;
+        }
+        try {
+            return LENIENT.readTree(json);
+        } catch (Exception e) {
+            return null;
         }
     }
 

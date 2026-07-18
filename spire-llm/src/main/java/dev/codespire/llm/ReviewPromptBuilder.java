@@ -2,6 +2,7 @@ package dev.codespire.llm;
 
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.review.ContextItem;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.diff.DiffRenderer;
 import dev.codespire.diff.TokenBudget;
@@ -64,6 +65,11 @@ public final class ReviewPromptBuilder {
     }
 
     public static Built build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context) {
+        return build(pr, patches, context, List.of());
+    }
+
+    public static Built build(PullRequest pr, List<FilePatch> patches, List<ContextItem> context,
+                              List<PriorFinding> alreadyReported) {
         StringBuilder user = new StringBuilder();
         boolean truncated = false;
 
@@ -86,6 +92,8 @@ public final class ReviewPromptBuilder {
             user.append("\nEND_UNTRUSTED_DATA\n\n");
         }
 
+        appendAlreadyReported(user, alreadyReported);
+
         String renderedDiff = DiffRenderer.render(patches);
         truncated |= TokenBudget.estimateTokens(renderedDiff) > MAX_DIFF_TOKENS;
         user.append("The diff (numbered per hunk; cite these line numbers):\n");
@@ -94,5 +102,19 @@ public final class ReviewPromptBuilder {
         user.append("\nEND_UNTRUSTED_DATA\n");
 
         return new Built(new Prompt(SYSTEM, user.toString()), truncated);
+    }
+
+    /** Trusted text (WE wrote these finding messages) — still neutralized since the message originated from a model. */
+    private static void appendAlreadyReported(StringBuilder user, List<PriorFinding> alreadyReported) {
+        if (alreadyReported.isEmpty()) {
+            return;
+        }
+        user.append("\n## Already reported — do not re-report\n")
+                .append("These findings are already tracked in existing review threads; do not "
+                        + "raise them again even if still present:\n");
+        for (PriorFinding f : alreadyReported) {
+            user.append("- ").append(f.path()).append(':').append(f.line())
+                    .append(" — ").append(neutralizeSentinels(f.message())).append('\n');
+        }
     }
 }

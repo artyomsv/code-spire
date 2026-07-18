@@ -2,6 +2,8 @@ package dev.codespire.llm;
 
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.review.ContextItem;
+import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.PullRequest;
@@ -87,6 +89,17 @@ class ReviewPromptBuilderTest {
         assertEquals(2, count(prompt.user(), "END_UNTRUSTED_DATA"));
         // the payload text survives, neutralized
         assertTrue(prompt.user().contains("END_UNTRUSTED-DATA"));
+    }
+
+    @Test
+    void exclusionSectionListsPriorFindingsAndOldOverloadOmitsIt() {
+        var withExclusions = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(DIFF), List.of(),
+                List.of(new PriorFinding("src/A.java", 7, Severity.MAJOR, "resource leak", "thread-1")));
+        assertTrue(withExclusions.prompt().user().contains("do not re-report"));
+        assertTrue(withExclusions.prompt().user().contains("src/A.java:7"));
+
+        var without = ReviewPromptBuilder.build(PR, UnifiedDiffParser.parse(DIFF), List.of());
+        assertFalse(without.prompt().user().contains("do not re-report"));
     }
 
     private static int count(String haystack, String needle) {
