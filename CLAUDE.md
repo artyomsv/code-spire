@@ -12,12 +12,12 @@ The design is fully specified in `docs/` — **treat those files as the source o
 |---|---|
 | `docs/PRD.md` | Problem, users, goals, FR-1..13 / NFR-1..9, scope, success criteria |
 | `docs/ARCHITECTURE.md` | Event-driven plugin-first core; module layout; build sequencing |
-| `docs/EVENT-MODEL.md` (+ `docs/diagrams/event-model.html`) | Slices S1–S10 in Event Modeling notation |
+| `docs/EVENT-MODEL.md` (+ `docs/diagrams/event-model.html`) | Slices S1–S11 in Event Modeling notation |
 | `docs/CONTRACT.md` | Event/command catalog, `ReviewLifecycle` decide table, SPI ports, topics, Bitbucket mapping |
 | `docs/DATA-MODEL.md` | Value types, event store, object store, read models, encryption boundaries |
 | `docs/SCM-MAPPING.md` | Provider-neutral SCM model verified against Bitbucket/GitHub/GitLab/DC APIs |
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
-| `docs/DECISIONS.md` | ADR-001..014 — every locked decision with its why |
+| `docs/DECISIONS.md` | ADR-001..019 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 
@@ -105,6 +105,13 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `GatewayScmProducer` + `SPIRE_SCM_BITBUCKET_WEBHOOK_SECRET`) — Bitbucket now registers like the
   others (`bitbucket-cloud` provider). Dev webhook exposure: opt-in Cloudflare quick-tunnel
   service (`--profile tunnel`) forwarding to `gateway:39281`.
+- **Re-review reconciliation delivered (ADR-019, 2026-07-18):** a follow-up commit now reconciles
+  instead of blindly re-reviewing — the orchestrator command-carries the last posted run's snapshot
+  (`PriorRun`, from `review_status.posted_findings_json`, commit-guarded) into `GenerateReview`; the
+  worker runs a claim-guarded reconcile call (prior findings + threads + incremental diff via
+  `DiffSource.fetchCompareDiff`, full-diff fallback on force-push) for per-finding verdicts, then the
+  review call with an exclusion list. `PostComments` resolves-then-replies closing verdicts (Bitbucket
+  degrades to reply-only), always replies `STILL_OPEN`, updates the summary in place. V19; UI card.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 

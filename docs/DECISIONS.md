@@ -4,6 +4,66 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-019 — Re-reviews post deltas, not the full finding set
+
+**Context.** Before this decision, a follow-up commit to an already-reviewed PR triggered the exact
+same pipeline as the first review: fetch the full diff, run one review call, post a fresh inline
+comment for every finding. Every prior finding got re-raised verbatim (duplicate noise on threads the
+author was already discussing), nothing closed automatically when a finding was actually fixed, and
+the summary comment piled up as a new post each time instead of reflecting current state.
+
+**Decision.** On a follow-up commit to a PR with a posted prior run, the worker runs **two
+claim-guarded LLM calls** instead of one. First, a **reconcile call** (`LLM:reconcile` idempotency
+claim) judges each prior finding — prior findings + their best-effort thread transcripts + the
+incremental diff since the prior run (new SPI `DiffSource.fetchCompareDiff`, falling back to the full
+PR diff when the provider can't compare, e.g. after a force-push) — producing one
+`FindingVerdict{RESOLVED|STILL_OPEN|ACKNOWLEDGED|SUPERSEDED}` per finding. Second, the **standard
+review call** (`LLM` claim, unchanged prompt) runs with an added "already reported — do not re-report"
+exclusion section built from the same prior findings, then a deterministic filter drops any new
+finding whose anchor collides with a `STILL_OPEN` verdict (it's already tracked in its own thread).
+`PostComments` then acts per verdict: closing verdicts (`RESOLVED`/`ACKNOWLEDGED`/`SUPERSEDED`) try
+`CommentSink.resolveThread` first — a human who beat the bot to it (`ALREADY_RESOLVED`) means the
+reply is skipped entirely; otherwise (resolved-by-us or `UNSUPPORTED`) a reply always follows.
+`STILL_OPEN` never resolves and always replies. Genuinely new findings post fresh inline comments, and
+the summary is rewritten **in place** (`CommentSink.updateComment`, falling back to a fresh post if the
+old comment vanished or was edited away). Every reply/resolve holds its own `comment_idempotency` claim
+(`reply:<threadRef>`, `resolve:<threadRef>` — value `bot`/`human`/`unsupported` — so redelivery repeats
+zero external calls).
+
+Prior-run state is **command-carried**, not worker-owned: the orchestrator packs `PriorRun{headCommit,
+summaryCommentId, findings}` onto `GenerateReview` from `review_status.posted_findings_json`, a
+snapshot stamped at the last `CommentsPosted` behind a **commit-match guard** — the snapshot UPDATE
+only applies when the posted run's commit still matches the review's current `commit_sha`, so a stale
+or superseded run's `CommentsPosted` (reachable only through the worker's head-re-check race) can't
+overwrite a consistent snapshot with mismatched findings. This keeps the single-writer aggregate side
+(the orchestrator, which already owns `review_status`) as the sole owner of "what was actually posted,"
+and the worker stateless across runs — exactly the shape ADR-015 established for brokered credentials.
+
+**Alternatives rejected:**
+- **Worker-local snapshot.** Having the worker persist its own "last posted" table would duplicate the
+  orchestrator's read model, invite drift between "what the worker thinks it posted" and what actually
+  reached the SCM, and hand the worker write ownership of state that belongs to the read-model owner —
+  a schema-purpose violation (ADR-011 schema-per-service is about *ownership*, not just tables).
+- **Single combined LLM call.** Asking one call to both reconcile prior findings and generate a fresh
+  review multiplexes two different tasks into one prompt: it would require rewriting the
+  already-proven review prompt (ported from PR-Agent, ADR-002) to also emit verdicts, and one
+  malformed section of the response would corrupt both outputs instead of failing independently.
+- **Deterministic anchor-only dedup (no LLM).** Comparing old and new anchors can suppress a duplicate
+  at the *same* position, but cannot tell a fixed issue from one that merely moved or was reworded —
+  no real fix detection, and the heuristic would be throwaway work once genuine reconciliation is built.
+
+**Consequences.**
+- Every follow-up review now pays for **two LLM claims** (`LLM:reconcile` + `LLM`) instead of one; both
+  are claim-guarded so a redelivered `GenerateReview` never re-spends. A first review (no prior posted
+  run — `priorRun` null) is untouched: the exclusion/verdict machinery never engages, and every
+  extended wire type defaults empty/null via old-arity convenience constructors.
+- Bitbucket Cloud has no thread-resolve API for PR comments — `resolveThread`'s default `UNSUPPORTED`
+  degrades it to reply-only, so a closing verdict there gets a reply but the thread stays visibly
+  "open" in Bitbucket's UI. GitHub (GraphQL `resolveReviewThread`) and GitLab (discussion `PUT`) get
+  real resolution.
+
+---
+
 ## ADR-018 — LLM provider registry: in-app, encrypted, brokered per command
 
 **Context.** The LLM was selected at worker boot from env (`SPIRE_LLM_PROVIDER` + `SPIRE_LLM_BASE_URL`/
