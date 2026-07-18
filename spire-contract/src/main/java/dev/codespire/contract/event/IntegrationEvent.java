@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
+import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
@@ -120,9 +121,21 @@ public sealed interface IntegrationEvent {
         }
     }
 
-    /** Findings ride INLINE (ADR-011); may quote source — bus at-rest posture per ADR-014. */
-    record ReviewGenerated(String reviewId, long prId, String commit,
-                           ReviewResult result) implements IntegrationEvent {
+    /**
+     * Findings ride INLINE (ADR-011); may quote source — bus at-rest posture per ADR-014.
+     * verdicts + reconcileUsage are set only by the follow-up reconcile flow (ADR-019);
+     * both empty/null on a first review.
+     */
+    record ReviewGenerated(String reviewId, long prId, String commit, ReviewResult result,
+                           List<FindingVerdict> verdicts, ModelUsage reconcileUsage) implements IntegrationEvent {
+
+        public ReviewGenerated {
+            verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
+        }
+
+        public ReviewGenerated(String reviewId, long prId, String commit, ReviewResult result) {
+            this(reviewId, prId, commit, result, List.of(), null);
+        }
     }
 
     record ReviewFailed(String reviewId, String commit, String phase, String error,
@@ -130,13 +143,23 @@ public sealed interface IntegrationEvent {
     }
 
     record CommentsPosted(String reviewId, long prId, String commit, String summaryCommentId,
-                          List<PostedInline> inline) implements IntegrationEvent {
+                          List<PostedInline> inline, List<ThreadOutcome> threadOutcomes) implements IntegrationEvent {
 
         public CommentsPosted {
-            inline = inline == null ? null : List.copyOf(inline);
+            threadOutcomes = threadOutcomes == null ? List.of() : List.copyOf(threadOutcomes);
         }
 
         public record PostedInline(String commentId, String path, int line) {
+        }
+
+        /** replyCommentId null when the reply was skipped (a human had already resolved the thread). */
+        public record ThreadOutcome(String threadRef, FindingVerdict.Status status,
+                                    String replyCommentId, boolean resolved) {
+        }
+
+        public CommentsPosted(String reviewId, long prId, String commit, String summaryCommentId,
+                              List<PostedInline> inline) {
+            this(reviewId, prId, commit, summaryCommentId, inline, List.of());
         }
     }
 

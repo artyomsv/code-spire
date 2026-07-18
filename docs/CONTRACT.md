@@ -64,9 +64,9 @@ Every event (integration or domain) is wrapped:
 | `ContextRequested` | `spire-context-worker` | reviewId, repo, prId, commit, hints{ticketKeys,links}, **expectedSources[]** — fan-out signal each `ContextProvider` subscribes to (§8) |
 | `ContextContributed` | each `ContextProvider` | reviewId, source(`JIRA`/`CONFLUENCE`/`RULES`/`RAG`/`MEMORY`), status(`OK`/`EMPTY`/`ERROR`), items[], latencyMs |
 | `ContextAssembled` | aggregator | reviewId, prId, commit, contextRef, contributingSources[], missingSources[] |
-| `ReviewGenerated` | `spire-review-worker` (via `LlmProvider`) | reviewId, prId, commit, findings[] (inline `ReviewResult`, small), summary, model, tokensIn, tokensOut, costMillicents |
+| `ReviewGenerated` | `spire-review-worker` (via `LlmProvider`) | reviewId, prId, commit, findings[] (inline `ReviewResult`, small), summary, model, tokensIn, tokensOut, costMillicents, verdicts[]? (reconciliation verdicts — ADR-019), reconcileUsage? (reconcile LLM call usage — ADR-019) |
 | `ReviewFailed` | any worker | reviewId, commit, phase, error, retryable, attempt |
-| `CommentsPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, prId, commit, summaryCommentId, inline[]{commentId,path,line} |
+| `CommentsPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, prId, commit, summaryCommentId, inline[]{commentId,path,line}, threadOutcomes[]? (thread resolution outcomes — ADR-019) |
 | `FollowUpGenerated` | `spire-review-worker` | reviewId, threadRef, answerText |
 | `FollowUpPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId |
 
@@ -95,8 +95,8 @@ Every event (integration or domain) is wrapped:
 |---|---|---|
 | `FetchDiff` | `spire-review-worker` | reviewId, repo, prId, commit |
 | `GatherContext` | `spire-context-worker` (fan-out) | reviewId, repo, prId, commit, hints{ticketKeys,links} |
-| `GenerateReview` | `spire-review-worker` | reviewId, prId, commit, contextRef, attempt, providerOverride? (set by the fallback saga on retry; worker re-fetches the diff by commit) |
-| `PostComments` | `spire-review-worker` | reviewId, repo, prId, findings[] (inline — same `ReviewResult` as `ReviewGenerated`; findings are not stored as blobs, ADR-011) |
+| `GenerateReview` | `spire-review-worker` | reviewId, prId, commit, contextRef, attempt, providerOverride? (set by the fallback saga on retry; worker re-fetches the diff by commit), priorRun? (prior posted run's findings — ADR-019) |
+| `PostComments` | `spire-review-worker` | reviewId, repo, prId, commit, findings[] (inline — same `ReviewResult` as `ReviewGenerated`; findings are not stored as blobs, ADR-011), verdicts[]? (follow-up reconciliation verdicts — ADR-019), priorSummaryRef? (summary comment to update in place on follow-up review) |
 | `AnswerFollowUp` | `spire-review-worker` | reviewId, repo, prId, threadRef, question — the worker fetches the thread history from the SCM on demand (no blob; same re-fetch philosophy as diffs) |
 
 **Record commands** (to the `ReviewLifecycle` decider — append *domain* events):

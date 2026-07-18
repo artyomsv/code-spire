@@ -2,6 +2,8 @@ package dev.codespire.contract.command;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -74,15 +76,40 @@ public sealed interface ActionCommand {
                          String contextCredential) implements ActionCommand {
     }
 
-    /** providerOverride is set by the fallback saga on retry; worker re-fetches the diff by commit. */
+    /**
+     * providerOverride is set by the fallback saga on retry; worker re-fetches the diff by commit.
+     * priorRun (ADR-019) is non-null only on a follow-up review of an already-posted PR — it
+     * switches the worker into the reconcile + review two-call flow.
+     */
     record GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
                           int attempt, String providerOverride, String scmCredential,
-                          String llmCredential) implements ActionCommand {
+                          String llmCredential, PriorRun priorRun) implements ActionCommand {
+
+        public GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
+                              int attempt, String providerOverride, String scmCredential,
+                              String llmCredential) {
+            this(reviewId, repo, prId, commit, contextRef, attempt, providerOverride,
+                    scmCredential, llmCredential, null);
+        }
     }
 
-    /** Findings inline — same ReviewResult as ReviewGenerated (ADR-011). */
+    /**
+     * Findings inline — same ReviewResult as ReviewGenerated (ADR-011). On a follow-up review the
+     * verdicts drive thread replies/resolves (ADR-019) and priorSummaryRef is the summary comment
+     * to update in place; both empty/null on a first review.
+     */
     record PostComments(String reviewId, RepoRef repo, long prId, String commit,
-                        ReviewResult findings, String scmCredential) implements ActionCommand {
+                        ReviewResult findings, String scmCredential,
+                        List<FindingVerdict> verdicts, String priorSummaryRef) implements ActionCommand {
+
+        public PostComments {
+            verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
+        }
+
+        public PostComments(String reviewId, RepoRef repo, long prId, String commit,
+                            ReviewResult findings, String scmCredential) {
+            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null);
+        }
     }
 
     /**
