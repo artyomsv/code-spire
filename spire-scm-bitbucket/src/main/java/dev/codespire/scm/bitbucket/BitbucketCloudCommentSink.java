@@ -82,6 +82,15 @@ public class BitbucketCloudCommentSink implements CommentSink {
         }
     }
 
+    /** Rewrite an existing comment's body in place (summary update on re-reviews). */
+    @Override
+    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+        String path = "/2.0/repositories/" + repo.full() + "/pullrequests/" + prId
+                + "/comments/" + commentId;
+        client.putJson(path, Map.of("content", Map.of("raw", bodyMd)));
+        return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
+    }
+
     @Override
     public Author getPullRequestAuthor(RepoRef repo, long prId) {
         JsonNode author = client.getJson(prPath(repo, prId)).path("author");

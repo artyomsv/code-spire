@@ -80,6 +80,16 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
         return new Diff(DiffRefs.headOnly(commit), files, false);
     }
 
+    /**
+     * The reconciliation lens (prior head -> new head). Bitbucket's compare spec is
+     * {@code source..destination} — {@code {head}..{base}} yields the changes reachable
+     * from head that are not in base.
+     */
+    @Override
+    public String fetchCompareDiff(RepoRef repo, String base, String head) {
+        return client.getText("/2.0/repositories/" + repo.full() + "/diff/" + head + ".." + base);
+    }
+
     private String prPath(RepoRef repo, long prId) {
         return "/repositories/" + repo.workspace() + "/" + repo.slug() + "/pullrequests/" + prId;
     }
