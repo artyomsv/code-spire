@@ -115,6 +115,12 @@ class ResultSagaRetryTest {
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
             }
+
+            @Override
+            public void recordOpenFindings(String reviewId, ReviewResult result,
+                    List<dev.codespire.contract.review.FindingVerdict> verdicts,
+                    List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
@@ -247,6 +253,12 @@ class ResultSagaRetryTest {
 
             @Override
             public void recordReconciliation(String reviewId,
+                    List<dev.codespire.contract.review.FindingVerdict> verdicts,
+                    List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+            }
+
+            @Override
+            public void recordOpenFindings(String reviewId, ReviewResult result,
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
             }

@@ -237,21 +237,25 @@ public class ReviewProjection {
 
     /**
      * Snapshot the run that actually reached the SCM — the source for the next
-     * follow-up's {@link PriorRun} (ADR-019). Copies {@code findings_json} verbatim
-     * (already encrypted with AAD = reviewId) rather than re-encrypting.
+     * follow-up's {@link PriorRun} (ADR-019). Copies {@code open_findings_json}
+     * verbatim (already encrypted with AAD = reviewId) rather than re-encrypting —
+     * the carry-forward baseline (this round's new findings + prior still-open/
+     * unchanged ones, ADR-019 refinement) — falling back to {@code findings_json}
+     * when it is NULL (a review predating {@link #recordOpenFindings}, or one that
+     * skipped it), which preserves the original copy-verbatim behavior.
      *
      * <p>Guarded by {@code commit_sha}: the UPDATE only applies when {@code commit}
      * still matches the review's current commit. A superseded run's CommentsPosted
      * — reachable only through the worker's head-re-check race — carries a stale
      * commit that can no longer match (a newer run's header/outcome write has since
      * advanced {@code commit_sha}), so the write no-ops and the prior, consistent
-     * snapshot is left in place instead of being paired with {@code findings_json}
-     * that may already hold the newer run's findings.
+     * snapshot is left in place instead of being paired with findings that may
+     * already hold the newer run's data.
      */
     public void recordPosted(String reviewId, String commit, String summaryCommentId) {
         update("""
                 UPDATE review_status SET last_posted_commit = ?, last_summary_comment_id = ?,
-                       posted_findings_json = findings_json, updated_at = now()
+                       posted_findings_json = COALESCE(open_findings_json, findings_json), updated_at = now()
                  WHERE review_id = ? AND commit_sha = ?
                 """, ps -> {
             ps.setString(1, commit);
@@ -302,12 +306,19 @@ public class ReviewProjection {
         return out;
     }
 
-    /** loc is "path:line" (existing format) split at the LAST ':'. */
+    /**
+     * loc is "path:line" (existing format) split at the LAST ':'. Prefers the entry's own STORED
+     * threadRef (set by {@link #recordOpenFindings} for a carried-forward still-open finding) so a
+     * finding's original thread survives without needing a {@code review_thread} row; falls back to
+     * the path:line thread-index join for a finding that has never been through carry-forward (e.g.
+     * this round's brand-new findings, or a first-review row predating {@link #recordOpenFindings}).
+     */
     private PriorFinding toPriorFinding(ReviewDetail.FindingView f, ThreadIndex index) {
         int splitAt = f.loc().lastIndexOf(':');
         String path = f.loc().substring(0, splitAt);
         int line = Integer.parseInt(f.loc().substring(splitAt + 1));
-        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), index.threadByLoc().get(f.loc()));
+        String threadRef = f.threadRef() != null ? f.threadRef() : index.threadByLoc().get(f.loc());
+        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), threadRef);
     }
 
     /** Reverse of {@link #severitySlug} — lossy for NIT/INFO (both slug to "nit");
@@ -325,28 +336,22 @@ public class ReviewProjection {
     /**
      * Merge each verdict with its originating prior finding (matched by threadRef,
      * falling back to path+line — a prior finding whose inline post failed has no
-     * threadRef) into one encrypted JSON array (AAD = reviewId). Only the
-     * serialization step is lenient: a JSON encoding failure logs and skips the
-     * write rather than throwing into the saga. A SQLException from the UPDATE
+     * threadRef), then MERGE-UPSERT the resulting entries into the existing
+     * {@code reconciliation_json} rather than replacing it wholesale: a prior round's
+     * entry with no match this round is retained as-is (resolved/acknowledged history
+     * stays visible on the dashboard across rounds), and a re-verdicted entry replaces
+     * its earlier self in place. Only the serialization/parse steps are lenient: a
+     * JSON failure logs and skips (existing state loads as empty / the write is
+     * skipped) rather than throwing into the saga. A SQLException from the UPDATE
      * itself still propagates, like every other write in this class.
      */
     public void recordReconciliation(String reviewId, List<FindingVerdict> verdicts,
                                      List<PriorFinding> priorFindings) {
-        List<ReconciliationEntry> entries = verdicts.stream()
+        List<ReconciliationEntry> incoming = verdicts.stream()
                 .map(v -> toReconciliationEntry(v, matchPriorFinding(v, priorFindings)))
                 .toList();
-        String json;
-        try {
-            json = mapper.writeValueAsString(entries);
-        } catch (JsonProcessingException e) {
-            LOG.warn("Failed to serialize reconciliation verdicts", e);
-            return;
-        }
-        String encrypted = encryption.encryptString(json, reviewId);
-        update("UPDATE review_status SET reconciliation_json = ?, updated_at = now() WHERE review_id = ?", ps -> {
-            ps.setString(1, encrypted);
-            ps.setString(2, reviewId);
-        });
+        List<ReconciliationEntry> merged = mergeReconciliation(loadReconciliationEntries(reviewId), incoming);
+        writeReconciliation(reviewId, merged);
     }
 
     private PriorFinding matchPriorFinding(FindingVerdict v, List<PriorFinding> priorFindings) {
@@ -365,9 +370,143 @@ public class ReviewProjection {
         return new ReconciliationEntry(sev, v.path() + ":" + v.line(), msg, v.status().name(), v.note(), v.threadRef());
     }
 
+    /** The stored {@code reconciliation_json}, decrypted and parsed — empty (never throws) on a
+     *  missing column, decrypt failure, or parse failure, same posture as {@link #parseReconciliation}. */
+    private List<ReconciliationEntry> loadReconciliationEntries(String reviewId) {
+        String stored;
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT reconciliation_json FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                stored = rs.next() ? rs.getString(1) : null;
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "reconciliation_json read failed for %s", reviewId);
+            return List.of();
+        }
+        if (stored == null || stored.isBlank()) {
+            return List.of();
+        }
+        String json;
+        try {
+            json = encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException notEncrypted) {
+            json = stored; // legacy plaintext row
+        }
+        try {
+            return mapper.readerForListOf(ReconciliationEntry.class).readValue(json);
+        } catch (Exception e) {
+            LOG.debugf("Failed to parse reconciliation_json for merge: %s", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * Key = threadRef when non-null, else loc. An incoming entry replaces the existing entry at the
+     * same key IN PLACE (keeps its position — a re-verdicted finding doesn't jump to the bottom);
+     * an existing entry with no match this round is retained as-is; an incoming entry with no
+     * existing match is appended.
+     */
+    private List<ReconciliationEntry> mergeReconciliation(List<ReconciliationEntry> existing,
+                                                          List<ReconciliationEntry> incoming) {
+        Map<String, ReconciliationEntry> byKey = new HashMap<>();
+        for (ReconciliationEntry e : incoming) {
+            byKey.put(reconciliationKey(e), e);
+        }
+        List<ReconciliationEntry> merged = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ReconciliationEntry old : existing) {
+            String key = reconciliationKey(old);
+            merged.add(byKey.getOrDefault(key, old));
+            seen.add(key);
+        }
+        for (ReconciliationEntry e : incoming) {
+            if (seen.add(reconciliationKey(e))) {
+                merged.add(e);
+            }
+        }
+        return merged;
+    }
+
+    private static String reconciliationKey(ReconciliationEntry e) {
+        return e.threadRef() != null ? "t:" + e.threadRef() : "l:" + e.loc();
+    }
+
+    private void writeReconciliation(String reviewId, List<ReconciliationEntry> entries) {
+        String json;
+        try {
+            json = mapper.writeValueAsString(entries);
+        } catch (JsonProcessingException e) {
+            LOG.warn("Failed to serialize reconciliation verdicts", e);
+            return;
+        }
+        String encrypted = encryption.encryptString(json, reviewId);
+        update("UPDATE review_status SET reconciliation_json = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, encrypted);
+            ps.setString(2, reviewId);
+        });
+    }
+
     /** Wire shape for {@code reconciliation_json}: one entry per verdict, merged with its finding. */
     private record ReconciliationEntry(String sev, String loc, String msg, String status, String note,
                                        String threadRef) {
+    }
+
+    /**
+     * The carry-forward baseline for the NEXT follow-up's reconciliation (ADR-019 refinement) —
+     * this round's brand-new findings (from {@code result}, threadRef unset — resolved at read time
+     * via the thread-index join like a fresh {@code findings_json} row) UNION every prior finding
+     * still open after this round's verdicts (STILL_OPEN/UNCHANGED, or no matching verdict at all —
+     * carrying an unmatched prior finding is the safer default over silently dropping it). A carried
+     * finding keeps its ORIGINAL threadRef/severity/message so it survives even when no
+     * {@code review_thread} row exists for its loc. Written to {@code open_findings_json}, encrypted
+     * (AAD = reviewId); lenient on serialization failure (WARN + skip), like {@link #recordReconciliation}.
+     */
+    public void recordOpenFindings(String reviewId, ReviewResult result, List<FindingVerdict> verdicts,
+                                   List<PriorFinding> priorFindings) {
+        List<ReviewDetail.FindingView> open = new ArrayList<>();
+        result.findings().forEach(f -> open.add(toView(f)));
+        open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
+        String json;
+        try {
+            json = mapper.writeValueAsString(open);
+        } catch (JsonProcessingException e) {
+            LOG.warn("Failed to serialize open findings", e);
+            return;
+        }
+        String encrypted = encryption.encryptString(json, reviewId);
+        update("UPDATE review_status SET open_findings_json = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, encrypted);
+            ps.setString(2, reviewId);
+        });
+    }
+
+    /** Every prior finding this round's verdicts leave open: STILL_OPEN/UNCHANGED, or unmatched
+     *  (no corresponding verdict — treated as still open, safer than dropping it silently). */
+    private List<ReviewDetail.FindingView> stillOpenPriorFindings(List<FindingVerdict> verdicts,
+                                                                   List<PriorFinding> priorFindings) {
+        List<ReviewDetail.FindingView> carried = new ArrayList<>();
+        for (PriorFinding pf : priorFindings) {
+            FindingVerdict.Status status = matchVerdict(pf, verdicts).map(FindingVerdict::status).orElse(null);
+            if (status == null || status == FindingVerdict.Status.STILL_OPEN
+                    || status == FindingVerdict.Status.UNCHANGED) {
+                carried.add(new ReviewDetail.FindingView(severitySlug(pf.severity()),
+                        pf.path() + ":" + pf.line(), pf.message(), pf.threadRef()));
+            }
+        }
+        return carried;
+    }
+
+    /** Which of this round's verdicts judges the given prior finding — matched by threadRef when
+     *  both are non-null, else by path+line (reverse direction of {@link #matchPriorFinding}). */
+    private Optional<FindingVerdict> matchVerdict(PriorFinding pf, List<FindingVerdict> verdicts) {
+        return verdicts.stream()
+                .filter(v -> pf.threadRef() != null && pf.threadRef().equals(v.threadRef()))
+                .findFirst()
+                .or(() -> verdicts.stream()
+                        .filter(v -> v.path().equals(pf.path()) && v.line() == pf.line())
+                        .findFirst());
     }
 
     /**

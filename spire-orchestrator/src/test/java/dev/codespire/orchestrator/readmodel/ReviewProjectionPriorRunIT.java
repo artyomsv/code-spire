@@ -147,4 +147,97 @@ class ReviewProjectionPriorRunIT {
         assertEquals("", unmatched.msg());
         assertEquals("nit", unmatched.sev());
     }
+
+    @Test
+    void carryForwardKeepsStillOpenPriorFindings() {
+        String reviewId = "review::ws/prior-run-it#6";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 6L,
+                "t", "a", "aid", "src", "dst", "c2", "http://x", "github", "reviewing", 0);
+        ReviewResult result = new ReviewResult(
+                List.of(new Finding("src/New.java", new LineRange(3, 3), Severity.MINOR, "new issue", null)),
+                "summary", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result, 4);
+
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict("t-old", "src/Old.java", 7, FindingVerdict.Status.STILL_OPEN, "still there"));
+        List<PriorFinding> priorFindings = List.of(
+                new PriorFinding("src/Old.java", 7, Severity.MAJOR, "old issue", "t-old"));
+        projection.recordOpenFindings(reviewId, result, verdicts, priorFindings);
+        projection.recordPosted(reviewId, "c2", "sum");
+
+        Optional<PriorRun> prior = projection.priorRunFor(reviewId);
+        assertTrue(prior.isPresent());
+        assertEquals(2, prior.get().findings().size());
+        PriorFinding old = prior.get().findings().stream()
+                .filter(f -> f.path().equals("src/Old.java")).findFirst().orElseThrow();
+        assertEquals("t-old", old.threadRef(), "carried finding keeps its stored threadRef, no thread row needed");
+        assertEquals(7, old.line());
+        PriorFinding fresh = prior.get().findings().stream()
+                .filter(f -> f.path().equals("src/New.java")).findFirst().orElseThrow();
+        assertEquals(3, fresh.line());
+    }
+
+    @Test
+    void resolvedPriorFindingsExitTheBaseline() {
+        String reviewId = "review::ws/prior-run-it#7";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 7L,
+                "t", "a", "aid", "src", "dst", "c3", "http://x", "github", "reviewing", 0);
+        ReviewResult result = new ReviewResult(
+                List.of(new Finding("src/New.java", new LineRange(3, 3), Severity.MINOR, "new issue", null)),
+                "summary", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result, 4);
+
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict("t-old", "src/Old.java", 7, FindingVerdict.Status.RESOLVED, "fixed"));
+        List<PriorFinding> priorFindings = List.of(
+                new PriorFinding("src/Old.java", 7, Severity.MAJOR, "old issue", "t-old"));
+        projection.recordOpenFindings(reviewId, result, verdicts, priorFindings);
+        projection.recordPosted(reviewId, "c3", "sum");
+
+        Optional<PriorRun> prior = projection.priorRunFor(reviewId);
+        assertTrue(prior.isPresent());
+        assertEquals(1, prior.get().findings().size(), "resolved prior finding drops out of the baseline");
+        assertEquals("src/New.java", prior.get().findings().getFirst().path());
+    }
+
+    @Test
+    void reconciliationMergeRetainsEarlierRounds() {
+        String reviewId = "review::ws/prior-run-it#8";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 8L,
+                "t", "a", "aid", "src", "dst", "c4", "http://x", "github", "completed", 6);
+
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-1", "src/A.java", 1, FindingVerdict.Status.RESOLVED, "fixed")),
+                List.of(new PriorFinding("src/A.java", 1, Severity.MAJOR, "leak", "t-1")));
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-2", "src/B.java", 2, FindingVerdict.Status.STILL_OPEN, "still there")),
+                List.of(new PriorFinding("src/B.java", 2, Severity.MINOR, "issue", "t-2")));
+
+        ReviewDetail detail = projection.loadDetail("ws", "prior-run-it", 8L).orElseThrow();
+        assertEquals(2, detail.reconciliation().size(), "round 1's entry must survive round 2's merge");
+        ReviewDetail.ReconciliationView t1 = detail.reconciliation().stream()
+                .filter(v -> "src/A.java:1".equals(v.loc())).findFirst().orElseThrow();
+        assertEquals("resolved", t1.status());
+        ReviewDetail.ReconciliationView t2 = detail.reconciliation().stream()
+                .filter(v -> "src/B.java:2".equals(v.loc())).findFirst().orElseThrow();
+        assertEquals("still open", t2.status());
+    }
+
+    @Test
+    void reconciliationMergeReplacesReverdictedEntries() {
+        String reviewId = "review::ws/prior-run-it#9";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 9L,
+                "t", "a", "aid", "src", "dst", "c5", "http://x", "github", "completed", 6);
+
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-3", "src/C.java", 3, FindingVerdict.Status.STILL_OPEN, "still there")),
+                List.of(new PriorFinding("src/C.java", 3, Severity.MAJOR, "issue", "t-3")));
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-3", "src/C.java", 3, FindingVerdict.Status.RESOLVED, "fixed")),
+                List.of(new PriorFinding("src/C.java", 3, Severity.MAJOR, "issue", "t-3")));
+
+        ReviewDetail detail = projection.loadDetail("ws", "prior-run-it", 9L).orElseThrow();
+        assertEquals(1, detail.reconciliation().size(), "the re-verdicted entry replaces, not duplicates");
+        assertEquals("resolved", detail.reconciliation().getFirst().status());
+    }
 }

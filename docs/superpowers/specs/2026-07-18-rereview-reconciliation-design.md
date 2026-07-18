@@ -53,6 +53,14 @@ generate and post. Reconciliation changes what flows through it:
 - **First review** (no prior posted run): fields empty → worker behaves exactly as today.
 - Prior run = the most recent run that actually posted comments. A run superseded mid-flight
   contributes nothing.
+- **Baseline carry-forward (refinement):** `priorFindings` comes from `posted_findings_json`, which
+  snapshots `open_findings_json` (falling back to `findings_json` when absent) — a baseline that
+  unions each round's brand-new findings with every prior finding still `STILL_OPEN`/`UNCHANGED` (or
+  unmatched by any verdict), carrying its original `threadRef` forward. Without this, a still-open
+  finding would drop out of `priorFindings` after one round and get re-posted as "new" the round
+  after. The dashboard's reconciliation view (`reconciliation_json`) is a merge-upsert across rounds
+  for the same reason: a finding resolved in an earlier round must stay visible, not vanish once a
+  later round's verdicts overwrite the column.
 
 ## Worker: reconcile call + review call + deterministic merge
 

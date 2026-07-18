@@ -65,6 +65,19 @@ and the worker stateless across runs — exactly the shape ADR-015 established f
   of `STILL_OPEN` when the incremental diff is available) stay silent on the SCM — the reviewer only
   speaks in threads the author's changes actually affect.
 
+**Baseline carry-forward (refinement).** The initial cut stamped `posted_findings_json` as a verbatim
+copy of `findings_json`, which holds only the current round's NEW findings — so a still-open prior
+finding dropped out of the baseline after one round and the round after re-discovered it as "new,"
+posting a duplicate thread. The fix: `recordOpenFindings` now writes a separate `open_findings_json`
+baseline that unions this round's new findings with every prior finding whose verdict is
+`STILL_OPEN`/`UNCHANGED` (or has no matching verdict at all — carried rather than dropped, the safer
+default), keeping each carried finding's original `threadRef`; `recordPosted` snapshots
+`COALESCE(open_findings_json, findings_json)` so the baseline carries forward indefinitely while a
+pre-refinement row still falls back to the old behavior. The reconciliation view shown on the
+dashboard (`reconciliation_json`) is likewise now a **merge-upsert**, not a wholesale replace: each
+round's verdicts overwrite only the matching earlier entry (keyed by `threadRef`, else `loc`), so a
+finding resolved in round 1 stays visible (as "resolved") in round 2's view instead of disappearing.
+
 ---
 
 ## ADR-018 — LLM provider registry: in-app, encrypted, brokered per command

@@ -145,6 +145,13 @@ public class ResultSaga {
                     projection.recordReconciliation(e.reviewId(), e.verdicts(),
                             prior.map(PriorRun::findings).orElse(List.of()));
                 }
+                // Carry-forward baseline for the NEXT follow-up (ADR-019 refinement): unconditional,
+                // even with empty verdicts — a first review then stores just its own findings,
+                // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
+                // posted_findings_json semantics unchanged since the two columns hold the same
+                // findings in that case).
+                projection.recordOpenFindings(e.reviewId(), pricedResult, e.verdicts(),
+                        prior.map(PriorRun::findings).orElse(List.of()));
                 if (e.result().truncated()) {
                     projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
                             + "(changes beyond the token limit were not reviewed).");
