@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Bot, ChevronDown, Cpu, MessagesSquare } from 'lucide-react';
+import { Bot, Cpu } from 'lucide-react';
+import { FindingConversation } from './components/FindingConversation';
 import { RiOpenaiFill } from 'react-icons/ri';
 import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
@@ -397,17 +398,15 @@ export function findingsCard(r: ReviewDetail) {
                   <span className="loc">{f.loc}</span>
                 </div>
                 <div className="msg">{f.msg}</div>
-                {turns.length > 0 && (
-                  <details className="finding-convo">
-                    <summary>
-                      <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
-                      <span>
-                        {turns.length} {turns.length === 1 ? 'reply' : 'replies'}
-                      </span>
-                      <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
-                    </summary>
-                    {conversationExchangesBody(turns)}
-                  </details>
+                {turns.length > 0 && f.threadRef && (
+                  <FindingConversation
+                    workspace={r.workspace}
+                    slug={r.slug}
+                    pr={r.pr}
+                    threadRef={f.threadRef}
+                    replyCount={turns.length}
+                    previewBody={conversationExchangesBody(turns)}
+                  />
                 )}
               </div>
             </div>

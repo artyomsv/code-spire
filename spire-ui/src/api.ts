@@ -39,6 +39,31 @@ export interface Finding {
   threadRef?: string; // the SCM thread this finding owns (present when it has a conversation)
 }
 
+/** One message in a re-fetched SCM thread (full text, not the persisted preview). */
+export interface ThreadMessage {
+  author: string;
+  text: string;
+  fromBot: boolean;
+}
+
+/**
+ * Re-fetch a finding's conversation thread from the SCM in full (ADR-011 — the full text is not
+ * persisted, only re-fetched by reference). Throws on any non-2xx so callers can fall back to the
+ * stored preview.
+ */
+export async function fetchThreadMessages(
+  workspace: string,
+  slug: string,
+  pr: string | number,
+  threadRef: string,
+): Promise<ThreadMessage[]> {
+  const res = await fetch(
+    `/api/reviews/${workspace}/${slug}/${pr}/threads/${encodeURIComponent(threadRef)}`,
+  );
+  if (!res.ok) throw new Error(`Failed to load thread (${res.status})`);
+  return res.json();
+}
+
 export interface Usage {
   model: string;
   prompt: string;

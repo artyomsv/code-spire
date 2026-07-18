@@ -1,8 +1,14 @@
 package dev.codespire.orchestrator.web;
 
 import dev.codespire.contract.event.ReviewIds;
+import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadMessage;
+import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.pipeline.ReviewRerunService;
+import dev.codespire.orchestrator.provider.ProviderClients;
+import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.readmodel.ReviewDetail;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewSummary;
@@ -14,6 +20,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
@@ -31,9 +38,39 @@ public class ReviewsResource {
     @Inject
     ReviewRerunService rerunService;
 
+    @Inject
+    ProviderRegistry providers;
+
+    @Inject
+    ProviderClients clients;
+
     @GET
     public List<ReviewSummary> list() {
         return projection.listSummaries();
+    }
+
+    /**
+     * Re-fetch a finding's conversation thread from the SCM in full (ADR-011: conversation text is
+     * never persisted — only the ≤160-char preview is stored, the full messages live on the SCM).
+     * The UI calls this when a finding's conversation is expanded; on any failure it falls back to the
+     * stored preview. {@code threadRef} is the SCM comment/discussion id the finding owns.
+     */
+    @GET
+    @Path("/{workspace}/{slug}/{pr}/threads/{threadRef}")
+    public List<ThreadMessage> thread(@PathParam("workspace") String workspace,
+                                      @PathParam("slug") String slug,
+                                      @PathParam("pr") long pr,
+                                      @PathParam("threadRef") String threadRef) {
+        ScmProvider provider = providers.resolveByWorkspace(workspace)
+                .orElseThrow(() -> new NotFoundException("No provider registered for workspace " + workspace));
+        ThreadSource source;
+        try {
+            source = clients.threadSource(provider);
+        } catch (UnsupportedOperationException e) {
+            // Provider doesn't support thread re-fetch (only GitHub does today) — the UI keeps the preview.
+            throw new WebApplicationException(e.getMessage(), Response.Status.NOT_IMPLEMENTED);
+        }
+        return source.fetchThread(new RepoRef(workspace, slug), pr, new ThreadRef(threadRef)).messages();
     }
 
     @GET

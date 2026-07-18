@@ -3,10 +3,12 @@ package dev.codespire.orchestrator.provider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.IdentitySource;
+import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.scm.bitbucket.BitbucketCloudClient;
 import dev.codespire.scm.bitbucket.BitbucketCloudConfig;
 import dev.codespire.scm.bitbucket.BitbucketCloudDiffSource;
 import dev.codespire.scm.github.GitHubClient;
+import dev.codespire.scm.github.GitHubCommentSink;
 import dev.codespire.scm.github.GitHubConfig;
 import dev.codespire.scm.github.GitHubDiffSource;
 import dev.codespire.scm.gitlab.GitLabClient;
@@ -33,6 +35,20 @@ public class ProviderClients {
             case "github" -> new GitHubDiffSource(new GitHubClient(githubConfig(provider), mapper));
             case "gitlab" -> new GitLabDiffSource(new GitLabClient(gitlabConfig(provider), mapper));
             default -> throw new IllegalStateException("Unsupported provider type: " + provider.type());
+        };
+    }
+
+    /**
+     * A read-only thread reader for a resolved provider — re-fetches a comment thread's full
+     * messages from the SCM on demand (ADR-011: conversation text is never persisted, only re-fetched
+     * by reference). GitHub-only for now; other providers' comment sinks don't yet implement
+     * {@link ThreadSource}, so the caller degrades gracefully (falls back to the stored preview).
+     */
+    public ThreadSource threadSource(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new GitHubCommentSink(new GitHubClient(githubConfig(provider), mapper));
+            default -> throw new UnsupportedOperationException(
+                    "Thread re-fetch is not supported for provider type: " + provider.type());
         };
     }
 

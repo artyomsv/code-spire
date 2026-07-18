@@ -477,6 +477,7 @@
   .finding-convo[open] > summary .finding-convo-chevron { transform: rotate(180deg); }
   .finding-convo[open] > summary { margin-bottom: 12px; }
   .finding-convo .convo { padding-left: 2px; }
+  .convo-note { font-size: 12px; color: var(--text-3); font-style: italic; padding: 2px 2px 4px; }
 
   .clean { text-align: center; padding: 26px; color: var(--good); font-weight: 600; font-size: 13.5px; }
   .clean .em { font-family: var(--font-mono); font-size: 22px; display: block; margin-bottom: 6px; }
