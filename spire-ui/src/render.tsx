@@ -419,17 +419,11 @@ function llmCallRow(call: LlmCall, i: number) {
         <span className="usage-cost">{formatCost(call.costMillicents)}</span>
       </div>
       <div className="usage-call-meta">
-        <span>{call.model}</span>
-        <span className="usage-sep">·</span>
-        <span>
+        <div className="usage-model">{call.model}</div>
+        <div className="usage-tokens">
           {call.tokensIn.toLocaleString()} → {call.tokensOut.toLocaleString()} tok
-        </span>
-        {call.createdAt && (
-          <>
-            <span className="usage-sep">·</span>
-            <span className="usage-time">{formatEventTime(call.createdAt)}</span>
-          </>
-        )}
+        </div>
+        {call.createdAt && <div className="usage-time">{formatEventTime(call.createdAt)}</div>}
       </div>
     </div>
   );

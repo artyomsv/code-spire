@@ -508,11 +508,11 @@
   .usage-call.followup .usage-kind::before { background: var(--blue); }
   .usage-cost { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
   .usage-call-meta {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; padding-left: 13px;
-    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); line-height: 1.5;
+    margin-top: 4px; padding-left: 13px;
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); line-height: 1.65;
   }
-  .usage-sep { opacity: 0.45; }
-  .usage-time { color: var(--text-2); }
+  .usage-model { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .usage-time { color: var(--text-3); }
   .usage-total {
     display: flex; align-items: baseline; justify-content: space-between;
     padding-top: 11px; margin-top: 3px; border-top: 1px solid var(--border);
