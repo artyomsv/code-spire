@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.put;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
@@ -57,6 +58,7 @@ class GitLabReconciliationTest {
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":\"d1\",\"notes\":[{\"id\":5,\"resolvable\":true,\"resolved\":false}]}")));
         wireMock.stubFor(put(urlEqualTo("/projects/ws%2Frepo/merge_requests/1/discussions/d1"))
+                .withRequestBody(equalToJson("{\"resolved\":true}"))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":\"d1\"}")));
@@ -79,6 +81,7 @@ class GitLabReconciliationTest {
     @Test
     void updateCommentPutsTheNoteBody() {
         wireMock.stubFor(put(urlEqualTo("/projects/ws%2Frepo/merge_requests/1/notes/7"))
+                .withRequestBody(equalToJson("{\"body\":\"new body\"}"))
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":7}")));
