@@ -139,12 +139,11 @@ public class ResultSaga {
                 if (e.reconcileUsage() != null) {
                     projection.recordLlmCall(e.reviewId(), "reconcile", priceUsage(e.reconcileUsage()));
                 }
-                String priorSummaryRef = null;
+                java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
+                String priorSummaryRef = prior.map(PriorRun::summaryCommentId).orElse(null);
                 if (!e.verdicts().isEmpty()) {
-                    java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
                     projection.recordReconciliation(e.reviewId(), e.verdicts(),
                             prior.map(PriorRun::findings).orElse(List.of()));
-                    priorSummaryRef = prior.map(PriorRun::summaryCommentId).orElse(null);
                 }
                 if (e.result().truncated()) {
                     projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "

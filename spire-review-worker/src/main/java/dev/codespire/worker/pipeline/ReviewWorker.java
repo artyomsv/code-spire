@@ -115,9 +115,13 @@ public class ReviewWorker {
             List<ContextItem> context = loadContext(command.contextRef());
             WorkerLlmProvider.LlmClient client = llm.forCommand(command);
 
-            // ADR-019: reconcile (its own claim) runs before the LLM_KEY switch below.
+            // ADR-019: reconcile (its own claim) runs before the LLM_KEY switch below. Skipped
+            // when there are no prior findings to judge — that call is guaranteed to yield zero
+            // verdicts, so paying for it would be pure waste (the summary-update path doesn't
+            // depend on verdicts either, so skipping here is otherwise a no-op).
             PriorRun prior = command.priorRun();
-            ReconcileOutcome reconcile = prior == null ? null : reconcile(command, clients, diff, prior, client);
+            ReconcileOutcome reconcile = prior == null || prior.findings().isEmpty()
+                    ? null : reconcile(command, clients, diff, prior, client);
 
             // Command-level dedup (finding H4): a redelivered GenerateReview for a
             // commit whose LLM call already completed must not pay twice. A
@@ -200,15 +204,26 @@ public class ReviewWorker {
         return outcome;
     }
 
-    /** @return the incremental diff, or null (fall back to the full diff) when the provider can't compare. */
+    /**
+     * @return the incremental diff, or null (fall back to the full diff) when the provider can't
+     * compare or returns a blank result (GitLab: no diffs between the revisions; GitHub: an empty
+     * body when base==head) — a blank string is not a valid "incremental diff", it's "no diff".
+     */
     private String compareOrNull(DiffSource diffSource, GenerateReview command, PriorRun prior) {
+        String result;
         try {
-            return diffSource.fetchCompareDiff(command.repo(), prior.headCommit(), command.commit());
+            result = diffSource.fetchCompareDiff(command.repo(), prior.headCommit(), command.commit());
         } catch (RuntimeException e) {
             LOG.infof("compare %s..%s unavailable (%s) — reconciling on the full diff",
                     prior.headCommit(), command.commit(), e.getMessage());
             return null;
         }
+        if (result == null || result.isBlank()) {
+            LOG.debugf("compare %s..%s returned a blank diff — reconciling on the full diff",
+                    prior.headCommit(), command.commit());
+            return null;
+        }
+        return result;
     }
 
     /** Best-effort per-finding thread transcripts: a fetch failure never aborts the reconcile call. */
@@ -366,7 +381,7 @@ public class ReviewWorker {
             // non-inline claims (SUMMARY, LLM[:reconcile], reply:, resolve:) — none of those are
             // posted inline comments, so they must never leak into the inline list.
             previouslyPosted.forEach((key, id) -> {
-                if (!SUMMARY_KEY.equals(key) && !key.startsWith(LLM_KEY)
+                if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key) && !RECONCILE_KEY.equals(key)
                         && !key.startsWith("reply:") && !key.startsWith("resolve:")
                         && posted.stream().noneMatch(p -> p.commentId().equals(id))) {
                     posted.add(new CommentsPosted.PostedInline(id, key, 0));

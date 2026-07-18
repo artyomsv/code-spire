@@ -343,11 +343,19 @@ class ReviewWorkerTest {
         worker.postComments(postCommand(verdictsRSA(), oneNewFinding(), "sum-1"));
         int replies = sink.repliedThreads.size();
         int resolves = sink.resolvedThreads.size();
+        CommentsPosted.ThreadOutcome firstT1 = lastCommentsPosted().threadOutcomes().stream()
+                .filter(o -> o.threadRef().equals("t-1")).findFirst().orElseThrow();
 
         worker.postComments(postCommand(verdictsRSA(), oneNewFinding(), "sum-1"));
         assertEquals(replies, sink.repliedThreads.size());
         assertEquals(resolves, sink.resolvedThreads.size());
-        assertEquals(3, lastCommentsPosted().threadOutcomes().size(), "outcomes reconstructed from claims");
+        CommentsPosted redelivered = lastCommentsPosted();
+        assertEquals(3, redelivered.threadOutcomes().size(), "outcomes reconstructed from claims");
+        CommentsPosted.ThreadOutcome reconstructedT1 = redelivered.threadOutcomes().stream()
+                .filter(o -> o.threadRef().equals("t-1")).findFirst().orElseThrow();
+        assertTrue(reconstructedT1.resolved(), "reconstructed outcome preserves t-1's resolved flag");
+        assertEquals(firstT1.replyCommentId(), reconstructedT1.replyCommentId(),
+                "reconstructed outcome reuses the first delivery's reply comment id, not a fresh one");
     }
 
     @Test
@@ -459,6 +467,19 @@ class ReviewWorkerTest {
         worker.generateReview(generateCommand(null));
         assertEquals(1, llmCalls.size(), "single LLM call, no reconcile");
         assertTrue(lastReviewGenerated().verdicts().isEmpty());
+    }
+
+    @Test
+    void emptyPriorFindingsSkipNoReconcileCall() {
+        // A clean prior run (0 findings) guarantees the reconcile call yields zero
+        // verdicts — skip it entirely rather than paying for a call with a known outcome.
+        PriorRun cleanPrior = new PriorRun("aaa111", "sum-1", List.of());
+        worker.generateReview(generateCommand(cleanPrior));
+
+        assertEquals(1, llmCalls.size(), "no reconcile call when there are no prior findings to judge");
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertTrue(emitted.verdicts().isEmpty());
+        assertNull(emitted.reconcileUsage());
     }
 
     private GenerateReview generateCommand(PriorRun prior) {

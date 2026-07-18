@@ -102,4 +102,49 @@ class ReviewProjectionPriorRunIT {
         assertEquals("warning", view.sev());
         assertTrue(view.resolvedThread());
     }
+
+    @Test
+    void recordReconciliationMatchesByThreadRefThenPathLineThenFallsBackForUnmatched() {
+        String reviewId = "review::ws/prior-run-it#5";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 5L,
+                "t", "a", "aid", "src", "dst", "ddd444", "http://x", "github", "completed", 6);
+
+        List<PriorFinding> priorFindings = List.of(
+                // matched by threadRef — path/line differ from the verdict on purpose to prove
+                // the threadRef match wins over any path+line comparison.
+                new PriorFinding("src/A.java", 10, Severity.MAJOR, "leak in A", "t-A"),
+                // never posted inline (no threadRef) — only matchable by path+line.
+                new PriorFinding("src/B.java", 3, Severity.MINOR, "issue in B", null));
+
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict("t-A", "src/A.java", 10, FindingVerdict.Status.RESOLVED, "fixed"),
+                new FindingVerdict(null, "src/B.java", 3, FindingVerdict.Status.STILL_OPEN, null),
+                // matches neither a threadRef nor a path+line of any prior finding.
+                new FindingVerdict("t-Z", "src/C.java", 99, FindingVerdict.Status.ACKNOWLEDGED, "note"));
+
+        projection.recordReconciliation(reviewId, verdicts, priorFindings);
+
+        ReviewDetail detail = projection.loadDetail("ws", "prior-run-it", 5L).orElseThrow();
+        assertEquals(3, detail.reconciliation().size());
+
+        ReviewDetail.ReconciliationView byThreadRef = detail.reconciliation().get(0);
+        assertEquals("src/A.java:10", byThreadRef.loc());
+        assertEquals("resolved", byThreadRef.status());
+        assertEquals("leak in A", byThreadRef.msg());
+        assertEquals("warning", byThreadRef.sev(), "MAJOR -> warning, matched via threadRef");
+
+        ReviewDetail.ReconciliationView byPathLine = detail.reconciliation().get(1);
+        assertEquals("src/B.java:3", byPathLine.loc());
+        assertEquals("still open", byPathLine.status());
+        assertEquals("issue in B", byPathLine.msg());
+        assertEquals("suggestion", byPathLine.sev(), "MINOR -> suggestion, matched via path+line fallback");
+
+        ReviewDetail.ReconciliationView unmatched = detail.reconciliation().get(2);
+        assertEquals("src/C.java:99", unmatched.loc());
+        assertEquals("acknowledged", unmatched.status());
+        // matchPriorFinding finds nothing: toReconciliationEntry falls back to msg="" and
+        // sev=severitySlug(Severity.INFO), which slugs to "nit" (same bucket as NIT).
+        assertEquals("", unmatched.msg());
+        assertEquals("nit", unmatched.sev());
+    }
 }

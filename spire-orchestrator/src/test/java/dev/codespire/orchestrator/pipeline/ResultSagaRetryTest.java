@@ -4,7 +4,12 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
+import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.event.ReviewIds;
+import dev.codespire.contract.lifecycle.ReviewState;
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorRun;
+import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
@@ -18,6 +23,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -172,5 +178,85 @@ class ResultSagaRetryTest {
         assertTrue(emitted.isEmpty(), "cannot retry without a provider credential");
         assertEquals(List.of("failed"), terminalStatuses);
         assertInstanceOf(RecordCommand.RecordFailure.class, recorded.get(0));
+    }
+
+    /**
+     * Saga-level seam for the priorSummaryRef fix: a follow-up review after a CLEAN prior run
+     * (0 findings, so no reconciliation to record) must still resolve priorSummaryRef from
+     * priorRunFor so PostComments updates the existing summary in place instead of duplicating it.
+     */
+    @Test
+    void reviewGeneratedWithEmptyVerdicts_stillCarriesThePriorSummaryRefWhenAPriorRunExists() {
+        PriorRun cleanPrior = new PriorRun(COMMIT, "sum-prior-1", List.of());
+        var saga = sagaForReviewGenerated(cleanPrior, Optional.of("packed-cred"));
+
+        var result = new ReviewResult(List.of(), "all clean", new ModelUsage(null, 0, 0, 0));
+        saga.on(new ReviewGenerated(REVIEW_ID, 412L, COMMIT, result));
+
+        assertEquals(1, emitted.size(), "one PostComments command emitted");
+        var postComments = assertInstanceOf(ActionCommand.PostComments.class, emitted.get(0));
+        assertNotNull(postComments.priorSummaryRef(),
+                "priorSummaryRef must resolve from priorRunFor even when verdicts are empty");
+        assertEquals("sum-prior-1", postComments.priorSummaryRef());
+    }
+
+    /** Minimal ResultSaga wired for the ReviewGenerated -> PostComments path (no ReviewFailed fakery needed). */
+    private ResultSaga sagaForReviewGenerated(PriorRun priorRun, Optional<String> credential) {
+        ResultSaga saga = new ResultSaga();
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
+                recorded.add(command);
+                return List.of();
+            }
+
+            @Override
+            public ReviewState currentState(String reviewId) {
+                return new ReviewState(reviewId, REPO, 412L, ReviewState.Status.REVIEWING,
+                        COMMIT, java.util.Set.of(), null, java.util.Map.of());
+            }
+        };
+        saga.commands = new CommandsEmitter() {
+            @Override
+            public void emit(ActionCommand command) {
+                emitted.add(command);
+            }
+        };
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail) {
+            }
+
+            @Override
+            public void recordOutcome(String reviewId, ReviewResult result, int stage) {
+            }
+
+            @Override
+            public void recordLlmCall(String reviewId, String kind, ModelUsage usage) {
+            }
+
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.of(priorRun);
+            }
+
+            @Override
+            public void recordReconciliation(String reviewId,
+                    List<dev.codespire.contract.review.FindingVerdict> verdicts,
+                    List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+            }
+        };
+        saga.workerCredentials = new WorkerCredentials() {
+            @Override
+            public Optional<String> packForReview(String reviewId) {
+                return credential;
+            }
+        };
+        return saga;
     }
 }
