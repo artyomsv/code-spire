@@ -17,9 +17,13 @@ import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
@@ -30,7 +34,9 @@ import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.UnifiedDiffParser;
 import dev.codespire.scm.bitbucket.BitbucketApiException;
 import dev.codespire.scm.github.GitHubApiException;
@@ -43,11 +49,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -74,16 +80,24 @@ class ReviewWorkerTest {
     private List<IntegrationEvent> emitted;
     private RecordingSink sink;
     private InMemoryIdempotency idempotency;
-    private AtomicInteger llmCalls;
+    private List<Prompt> llmCalls;
     private RuntimeException diffFailure;
+    private String compareDiff;
+    private RuntimeException compareFailure;
+    private String reconcileResponse;
+    private String reviewResponse;
 
     @BeforeEach
     void setUp() {
         emitted = new ArrayList<>();
         sink = new RecordingSink();
         idempotency = new InMemoryIdempotency();
-        llmCalls = new AtomicInteger();
+        llmCalls = new ArrayList<>();
         diffFailure = null;
+        compareDiff = "diff --git a/inc b/inc";
+        compareFailure = null;
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"fixed\"}]}";
+        reviewResponse = "{\"summary\":\"s\",\"findings\":[]}";
 
         worker = new ReviewWorker();
         worker.mapper = new ObjectMapper();
@@ -113,6 +127,14 @@ class ReviewWorkerTest {
                 }
                 return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(DIFF), false);
             }
+
+            @Override
+            public String fetchCompareDiff(RepoRef repo, String base, String head) {
+                if (compareFailure != null) {
+                    throw compareFailure;
+                }
+                return compareDiff;
+            }
         };
         // ADR-015: the worker builds SCM clients per command; supply the fakes directly.
         worker.scm = new WorkerScmClients() {
@@ -129,9 +151,10 @@ class ReviewWorkerTest {
 
             @Override
             public CompletionStage<Completion> complete(Prompt prompt, ModelParams params) {
-                llmCalls.incrementAndGet();
-                return CompletableFuture.completedFuture(new Completion(
-                        "{\"summary\":\"s\",\"findings\":[]}", new ModelUsage("m", 1, 1, 0)));
+                llmCalls.add(prompt);
+                boolean isReconcile = prompt.user().contains("Prior findings");
+                String text = isReconcile ? reconcileResponse : reviewResponse;
+                return CompletableFuture.completedFuture(new Completion(text, new ModelUsage("m", 1, 1, 0)));
             }
         });
     }
@@ -216,11 +239,11 @@ class ReviewWorkerTest {
     void redeliveredGenerateReviewNeverPaysTwiceButReEmits() {
         GenerateReview command = new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null);
         worker.generateReview(command);
-        assertEquals(1, llmCalls.get());
+        assertEquals(1, llmCalls.size());
         ReviewGenerated first = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
 
         worker.generateReview(command); // redelivery of the completed command (H4)
-        assertEquals(1, llmCalls.get(), "no second paid LLM call");
+        assertEquals(1, llmCalls.size(), "no second paid LLM call");
         ReviewGenerated replayed = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
         assertEquals(first.result(), replayed.result(), "redelivery converges on the persisted result");
     }
@@ -230,7 +253,7 @@ class ReviewWorkerTest {
         // claim exists but was never marked (crash between LLM call and mark)
         idempotency.claim(REVIEW_ID, COMMIT, "LLM");
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
-        assertEquals(1, llmCalls.get(), "reclaimable NULL claim re-runs the call");
+        assertEquals(1, llmCalls.size(), "reclaimable NULL claim re-runs the call");
         assertInstanceOf(ReviewGenerated.class, emitted.getLast());
     }
 
@@ -243,7 +266,7 @@ class ReviewWorkerTest {
         idempotency.markPosted(REVIEW_ID, COMMIT, "LLM", new ObjectMapper().writeValueAsString(result));
 
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
-        assertEquals(0, llmCalls.get(), "no repeat spend — result comes from the idempotency row");
+        assertEquals(0, llmCalls.size(), "no repeat spend — result comes from the idempotency row");
         ReviewGenerated generated = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
         assertEquals(result, generated.result());
     }
@@ -255,8 +278,82 @@ class ReviewWorkerTest {
         idempotency.markPosted(REVIEW_ID, COMMIT, "LLM", "generated");
 
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
-        assertEquals(0, llmCalls.get(), "completed call is never re-paid");
+        assertEquals(0, llmCalls.size(), "completed call is never re-paid");
         assertTrue(emitted.isEmpty(), "nothing replayable to emit");
+    }
+
+    // --- follow-up review: reconcile + review two-call flow (ADR-019) ---
+
+    @Test
+    void followUpReviewRunsReconcileAndReviewCallsAndEmitsVerdicts() {
+        worker.generateReview(generateCommand(priorWithOneFinding()));
+
+        assertEquals(2, llmCalls.size(), "reconcile + review = two LLM calls");
+        assertTrue(llmCalls.get(0).user().contains("Prior findings"));
+        assertTrue(llmCalls.get(0).user().contains("diff --git a/inc"), "reconcile sees the incremental diff");
+        assertTrue(llmCalls.get(1).user().contains("do not re-report"), "review call carries the exclusion list");
+
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertEquals(1, emitted.verdicts().size());
+        assertEquals(FindingVerdict.Status.RESOLVED, emitted.verdicts().getFirst().status());
+        assertNotNull(emitted.reconcileUsage());
+    }
+
+    @Test
+    void compareFailureFallsBackToFullDiffReconcile() {
+        compareFailure = new RuntimeException("404");
+        worker.generateReview(generateCommand(priorWithOneFinding()));
+        assertTrue(llmCalls.get(0).user().contains("incremental diff is unavailable"));
+        assertEquals(2, llmCalls.size(), "reconcile still runs on the full diff");
+    }
+
+    @Test
+    void redeliveryAfterBothCallsReplaysBothPersistedResults() {
+        worker.generateReview(generateCommand(priorWithOneFinding()));
+        int paidCalls = llmCalls.size();
+        worker.generateReview(generateCommand(priorWithOneFinding())); // redelivery
+        assertEquals(paidCalls, llmCalls.size(), "no second spend on either call");
+        ReviewGenerated replayed = lastReviewGenerated();
+        assertEquals(1, replayed.verdicts().size(), "verdicts replayed from the persisted claim");
+    }
+
+    @Test
+    void stillOpenAnchorCollisionsAreDroppedFromNewFindings() {
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"not fixed\"}]}";
+        reviewResponse = """
+                {"summary":"s","findings":[
+                  {"path":"src/Demo.java","line":5,"endLine":5,"severity":"MAJOR","message":"leak","suggestion":null},
+                  {"path":"src/Other.java","line":9,"endLine":9,"severity":"MINOR","message":"new issue","suggestion":null}
+                ]}
+                """;
+        worker.generateReview(generateCommand(priorStillOpenAtDemo5()));
+        ReviewGenerated emitted = lastReviewGenerated();
+        assertEquals(1, emitted.result().findings().size());
+        assertEquals("src/Other.java", emitted.result().findings().getFirst().path());
+    }
+
+    @Test
+    void firstReviewPathIsUnchanged() {
+        worker.generateReview(generateCommand(null));
+        assertEquals(1, llmCalls.size(), "single LLM call, no reconcile");
+        assertTrue(lastReviewGenerated().verdicts().isEmpty());
+    }
+
+    private GenerateReview generateCommand(PriorRun prior) {
+        return new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null, prior);
+    }
+
+    private ReviewGenerated lastReviewGenerated() {
+        return assertInstanceOf(ReviewGenerated.class, emitted.getLast());
+    }
+
+    private PriorRun priorWithOneFinding() {
+        return new PriorRun("aaa111", "sum-1",
+                List.of(new PriorFinding("src/Demo.java", 5, Severity.MAJOR, "leak", "t-1")));
+    }
+
+    private PriorRun priorStillOpenAtDemo5() {
+        return priorWithOneFinding();
     }
 
     // --- failure classification (H1: provider-neutral ScmApiException) ---
@@ -324,7 +421,7 @@ class ReviewWorkerTest {
 
     // --- test doubles ---
 
-    private static final class RecordingSink implements CommentSink {
+    private static final class RecordingSink implements CommentSink, ThreadSource {
 
         int inlinePosts;
         int failOnInline; // 1-based index of the inline post that throws; 0 = never
@@ -365,6 +462,12 @@ class ReviewWorkerTest {
         @Override
         public Author getPullRequestAuthor(RepoRef repo, long prId) {
             return Author.of("TEST-id", "test", "Test");
+        }
+
+        @Override
+        public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
+            return new ThreadTranscript(thread, "src/Demo.java", 5, COMMIT,
+                    List.of(new ThreadMessage("author", "please fix this", false)));
         }
     }
 
