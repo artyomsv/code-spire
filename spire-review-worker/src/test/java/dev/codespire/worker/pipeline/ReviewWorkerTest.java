@@ -198,6 +198,21 @@ class ReviewWorkerTest {
     }
 
     @Test
+    void llmIdempotencyClaimIsNotLeakedAsAnInlineComment() {
+        // A completed LLM claim's value is the findings-result blob, not a posted comment id.
+        // The partial-retry reconstruction must never emit it as an inline comment.
+        idempotency.claim(REVIEW_ID, COMMIT, "LLM");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "LLM", "{\"findings\":[],\"summary\":\"s\"}");
+
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        CommentsPosted posted = assertInstanceOf(CommentsPosted.class, emitted.getLast());
+        assertEquals(1, posted.inline().size(), "only the real finding is posted — the LLM claim is not leaked");
+        assertTrue(posted.inline().stream().noneMatch(p -> "LLM".equals(p.path())),
+                "no inline comment carries the LLM claim key as its path");
+    }
+
+    @Test
     void redeliveredGenerateReviewNeverPaysTwiceButReEmits() {
         GenerateReview command = new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null);
         worker.generateReview(command);

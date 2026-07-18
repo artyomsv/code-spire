@@ -216,9 +216,12 @@ public class ReviewWorker {
             if (summaryCommentId == null) {
                 return; // summary failure already emitted ReviewFailed
             }
-            // Include ids reconstructed from a previous partially-completed attempt.
+            // Recover inline comment ids from a previous partially-completed attempt. Skip the
+            // non-inline claims (SUMMARY, LLM) — they are not posted comments (the LLM claim's value
+            // is the findings-result blob), so they must never leak into the inline list.
             previouslyPosted.forEach((key, id) -> {
-                if (!SUMMARY_KEY.equals(key) && posted.stream().noneMatch(p -> p.commentId().equals(id))) {
+                if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key)
+                        && posted.stream().noneMatch(p -> p.commentId().equals(id))) {
                     posted.add(new CommentsPosted.PostedInline(id, key, 0));
                 }
             });
