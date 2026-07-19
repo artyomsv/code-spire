@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Bot, CheckCircle2, CircleDashed, CircleDot, Cpu } from 'lucide-react';
+import { Bot, CheckCircle2, Cpu } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -312,61 +312,109 @@ function statusSlug(status: string): string {
 
 const RECON_CLOSED_STATUSES = new Set(['resolved', 'acknowledged', 'superseded']);
 
-/** The verdict icon: a dashed circle for 'unchanged' (no thread action ever taken), a filled
- *  check for a thread actually resolved, otherwise a plain dot (open / reply-only). */
-function reconciliationIcon(item: ReconciliationItem) {
-  if (item.status === 'unchanged') return <CircleDashed size={13} />;
-  return item.resolvedThread ? <CheckCircle2 size={13} /> : <CircleDot size={13} />;
+/**
+ * One row of the unified findings list — either this round's new finding or a reconciliation
+ * verdict against a prior round's finding, normalized so both render with the same markup.
+ */
+interface FindingRow {
+  key: string;
+  sev: Finding['sev'];
+  loc: string;
+  msg: string;
+  note?: string;
+  status: string; // 'new' | the reconciliation verdict ('still open' | 'unchanged' | 'resolved' | …)
+  closed: boolean;
+  threadRef?: string;
+  resolvedThread?: boolean;
+}
+
+function newFindingRows(findingsList: Finding[]): FindingRow[] {
+  return findingsList.map((f, i) => ({
+    key: `new-${i}`,
+    sev: f.sev,
+    loc: f.loc,
+    msg: f.msg,
+    status: 'new',
+    closed: false,
+    threadRef: f.threadRef,
+  }));
 }
 
 /**
- * A re-review's verdicts against the prior run's findings, shown directly above the findings
- * card. A verdict is "closed" only when it's resolved/acknowledged/superseded; 'still open' and
- * 'unchanged' (the follow-up never touched that finding) both keep counting as open.
+ * Reconciliation verdicts as rows, excluding any whose thread a new finding already owns. The
+ * two sets are disjoint by construction, but if the same thread ever appears in both, the
+ * findingsList copy (already rendered above) wins rather than showing the thread twice.
  */
-export function reconciliationCard(items: ReconciliationItem[]) {
-  if (!items.length) return null;
-  const closed = items.filter((i) => RECON_CLOSED_STATUSES.has(i.status)).length;
-  const open = items.length - closed;
+function reconciliationRows(reconciliation: ReconciliationItem[], ownedThreads: Set<string>): FindingRow[] {
+  return reconciliation
+    .filter((i) => !(i.threadRef && ownedThreads.has(i.threadRef)))
+    .map((i, idx) => ({
+      key: `recon-${i.threadRef ?? idx}`,
+      sev: i.sev,
+      loc: i.loc,
+      msg: i.msg,
+      note: i.note,
+      status: i.status,
+      closed: RECON_CLOSED_STATUSES.has(i.status),
+      threadRef: i.threadRef,
+      resolvedThread: i.resolvedThread,
+    }));
+}
+
+/** One findings-list row — a severity badge, location, message, status badge (with a check icon
+ *  once closed) and the existing per-finding conversation toggle. */
+function findingRow(r: ReviewDetail, row: FindingRow) {
+  const turns = row.threadRef
+    ? r.events.filter(
+        (e: ReviewEvent) => e.threadRef === row.threadRef && (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated'),
+      )
+    : [];
+  const resolvedThread =
+    row.resolvedThread ??
+    (row.threadRef ? r.reconciliation?.find((item) => item.threadRef === row.threadRef)?.resolvedThread : undefined);
   return (
-    <div className="card reconciliation-card">
-      <div className="head">
-        <span className="k">//</span>
-        <h3>Reconciliation</h3>
-        <span className="badge">
-          {closed} closed · {open} still open
-        </span>
-      </div>
-      <div className="body">
-        {items.map((i, idx) => (
-          <div
-            key={`${i.loc}-${i.threadRef ?? idx}`}
-            className={`finding recon-item recon-${statusSlug(i.status)} ${i.sev}`}
-          >
-            <div className="stripe"></div>
-            <div className="fbody">
-              <div className="frow">
-                <span className="sev">{i.sev}</span>
-                <span className="loc">{i.loc}</span>
-                <span className="recon-verdict">
-                  {reconciliationIcon(i)}
-                  {i.status}
-                </span>
-              </div>
-              <div className="msg">{i.msg}</div>
-              {i.note ? (
-                <div className="recon-note">
-                  <MessageText>{i.note}</MessageText>
-                </div>
-              ) : null}
-            </div>
+    <div
+      key={row.key}
+      className={`finding recon-item recon-${statusSlug(row.status)} ${row.sev}${row.closed ? ' finding-closed' : ''}`}
+    >
+      <div className="stripe"></div>
+      <div className="fbody">
+        <div className="frow">
+          <span className="sev">{row.sev}</span>
+          <span className="loc">{row.loc}</span>
+          <span className="recon-verdict">
+            {row.closed && <CheckCircle2 size={13} />}
+            {row.status}
+          </span>
+        </div>
+        <div className="msg">{row.msg}</div>
+        {row.note ? (
+          <div className="recon-note">
+            <MessageText>{row.note}</MessageText>
           </div>
-        ))}
+        ) : null}
+        {turns.length > 0 && row.threadRef && (
+          <FindingConversation
+            workspace={r.workspace}
+            slug={r.slug}
+            pr={r.pr}
+            threadRef={row.threadRef}
+            previewTurns={turns}
+            previewBody={conversationExchangesBody(turns)}
+            resolved={resolvedThread}
+          />
+        )}
       </div>
     </div>
   );
 }
 
+/**
+ * The unified findings list: this round's new findings plus the prior round's reconciliation
+ * verdicts, as one list. Open items (new / still open / unchanged) render first; closed verdicts
+ * (resolved / acknowledged / superseded) are grouped in a collapsed "Resolved (N)" section at the
+ * bottom so a multi-round review reads as one place to look, not two near-empty cards.
+ */
 export function findingsCard(r: ReviewDetail) {
   if (r.status === 'failed' || r.status === 'cancelled') {
     return (
@@ -392,7 +440,9 @@ export function findingsCard(r: ReviewDetail) {
       </div>
     );
   }
-  if (!r.findingsList.length) {
+
+  const reconciliation = r.reconciliation ?? [];
+  if (!r.findingsList.length && !reconciliation.length) {
     return (
       <div className="card">
         <div className="head">
@@ -408,6 +458,14 @@ export function findingsCard(r: ReviewDetail) {
       </div>
     );
   }
+
+  const ownedThreads = new Set(
+    r.findingsList.filter((f): f is Finding & { threadRef: string } => !!f.threadRef).map((f) => f.threadRef),
+  );
+  const reconRows = reconciliationRows(reconciliation, ownedThreads);
+  const openRows = [...newFindingRows(r.findingsList), ...reconRows.filter((row) => !row.closed)];
+  const closedRows = reconRows.filter((row) => row.closed);
+
   const more =
     r.findings > r.findingsList.length ? (
       <div
@@ -422,52 +480,25 @@ export function findingsCard(r: ReviewDetail) {
         + {r.findings - r.findingsList.length} more {r.status === 'reviewing' ? '· still generating' : ''}
       </div>
     ) : null;
+
   return (
     <div className="card">
       <div className="head">
         <span className="k">//</span>
         <h3>Findings</h3>
         <span className="badge">
-          {r.findings}
-          {r.status === 'reviewing' ? ' so far' : ''}
+          {openRows.length} open · {closedRows.length} closed
         </span>
       </div>
       <div className="body">
-        {r.findingsList.map((f: Finding, i: number) => {
-          const turns = f.threadRef
-            ? r.events.filter(
-                (e: ReviewEvent) =>
-                  e.threadRef === f.threadRef && (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated'),
-              )
-            : [];
-          const resolvedThread = f.threadRef
-            ? r.reconciliation?.find((item) => item.threadRef === f.threadRef)?.resolvedThread
-            : undefined;
-          return (
-            <div key={i} className={`finding ${f.sev}`}>
-              <div className="stripe"></div>
-              <div className="fbody">
-                <div className="frow">
-                  <span className="sev">{f.sev}</span>
-                  <span className="loc">{f.loc}</span>
-                </div>
-                <div className="msg">{f.msg}</div>
-                {turns.length > 0 && f.threadRef && (
-                  <FindingConversation
-                    workspace={r.workspace}
-                    slug={r.slug}
-                    pr={r.pr}
-                    threadRef={f.threadRef}
-                    previewTurns={turns}
-                    previewBody={conversationExchangesBody(turns)}
-                    resolved={resolvedThread}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {openRows.map((row) => findingRow(r, row))}
         {more}
+        {closedRows.length > 0 && (
+          <details className="resolved-group">
+            <summary>Resolved ({closedRows.length})</summary>
+            <div className="resolved-group-body">{closedRows.map((row) => findingRow(r, row))}</div>
+          </details>
+        )}
       </div>
     </div>
   );

@@ -476,7 +476,17 @@
   .recon-item.recon-still-open { --rv: var(--warn); }
   .recon-item.recon-acknowledged, .recon-item.recon-superseded { --rv: var(--muted); }
   .recon-item.recon-unchanged { --rv: var(--text-3, var(--muted)); opacity: 0.75; }
+  .recon-item.recon-new { --rv: var(--iris); }
   .recon-note { margin-top: 8px; }
+
+  /* ---- extension: resolved findings group (collapsed, muted — bottom of the unified list) ---- */
+  .resolved-group { margin-top: 14px; }
+  .resolved-group > summary {
+    cursor: pointer; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-3); user-select: none;
+  }
+  .resolved-group > summary:hover { color: var(--text-2); }
+  .resolved-group-body { margin-top: 10px; opacity: 0.72; }
   .finding-convo { margin-top: 12px; }
   .finding-convo > summary {
     cursor: pointer; list-style: none; user-select: none;
