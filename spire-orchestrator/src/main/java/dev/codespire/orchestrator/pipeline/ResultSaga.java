@@ -202,10 +202,12 @@ public class ResultSaga {
                 if (e.usage() != null) {
                     projection.recordLlmCall(e.reviewId(), "followup", priceUsage(e.usage()));
                 }
+                projection.touch(e.reviewId());
             }
             case FollowUpPosted e -> {
                 threads.bumpTurn(e.reviewId(), e.threadRef(), e.commentId());
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
+                projection.touch(e.reviewId());
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());

@@ -14,6 +14,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +26,25 @@ class ReviewProjectionPriorRunIT {
 
     @Inject ReviewProjection projection;
     @Inject ReviewThreadView threads;
+
+    /**
+     * Conversation activity (a reply becoming visible, a follow-up's cost landing) writes
+     * appendEvent/recordLlmCall/bumpTurn but none of those touch review_status — without a
+     * dedicated bump, the dashboard's live feed (keyed off updated_at) never learns about it.
+     */
+    @Test
+    void touchBumpsUpdatedAtAndBroadcasts() throws InterruptedException {
+        String reviewId = "review::ws/prior-run-it#15";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 15L,
+                "t", "a", "aid", "src", "dst", "c14", "http://x", "github", "reviewing", 0);
+        Instant before = projection.loadDetail("ws", "prior-run-it", 15L).orElseThrow().updatedAt();
+
+        Thread.sleep(5);
+        projection.touch(reviewId);
+
+        Instant after = projection.loadDetail("ws", "prior-run-it", 15L).orElseThrow().updatedAt();
+        assertTrue(after.isAfter(before), "touch must bump updated_at so the live feed picks up the change");
+    }
 
     @Test
     void priorRunJoinsPostedFindingsWithTheirThreads() {

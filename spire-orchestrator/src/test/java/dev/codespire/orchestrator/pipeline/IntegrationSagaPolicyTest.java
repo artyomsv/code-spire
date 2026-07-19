@@ -3,12 +3,14 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
@@ -88,6 +90,10 @@ class IntegrationSagaPolicyTest {
 
             @Override
             public void setNote(String reviewId, String note) {
+            }
+
+            @Override
+            public void touch(String reviewId) {
             }
         };
         saga.providers = new ProviderRegistry() {
@@ -252,5 +258,58 @@ class IntegrationSagaPolicyTest {
         assertEquals(List.of("bitbucket-cloud"), headerProviderTypes, "the dashboard header is still registered");
         assertTrue(emitted.isEmpty(), "observe mode emits no action commands");
         assertTrue(notes.contains("ReviewObserved"));
+    }
+
+    /**
+     * A human's reply becoming visible on the timeline must also bump the dashboard's live feed
+     * (updated_at) — otherwise the conversation only shows up after a hard refresh.
+     */
+    @Test
+    void authorReplied_touchesTheProjectionForLiveUpdate() {
+        List<String> touched = new ArrayList<>();
+        String reviewId = "review::acme/web#412";
+        var followUp = new ActionCommand.AnswerFollowUp(reviewId, new RepoRef("acme", "web"), 412L,
+                new ThreadRef("t-1"), "c-1", "why is this a bug?", "scm-cred", "llm-cred", false, 1, 100L, 2.0);
+
+        IntegrationSaga saga = new IntegrationSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.commands = new CommandsEmitter() {
+            @Override
+            public void emit(ActionCommand command) {
+                emitted.add(command);
+            }
+        };
+        saga.providers = new ProviderRegistry() {
+            @Override
+            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+                return Optional.empty(); // no provider resolved -> isBotAuthored() is false, not a self-loop
+            }
+        };
+        saga.conversation = new ConversationSaga() {
+            @Override
+            public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
+                return Optional.of(followUp);
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
+            }
+
+            @Override
+            public void touch(String reviewId) {
+                touched.add(reviewId);
+            }
+        };
+
+        saga.on(new AuthorReplied(new RepoRef("acme", "web"), 412L, reviewId, new ThreadRef("t-1"), "c-1",
+                "why is this a bug?", Author.of("human-1", "alice", "Alice")));
+
+        assertEquals(1, emitted.size(), "the planned AnswerFollowUp is still emitted");
+        assertEquals(List.of(reviewId), touched, "the reply becoming visible must bump the live dashboard");
     }
 }

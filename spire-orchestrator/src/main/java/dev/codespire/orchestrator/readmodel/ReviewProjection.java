@@ -141,6 +141,18 @@ public class ReviewProjection {
     }
 
     /**
+     * Bump the review's updated_at and push a fresh summary to live clients — used by
+     * activity that changes detail-page data (conversation turns, follow-up costs)
+     * without going through a status/stage write, which would otherwise broadcast.
+     */
+    public void touch(String reviewId) {
+        update("UPDATE review_status SET updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, reviewId);
+        });
+        broadcast(reviewId);
+    }
+
+    /**
      * Persist the technical error behind a terminal failure so the UI can show WHY
      * a review failed. Encrypted at rest (AAD = reviewId, like findings) and bounded
      * — a provider error can be a large blob and may echo fragments of the diff.

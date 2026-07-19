@@ -3,6 +3,8 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
+import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.event.ReviewIds;
@@ -11,9 +13,11 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
 
@@ -120,6 +124,10 @@ class ResultSagaRetryTest {
             public void recordOpenFindings(String reviewId, ReviewResult result,
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+            }
+
+            @Override
+            public void touch(String reviewId) {
             }
         };
         saga.workerCredentials = new WorkerCredentials() {
@@ -262,6 +270,10 @@ class ResultSagaRetryTest {
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
             }
+
+            @Override
+            public void touch(String reviewId) {
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
@@ -270,5 +282,71 @@ class ResultSagaRetryTest {
             }
         };
         return saga;
+    }
+
+    /**
+     * A follow-up's cost landing (recordLlmCall) must also bump the dashboard's live feed
+     * (updated_at) — otherwise the new cost/turn only shows up after a hard refresh.
+     */
+    @Test
+    void followUpGenerated_touchesTheProjectionForLiveUpdate() {
+        List<String> touched = new ArrayList<>();
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
+            }
+
+            @Override
+            public void touch(String reviewId) {
+                touched.add(reviewId);
+            }
+        };
+
+        saga.on(new FollowUpGenerated(REVIEW_ID, new ThreadRef("t-1"), "because it leaks a resource", null));
+
+        assertEquals(List.of(REVIEW_ID), touched, "a new follow-up turn must bump the live dashboard");
+    }
+
+    /**
+     * The bot's reply actually landing on the SCM (FollowUpPosted) must also bump the
+     * dashboard's live feed — same rationale as {@link #followUpGenerated_touchesTheProjectionForLiveUpdate}.
+     */
+    @Test
+    void followUpPosted_touchesTheProjectionForLiveUpdate() {
+        List<String> touched = new ArrayList<>();
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
+            }
+        };
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
+                recorded.add(command);
+                return List.of();
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void touch(String reviewId) {
+                touched.add(reviewId);
+            }
+        };
+
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("t-1"), "c-1"));
+
+        assertEquals(List.of(REVIEW_ID), touched, "the bot's reply landing must bump the live dashboard");
     }
 }

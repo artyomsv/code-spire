@@ -98,6 +98,7 @@ public class IntegrationSaga {
                         String author = e.author() == null ? "unknown" : e.author().username();
                         projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
                                 "@" + author + ": " + Previews.of(e.text()), e.threadRef().value());
+                        projection.touch(e.reviewId());
                         commands.emit(cmd);
                     });
                 }
