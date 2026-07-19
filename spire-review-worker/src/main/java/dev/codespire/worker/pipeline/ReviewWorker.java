@@ -23,6 +23,7 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.scm.ChangeType;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
@@ -199,23 +200,26 @@ public class ReviewWorker {
      * finding against the incremental diff (or the full diff on a compare failure) plus its
      * thread transcript. Runs before the review call so a crash between the two replays cleanly.
      *
-     * <p>The prior findings are remapped through the incremental diff's renames BEFORE anything
-     * else touches them (defect fix): a follow-up commit that renames a reviewed file must not
-     * have its findings judged, excluded, or re-carried at the stale old path. Remapping happens
-     * once here and the result — {@link Reconciliation#exclusions()} — is reused verbatim for the
-     * review call's exclusion list, so a redelivered/replayed run stays consistent.
+     * <p>The {@code RECONCILE_KEY} claim is checked FIRST, before any SCM call (ordering fix): a
+     * redelivery whose claim is already posted must never re-fetch the compare diff — that live
+     * call's result can legitimately differ from the first run's (a transient error, a blank
+     * result, different rename detection) and re-deriving fresh exclusions from it would carry OLD
+     * paths while the persisted verdicts carry the FIRST run's remapped NEW paths, a mixed state.
+     * The AlreadyPosted branch instead rebuilds the exclusion list from the PERSISTED verdicts via
+     * {@link #exclusionsFromPersisted}. Only the Post branch — a genuinely fresh reconcile — fetches
+     * the compare diff and remaps prior findings through its renames, exactly as before.
      */
     private Reconciliation reconcile(GenerateReview command, WorkerScmClients.Clients clients,
                                      Diff diff, PriorRun prior, WorkerLlmProvider.LlmClient client) {
-        String incremental = compareOrNull(clients.diff(), command, prior);
-        List<PriorFinding> remapped = remapRenames(prior.findings(), renameMap(incremental));
-
         switch (idempotency.claim(command.reviewId(), command.commit(), RECONCILE_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                return new Reconciliation(remapped, readReconcileOutcome(already.commentId()));
+                ReconcileOutcome outcome = readReconcileOutcome(already.commentId());
+                return new Reconciliation(exclusionsFromPersisted(outcome.verdicts(), prior.findings()), outcome);
             }
             case CommentIdempotencyStore.Claim.Post ignored -> { }
         }
+        String incremental = compareOrNull(clients.diff(), command, prior);
+        List<PriorFinding> remapped = remapRenames(prior.findings(), renameMap(incremental));
         String diffText = incremental != null ? incremental : DiffRenderer.render(diff.files());
         Map<String, ThreadTranscript> transcripts = fetchTranscripts(clients, command, remapped);
         Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText, incremental != null);
@@ -228,14 +232,66 @@ public class ReviewWorker {
         return new Reconciliation(remapped, outcome);
     }
 
+    /**
+     * The review call's exclusion list, rebuilt from a PERSISTED reconcile outcome instead of a
+     * fresh compare fetch (AlreadyPosted branch of {@link #reconcile}) — mirrors the proven
+     * technique in {@code ReviewProjection.stillOpenPriorFindings}. Each verdict is matched back to
+     * the ORIGINAL prior finding it judged (threadRef when both are non-null, else path+line
+     * against the original — a verdict's own path/line already reflect whatever rename the FIRST
+     * run followed) and rebuilt carrying the verdict's (fresher) path/line with the matched
+     * finding's severity/message/threadRef. A verdict with no match is skipped; a prior finding
+     * with no matching verdict at all is appended with its original fields (carried un-verdicted).
+     */
+    private static List<PriorFinding> exclusionsFromPersisted(List<FindingVerdict> verdicts,
+                                                              List<PriorFinding> priorFindings) {
+        boolean[] matched = new boolean[priorFindings.size()];
+        List<PriorFinding> exclusions = new ArrayList<>();
+        for (FindingVerdict v : verdicts) {
+            int idx = matchPriorFindingIndex(v, priorFindings);
+            if (idx >= 0) {
+                matched[idx] = true;
+                PriorFinding pf = priorFindings.get(idx);
+                exclusions.add(new PriorFinding(v.path(), v.line(), pf.severity(), pf.message(), pf.threadRef()));
+            }
+        }
+        for (int i = 0; i < priorFindings.size(); i++) {
+            if (!matched[i]) {
+                exclusions.add(priorFindings.get(i));
+            }
+        }
+        return exclusions;
+    }
+
+    /** threadRef match first (both non-null), else path+line; -1 when neither matches. */
+    private static int matchPriorFindingIndex(FindingVerdict v, List<PriorFinding> priorFindings) {
+        for (int i = 0; i < priorFindings.size(); i++) {
+            if (v.threadRef() != null && v.threadRef().equals(priorFindings.get(i).threadRef())) {
+                return i;
+            }
+        }
+        for (int i = 0; i < priorFindings.size(); i++) {
+            PriorFinding pf = priorFindings.get(i);
+            if (pf.path().equals(v.path()) && pf.line() == v.line()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /** Old path -> new path for files the incremental diff renamed/moved; empty when there is no
-     *  incremental diff (force-push fallback) or nothing was renamed. */
+     *  incremental diff (force-push fallback) or nothing was renamed. Copies are deliberately
+     *  excluded (Minor fix): a COPIED patch's oldPath is the ORIGINAL file, still present and
+     *  unmodified — remapping a prior finding there to the copy's path would follow it to code
+     *  that never moved. */
     private static Map<String, String> renameMap(String incrementalDiff) {
         if (incrementalDiff == null) {
             return Map.of();
         }
         Map<String, String> renames = new HashMap<>();
         for (FilePatch patch : UnifiedDiffParser.parse(incrementalDiff)) {
+            if (patch.change() != ChangeType.RENAMED) {
+                continue;
+            }
             String oldPath = patch.oldPath();
             String newPath = patch.newPath();
             if (oldPath != null && !oldPath.isBlank() && newPath != null && !newPath.isBlank()

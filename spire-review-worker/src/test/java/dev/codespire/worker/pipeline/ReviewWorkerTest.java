@@ -110,6 +110,7 @@ class ReviewWorkerTest {
     private String diffText;
     private String compareDiff;
     private RuntimeException compareFailure;
+    private int compareDiffFetches;
     private String reconcileResponse;
     private String reviewResponse;
 
@@ -123,6 +124,7 @@ class ReviewWorkerTest {
         diffText = DIFF;
         compareDiff = "diff --git a/inc b/inc";
         compareFailure = null;
+        compareDiffFetches = 0;
         reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"fixed\"}]}";
         reviewResponse = "{\"summary\":\"s\",\"findings\":[]}";
 
@@ -157,6 +159,7 @@ class ReviewWorkerTest {
 
             @Override
             public String fetchCompareDiff(RepoRef repo, String base, String head) {
+                compareDiffFetches++;
                 if (compareFailure != null) {
                     throw compareFailure;
                 }
@@ -486,6 +489,33 @@ class ReviewWorkerTest {
         assertEquals(paidCalls, llmCalls.size(), "no second spend on either call");
         ReviewGenerated replayed = lastReviewGenerated();
         assertEquals(1, replayed.verdicts().size(), "verdicts replayed from the persisted claim");
+    }
+
+    @Test
+    void redeliveryNeverRefetchesTheCompareDiff() {
+        // Ordering regression guard: a redelivered GenerateReview whose reconcile call already
+        // completed must derive its exclusions from the PERSISTED verdicts, never a fresh compare
+        // fetch — otherwise a differing live result (here: no incremental diff at all) would carry
+        // stale old-path exclusions against verdicts that already hold the FIRST run's remapped path.
+        compareDiff = RENAME_DIFF; // src/Old.java -> src/New.java
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"not fixed\"}]}";
+        PriorRun prior = new PriorRun("aaa111", "sum-1",
+                List.of(new PriorFinding("src/Old.java", 5, Severity.MAJOR, "leak", "t-1")));
+
+        worker.generateReview(generateCommand(prior));
+        assertEquals(1, compareDiffFetches, "compare diff fetched once on the first run");
+        int paidCalls = llmCalls.size();
+        ReviewGenerated first = lastReviewGenerated();
+        assertEquals("src/New.java", first.verdicts().getFirst().path(), "first run remaps through the rename");
+
+        compareDiff = null; // if refetched, this would be read as "no incremental diff"
+        worker.generateReview(generateCommand(prior)); // redelivery
+
+        assertEquals(1, compareDiffFetches, "redelivery must not refetch the compare diff");
+        assertEquals(paidCalls, llmCalls.size(), "no second spend on either call");
+        ReviewGenerated replayed = lastReviewGenerated();
+        assertEquals("src/New.java", replayed.verdicts().getFirst().path(),
+                "redelivered verdict still carries the FIRST run's remapped path — no mixed state");
     }
 
     @Test

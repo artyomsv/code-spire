@@ -465,6 +465,7 @@
   .finding .loc { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); margin-left: auto; }
   .finding .msg { font-size: 13px; color: var(--text); margin-top: 8px; }
   .finding .msg code { font-family: var(--font-mono); font-size: 12px; background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+  .finding-closed { opacity: 0.75; }
 
   /* ---- extension: reconciliation card (re-review verdicts against prior findings) ---- */
   .recon-verdict {
