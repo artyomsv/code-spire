@@ -130,6 +130,12 @@ judge from current state." The pipeline never aborts because of a force-push.
   per-thread outcomes (replied / resolved).
 - ResultSaga marks `review_thread` rows resolved and stamps each finding with its verdict in the
   read model.
+- Tracking: same-anchor (`path:line`) findings merge into one tracked concern, never two — two
+  findings at one anchor collapse onto the same SCM thread at posting time anyway, so carrying them
+  as separate baseline entries makes the next round's verdict matching ambiguous.
+- Tracking: the reconciliation view retains only closed history (resolved/acknowledged/superseded)
+  for entries unmatched by this round's verdicts — an open (still-open/unchanged) entry with no
+  match is dropped as a ghost, never carried forward un-updatable.
 - Review detail UI: a reconciliation banner (N resolved · N still open · N new) and a verdict badge
   per prior finding; resolved threads render collapsed/checked.
 - Docs ride along: new EVENT-MODEL slice (S11 Reconciliation), a new ADR — **re-reviews post

@@ -281,8 +281,14 @@ public class ReviewProjection {
                     return Optional.empty();
                 }
                 ThreadIndex index = buildThreadIndex(loadThreadRows(c, reviewId));
-                List<PriorFinding> findings = toPriorFindings(
-                        parseFindings(rs.getString("posted_findings_json"), reviewId), index);
+                // Defense on read: a row written before the anchor-merge fix (or written straight
+                // from recordOutcome's raw findings_json, never deduped) can still hold two entries
+                // at the same path:line — dedupe here too so legacy data can't produce the same
+                // ambiguous-verdict-matching bug the write-side fix (recordOpenFindings) prevents
+                // for new baselines.
+                List<ReviewDetail.FindingView> posted =
+                        dedupeByAnchor(parseFindings(rs.getString("posted_findings_json"), reviewId));
+                List<PriorFinding> findings = toPriorFindings(posted, index);
                 return Optional.of(new PriorRun(
                         rs.getString("last_posted_commit"), rs.getString("last_summary_comment_id"), findings));
             }
@@ -402,11 +408,22 @@ public class ReviewProjection {
         }
     }
 
+    /** Verdict statuses (as stored — enum {@code name()}, not the display slug) that represent
+     *  permanently closed history rather than an actively tracked open concern. */
+    private static final Set<String> CLOSED_STATUSES = Set.of("RESOLVED", "ACKNOWLEDGED", "SUPERSEDED");
+
     /**
      * Key = threadRef when non-null, else loc. An incoming entry replaces the existing entry at the
-     * same key IN PLACE (keeps its position — a re-verdicted finding doesn't jump to the bottom);
-     * an existing entry with no match this round is retained as-is; an incoming entry with no
-     * existing match is appended.
+     * same key IN PLACE (keeps its position — a re-verdicted finding doesn't jump to the bottom); an
+     * incoming entry with no existing match is appended. An existing entry with NO match this round
+     * is retained only when its status is closed (RESOLVED/ACKNOWLEDGED/SUPERSEDED) — that is
+     * permanent history and stays visible on the dashboard across rounds. An existing entry with an
+     * OPEN status (STILL_OPEN/UNCHANGED) and no match this round is DROPPED: it was merged into
+     * another tracked entry (anchor dedupe) or otherwise exited tracking, and carrying it forward
+     * unchanged would leave an un-updatable ghost row that can never be re-verdicted again.
+     *
+     * <p>Invariant: the view's open rows always correspond to currently-tracked findings; its
+     * closed rows are permanent history.
      */
     private List<ReconciliationEntry> mergeReconciliation(List<ReconciliationEntry> existing,
                                                           List<ReconciliationEntry> incoming) {
@@ -418,8 +435,15 @@ public class ReviewProjection {
         Set<String> seen = new HashSet<>();
         for (ReconciliationEntry old : existing) {
             String key = reconciliationKey(old);
-            merged.add(byKey.getOrDefault(key, old));
-            seen.add(key);
+            ReconciliationEntry replacement = byKey.get(key);
+            if (replacement != null) {
+                merged.add(replacement);
+                seen.add(key);
+            } else if (CLOSED_STATUSES.contains(old.status())) {
+                merged.add(old);
+                seen.add(key);
+            }
+            // else: an unmatched OPEN-status entry is a ghost — drop it.
         }
         for (ReconciliationEntry e : incoming) {
             if (seen.add(reconciliationKey(e))) {
@@ -468,9 +492,10 @@ public class ReviewProjection {
         List<ReviewDetail.FindingView> open = new ArrayList<>();
         result.findings().forEach(f -> open.add(toView(f)));
         open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
+        List<ReviewDetail.FindingView> deduped = dedupeByAnchor(open);
         String json;
         try {
-            json = mapper.writeValueAsString(open);
+            json = mapper.writeValueAsString(deduped);
         } catch (JsonProcessingException e) {
             LOG.warn("Failed to serialize open findings", e);
             return;
@@ -480,6 +505,39 @@ public class ReviewProjection {
             ps.setString(1, encrypted);
             ps.setString(2, reviewId);
         });
+    }
+
+    /**
+     * One anchor ({@code path:line}) = one tracked concern. Two findings sharing an anchor collapse
+     * onto the same SCM thread at posting time (the second's inline post folds into the first's
+     * anchor claim, {@link #attachThreadRefs}); carrying both forward as separate baseline entries
+     * makes the NEXT round's verdict matching ambiguous (one threadRef, two prior findings — see
+     * {@link #matchVerdict}). Grouping here, before the baseline is written, guarantees every
+     * baseline this method produces has unique anchors (and, after the thread join, unique
+     * threadRefs) — the group keeps the FIRST entry's severity, the first non-null threadRef found
+     * in the group, and concatenates distinct messages with {@code "; also: "}.
+     */
+    private static List<ReviewDetail.FindingView> dedupeByAnchor(List<ReviewDetail.FindingView> entries) {
+        Map<String, List<ReviewDetail.FindingView>> byAnchor = new java.util.LinkedHashMap<>();
+        for (ReviewDetail.FindingView e : entries) {
+            byAnchor.computeIfAbsent(e.loc(), k -> new ArrayList<>()).add(e);
+        }
+        List<ReviewDetail.FindingView> merged = new ArrayList<>();
+        for (List<ReviewDetail.FindingView> group : byAnchor.values()) {
+            merged.add(mergeFindingGroup(group));
+        }
+        return merged;
+    }
+
+    /** Collapse one same-anchor group into a single {@link ReviewDetail.FindingView} — see
+     *  {@link #dedupeByAnchor} for the merge rules. */
+    private static ReviewDetail.FindingView mergeFindingGroup(List<ReviewDetail.FindingView> group) {
+        ReviewDetail.FindingView first = group.getFirst();
+        String threadRef = group.stream().map(ReviewDetail.FindingView::threadRef)
+                .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        String msg = group.stream().map(ReviewDetail.FindingView::msg).distinct()
+                .reduce((a, b) -> a + "; also: " + b).orElse(first.msg());
+        return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef);
     }
 
     /**

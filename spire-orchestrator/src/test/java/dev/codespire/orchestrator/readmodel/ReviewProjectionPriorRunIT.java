@@ -267,4 +267,76 @@ class ReviewProjectionPriorRunIT {
         assertEquals(1, detail.reconciliation().size(), "the re-verdicted entry replaces, not duplicates");
         assertEquals("resolved", detail.reconciliation().getFirst().status());
     }
+
+    @Test
+    void sameAnchorFindingsMergeIntoOneTrackedEntry() {
+        String reviewId = "review::ws/prior-run-it#12";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 12L,
+                "t", "a", "aid", "src", "dst", "c11", "http://x", "github", "reviewing", 0);
+        ReviewResult result = new ReviewResult(
+                List.of(
+                        new Finding("src/Dup.java", new LineRange(4, 4), Severity.MAJOR, "first issue", null),
+                        new Finding("src/Dup.java", new LineRange(4, 4), Severity.MINOR, "second issue", null)),
+                "summary", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result, 4);
+        projection.recordOpenFindings(reviewId, result, List.of(), List.of());
+        projection.recordPosted(reviewId, "c11", "sum");
+
+        Optional<PriorRun> prior = projection.priorRunFor(reviewId);
+        assertTrue(prior.isPresent());
+        List<PriorFinding> dupFindings = prior.get().findings().stream()
+                .filter(f -> f.path().equals("src/Dup.java") && f.line() == 4).toList();
+        assertEquals(1, dupFindings.size(), "same-anchor findings must merge into one tracked entry");
+        String msg = dupFindings.getFirst().message();
+        assertTrue(msg.contains("first issue"), "merged message keeps the first entry's text: " + msg);
+        assertTrue(msg.contains("second issue"), "merged message appends the second entry's text: " + msg);
+    }
+
+    @Test
+    void openGhostEntriesAreDroppedFromTheMergedView() {
+        String reviewId = "review::ws/prior-run-it#11";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 11L,
+                "t", "a", "aid", "src", "dst", "c10", "http://x", "github", "completed", 6);
+
+        // Round 1: an UNCHANGED (open-status) verdict for t-g gets tracked.
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-g", "src/G.java", 1, FindingVerdict.Status.UNCHANGED, "still there")),
+                List.of(new PriorFinding("src/G.java", 1, Severity.MAJOR, "ghost issue", "t-g")));
+
+        // Round 2: t-g is not re-verdicted at all (merged elsewhere / dropped from tracking) — it
+        // must not linger as a stale open row.
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-h", "src/H.java", 2, FindingVerdict.Status.STILL_OPEN, "new")),
+                List.of(new PriorFinding("src/H.java", 2, Severity.MINOR, "other issue", "t-h")));
+
+        ReviewDetail detail = projection.loadDetail("ws", "prior-run-it", 11L).orElseThrow();
+        assertTrue(detail.reconciliation().stream().noneMatch(v -> "src/G.java:1".equals(v.loc())),
+                "an OPEN-status entry unmatched this round is a ghost and must be dropped");
+    }
+
+    @Test
+    void legacyDuplicateAnchorsAreDedupedOnRead() {
+        // Simulates a row written BEFORE the anchor-merge fix: recordOutcome (the raw LLM findings,
+        // never deduped) followed by recordPosted with no open_findings_json, so posted_findings_json
+        // falls back verbatim to findings_json — exactly the shape a legacy duplicate-anchor row has.
+        String reviewId = "review::ws/prior-run-it#13";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 13L,
+                "t", "a", "aid", "src", "dst", "c12", "http://x", "github", "reviewing", 0);
+        ReviewResult result = new ReviewResult(
+                List.of(
+                        new Finding("src/Legacy.java", new LineRange(9, 9), Severity.MAJOR, "legacy first", null),
+                        new Finding("src/Legacy.java", new LineRange(9, 9), Severity.MINOR, "legacy second", null)),
+                "summary", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result, 4);
+        projection.recordPosted(reviewId, "c12", "sum");
+
+        Optional<PriorRun> prior = projection.priorRunFor(reviewId);
+        assertTrue(prior.isPresent());
+        List<PriorFinding> dupFindings = prior.get().findings().stream()
+                .filter(f -> f.path().equals("src/Legacy.java") && f.line() == 9).toList();
+        assertEquals(1, dupFindings.size(), "legacy duplicate-anchor rows must dedupe on read");
+        String msg = dupFindings.getFirst().message();
+        assertTrue(msg.contains("legacy first") && msg.contains("legacy second"),
+                "merged message keeps both texts: " + msg);
+    }
 }
