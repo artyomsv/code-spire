@@ -530,14 +530,34 @@ public class ReviewProjection {
     }
 
     /** Collapse one same-anchor group into a single {@link ReviewDetail.FindingView} — see
-     *  {@link #dedupeByAnchor} for the merge rules. */
+     *  {@link #dedupeByAnchor} for the merge rules. Message merge is idempotent: merging the same
+     *  constituents (in any order, even if already merged) always yields the same result. */
     private static ReviewDetail.FindingView mergeFindingGroup(List<ReviewDetail.FindingView> group) {
         ReviewDetail.FindingView first = group.getFirst();
         String threadRef = group.stream().map(ReviewDetail.FindingView::threadRef)
                 .filter(java.util.Objects::nonNull).findFirst().orElse(null);
-        String msg = group.stream().map(ReviewDetail.FindingView::msg).distinct()
-                .reduce((a, b) -> a + "; also: " + b).orElse(first.msg());
+        String msg = mergeMessages(group.stream().map(ReviewDetail.FindingView::msg).toList());
         return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef);
+    }
+
+    /** Merge a list of message strings (some may contain "; also: "-joined segments) into a single
+     *  message with deduplicated constituents, preserving first-seen order. Idempotent: re-merging
+     *  the result with its own constituents yields the same string. */
+    private static String mergeMessages(List<String> messages) {
+        java.util.LinkedHashSet<String> constituents = new java.util.LinkedHashSet<>();
+        for (String msg : messages) {
+            if (msg != null && !msg.isBlank()) {
+                // Split on "; also: " to extract all constituent parts (including re-merged ones).
+                for (String part : msg.split("; also: ", -1)) {
+                    String trimmed = part.trim();
+                    if (!trimmed.isBlank()) {
+                        constituents.add(trimmed);
+                    }
+                }
+            }
+        }
+        return constituents.isEmpty() ? "" :
+                String.join("; also: ", constituents);
     }
 
     /**

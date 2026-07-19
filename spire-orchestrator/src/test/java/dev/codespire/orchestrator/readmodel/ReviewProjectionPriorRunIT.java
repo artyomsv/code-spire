@@ -339,4 +339,57 @@ class ReviewProjectionPriorRunIT {
         assertTrue(msg.contains("legacy first") && msg.contains("legacy second"),
                 "merged message keeps both texts: " + msg);
     }
+
+    @Test
+    void anchorMergeIsIdempotentAcrossRounds() {
+        // Round 1: two findings at the same anchor merge into one.
+        String reviewId = "review::ws/prior-run-it#14";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 14L,
+                "t", "a", "aid", "src", "dst", "c13", "http://x", "github", "reviewing", 0);
+        ReviewResult result1 = new ReviewResult(
+                List.of(
+                        new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MAJOR, "issue A", null),
+                        new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MINOR, "issue B", null)),
+                "summary1", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result1, 4);
+        projection.recordOpenFindings(reviewId, result1, List.of(), List.of());
+        projection.recordPosted(reviewId, "c13", "sum1");
+
+        // Verify round 1 produced the expected merged message.
+        Optional<PriorRun> priorRound1 = projection.priorRunFor(reviewId);
+        assertTrue(priorRound1.isPresent());
+        List<PriorFinding> findingsRound1 = priorRound1.get().findings().stream()
+                .filter(f -> f.path().equals("src/Idempotent.java") && f.line() == 5).toList();
+        assertEquals(1, findingsRound1.size(), "round 1: two findings at same anchor must merge");
+        String mergedMsg = findingsRound1.getFirst().message();
+        assertTrue(mergedMsg.contains("issue A") && mergedMsg.contains("issue B"),
+                "round 1: merged message contains both: " + mergedMsg);
+
+        // Round 2: re-review with the same findings AND the prior carry-forward.
+        // The prior finding ("issue A; also: issue B") has a STILL_OPEN verdict.
+        // Fresh LLM result also flags "issue A" and "issue B" at the same anchor.
+        ReviewResult result2 = new ReviewResult(
+                List.of(
+                        new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MAJOR, "issue A", null),
+                        new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MINOR, "issue B", null)),
+                "summary2", new ModelUsage("m", 1, 1, 1));
+        projection.recordOutcome(reviewId, result2, 4);
+
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict(null, "src/Idempotent.java", 5, FindingVerdict.Status.STILL_OPEN, "still there"));
+        List<PriorFinding> priorFindings = List.of(
+                new PriorFinding("src/Idempotent.java", 5, Severity.MAJOR, mergedMsg, null));
+        projection.recordOpenFindings(reviewId, result2, verdicts, priorFindings);
+        projection.recordPosted(reviewId, "c13", "sum2");
+
+        // Verify round 2: the merged message must be idempotent (no duplicated segments).
+        Optional<PriorRun> priorRound2 = projection.priorRunFor(reviewId);
+        assertTrue(priorRound2.isPresent());
+        List<PriorFinding> findingsRound2 = priorRound2.get().findings().stream()
+                .filter(f -> f.path().equals("src/Idempotent.java") && f.line() == 5).toList();
+        assertEquals(1, findingsRound2.size(), "round 2: merged findings must remain one entry");
+        String idempotentMsg = findingsRound2.getFirst().message();
+        assertEquals(mergedMsg, idempotentMsg,
+                "round 2: re-merging the same constituents must yield the identical message (idempotent)");
+    }
 }
