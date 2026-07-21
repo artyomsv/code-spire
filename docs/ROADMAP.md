@@ -109,6 +109,24 @@ down is the original design-time roadmap (kept for reference).
   against `scm_provider`). Publish tail shared with the Bitbucket edge (`IntegrationPublisher`). Ingress +
   gateway CRUD/verify + saga-idempotency + UI tests green. Live runbook: SMOKE-TEST.md **Mode E** (Tailscale Funnel).
 
+- **Conversational replies (B5, S8) — delivered (2026-07-16..18)**: author replies in a bot thread get
+  in-thread LLM answers (`AnswerFollowUp`, per-comment idempotency, GitHub-first via `ThreadSource`);
+  per-provider conversation levels (report-only / explain / interactive) in Settings; finding-linked
+  threads nested under their findings on the detail page with markdown rendering and live updates.
+- **Unified keyed webhook ingress — all three SCMs (2026-07-16)**: GitLab (`X-Gitlab-Token`) and
+  Bitbucket folded onto the per-repo registry edge `POST /webhooks/{provider}/{key}`; the legacy
+  single-secret Bitbucket edge removed. Shared `RegistryWebhookEdge` (resolve→verify→translate→scope→
+  publish). Dev exposure via opt-in Cloudflare quick-tunnel.
+- **Re-review reconciliation (ADR-019) — delivered + hardened (2026-07-18..20)**: follow-up commits
+  reconcile instead of blind re-review — command-carried prior-run snapshot, two claim-guarded LLM
+  calls (reconcile verdicts on the incremental diff + review with an exclusion list), per-verdict
+  posting (reply/auto-resolve fixed findings, quiet `UNCHANGED` on untouched ones, in-place summary
+  update), `resolveThread`/`updateComment`/`fetchCompareDiff` SPI capabilities (Bitbucket degrades to
+  reply-only). Hardened through live multi-round testing: carry-forward open-findings baseline, file
+  rename following, same-anchor merging + ghost cleanup, unified findings list in the UI, live
+  dashboard updates on conversation activity. V17–V20; verified live on GitHub (`artyomsv/spire-test`
+  PRs #8–#11).
+
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
 **A. Finish the multi-SCM story (current thread)**
@@ -146,6 +164,33 @@ down is the original design-time roadmap (kept for reference).
    `attempt` column). Not per-call SmallRye FT — see the ADR for why.
 9. ✅ **Author numeric id** · S. `author_id` surfaced on `ReviewSummary` + shown under `@username` in the
    list; `Attempt` on the detail page is now live too.
+
+**E. SCM parity & new feature threads (added 2026-07-21)**
+13. **SCM parity live-testing for the full loop** · M · ⚑ (needs live GitLab/Bitbucket repos+tokens).
+    GitHub is the proven reference (webhook → review → conversation → reconciliation, PRs #8–#11).
+    Finalize GitHub (any remaining edge cases from live use), then run the SAME end-to-end flow on
+    **GitLab** (webhook ingress, review, thread replies, reconciliation incl. discussion resolve +
+    compare + note update — all WireMock-tested, never live-tested) and **Bitbucket** (reply-only
+    reconciliation degradation; **verify the compare-spec direction `{head}..{base}` against a live
+    workspace** — currently documented-but-unverified).
+14. **Ticket-reference context providers: GitHub Issues + GitLab Issues** · M. Extend the proven
+    ContextProvider SPI (Jira/Confluence precedent — zero core changes expected): resolve issue
+    references from PR title/branch/description (`#123`, `GH-123`, `org/repo#123`, GitLab `#123` /
+    cross-project refs) into `ContextItem`s via the respective issue APIs, reusing the SCM registry
+    credentials where the provider type matches. Same encrypted registry + Settings → Context +
+    preview/connectivity-check pattern. Rounds out "reviews understand the ticket" across all
+    supported platforms.
+15. **Prompt management (operator-controlled prompts)** · L · ⚑ (needs a design pass / brainstorm
+    before implementation). As an open-source project, operators must be able to inspect, customize,
+    and maintain the prompts the reviewer uses (review, reconcile, follow-up) for their own needs.
+    Sketch: a **Settings → Prompts** sidebar section; DB-backed, versioned prompt templates seeded
+    from the built-in defaults with a "reset to default" path; the existing prompt builders
+    (`ReviewPromptBuilder`, `ReconcilePrompt`, `FollowUpPrompt`) become slot/template-driven so
+    custom prompts keep the structural invariants (untrusted-data fencing, sentinel neutralization,
+    token clipping, JSON output contract) that customization must NOT be able to break; possibly a
+    guided builder UI over the slots rather than a raw textarea. Open questions for the brainstorm:
+    per-repo vs global scope, template variable surface, validation/preview against a sample diff,
+    migration story when built-in defaults evolve.
 
 **D. Infra & security hardening**
 10. **OIDC on the dashboard** · M. UI/API is unauthenticated — matters before any shared deployment.
