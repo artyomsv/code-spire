@@ -23,6 +23,7 @@ public record ReviewDetail(
         String htmlUrl,
         String providerType,
         String status,
+        boolean answering,
         int stage,
         int findings,
         int blockerCount,

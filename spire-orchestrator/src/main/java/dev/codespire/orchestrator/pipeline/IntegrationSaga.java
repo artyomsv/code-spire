@@ -103,7 +103,9 @@ public class IntegrationSaga {
                         String author = e.author() == null ? "unknown" : e.author().username();
                         projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
                                 "@" + author + ": " + Previews.of(e.text()), e.threadRef().value());
-                        projection.touch(e.reviewId());
+                        // Flags "answering" AND bumps the live dashboard in one broadcast — replaces
+                        // the plain touch() that used to sit here (fix #5, avoid double-broadcast).
+                        projection.setAnswering(e.reviewId(), true);
                         commands.emit(cmd);
                     });
                 }

@@ -153,6 +153,21 @@ public class ReviewProjection {
     }
 
     /**
+     * Transient "the bot is answering a reply" hint (fix #5): set true when a follow-up is
+     * dispatched, cleared when it posts or terminally fails. Best-effort UI signal, not part
+     * of the aggregate — a missed clear only means a stale indicator, never a stuck pipeline.
+     * Also bumps updated_at and broadcasts, so callers should not additionally call
+     * {@link #touch} for the same state change (would double-broadcast).
+     */
+    public void setAnswering(String reviewId, boolean answering) {
+        update("UPDATE review_status SET answering = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setBoolean(1, answering);
+            ps.setString(2, reviewId);
+        });
+        broadcast(reviewId);
+    }
+
+    /**
      * Persist the technical error behind a terminal failure so the UI can show WHY
      * a review failed. Encrypted at rest (AAD = reviewId, like findings) and bounded
      * — a provider error can be a large blob and may echo fragments of the diff.
@@ -980,15 +995,15 @@ public class ReviewProjection {
 
     private record ReviewRow(String id, String workspace, String slug, long pr, String title, String author,
                              String authorId, String branch, String base, String sha, String htmlUrl,
-                             String providerType, String status, int stage, int findings, String findingsJson,
-                             String reconciliationJson, String model, Integer tokensIn, Integer tokensOut,
-                             Long costMillicents, String note, String errorDetail, int attempt, Instant createdAt,
-                             Instant updatedAt) {
+                             String providerType, String status, boolean answering, int stage, int findings,
+                             String findingsJson, String reconciliationJson, String model, Integer tokensIn,
+                             Integer tokensOut, Long costMillicents, String note, String errorDetail, int attempt,
+                             Instant createdAt, Instant updatedAt) {
         ReviewSummary toSummary(String llmType, OpenCounts openCounts, long totalCostMillicents) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
                     totalCostMillicents, model == null ? "" : model,
-                    llmType == null ? "" : llmType, updatedAt);
+                    llmType == null ? "" : llmType, updatedAt, answering);
         }
     }
 
@@ -1080,7 +1095,7 @@ public class ReviewProjection {
                 rs.getString("title"), rs.getString("author"), rs.getString("author_id"),
                 rs.getString("source_branch"), rs.getString("dest_branch"), rs.getString("commit_sha"),
                 rs.getString("html_url"), rs.getString("provider_type"),
-                rs.getString("status"), rs.getInt("stage"), rs.getInt("findings_count"),
+                rs.getString("status"), rs.getBoolean("answering"), rs.getInt("stage"), rs.getInt("findings_count"),
                 rs.getString("findings_json"), rs.getString("reconciliation_json"), rs.getString("model"),
                 (Integer) rs.getObject("tokens_in"), (Integer) rs.getObject("tokens_out"),
                 (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getString("error_detail"),
@@ -1092,10 +1107,10 @@ public class ReviewProjection {
                                   List<ReviewDetail.FindingView> findings,
                                   List<ReviewDetail.ReconciliationView> reconciliation) {
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
-                r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.stage, r.findings, blockerCount(r),
-                r.updatedAt, r.attempt, computeStages(r.status, r.stage), List.of("", "", "", "", "", ""),
-                findings, reconciliation, usageView(r), withReviewCall(r, llmCalls), r.note,
-                decryptError(r.errorDetail, r.id), events);
+                r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.answering, r.stage, r.findings,
+                blockerCount(r), r.updatedAt, r.attempt, computeStages(r.status, r.stage),
+                List.of("", "", "", "", "", ""), findings, reconciliation, usageView(r),
+                withReviewCall(r, llmCalls), r.note, decryptError(r.errorDetail, r.id), events);
     }
 
     /**

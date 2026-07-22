@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
@@ -44,6 +45,32 @@ class ReviewProjectionPriorRunIT {
 
         Instant after = projection.loadDetail("ws", "prior-run-it", 15L).orElseThrow().updatedAt();
         assertTrue(after.isAfter(before), "touch must bump updated_at so the live feed picks up the change");
+    }
+
+    /**
+     * The transient "responding" hint (fix #5): set true when a follow-up reply is dispatched,
+     * cleared when it posts — surfaced on both the list row and the detail payload so the
+     * dashboard can show an indicator while the bot works on an answer.
+     */
+    @Test
+    void setAnsweringTogglesTheFlagAndSurfacesOnSummaryAndDetail() {
+        String reviewId = "review::ws/prior-run-it#16";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 16L,
+                "t", "a", "aid", "src", "dst", "c15", "http://x", "github", "reviewing", 0);
+
+        projection.setAnswering(reviewId, true);
+        ReviewSummary onSummary = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        assertTrue(onSummary.answering(), "answering must surface on the list row once set");
+        assertTrue(projection.loadDetail("ws", "prior-run-it", 16L).orElseThrow().answering(),
+                "answering must surface on the detail payload once set");
+
+        projection.setAnswering(reviewId, false);
+        ReviewSummary offSummary = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        assertFalse(offSummary.answering(), "answering must clear on the list row");
+        assertFalse(projection.loadDetail("ws", "prior-run-it", 16L).orElseThrow().answering(),
+                "answering must clear on the detail payload");
     }
 
     @Test

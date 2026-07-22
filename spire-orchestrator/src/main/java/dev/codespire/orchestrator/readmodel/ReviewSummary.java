@@ -28,5 +28,6 @@ public record ReviewSummary(
         long costMillicents,
         String model,
         String llmType,
-        Instant updatedAt) {
+        Instant updatedAt,
+        boolean answering) {
 }

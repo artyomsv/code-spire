@@ -301,12 +301,13 @@ class IntegrationSagaPolicyTest {
     }
 
     /**
-     * A human's reply becoming visible on the timeline must also bump the dashboard's live feed
-     * (updated_at) — otherwise the conversation only shows up after a hard refresh.
+     * A human's reply that plans a follow-up must flag the review as "answering" — a single
+     * write that both bumps the dashboard's live feed (updated_at) and lets the UI show a
+     * "responding" indicator while the bot works on an answer (fix #5).
      */
     @Test
-    void authorReplied_touchesTheProjectionForLiveUpdate() {
-        List<String> touched = new ArrayList<>();
+    void authorReplied_setsAnsweringTrueWhenAFollowUpIsPlanned() {
+        List<Boolean> answeringCalls = new ArrayList<>();
         String reviewId = "review::acme/web#412";
         var followUp = new ActionCommand.AnswerFollowUp(reviewId, new RepoRef("acme", "web"), 412L,
                 new ThreadRef("t-1"), "c-1", "why is this a bug?", "scm-cred", "llm-cred", false, 1, 100L, 2.0);
@@ -341,8 +342,8 @@ class IntegrationSagaPolicyTest {
             }
 
             @Override
-            public void touch(String reviewId) {
-                touched.add(reviewId);
+            public void setAnswering(String reviewId, boolean answering) {
+                answeringCalls.add(answering);
             }
         };
 
@@ -350,6 +351,7 @@ class IntegrationSagaPolicyTest {
                 "why is this a bug?", Author.of("human-1", "alice", "Alice")));
 
         assertEquals(1, emitted.size(), "the planned AnswerFollowUp is still emitted");
-        assertEquals(List.of(reviewId), touched, "the reply becoming visible must bump the live dashboard");
+        assertEquals(List.of(true), answeringCalls,
+                "dispatching a follow-up flags the review as answering (and bumps the live dashboard)");
     }
 }

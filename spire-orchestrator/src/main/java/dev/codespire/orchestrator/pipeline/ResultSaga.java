@@ -207,7 +207,12 @@ public class ResultSaga {
             case FollowUpPosted e -> {
                 threads.bumpTurn(e.reviewId(), e.threadRef(), e.commentId());
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
-                projection.touch(e.reviewId());
+                // Normal-completion clear (fix #5) — also bumps the live dashboard, replacing the
+                // plain touch() that used to sit here (avoid double-broadcast). A follow-up's
+                // terminal failure never reaches this saga as an event (FollowUpWorker re-throws
+                // straight to cs.dlq, no ReviewFailed) — the flag is best-effort there and relies
+                // on the next dashboard activity to clear it.
+                projection.setAnswering(e.reviewId(), false);
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());

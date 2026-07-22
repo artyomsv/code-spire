@@ -314,12 +314,13 @@ class ResultSagaRetryTest {
     }
 
     /**
-     * The bot's reply actually landing on the SCM (FollowUpPosted) must also bump the
-     * dashboard's live feed — same rationale as {@link #followUpGenerated_touchesTheProjectionForLiveUpdate}.
+     * The bot's reply actually landing on the SCM (FollowUpPosted) must clear the "answering"
+     * flag — the normal-completion clear (fix #5) — which also bumps the dashboard's live feed,
+     * same rationale as {@link #followUpGenerated_touchesTheProjectionForLiveUpdate}.
      */
     @Test
-    void followUpPosted_touchesTheProjectionForLiveUpdate() {
-        List<String> touched = new ArrayList<>();
+    void followUpPosted_setsAnsweringFalse() {
+        List<Boolean> answeringCalls = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
         saga.timeline = new TimelineBroadcaster() {
             @Override
@@ -340,13 +341,14 @@ class ResultSagaRetryTest {
         };
         saga.projection = new ReviewProjection() {
             @Override
-            public void touch(String reviewId) {
-                touched.add(reviewId);
+            public void setAnswering(String reviewId, boolean answering) {
+                answeringCalls.add(answering);
             }
         };
 
         saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("t-1"), "c-1"));
 
-        assertEquals(List.of(REVIEW_ID), touched, "the bot's reply landing must bump the live dashboard");
+        assertEquals(List.of(false), answeringCalls,
+                "the bot's reply landing must clear the answering flag (and bump the live dashboard)");
     }
 }
