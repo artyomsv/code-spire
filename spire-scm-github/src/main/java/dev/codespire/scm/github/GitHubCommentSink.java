@@ -233,11 +233,16 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             if (count < 100) {
                 break; // last page reached
             }
-            if (page == MAX_THREAD_PAGES) {
-                LOG.log(System.Logger.Level.WARNING,
-                        "thread " + root + " transcript may be truncated after " + MAX_THREAD_PAGES + " pages");
-            }
+            warnIfTranscriptTruncated(root, page);
         }
         return new ThreadTranscript(thread, path, line, commit, messages);
+    }
+
+    /** Reached here only with a full (100-comment) page — count < 100 already broke the loop above. */
+    private static void warnIfTranscriptTruncated(String threadId, int page) {
+        if (page == MAX_THREAD_PAGES) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "thread " + threadId + " transcript may be truncated after " + MAX_THREAD_PAGES + " pages");
+        }
     }
 }
