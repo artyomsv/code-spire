@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Bot, CheckCircle2, Cpu } from 'lucide-react';
+import { Bot, CheckCircle2, Cpu, MessageCircle } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -216,6 +216,35 @@ export function outcomeBadge(status: ReviewStatus, findings: number, blockerCoun
     return <span className={`pill ${cls}`}>{label}</span>;
   }
   return pill(status);
+}
+
+/**
+ * Subtle "responding…" indicator shown while the bot is composing a follow-up reply
+ * (`answering: true`). `answering` is best-effort and can rarely stay true if a
+ * follow-up dies terminally, so this is a static pill — not an unbounded spinner
+ * that would read as "stuck forever".
+ */
+export function respondingPill() {
+  return (
+    <span className="responding" title="The bot is composing a reply">
+      <MessageCircle size={11} />
+      responding…
+    </span>
+  );
+}
+
+/**
+ * The status cell: the outcome badge plus the "responding…" indicator when the bot
+ * is mid-reply. Shared by the reviews-list row and the detail header so both stay
+ * in sync with the same gating logic.
+ */
+export function statusCell(r: { status: ReviewStatus; findings: number; blockerCount: number; answering?: boolean }) {
+  return (
+    <>
+      {outcomeBadge(r.status, r.findings, r.blockerCount)}
+      {r.answering && respondingPill()}
+    </>
+  );
 }
 
 // In the list, ReviewSummary carries only `status` + `stage` (no per-segment

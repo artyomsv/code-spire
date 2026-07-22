@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';
-import { eventsCard, findingsCard, generalDiscussionCard, metaCard, openInLabel, outcomeBadge, safeHttpUrl, stageLabel, STATUS_LABEL, stepper, usageCard } from '../render';
+import { eventsCard, findingsCard, generalDiscussionCard, metaCard, openInLabel, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 
 interface Props {
@@ -103,7 +103,7 @@ export default function ReviewDetail({ reviews }: Props) {
             <span className="repo">
               {r.repo}#{r.pr}
             </span>
-            {outcomeBadge(r.status, r.findings, r.blockerCount)}
+            {statusCell(r)}
             <span className="sep">·</span>
             <span>@{r.author}</span>
             <span className="sep">·</span>

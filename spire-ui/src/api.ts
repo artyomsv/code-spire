@@ -30,6 +30,7 @@ export interface ReviewSummary {
   model: string; // model that produced the review, e.g. "gemini-3.1-pro-preview" ('' if none yet)
   llmType: string; // LLM vendor from the catalog: 'openai' | 'anthropic' | 'gemini' | '' (uncatalogued)
   updatedAt: string; // ISO-8601
+  answering?: boolean; // transient: true while the bot is composing a follow-up reply
 }
 
 export interface Finding {
