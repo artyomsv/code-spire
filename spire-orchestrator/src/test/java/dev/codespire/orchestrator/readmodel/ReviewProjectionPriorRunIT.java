@@ -412,4 +412,60 @@ class ReviewProjectionPriorRunIT {
         assertEquals(mergedMsg, idempotentMsg,
                 "round 2: re-merging the same constituents must yield the identical message (idempotent)");
     }
+
+    @Test
+    void listSummaryShowsCumulativeCostAndOpenReconciledFindings() {
+        String reviewId = "review::ws/list-recon-it#1";
+        projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 1L,
+                "t", "a", "aid", "src", "dst", "c2", "http://x", "github", "completed", 6);
+        // last run: 0 new findings, its own cost overwrites cost_millicents
+        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum",
+                new ModelUsage("m", 1, 1, 738)), 6);
+        projection.recordLlmCall(reviewId, "review", new ModelUsage("m", 1, 1, 2189));
+        projection.recordLlmCall(reviewId, "review", new ModelUsage("m", 1, 1, 738));
+        projection.recordLlmCall(reviewId, "reconcile", new ModelUsage("m", 1, 1, 965));
+        // reconciliation carries one STILL_OPEN critical
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-1", "src/A.java", 12,
+                        FindingVerdict.Status.STILL_OPEN, "missing")),
+                List.of(new PriorFinding("src/A.java", 12, Severity.BLOCKER, "npe", "t-1")));
+
+        ReviewSummary summary = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        assertEquals(2189 + 738 + 965, summary.costMillicents(), "cumulative across all LLM calls");
+        assertEquals(1, summary.findings(), "one still-open reconciliation finding");
+        assertEquals(1, summary.blockerCount(), "the still-open critical");
+    }
+
+    @Test
+    void listSummaryPassesOnlyWhenNoOpenFindingsRemain() {
+        String reviewId = "review::ws/list-recon-it#2";
+        projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 2L,
+                "t", "a", "aid", "src", "dst", "c3", "http://x", "github", "completed", 6);
+        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum",
+                new ModelUsage("m", 1, 1, 100)), 6);
+        // all prior findings resolved
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-9", "src/B.java", 3,
+                        FindingVerdict.Status.RESOLVED, "fixed")),
+                List.of(new PriorFinding("src/B.java", 3, Severity.MAJOR, "x", "t-9")));
+        ReviewSummary summary = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        assertEquals(0, summary.findings(), "resolved findings are not open");
+    }
+
+    @Test
+    void firstReviewOpenCountIsItsNewFindings() {
+        String reviewId = "review::ws/list-recon-it#3";
+        projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 3L,
+                "t", "a", "aid", "src", "dst", "c1", "http://x", "github", "completed", 6);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/C.java", new LineRange(4, 4), Severity.BLOCKER, "leak", null)),
+                "sum", new ModelUsage("m", 1, 1, 500)), 6);
+        ReviewSummary summary = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        assertEquals(1, summary.findings());
+        assertEquals(1, summary.blockerCount());
+        assertEquals(500, summary.costMillicents(), "no llm_call rows -> falls back to cost_millicents");
+    }
 }

@@ -806,8 +806,14 @@ public class ReviewProjection {
     public List<ReviewSummary> listSummaries() {
         // The LLM vendor for the badge comes from the catalog (name -> type); a scalar subquery keeps
         // it one-row-per-review and yields NULL for uncatalogued models (shown as a neutral chip).
+        // total_cost_millicents sums every review_llm_call row (the review generation plus every
+        // reconcile/follow-up call), falling back to the last run's cost_millicents for a review that
+        // predates per-call tracking — the list row must show the review's LIFETIME cost, not just the
+        // last run's (fixes #2).
         String sql = """
-                SELECT rs.*, (SELECT m.type FROM llm_model m WHERE m.name = rs.model LIMIT 1) AS llm_type
+                SELECT rs.*, (SELECT m.type FROM llm_model m WHERE m.name = rs.model LIMIT 1) AS llm_type,
+                       COALESCE((SELECT SUM(c.cost_millicents) FROM review_llm_call c
+                                 WHERE c.review_id = rs.review_id), rs.cost_millicents) AS total_cost_millicents
                 FROM review_status rs ORDER BY rs.updated_at DESC
                 """;
         List<ReviewSummary> out = new ArrayList<>();
@@ -936,7 +942,7 @@ public class ReviewProjection {
             if (row == null) {
                 return; // header not written yet (events can race ahead) — nothing to push
             }
-            summary = row.toSummary(llmTypeFor(c, row.model()), blockerCount(row));
+            summary = row.toSummary(llmTypeFor(c, row.model()), openCounts(row), cumulativeCost(c, row));
         } catch (SQLException e) {
             LOG.debugf("broadcast load failed for %s: %s", reviewId, e.getMessage());
             return;
@@ -978,10 +984,10 @@ public class ReviewProjection {
                              String reconciliationJson, String model, Integer tokensIn, Integer tokensOut,
                              Long costMillicents, String note, String errorDetail, int attempt, Instant createdAt,
                              Instant updatedAt) {
-        ReviewSummary toSummary(String llmType, int blockerCount) {
+        ReviewSummary toSummary(String llmType, OpenCounts openCounts, long totalCostMillicents) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
-                    htmlUrl, providerType, status, stage, findings, blockerCount,
-                    costMillicents == null ? 0L : costMillicents, model == null ? "" : model,
+                    htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
+                    totalCostMillicents, model == null ? "" : model,
                     llmType == null ? "" : llmType, updatedAt);
         }
     }
@@ -997,14 +1003,62 @@ public class ReviewProjection {
 
     private ReviewSummary toSummary(ResultSet rs) throws SQLException {
         ReviewRow row = readRow(rs);
-        return row.toSummary(rs.getString("llm_type"), blockerCount(row));
+        return row.toSummary(rs.getString("llm_type"), openCounts(row), rs.getLong("total_cost_millicents"));
     }
 
-    /** Count of blocker-severity (critical) findings on a row — drives the "changes requested" outcome. */
+    /** Count of blocker-severity (critical) findings on a row — drives the detail page's
+     *  current-run "changes requested" outcome ({@link #toDetail}). */
     private int blockerCount(ReviewRow row) {
         return (int) parseFindings(row.findingsJson(), row.id()).stream()
                 .filter(f -> "critical".equals(f.sev()))
                 .count();
+    }
+
+    private record OpenCounts(int open, int openBlockers) {
+    }
+
+    /**
+     * The review's currently-open findings — this run's new findings plus reconciliation
+     * entries still open (still-open/unchanged), deduped by thread. This is what the list row
+     * must show (fixes #3): a review with a carried-forward open critical is NOT "passed".
+     */
+    private OpenCounts openCounts(ReviewRow row) {
+        Map<String, String> openSevByKey = new java.util.LinkedHashMap<>();
+        for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
+            openSevByKey.put(keyOf(f.threadRef(), f.loc()), f.sev());
+        }
+        for (ReviewDetail.ReconciliationView r : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
+            if ("still open".equals(r.status()) || "unchanged".equals(r.status())) {
+                openSevByKey.put(keyOf(r.threadRef(), r.loc()), r.sev());
+            }
+        }
+        int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
+        return new OpenCounts(openSevByKey.size(), blockers);
+    }
+
+    private static String keyOf(String threadRef, String loc) {
+        return threadRef != null && !threadRef.isBlank() ? "t:" + threadRef : "l:" + loc;
+    }
+
+    /**
+     * Cumulative cost for a single row loaded outside {@link #listSummaries}'s subquery (the
+     * {@link #broadcast} path) — same fallback rule as the SQL: sum every {@code review_llm_call}
+     * row, falling back to the row's own {@code cost_millicents} when there are none yet.
+     */
+    private long cumulativeCost(Connection c, ReviewRow row) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT SUM(cost_millicents) FROM review_llm_call WHERE review_id = ?")) {
+            ps.setString(1, row.id());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    long sum = rs.getLong(1);
+                    if (!rs.wasNull()) {
+                        return sum;
+                    }
+                }
+            }
+        }
+        return row.costMillicents() == null ? 0L : row.costMillicents();
     }
 
     /** The LLM vendor for a model name, from the catalog; null when uncatalogued or no model yet. */
