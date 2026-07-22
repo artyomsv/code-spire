@@ -45,3 +45,35 @@ describe('FindingConversation resolved state', () => {
     expect(html).toContain('lucide-messages-square');
   });
 });
+
+describe('FindingConversation awaiting-reply hint', () => {
+  const followUp = (): ReviewEvent => ({ ...turn(), type: 'FollowUpGenerated', det: 'Because …' });
+
+  it('renders the "responding" hint when the thread ends in an unanswered human reply', () => {
+    const html = renderToStaticMarkup(
+      <FindingConversation
+        workspace="acme"
+        slug="web"
+        pr={1}
+        threadRef="t1"
+        previewTurns={[followUp(), turn()]}
+        previewBody={<div>preview</div>}
+      />,
+    );
+    expect(html).toContain('responding');
+  });
+
+  it('shows no hint when the exchange ends with the bot already answering', () => {
+    const html = renderToStaticMarkup(
+      <FindingConversation
+        workspace="acme"
+        slug="web"
+        pr={1}
+        threadRef="t1"
+        previewTurns={[turn(), followUp()]}
+        previewBody={<div>preview</div>}
+      />,
+    );
+    expect(html).not.toContain('responding');
+  });
+});

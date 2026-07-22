@@ -1,5 +1,5 @@
-import { useState, type ReactNode, type SyntheticEvent } from 'react';
-import { Bot, CheckCircle2, ChevronDown, MessagesSquare } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
+import { Bot, CheckCircle2, ChevronDown, MessageCircle, MessagesSquare } from 'lucide-react';
 import { fetchThreadMessages, type ReviewEvent, type ThreadMessage } from '../api';
 import { formatEventTime } from '../format';
 import { MessageText } from './MessageText';
@@ -20,11 +20,43 @@ type LoadState =
   | { status: 'loaded'; messages: ThreadMessage[] }
   | { status: 'error' };
 
+/** Whether the thread needs a (re)fetch: the panel is open and either nothing has been loaded
+ *  yet, or it was loaded at a reply count that's now stale (a new turn arrived since). */
+export function needsFetch(open: boolean, loadedAtCount: number | null, replyCount: number): boolean {
+  return open && loadedAtCount !== replyCount;
+}
+
+/**
+ * Fetch the thread via {@code fetchThread} when {@link needsFetch} says to; otherwise resolve to
+ * {@code null} without calling it. Factored out of the effect so the re-fetch trigger — including
+ * "a new turn arrived while the thread was open" — is directly testable with a mocked fetcher.
+ */
+export async function refreshThread(
+  open: boolean,
+  replyCount: number,
+  loadedAtCount: number | null,
+  fetchThread: () => Promise<ThreadMessage[]>,
+): Promise<{ loadedAtCount: number; messages: ThreadMessage[] } | null> {
+  if (!needsFetch(open, loadedAtCount, replyCount)) return null;
+  const messages = await fetchThread();
+  return { loadedAtCount: replyCount, messages };
+}
+
+/** The thread is "awaiting the bot's answer" when the last stored turn is a human reply the bot
+ *  hasn't answered yet — a completed exchange always ends with a FollowUpGenerated (bot) turn. */
+export function isAwaitingReply(previewTurns: ReviewEvent[]): boolean {
+  return previewTurns.length > 0 && previewTurns[previewTurns.length - 1].type === 'AuthorReplied';
+}
+
 /**
  * A finding's conversation, collapsible. On expand it re-fetches the full thread from the SCM
  * (ADR-011 — the full text isn't persisted). The SCM messages carry no timestamps, so we pair them
  * by order with our own stored events, which do. While loading it shows a hint; on any failure it
  * falls back to the stored preview passed as {@code previewBody}, so the panel is never empty.
+ *
+ * The parent detail payload refreshes live, so {@code previewTurns} can grow while this panel
+ * stays mounted and open (a new reply arrived) — the fetched messages are re-pulled whenever the
+ * reply count moves past what was last loaded, not just on the initial expand.
  */
 export function FindingConversation({
   workspace,
@@ -36,18 +68,31 @@ export function FindingConversation({
   resolved,
 }: FindingConversationProps) {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
+  const [open, setOpen] = useState(false);
+  const loadedAtCount = useRef<number | null>(null);
   const replyCount = previewTurns.length;
+  const awaitingReply = isAwaitingReply(previewTurns);
 
-  async function handleToggle(e: SyntheticEvent<HTMLDetailsElement>) {
-    if (!e.currentTarget.open) return; // only fetch on expand
-    if (state.status === 'loading' || state.status === 'loaded') return; // fetch once (retry on reopen after error)
+  useEffect(() => {
+    if (!needsFetch(open, loadedAtCount.current, replyCount)) return;
+    let cancelled = false;
     setState({ status: 'loading' });
-    try {
-      const messages = await fetchThreadMessages(workspace, slug, pr, threadRef);
-      setState({ status: 'loaded', messages });
-    } catch {
-      setState({ status: 'error' });
-    }
+    refreshThread(open, replyCount, loadedAtCount.current, () => fetchThreadMessages(workspace, slug, pr, threadRef))
+      .then((result) => {
+        if (cancelled || !result) return;
+        loadedAtCount.current = result.loadedAtCount;
+        setState({ status: 'loaded', messages: result.messages });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: 'error' }); // leave loadedAtCount unset — retry on reopen
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, replyCount, workspace, slug, pr, threadRef]);
+
+  function handleToggle(e: SyntheticEvent<HTMLDetailsElement>) {
+    setOpen(e.currentTarget.open);
   }
 
   return (
@@ -61,6 +106,12 @@ export function FindingConversation({
         <span>
           {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
         </span>
+        {awaitingReply && (
+          <span className="responding" title="Awaiting the bot's reply">
+            <MessageCircle size={11} aria-hidden="true" />
+            responding…
+          </span>
+        )}
         <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
       </summary>
       {state.status === 'loaded' ? (
