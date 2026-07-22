@@ -131,11 +131,12 @@
   fallback on a force-push/compare failure) produces one `FindingVerdict{RESOLVED|STILL_OPEN|
   ACKNOWLEDGED|SUPERSEDED|UNCHANGED}` per prior finding — `UNCHANGED` means the follow-up commit does
   not touch or affect that finding at all; a deterministic backstop also downgrades any `STILL_OPEN`
-  verdict to `UNCHANGED` when its finding's path isn't among the incremental diff's touched paths (no
-  downgrade when the incremental diff is unavailable). Then the standard **review call** (`LLM` claim)
-  runs with an "already reported" exclusion section built from the same prior findings, followed by a
-  deterministic filter that drops any new finding whose anchor collides with a `STILL_OPEN` or
-  `UNCHANGED` verdict.
+  verdict to `UNCHANGED` when its finding's own anchor line doesn't fall inside a changed hunk of the
+  incremental diff — hunk-level, not file-level, so fixing one part of a file no longer keeps every
+  other prior finding in that file "open" (no downgrade when the incremental diff is unavailable).
+  Then the standard **review call** (`LLM` claim) runs with an "already reported" exclusion section
+  built from the same prior findings, followed by a deterministic filter that drops any new finding
+  whose anchor collides with a `STILL_OPEN` or `UNCHANGED` verdict.
 - **Event:** `ReviewGenerated {..., verdicts, reconcileUsage}`.
 - **Saga:** on `ReviewGenerated` → `PostComments {..., verdicts, priorSummaryRef}`.
 - **Plugin (`CommentSink`):** acts per verdict — closing verdicts resolve-first (`resolveThread`;
@@ -147,9 +148,12 @@
   `resolve:<threadRef>`) so redelivery repeats zero external calls.
 - **Event:** `CommentsPosted {..., threadOutcomes}` → Decider → `ReviewCompleted`.
 - **View:** `ReviewThreadView` marks resolved threads; `review_status` re-snapshots
-  `posted_findings_json` (commit-guarded) for the *next* follow-up; the detail API/UI render a
-  reconciliation card (closed/still-open counts, verdict rows, resolved-thread check icons; `UNCHANGED`
-  renders as a muted dashed-circle badge, counted as open, with no thread affordance since none exists).
+  `posted_findings_json` (commit-guarded) for the *next* follow-up and carries a transient
+  `answering` flag (set when a follow-up reply is dispatched, cleared on post or terminal failure)
+  that the summary/detail API surface as a "responding" indicator while the bot works; the detail
+  API/UI render a reconciliation card (closed/still-open counts, verdict rows, resolved-thread check
+  icons; `UNCHANGED` renders as a muted dashed-circle badge, counted as open, with no thread
+  affordance since none exists).
 - **Note:** a first review (no prior posted run) takes the untouched S3–S6 path — `priorRun` is null
   and the exclusion/verdict machinery never engages.
 

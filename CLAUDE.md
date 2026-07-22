@@ -118,6 +118,10 @@ The design is fully specified in `docs/` — **treat those files as the source o
   until `ready_for_review` (`SPIRE_REVIEW_DRAFT_PRS` restores always-review); OLD-side/multi-line
   anchors and honest 406/pagination failures; plain PR comments now get conversational answers in
   the summary thread. GitLab/Bitbucket parity tracked in ROADMAP.md item 13.
+- **PR-12 review-fix batch (2026-07-22..23):** reviews-list rows now show reconciled open-finding
+  counts and cumulative LLM cost instead of overwritten last-run columns; `STILL_OPEN` downgrades
+  to `UNCHANGED` at hunk (not file) granularity; the Findings card shows an in-progress state
+  instead of a false clean; a transient `answering` flag (V21) drives a responding indicator.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 
