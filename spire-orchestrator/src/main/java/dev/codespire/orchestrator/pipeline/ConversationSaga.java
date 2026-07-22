@@ -58,9 +58,7 @@ public class ConversationSaga {
             return Optional.empty();
         }
         ScmProvider provider = providerOpt.get();
-        if (provider.botAccountId() == null || provider.botAccountId().isBlank()) {
-            timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
-                    "bot identity unknown — re-save the provider to resolve it");
+        if (botIdentityUnknown(provider, e)) {
             return Optional.empty();
         }
 
@@ -85,6 +83,16 @@ public class ConversationSaga {
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(provider), llmCred.get(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor()));
+    }
+
+    /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */
+    private boolean botIdentityUnknown(ScmProvider provider, AuthorReplied e) {
+        if (provider.botAccountId() != null && !provider.botAccountId().isBlank()) {
+            return false;
+        }
+        timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
+                "bot identity unknown — re-save the provider to resolve it");
+        return true;
     }
 
     /** The policy gate: level / allowlist / thread-ownership-or-mention / turn-cap (spec §4). Records
