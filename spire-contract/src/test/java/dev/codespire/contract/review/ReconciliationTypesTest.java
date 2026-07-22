@@ -3,12 +3,15 @@ package dev.codespire.contract.review;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -70,6 +73,39 @@ class ReconciliationTypesTest {
                 (IntegrationEvent.ReviewGenerated) mapper.readValue(mapper.writeValueAsString(evt), IntegrationEvent.class);
         assertEquals(verdicts, back.verdicts());
         assertEquals(42, back.reconcileUsage().costMillicents());
+    }
+
+    // --- AuthorReplied.topLevel wire compat (summary-comment conversations) ---
+
+    @Test
+    void authorRepliedTopLevelRoundTrips() throws Exception {
+        IntegrationEvent evt = new IntegrationEvent.AuthorReplied(
+                new RepoRef("ws", "repo"), 1L, "review::ws/repo#1", new ThreadRef("sum-1"),
+                "c-1", "looks wrong", Author.of("42", "octocat", "Octo Cat"), true);
+        IntegrationEvent.AuthorReplied back =
+                (IntegrationEvent.AuthorReplied) mapper.readValue(mapper.writeValueAsString(evt), IntegrationEvent.class);
+        assertTrue(back.topLevel());
+        assertEquals(evt, back);
+    }
+
+    @Test
+    void legacyAuthorRepliedJsonWithoutTopLevelDefaultsFalse() throws Exception {
+        // Wire compat: events serialized before this field existed carry no topLevel key.
+        String legacy = """
+                {"type":"AuthorReplied","repo":{"workspace":"ws","slug":"repo"},"prId":1,
+                 "reviewId":"review::ws/repo#1","threadRef":{"value":"t-1"},"commentId":"c-1",
+                 "text":"why?","author":{"providerUserId":"42","username":"octocat","displayName":"Octo Cat"}}""";
+        IntegrationEvent.AuthorReplied back =
+                (IntegrationEvent.AuthorReplied) mapper.readValue(legacy, IntegrationEvent.class);
+        assertFalse(back.topLevel());
+    }
+
+    @Test
+    void sevenArgAuthorRepliedConstructorDefaultsTopLevelFalse() {
+        IntegrationEvent.AuthorReplied e = new IntegrationEvent.AuthorReplied(
+                new RepoRef("ws", "repo"), 1L, "review::ws/repo#1", new ThreadRef("t-1"),
+                "c-1", "why?", Author.of("42", "octocat", "Octo Cat"));
+        assertFalse(e.topLevel());
     }
 
     @Test

@@ -164,36 +164,42 @@ public class GitHubIngress implements ScmIngress {
     }
 
     /**
-     * A top-level PR comment. Only "/command" comments matter here — a matching
-     * command becomes ManualCommandReceived (the saga maps "review" -> force
-     * review). issue_comment fires for issues too; the {@code issue.pull_request}
-     * node is present only on PRs. Non-command replies are not emitted:
-     * conversational follow-ups (AuthorReplied) are a parked roadmap item, so
-     * emitting them would be dead output today.
+     * A top-level PR comment. issue_comment fires for issues too; the {@code
+     * issue.pull_request} node is present only on PRs. A "/command" body becomes
+     * ManualCommandReceived when registered (the saga maps "review" -> force
+     * review), dropped when unregistered — unchanged from before. Any other body
+     * becomes {@code AuthorReplied(topLevel = true)}: a plain PR comment, answered
+     * in the review's summary comment as its conversation "thread" (CONTRACT §4).
      */
     private List<IntegrationEvent> issueComment(JsonNode payload) {
         if (!"created".equals(payload.path("action").asText(""))
                 || payload.path("issue").path("pull_request").isMissingNode()) {
             return List.of();
         }
-        String text = payload.path("comment").path("body").asText("").trim();
+        JsonNode comment = payload.path("comment");
+        String text = comment.path("body").asText("").trim();
+        RepoRef repo = repo(payload);
+        long issueNumber = issueNumber(payload);
         if (!text.startsWith("/")) {
-            return List.of();
+            String commentId = comment.path("id").asText();
+            return List.of(new AuthorReplied(repo, issueNumber, ReviewIds.reviewId(repo, issueNumber),
+                    new ThreadRef(commentId), commentId, text, author(comment.path("user")), true));
         }
         String[] parts = text.substring(1).split("\\s+", 2);
         String command = parts[0].toLowerCase(Locale.ROOT);
         if (!commands.contains(command)) {
             return List.of();
         }
-        return List.of(new ManualCommandReceived(repo(payload), issueNumber(payload),
-                command, parts.length > 1 ? parts[1] : "", author(payload.path("comment").path("user"))));
+        return List.of(new ManualCommandReceived(repo, issueNumber,
+                command, parts.length > 1 ? parts[1] : "", author(comment.path("user"))));
     }
 
     /**
      * A reply on a review (inline) comment thread (SCM-MAPPING §6). Emits AuthorReplied keyed to the
      * thread ROOT so the orchestrator can match it to a posted finding; the bot-self drop runs
-     * downstream (ADR-013). Only handles the review-comment API surface — top-level PR (issue) comments
-     * are intentionally NOT conversational here (their ids don't address the review-comment endpoints).
+     * downstream (ADR-013). Only handles the review-comment API surface — a plain top-level PR
+     * (issue) comment fires the separate {@code issue_comment} webhook, handled in {@link
+     * #issueComment} (its id doesn't address these review-comment endpoints).
      */
     private List<IntegrationEvent> reviewCommentReply(JsonNode payload) {
         if (!"created".equals(payload.path("action").asText(""))) {

@@ -87,11 +87,26 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
     }
 
+    /**
+     * A thread whose root is a review (inline) comment replies on the review-comments endpoint. A
+     * thread whose root is a plain PR comment (a topLevel {@code AuthorReplied}, answered in the
+     * summary "thread") has no such id there — the endpoint 404s — so the "reply" is simply the
+     * next top-level issue comment.
+     */
     @Override
     public CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
         String path = reviewCommentsPath(repo, prId) + "/" + thread.value() + "/replies";
-        JsonNode created = client.postJson(path, Map.of("body", bodyMd));
-        return new CommentRef(requireCommentId(created, path), thread, CommentKind.REPLY);
+        try {
+            JsonNode created = client.postJson(path, Map.of("body", bodyMd));
+            return new CommentRef(requireCommentId(created, path), thread, CommentKind.REPLY);
+        } catch (GitHubApiException notAReviewComment) {
+            if (!notAReviewComment.isNotFound()) {
+                throw notAReviewComment;
+            }
+            String issuePath = issueCommentsPath(repo, prId);
+            JsonNode created = client.postJson(issuePath, Map.of("body", bodyMd));
+            return new CommentRef(requireCommentId(created, issuePath), thread, CommentKind.REPLY);
+        }
     }
 
     /** In-place summary rewrite on a re-review — the summary is an issue comment (PATCH, not POST). */
@@ -202,13 +217,34 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         }
     }
 
+    /**
+     * Walks the PR REVIEW (inline) comments first — the common case, a reply nested under a
+     * finding. When the root id never turns up there (it's a plain top-level PR comment, a
+     * topLevel {@code AuthorReplied}), falls back to the issue-comment tail: the "thread" of a
+     * summary-comment conversation.
+     */
     @Override
     public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
         String botLogin = botLogin();
+        ReviewWalkResult walk = walkReviewComments(repo, prId, thread, botLogin);
+        if (walk.foundRoot()) {
+            return new ThreadTranscript(thread, walk.path(), walk.line(), walk.commit(), walk.messages());
+        }
+        return issueThreadTranscript(repo, prId, thread, botLogin);
+    }
+
+    /** Result of the review-comment walk: {@code foundRoot} false means the id never appeared as a
+     *  review comment, so the caller falls back to {@link #issueThreadTranscript}. */
+    private record ReviewWalkResult(boolean foundRoot, String path, int line, String commit,
+                                    List<ThreadMessage> messages) {
+    }
+
+    private ReviewWalkResult walkReviewComments(RepoRef repo, long prId, ThreadRef thread, String botLogin) {
         String root = thread.value();
         String path = "";
         int line = 0;
         String commit = "";
+        boolean foundRoot = false;
         List<ThreadMessage> messages = new ArrayList<>();
         // The review-comments endpoint paginates (100/page max); a thread's replies can span pages, so walk
         // pages until a short/empty one. MAX_THREAD_PAGES bounds a pathological PR.
@@ -223,19 +259,54 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
                     continue; // a different thread
                 }
                 if (root.equals(id)) {                      // the root carries the anchor
+                    foundRoot = true;
                     path = c.path("path").asText("");
                     line = c.path("original_line").asInt(c.path("line").asInt(0));
                     commit = c.path("commit_id").asText("");
                 }
-                String login = c.path("user").path("login").asText("");
-                messages.add(new ThreadMessage(login, c.path("body").asText("").trim(), login.equals(botLogin)));
+                messages.add(toMessage(c, botLogin));
             }
             if (count < 100) {
                 break; // last page reached
             }
             warnIfTranscriptTruncated(root, page);
         }
-        return new ThreadTranscript(thread, path, line, commit, messages);
+        return new ReviewWalkResult(foundRoot, path, line, commit, messages);
+    }
+
+    /**
+     * Fallback transcript for a topLevel reply: the root is a plain PR (issue) comment, so there is
+     * no code anchor (path/line/commit all empty) — the "thread" is simply the root plus every
+     * comment that follows it in the issue's comment list.
+     */
+    private ThreadTranscript issueThreadTranscript(RepoRef repo, long prId, ThreadRef thread, String botLogin) {
+        String root = thread.value();
+        List<ThreadMessage> messages = new ArrayList<>();
+        boolean pastRoot = false;
+        for (int page = 1; page <= MAX_THREAD_PAGES; page++) {
+            JsonNode pageComments = client.getJson(issueCommentsPath(repo, prId) + "?per_page=100&page=" + page);
+            int count = 0;
+            for (JsonNode c : pageComments) {
+                count++;
+                if (!pastRoot) {
+                    if (!root.equals(c.path("id").asText())) {
+                        continue; // before the root — not part of this conversation
+                    }
+                    pastRoot = true;
+                }
+                messages.add(toMessage(c, botLogin));
+            }
+            if (count < 100) {
+                break;
+            }
+            warnIfTranscriptTruncated(root, page);
+        }
+        return new ThreadTranscript(thread, null, 0, null, messages);
+    }
+
+    private static ThreadMessage toMessage(JsonNode c, String botLogin) {
+        String login = c.path("user").path("login").asText("");
+        return new ThreadMessage(login, c.path("body").asText("").trim(), login.equals(botLogin));
     }
 
     /** Reached here only with a full (100-comment) page — count < 100 already broke the loop above. */

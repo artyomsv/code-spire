@@ -59,4 +59,36 @@ class GitHubThreadFetchTest {
         assertEquals(1, t.messages().size());
         assertFalse(t.messages().get(0).fromBot());           // login unknown -> best-effort, not the bot
     }
+
+    @Test
+    void fetchThreadFallsBackToIssueCommentsWhenNoRootMatchesAReviewComment() throws Exception {
+        // The root id (555) is a plain top-level PR comment (topLevel AuthorReplied) -- it never
+        // appears among the review (inline) comments, so fetchThread must fall back to the
+        // issue-comment tail: the root plus every later comment, no code anchor.
+        GitHubClient client = mock(GitHubClient.class);
+        when(client.getJson("/user")).thenReturn(mapper.readTree("{\"login\":\"code-spire\"}"));
+        when(client.getJson("/repos/artyomsv/spire-test/pulls/5/comments?per_page=100&page=1"))
+                .thenReturn(mapper.readTree("""
+                        [ { "id": 100, "in_reply_to_id": null, "path": "src/App.java", "original_line": 42,
+                            "commit_id": "abc123", "body": "possible NPE", "user": { "login": "code-spire" } } ]
+                        """));
+        when(client.getJson("/repos/artyomsv/spire-test/issues/5/comments?per_page=100&page=1"))
+                .thenReturn(mapper.readTree("""
+                        [ { "id": 555, "body": "looks wrong to me", "user": { "login": "octocat" } },
+                          { "id": 556, "body": "actually you're right", "user": { "login": "code-spire" } },
+                          { "id": 557, "body": "fixed, thanks", "user": { "login": "octocat" } } ]
+                        """));
+
+        GitHubCommentSink sink = new GitHubCommentSink(client);
+        ThreadTranscript t = sink.fetchThread(new RepoRef("artyomsv", "spire-test"), 5, new ThreadRef("555"));
+
+        assertNull(t.path());
+        assertEquals(0, t.line());
+        assertNull(t.commit());
+        assertEquals(3, t.messages().size());
+        assertEquals("looks wrong to me", t.messages().get(0).text());
+        assertFalse(t.messages().get(0).fromBot());
+        assertTrue(t.messages().get(1).fromBot());             // code-spire == token owner
+        assertEquals("fixed, thanks", t.messages().get(2).text());
+    }
 }

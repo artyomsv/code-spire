@@ -166,10 +166,14 @@ public class FollowUpWorker {
     /**
      * The pure answer→reply core (no Kafka/DB) so it unit-tests with mocks. The thread is already fetched;
      * this fetches the anchored diff, renders the injection-fenced prompt, calls the LLM, and posts the reply.
+     * A summary-thread transcript (a topLevel {@code AuthorReplied}'s issue-comment fallback thread) carries
+     * no anchor commit, so the PR's current head is resolved first.
      */
     static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
                                  DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink) {
-        Diff diff = diffs.fetchDiff(repo, prId, transcript.commit());
+        String commit = transcript.commit() != null
+                ? transcript.commit() : diffs.fetchPullRequest(repo, prId).diffRefs().headSha();
+        Diff diff = diffs.fetchDiff(repo, prId, commit);
         String diffText = DiffRenderer.render(diff.files());
         Prompt prompt = FollowUpPrompt.render(transcript, diffText);
         Completion completion = llmProvider.complete(prompt, params).toCompletableFuture().join();

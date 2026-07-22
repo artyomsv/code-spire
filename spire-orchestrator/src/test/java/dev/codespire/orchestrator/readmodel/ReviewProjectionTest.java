@@ -241,6 +241,19 @@ class ReviewProjectionTest {
     }
 
     @Test
+    void summaryRefOfReturnsTheStoredRefOrEmpty() {
+        long pr = 4110L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "T", "u", "a", "f", "main", "sha-head-10",
+                "https://x/pr/4110", "github", "completed", ReviewProjection.STAGE_DONE);
+        assertTrue(projection.summaryRefOf(id).isEmpty(), "never posted -> empty");
+
+        projection.recordPosted(id, "sha-head-10", "sum-42");
+        assertEquals("sum-42", projection.summaryRefOf(id).orElseThrow());
+        assertTrue(projection.summaryRefOf(ReviewIds.reviewId(REPO, 99999L)).isEmpty(), "unknown review -> empty");
+    }
+
+    @Test
     void clearWorkerIdempotencyDropsClaimsButKeepsTheReview() throws Exception {
         long pr = 4109L;
         String id = ReviewIds.reviewId(REPO, pr);

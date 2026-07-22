@@ -6,10 +6,12 @@ import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffRefs;
+import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.scm.github.GitHubApiException;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadMessage;
@@ -52,6 +54,37 @@ class FollowUpWorkerTest {
         assertEquals("Because the caller can pass null.", r.answerText());
         assertNotNull(r.usage(), "the follow-up LLM call's usage is captured for the cost breakdown");
         assertEquals("m", r.usage().model());
+    }
+
+    @Test
+    void nullCommitTranscriptResolvesThePrHeadFirst() {
+        // A summary-thread transcript (issueThreadTranscript's fallback) carries no anchor commit --
+        // the PR head must be resolved before the diff can be fetched at all.
+        DiffSource diffs = mock(DiffSource.class);
+        CommentSink sink = mock(CommentSink.class);
+        LlmProvider llm = mock(LlmProvider.class);
+        ModelParams params = new ModelParams("m", 0.2, null);
+        RepoRef repo = new RepoRef("artyomsv", "spire-test");
+        ThreadRef thread = new ThreadRef("sum-1");
+        ThreadTranscript transcript = new ThreadTranscript(thread, null, 0, null,
+                List.of(new ThreadMessage("octocat", "why?", false)));
+
+        when(diffs.fetchPullRequest(eq(repo), eq(5L))).thenReturn(new PullRequest(
+                repo, 5L, "T", "d", "feature", "main", new DiffRefs(null, null, "head-9"),
+                Author.of("1", "octocat", "Octo Cat"), "https://x"));
+        when(diffs.fetchDiff(eq(repo), eq(5L), eq("head-9")))
+                .thenReturn(new Diff(DiffRefs.headOnly("head-9"), List.of(), false));
+        when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new Completion("Because the caller can pass null.", new ModelUsage("m", 1, 1, 0))));
+        when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
+                .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
+
+        FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(
+                repo, 5L, thread, transcript, diffs, llm, params, sink);
+
+        verify(diffs).fetchPullRequest(repo, 5L);            // null commit -> PR head resolved first
+        verify(diffs).fetchDiff(repo, 5L, "head-9");          // diff fetched by the resolved head
+        assertEquals("900", r.postedCommentId());
     }
 
     // --- scope "smart 1:1" gate (shouldAnswer) ---

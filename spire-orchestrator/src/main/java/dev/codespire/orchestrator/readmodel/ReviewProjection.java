@@ -711,6 +711,29 @@ public class ReviewProjection {
     }
 
     /**
+     * The review's posted summary comment id ({@code last_summary_comment_id}, V19) — the
+     * conversation "thread" a top-level (non-inline) reply is routed to, since a plain PR comment
+     * has no SCM thread of its own. Empty when the review is gone, or has never had a summary
+     * posted (null/blank column).
+     */
+    public Optional<String> summaryRefOf(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT last_summary_comment_id FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                String value = rs.getString(1);
+                return (value == null || value.isBlank()) ? Optional.empty() : Optional.of(value);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the summary ref for " + reviewId, e);
+        }
+    }
+
+    /**
      * The SCM type the review was registered under (its {@code provider_type}), used
      * to disambiguate provider resolution when a workspace name is registered on more
      * than one SCM. Empty if the review is gone or predates the stored type.

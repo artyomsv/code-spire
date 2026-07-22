@@ -160,6 +160,24 @@ class GitHubApiTest {
     }
 
     @Test
+    void replyOn404FallsBackToATopLevelIssueComment() {
+        // "555" is a summary-thread ref (a topLevel AuthorReplied's routed thread) -- it addresses no
+        // review comment, so the replies endpoint 404s and the reply becomes a fresh issue comment.
+        server.stubFor(post(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments/555/replies"))
+                .willReturn(aResponse().withStatus(404).withHeader("Content-Type", "application/json")
+                        .withBody("{ \"message\": \"Not Found\" }")));
+        server.stubFor(post(urlEqualTo("/repos/sandbox/demo-repo/issues/42/comments"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{ \"id\": 994 }")));
+
+        CommentRef ref = commentSink.replyInThread(REPO, 42, new ThreadRef("555"), "actually you're right");
+
+        assertEquals("994", ref.commentId());
+        assertEquals("555", ref.thread().value(), "the thread stays the summary ref, not the new comment's id");
+        server.verify(postRequestedFor(urlEqualTo("/repos/sandbox/demo-repo/issues/42/comments"))
+                .withRequestBody(equalToJson("{ \"body\": \"actually you're right\" }")));
+    }
+
+    @Test
     void fetchesPullRequestAuthorWithoutEmail() {
         server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""

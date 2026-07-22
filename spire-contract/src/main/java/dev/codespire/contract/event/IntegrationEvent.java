@@ -73,8 +73,17 @@ public sealed interface IntegrationEvent {
                                  Author author) implements IntegrationEvent {
     }
 
+    /** {@code topLevel} marks a plain PR (issue) comment — answered in the review's summary
+     *  comment as its conversation "thread" (no SCM threading available for it). {@code false}
+     *  (the 7-arg convenience ctor's default) is an inline review-comment reply, threaded as before. */
     record AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
-                         String commentId, String text, Author author) implements IntegrationEvent {
+                         String commentId, String text, Author author,
+                         boolean topLevel) implements IntegrationEvent {
+
+        public AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
+                             String commentId, String text, Author author) {
+            this(repo, prId, reviewId, threadRef, commentId, text, author, false);
+        }
     }
 
     /** P3: feeds the RAG indexer. */

@@ -2,6 +2,7 @@ package dev.codespire.scm.github;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
@@ -110,16 +111,29 @@ class GitHubIngressTest {
     }
 
     @Test
-    void ignoresCommentOnAPlainIssueOrWithoutACommand() {
-        // No issue.pull_request node => a plain issue, not a PR.
+    void ignoresCommentOnAPlainIssue() {
+        // No issue.pull_request node => a plain issue, not a PR — nothing is emitted at all.
         assertTrue(ingress.translate(webhook(issueComment("/review", false),
                 Map.of("X-GitHub-Event", "issue_comment"))).isEmpty());
-        // A non-command comment produces nothing (AuthorReplied is a parked feature).
-        assertTrue(ingress.translate(webhook(issueComment("looks good", true),
-                Map.of("X-GitHub-Event", "issue_comment"))).isEmpty());
-        // An unregistered command is not forwarded.
+    }
+
+    @Test
+    void unknownSlashCommandStaysDropped() {
+        // An unregistered command is not forwarded (and does not become a conversational reply either).
         assertTrue(ingress.translate(webhook(issueComment("/deploy now", true),
                 Map.of("X-GitHub-Event", "issue_comment"))).isEmpty());
+    }
+
+    @Test
+    void plainPrCommentBecomesTopLevelAuthorReplied() {
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(issueComment("looks wrong to me", true), Map.of("X-GitHub-Event", "issue_comment"))).getFirst());
+        assertTrue(e.topLevel());
+        assertEquals(7, e.prId());
+        assertEquals("555", e.threadRef().value());
+        assertEquals("555", e.commentId());
+        assertEquals("looks wrong to me", e.text());
+        assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
     }
 
     @Test
@@ -215,6 +229,7 @@ class GitHubIngressTest {
                   "repository": { "full_name": "artyomsv/spire-test" },
                   "issue": { "number": 7%s },
                   "comment": {
+                    "id": 555,
                     "body": "%s",
                     "user": { "id": %s, "login": "octocat" }
                   }
