@@ -755,14 +755,19 @@ public class ReviewWorker {
         };
     }
 
-    /** Update the prior summary in place on a follow-up review; a vanished/edited comment falls back to a fresh post. */
+    /** Update the prior summary in place on a follow-up review; only a 404 (the human deleted it)
+     *  falls back to a fresh post — every other failure (lost permission, transient error)
+     *  rethrows so it classifies through the normal summary failure path instead of risking a
+     *  doomed second post. */
     private CommentRef updateOrPost(CommentSink sink, PostComments command, String body) {
         if (command.priorSummaryRef() != null) {
             try {
                 return sink.updateComment(command.repo(), command.prId(), command.priorSummaryRef(), body);
             } catch (RuntimeException e) {
-                LOG.infof("summary %s update failed (%s) — posting fresh",
-                        command.priorSummaryRef(), unwrap(e).getMessage());
+                if (!(unwrap(e) instanceof ScmApiException api) || !api.isNotFound()) {
+                    throw e;   // permission/transient failures classify upstream; don't double-post
+                }
+                LOG.infof("summary %s is gone (404) — posting fresh", command.priorSummaryRef());
             }
         }
         return sink.postSummary(command.repo(), command.prId(), body);

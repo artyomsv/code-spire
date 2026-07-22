@@ -438,10 +438,21 @@ class ReviewWorkerTest {
     }
 
     @Test
-    void deletedSummaryFallsBackToAFreshPost() {
-        sink.failUpdateComment = true; // fake sink: updateComment throws
+    void deletedSummary404FallsBackToAFreshPost() {
+        sink.updateCommentFailure = new TestScmException(404, false, null); // human deleted the summary
         worker.postComments(postCommand(List.of(), noNewFindings(), "gone-1"));
         assertEquals(1, sink.summaryPosts.size());
+    }
+
+    @Test
+    void forbiddenSummaryUpdateDoesNotDoublePost() {
+        sink.updateCommentFailure = new TestScmException(403, false, null); // lost permission, not rate-limited
+        worker.postComments(postCommand(List.of(), noNewFindings(), "gone-1"));
+
+        assertTrue(sink.summaryPosts.isEmpty(), "no doomed second post after a permission failure");
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getLast());
+        assertEquals("post-comments", failed.phase());
+        assertFalse(failed.retryable(), "403 is terminal, not retryable");
     }
 
     @Test
@@ -800,7 +811,7 @@ class ReviewWorkerTest {
         RuntimeException inlineFailure; // exception thrown while inlineAttempts <= failInlineTimes
         final List<Long> inlinePostTimestamps = new ArrayList<>(); // one per postInline invocation
         boolean failSummary;
-        boolean failUpdateComment;
+        RuntimeException updateCommentFailure;
         CommentSink.ThreadResolution resolveResult = CommentSink.ThreadResolution.RESOLVED_NOW;
         String summaryBody = "";
         private int ids = 100;
@@ -852,8 +863,8 @@ class ReviewWorkerTest {
         @Override
         public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
             updatedComments.add(commentId);
-            if (failUpdateComment) {
-                throw new RuntimeException("404");
+            if (updateCommentFailure != null) {
+                throw updateCommentFailure;
             }
             return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
         }
