@@ -1,9 +1,11 @@
 # Smoke Test Runbook
 
-Two modes: **A** proves the pipeline with zero external accounts (stubs); **B** reviews a real
-Bitbucket Cloud PR with a real LLM. Do A first — it validates your local stack in ~2 minutes.
+Five modes: **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
+**C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
+PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel). Do A first — it validates
+your local stack in ~2 minutes.
 
-Prerequisites for both: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
+Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
 
 ---
 
@@ -134,8 +136,11 @@ Missing keys fail the affected service at startup naming the exact key — that'
 
 ### Known v1 limits (expected, not bugs)
 
-- No Jira/Confluence context yet; replies to bot comments are ingested but not answered; `/review`
-  re-trigger is parsed but inactive (all P2).
+- Draft PRs are skipped until the author marks them `ready_for_review`, unless
+  `SPIRE_REVIEW_DRAFT_PRS=true` (GitHub currently — see SMOKE-TEST.md Mode E and ROADMAP.md item 13
+  for GitLab/Bitbucket parity).
+- A PR whose diff exceeds the provider's diff-generation limit fails with an explicit "too large to
+  review" error instead of the raw HTTP response.
 - A transient SCM/LLM failure auto-retries the pipeline up to `spire.review.max-attempts` (default 3);
   the timeline shows `retry:<phase>` and the metadata `Attempt` climbs. Only once the budget is spent
   (or the failure is permanent) does the review go to `failed` — then push a new commit to restart.
@@ -318,7 +323,9 @@ Repo → Settings → Webhooks → Add webhook:
 - **Payload URL:** `https://<host>.ts.net/webhooks/github/<key>` (the path from step 1.3)
 - **Content type:** `application/json`
 - **Secret:** the secret from step 1.3
-- **Events:** "Let me select" → **Pull requests** (and **Issue comments** if you want `/review`)
+- **Events:** "Let me select" → **Pull requests** and **Issue comments** — a `/review` comment
+  forces a full re-run of the PR's latest commit; any other plain top-level PR comment starts (or
+  continues) a conversation in the summary-comment thread
 
 GitHub sends a `ping` on save → the gateway returns **204** (accepted, nothing published).
 

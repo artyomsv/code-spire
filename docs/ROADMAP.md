@@ -168,11 +168,14 @@ down is the original design-time roadmap (kept for reference).
 **E. SCM parity & new feature threads (added 2026-07-21)**
 13. **SCM parity live-testing for the full loop** · M · ⚑ (needs live GitLab/Bitbucket repos+tokens).
     GitHub is the proven reference (webhook → review → conversation → reconciliation, PRs #8–#11).
-    Finalize GitHub (any remaining edge cases from live use), then run the SAME end-to-end flow on
-    **GitLab** (webhook ingress, review, thread replies, reconciliation incl. discussion resolve +
-    compare + note update — all WireMock-tested, never live-tested) and **Bitbucket** (reply-only
-    reconciliation degradation; **verify the compare-spec direction `{head}..{base}` against a live
-    workspace** — currently documented-but-unverified).
+    ✅ **GitHub half done (2026-07-21..22)** — the live-use audit's 12 findings are fixed: truthful
+    403/GraphQL rate-limit detection + posting backoff, `/review` wired to a forced re-run, draft-PR
+    skip (`SPIRE_REVIEW_DRAFT_PRS`), honest 406/pagination failures, OLD-side/multi-line anchors,
+    and summary-comment conversations. GitLab/Bitbucket parity stays open: run the SAME end-to-end
+    flow on **GitLab** (webhook ingress, review, thread replies, reconciliation incl. discussion
+    resolve + compare + note update — all WireMock-tested, never live-tested) and **Bitbucket**
+    (reply-only reconciliation degradation; **verify the compare-spec direction `{head}..{base}`
+    against a live workspace** — currently documented-but-unverified).
 14. **Ticket-reference context providers: GitHub Issues + GitLab Issues** · M. Extend the proven
     ContextProvider SPI (Jira/Confluence precedent — zero core changes expected): resolve issue
     references from PR title/branch/description (`#123`, `GH-123`, `org/repo#123`, GitLab `#123` /

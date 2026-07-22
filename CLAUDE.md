@@ -112,6 +112,12 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `DiffSource.fetchCompareDiff`, full-diff fallback on force-push) for per-finding verdicts, then the
   review call with an exclusion list. `PostComments` resolves-then-replies closing verdicts (Bitbucket
   degrades to reply-only), always replies `STILL_OPEN`, updates the summary in place. V19; UI card.
+- **GitHub integration finalized (2026-07-21..22):** a live-use audit's 12 findings are closed —
+  403/GraphQL `RATE_LIMITED` now classify as retryable (was 429-only), backed by a throttled,
+  Retry-After-aware inline-posting backoff; `/review` PR comments force a re-run; draft PRs skip
+  until `ready_for_review` (`SPIRE_REVIEW_DRAFT_PRS` restores always-review); OLD-side/multi-line
+  anchors and honest 406/pagination failures; plain PR comments now get conversational answers in
+  the summary thread. GitLab/Bitbucket parity tracked in ROADMAP.md item 13.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 
