@@ -150,7 +150,8 @@ down is the original design-time roadmap (kept for reference).
    onto the same per-repo model.
 
 **B. Make the reviewer genuinely useful (P2 — currently diff-only)**
-4. **`/review` command** · M. Author types `/review` in a PR comment to (re-)trigger. Parsed, inactive.
+4. ✅ **`/review` command** (GitHub, 2026-07-21) — a `/review` PR comment forces a re-run via
+   `ReviewRerunService` (see item 13 / the finalize-GitHub thread). GitLab/Bitbucket fold on next.
 5. **Conversational replies** · M. Answer follow-ups in a thread (`AuthorReplied` received but ignored).
 6. ✅ **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked ticket & page context. Biggest lever.
    ✅ **Jira done (2026-07-08)** — SPI made real end-to-end (`spire-context-jira`, ticket-key extraction,
@@ -262,7 +263,8 @@ generic across two sources. Other levers with no infra blocker: **D10** (OIDC, b
 
 ## Explicitly deferred (NOT in v1)
 - **Fleet-level cost/abuse caps** — per-repo/workspace rate limit, daily LLM spend cap, giant-PR
-  guard, draft/WIP-PR skip, bot-authored-PR skip. v1 has only per-review token budgeting (ported).
+  guard, bot-authored-PR skip. v1 has only per-review token budgeting (ported). (Draft/WIP-PR skip
+  is no longer deferred — shipped for GitHub 2026-07-21, item 13; GitLab/Bitbucket fold on next.)
   Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of. NOTE: a giant PR
   is not silently mis-reviewed — the diff is clipped to the token budget and the partial review is now
   MARKED (dashboard note + a line on the posted summary comment). A hard giant-PR skip is still future.
