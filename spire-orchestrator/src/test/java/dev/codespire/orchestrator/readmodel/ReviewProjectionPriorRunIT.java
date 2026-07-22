@@ -551,4 +551,23 @@ class ReviewProjectionPriorRunIT {
         assertEquals(0, detail.findings(),
                 "findings stays the raw per-run new-findings count (findings card math depends on it)");
     }
+
+    /**
+     * The PR's own Open/Merged/Closed state (fix: PR-state badge) — independent of the review
+     * status: a new review's PR defaults OPEN, and setPrState updates it on both the list row and
+     * the detail payload.
+     */
+    @Test
+    void prStateDefaultsOpenAndSetSurfacesOnSummaryAndDetail() {
+        String reviewId = "review::ws/pr-state-it#1";
+        projection.registerHeader(reviewId, new RepoRef("ws", "pr-state-it"), 1L,
+                "t", "a", "aid", "src", "dst", "c1", "http://x", "github", "completed", 6);
+        assertEquals("OPEN", projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow().prState(),
+                "a new review's PR defaults OPEN");
+        projection.setPrState(reviewId, "MERGED");
+        assertEquals("MERGED", projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow().prState());
+        assertEquals("MERGED", projection.loadDetail("ws", "pr-state-it", 1L).orElseThrow().prState());
+    }
 }

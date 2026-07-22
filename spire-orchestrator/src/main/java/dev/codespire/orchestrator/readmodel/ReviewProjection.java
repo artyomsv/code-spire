@@ -139,6 +139,15 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
+    /** The PR's own Open/Merged/Closed state — independent of the review status (fix: PR-state badge). */
+    public void setPrState(String reviewId, String prState) {
+        update("UPDATE review_status SET pr_state = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, prState);
+            ps.setString(2, reviewId);
+        });
+        broadcast(reviewId);
+    }
+
     public void setNote(String reviewId, String note) {
         update("UPDATE review_status SET note = ?, updated_at = now() WHERE review_id = ?", ps -> {
             ps.setString(1, note);
@@ -1006,12 +1015,12 @@ public class ReviewProjection {
                              String providerType, String status, boolean answering, int stage, int findings,
                              String findingsJson, String reconciliationJson, String model, Integer tokensIn,
                              Integer tokensOut, Long costMillicents, String note, String errorDetail, int attempt,
-                             Instant createdAt, Instant updatedAt) {
+                             Instant createdAt, Instant updatedAt, String prState) {
         ReviewSummary toSummary(String llmType, OpenCounts openCounts, long totalCostMillicents) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
                     totalCostMillicents, model == null ? "" : model,
-                    llmType == null ? "" : llmType, updatedAt, answering);
+                    llmType == null ? "" : llmType, updatedAt, answering, prState);
         }
     }
 
@@ -1113,7 +1122,8 @@ public class ReviewProjection {
                 (Integer) rs.getObject("tokens_in"), (Integer) rs.getObject("tokens_out"),
                 (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getString("error_detail"),
                 rs.getInt("attempt"),
-                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
+                rs.getString("pr_state"));
     }
 
     private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events, List<ReviewDetail.LlmCall> llmCalls,
@@ -1127,7 +1137,7 @@ public class ReviewProjection {
                 blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
                 computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation, usageView(r),
-                withReviewCall(r, llmCalls), r.note, decryptError(r.errorDetail, r.id), events);
+                withReviewCall(r, llmCalls), r.note, decryptError(r.errorDetail, r.id), events, r.prState);
     }
 
     /**

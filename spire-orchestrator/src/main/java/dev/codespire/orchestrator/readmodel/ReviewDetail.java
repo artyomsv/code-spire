@@ -46,7 +46,8 @@ public record ReviewDetail(
         List<LlmCall> llmCalls,
         String note,
         String errorDetail,
-        List<EventView> events) {
+        List<EventView> events,
+        String prState) {
 
     /** A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM
      *  thread it owns ({@code threadRef}, null when it has no conversation / predates thread linking). */

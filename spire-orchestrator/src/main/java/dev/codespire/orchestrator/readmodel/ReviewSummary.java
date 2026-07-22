@@ -29,5 +29,6 @@ public record ReviewSummary(
         String model,
         String llmType,
         Instant updatedAt,
-        boolean answering) {
+        boolean answering,
+        String prState) {
 }

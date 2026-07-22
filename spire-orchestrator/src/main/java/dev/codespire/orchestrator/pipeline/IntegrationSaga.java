@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
+import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
@@ -84,8 +85,12 @@ public class IntegrationSaga {
         timeline.record("integration", event.getClass().getSimpleName(), reviewIdOf(event), "");
         switch (event) {
             case PullRequestEventReceived e -> onPullRequestEvent(e);
-            case PullRequestClosed e -> lifecycle.handle(ReviewIds.reviewId(e.repo(), e.prId()),
-                    new RecordCommand.CancelReview(e.reason().name()));
+            case PullRequestClosed e -> {
+                lifecycle.handle(ReviewIds.reviewId(e.repo(), e.prId()),
+                        new RecordCommand.CancelReview(e.reason().name()));
+                projection.setPrState(ReviewIds.reviewId(e.repo(), e.prId()),
+                        e.reason() == CloseReason.MERGED ? "MERGED" : "CLOSED");
+            }
             case ManualCommandReceived e -> {
                 if (isBotAuthored(e.repo().workspace(), e.author())) {
                     dropSelfLoop(reviewIdOf(e), "/" + e.command());
@@ -182,6 +187,7 @@ public class IntegrationSaga {
                 observe ? ReviewProjection.STAGE_RECEIVED : ReviewProjection.STAGE_DIFF);
         projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
                 e.action().name().toLowerCase(Locale.ROOT) + " · head " + commit);
+        projection.setPrState(reviewId, "OPEN");
 
         // Observe-only gate: register on the dashboard but do NOT advance the
         // aggregate. Emitting ReviewRequested here would lock the review into

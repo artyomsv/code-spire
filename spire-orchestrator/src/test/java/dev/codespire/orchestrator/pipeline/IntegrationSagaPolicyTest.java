@@ -4,8 +4,10 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
+import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
+import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.DiffRefs;
@@ -41,6 +43,8 @@ class IntegrationSagaPolicyTest {
     private final List<String> notes = new ArrayList<>();
     private final List<String> headerProviderTypes = new ArrayList<>();
     private final List<String> rerunInvocations = new ArrayList<>();
+    private final List<RecordCommand> handledCommands = new ArrayList<>();
+    private final List<String> prStateCalls = new ArrayList<>();
     private boolean reviewRegistered;
 
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
@@ -58,6 +62,7 @@ class IntegrationSagaPolicyTest {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
                 reviewRegistered = true;
+                handledCommands.add(command);
                 return lifecycleResult;
             }
         };
@@ -95,6 +100,11 @@ class IntegrationSagaPolicyTest {
 
             @Override
             public void touch(String reviewId) {
+            }
+
+            @Override
+            public void setPrState(String reviewId, String prState) {
+                prStateCalls.add(reviewId + ":" + prState);
             }
         };
         saga.providers = new ProviderRegistry() {
@@ -353,5 +363,49 @@ class IntegrationSagaPolicyTest {
         assertEquals(1, emitted.size(), "the planned AnswerFollowUp is still emitted");
         assertEquals(List.of(true), answeringCalls,
                 "dispatching a follow-up flags the review as answering (and bumps the live dashboard)");
+    }
+
+    @Test
+    void acceptedPullRequestEvent_setsPrStateOpen() {
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        saga.on(pr("acc-1", "alice"));
+        assertEquals(List.of("review::acme/web#412:OPEN"), prStateCalls,
+                "an accepted PR event stamps the PR state OPEN on the registered review");
+    }
+
+    @Test
+    void observedPullRequestEvent_stillSetsPrStateOpen() {
+        // Observe-only still registers the dashboard header — the PR is genuinely open,
+        // independent of whether the review pipeline runs (fix: PR-state badge).
+        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        saga.on(pr("acc-1", "alice"));
+        assertEquals(List.of("review::acme/web#412:OPEN"), prStateCalls);
+    }
+
+    @Test
+    void skippedPullRequestEvent_neverSetsPrState() {
+        var saga = sagaWith(policyMode(false), Optional.empty());
+        saga.on(pr("acc-1", "alice"));
+        assertTrue(prStateCalls.isEmpty(), "a skipped (non-registered) PR event must not stamp PR state");
+    }
+
+    @Test
+    void pullRequestClosedMerged_setsPrStateMergedAndStillIssuesCancelReview() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.MERGED));
+
+        assertEquals(List.of("review::acme/web#412:MERGED"), prStateCalls);
+        assertEquals(1, handledCommands.size(), "the existing cancel-on-close flow is unchanged");
+        assertInstanceOf(RecordCommand.CancelReview.class, handledCommands.get(0));
+    }
+
+    @Test
+    void pullRequestClosedDeclined_setsPrStateClosed() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.DECLINED));
+
+        assertEquals(List.of("review::acme/web#412:CLOSED"), prStateCalls);
+        assertEquals(1, handledCommands.size(), "the existing cancel-on-close flow is unchanged");
+        assertInstanceOf(RecordCommand.CancelReview.class, handledCommands.get(0));
     }
 }
