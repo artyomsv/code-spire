@@ -442,6 +442,21 @@ export function findingsCard(r: ReviewDetail) {
   }
 
   const reconciliation = r.reconciliation ?? [];
+  if (!r.findingsList.length && !reconciliation.length && r.status === 'reviewing') {
+    return (
+      <div className="card">
+        <div className="head">
+          <span className="k">//</span>
+          <h3>Findings</h3>
+        </div>
+        <div className="body">
+          <div className="clean">
+            <span className="em mono">Analyzing the diff…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (!r.findingsList.length && !reconciliation.length) {
     return (
       <div className="card">
