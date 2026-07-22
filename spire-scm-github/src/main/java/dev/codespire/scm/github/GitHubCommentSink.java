@@ -66,13 +66,21 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     @Override
     public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
         boolean old = anchor.side() == Side.OLD;
-        int line = old ? anchor.oldLine() : anchor.newLine();
-        JsonNode created = client.postJson(reviewCommentsPath(repo, prId), Map.of(
+        Map<String, Object> body = new HashMap<>(Map.of(
                 "body", bodyMd,
                 "commit_id", refs.headSha(),
                 "path", anchor.path(),
-                "line", line,
                 "side", old ? "LEFT" : "RIGHT"));
+        if (!old && anchor.endNewLine() != null && anchor.endNewLine() > anchor.newLine()) {
+            // GitHub anchors a multi-line range comment at the LAST line ("line"); the
+            // range's first line is carried separately as start_line/start_side.
+            body.put("start_line", anchor.newLine());
+            body.put("start_side", "RIGHT");
+            body.put("line", anchor.endNewLine());
+        } else {
+            body.put("line", old ? anchor.oldLine() : anchor.newLine());
+        }
+        JsonNode created = client.postJson(reviewCommentsPath(repo, prId), body);
         String id = requireCommentId(created, reviewCommentsPath(repo, prId));
         return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
     }

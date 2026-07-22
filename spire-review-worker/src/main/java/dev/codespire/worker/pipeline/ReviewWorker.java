@@ -650,8 +650,8 @@ public class ReviewWorker {
     private void postOneInline(CommentSink commentSink, PostComments command, Diff diff, Finding finding,
                                List<CommentsPosted.PostedInline> posted,
                                List<Finding> unanchored, List<Finding> failed) {
-        Optional<InlineAnchor> anchor = Anchors.resolveNewLine(
-                diff.files(), finding.path(), finding.range().startLine());
+        Optional<InlineAnchor> anchor = Anchors.resolveLine(
+                diff.files(), finding.path(), finding.range().startLine(), finding.range().endLine());
         if (anchor.isEmpty()) {
             unanchored.add(finding);
             return;

@@ -139,6 +139,18 @@ class GitHubApiTest {
     }
 
     @Test
+    void multiLineAnchorPostsAGitHubRangeComment() {
+        stubReviewCommentCreated();
+        commentSink.postInline(REPO, 42, DiffRefs.headOnly("abc"),
+                new InlineAnchor("src/App.java", "src/App.java", null, 5, Side.NEW, 8), "note");
+        server.verify(postRequestedFor(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments"))
+                .withRequestBody(equalToJson("""
+                        { "body": "note", "commit_id": "abc", "path": "src/App.java",
+                          "start_line": 5, "start_side": "RIGHT", "line": 8, "side": "RIGHT" }
+                        """)));
+    }
+
+    @Test
     void replyPostsToTheRepliesEndpoint() {
         server.stubFor(post(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments/77/replies"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{ \"id\": 993 }")));
