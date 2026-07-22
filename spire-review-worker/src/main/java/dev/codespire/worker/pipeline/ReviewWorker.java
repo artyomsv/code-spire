@@ -27,6 +27,7 @@ import dev.codespire.contract.scm.ChangeType;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
+import dev.codespire.contract.scm.Hunk;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.ScmApiException;
@@ -49,12 +50,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * The review worker: GenerateReview (re-fetch diff by commit -> prompt -> LLM
@@ -338,24 +337,57 @@ public class ReviewWorker {
 
     /**
      * Deterministic backstop: the LLM sometimes marks a finding STILL_OPEN even though the
-     * follow-up commit never touched its file. When the incremental diff is available, downgrade
-     * any such verdict to UNCHANGED so the reviewer stays silent on threads the author's changes
-     * couldn't possibly have affected. No incremental diff (force-push/blank fallback) means we
-     * can't tell what was touched, so the LLM's verdicts stand as-is.
+     * follow-up commit never touched its own anchor line. When the incremental diff is available,
+     * downgrade any such verdict to UNCHANGED so the reviewer stays silent on threads the
+     * author's changes couldn't possibly have affected — hunk-level, not file-level, so fixing
+     * one part of a file no longer keeps every other prior finding in that file "open". No
+     * incremental diff (force-push/blank fallback) means we can't tell what was touched, so the
+     * LLM's verdicts stand as-is.
      */
     private static List<FindingVerdict> downgradeUntouched(List<FindingVerdict> verdicts, String incrementalDiff) {
         if (incrementalDiff == null) {
             return verdicts;
         }
-        Set<String> touchedPaths = UnifiedDiffParser.parse(incrementalDiff).stream()
-                .flatMap(patch -> Stream.of(patch.oldPath(), patch.newPath()))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
+        Map<String, List<int[]>> changedRangesByPath = changedOldSideRanges(incrementalDiff);
         return verdicts.stream()
-                .map(v -> v.status() == FindingVerdict.Status.STILL_OPEN && !touchedPaths.contains(v.path())
-                        ? new FindingVerdict(v.threadRef(), v.path(), v.line(), FindingVerdict.Status.UNCHANGED, v.note())
+                .map(v -> v.status() == FindingVerdict.Status.STILL_OPEN && !lineTouched(changedRangesByPath, v)
+                        ? new FindingVerdict(v.threadRef(), v.path(), v.line(),
+                                FindingVerdict.Status.UNCHANGED, v.note())
                         : v)
                 .toList();
+    }
+
+    /** Test-only entry point: {@link #downgradeUntouched} is exercised directly by
+     *  hunk-granularity unit tests instead of through the full generateReview pipeline. */
+    static List<FindingVerdict> downgradeUntouchedForTest(List<FindingVerdict> verdicts, String incrementalDiff) {
+        return downgradeUntouched(verdicts, incrementalDiff);
+    }
+
+    /** OLD-side hunk ranges per path (registered under both old and new path, rename-safe). */
+    private static Map<String, List<int[]>> changedOldSideRanges(String incrementalDiff) {
+        Map<String, List<int[]>> ranges = new HashMap<>();
+        for (FilePatch patch : UnifiedDiffParser.parse(incrementalDiff)) {
+            for (Hunk hunk : patch.hunks()) {
+                int[] range = { hunk.oldStart(), hunk.oldStart() + Math.max(hunk.oldLines(), 1) - 1 };
+                register(ranges, patch.oldPath(), range);
+                register(ranges, patch.newPath(), range);
+            }
+        }
+        return ranges;
+    }
+
+    private static void register(Map<String, List<int[]>> ranges, String path, int[] range) {
+        if (path != null) {
+            ranges.computeIfAbsent(path, k -> new ArrayList<>()).add(range);
+        }
+    }
+
+    private static boolean lineTouched(Map<String, List<int[]>> ranges, FindingVerdict v) {
+        List<int[]> forPath = ranges.get(v.path());
+        if (forPath == null) {
+            return false;
+        }
+        return forPath.stream().anyMatch(r -> v.line() >= r[0] && v.line() <= r[1]);
     }
 
     /**

@@ -91,10 +91,11 @@ class ReviewWorkerTest {
             diff --git a/src/Touched.java b/src/Touched.java
             --- a/src/Touched.java
             +++ b/src/Touched.java
-            @@ -1,2 +1,3 @@
-             class Touched {
-            +    int change = 1;
-             }
+            @@ -4,3 +4,3 @@
+             line4
+            -old5
+            +new5
+             line6
             """;
     private static final String RENAME_DIFF = """
             diff --git a/src/Old.java b/src/New.java
@@ -651,7 +652,9 @@ class ReviewWorkerTest {
 
     @Test
     void stillOpenDowngradedWhenPathUntouched() {
-        compareDiff = INCREMENTAL_DIFF_TOUCHED_ONLY; // only src/Touched.java is touched
+        // src/Touched.java's hunk covers old lines 4-6 (finding at line 5 sits inside it);
+        // src/Untouched.java has no patch in the diff at all.
+        compareDiff = INCREMENTAL_DIFF_TOUCHED_ONLY;
         reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"x\"},"
                 + "{\"id\":2,\"status\":\"still-open\",\"note\":\"y\"}]}";
         PriorRun prior = new PriorRun("aaa111", "sum-1", List.of(
@@ -679,6 +682,51 @@ class ReviewWorkerTest {
         ReviewGenerated emitted = lastReviewGenerated();
         assertEquals(FindingVerdict.Status.STILL_OPEN, emitted.verdicts().getFirst().status(),
                 "no downgrade possible without an incremental diff — stay with the LLM's verdict");
+    }
+
+    // --- downgradeUntouched: hunk-level granularity (Task 2) ---
+
+    @Test
+    void stillOpenStaysOpenWhenItsOwnLineIsInAChangedHunk() {
+        // incremental diff changes lines around 5 in src/A.java; finding at line 5
+        String diff = "diff --git a/src/A.java b/src/A.java\n"
+                + "--- a/src/A.java\n+++ b/src/A.java\n"
+                + "@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
+        List<FindingVerdict> in = List.of(new FindingVerdict("t-1", "src/A.java", 5,
+                FindingVerdict.Status.STILL_OPEN, "still missing"));
+        List<FindingVerdict> out = ReviewWorker.downgradeUntouchedForTest(in, diff);
+        assertEquals(FindingVerdict.Status.STILL_OPEN, out.getFirst().status());
+    }
+
+    @Test
+    void stillOpenBecomesUnchangedWhenOnlyAnotherPartOfTheFileChanged() {
+        // change is around line 5; finding at line 12 (same file, untouched region)
+        String diff = "diff --git a/src/A.java b/src/A.java\n"
+                + "--- a/src/A.java\n+++ b/src/A.java\n"
+                + "@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
+        List<FindingVerdict> in = List.of(new FindingVerdict("t-2", "src/A.java", 12,
+                FindingVerdict.Status.STILL_OPEN, "still missing"));
+        List<FindingVerdict> out = ReviewWorker.downgradeUntouchedForTest(in, diff);
+        assertEquals(FindingVerdict.Status.UNCHANGED, out.getFirst().status(),
+                "finding's own line untouched -> silent even though the file changed elsewhere");
+    }
+
+    @Test
+    void untouchedFileStillDowngrades() {
+        String diff = "diff --git a/src/A.java b/src/A.java\n"
+                + "--- a/src/A.java\n+++ b/src/A.java\n@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
+        List<FindingVerdict> in = List.of(new FindingVerdict("t-3", "src/Other.java", 9,
+                FindingVerdict.Status.STILL_OPEN, "x"));
+        assertEquals(FindingVerdict.Status.UNCHANGED,
+                ReviewWorker.downgradeUntouchedForTest(in, diff).getFirst().status());
+    }
+
+    @Test
+    void nullDiffLeavesVerdictsUnchanged() {
+        List<FindingVerdict> in = List.of(new FindingVerdict("t-4", "src/A.java", 5,
+                FindingVerdict.Status.STILL_OPEN, "x"));
+        assertEquals(FindingVerdict.Status.STILL_OPEN,
+                ReviewWorker.downgradeUntouchedForTest(in, null).getFirst().status());
     }
 
     @Test
