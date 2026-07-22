@@ -98,6 +98,29 @@ class AnchorsTest {
         assertNull(anchor.endNewLine());
     }
 
+    private static final String TWO_HUNKS = """
+            diff --git a/a.java b/a.java
+            --- a/a.java
+            +++ b/a.java
+            @@ -1,1 +1,2 @@
+             keep1
+            +added2
+            @@ -5,1 +6,2 @@
+             keep6
+            +added7
+            """;
+
+    @Test
+    void rangeEndInADifferentHunkDegradesToSingleLine() {
+        // startLine (2) resolves in hunk 1; endLine (7) only exists in hunk 2 of the SAME file —
+        // distinct from "end absent anywhere" (rangeEndOutsideTheHunkDegradesToSingleLine): this
+        // proves the end must resolve in the SAME hunk as the start, not merely somewhere in the file.
+        List<FilePatch> patches = UnifiedDiffParser.parse(TWO_HUNKS);
+        InlineAnchor anchor = Anchors.resolveLine(patches, "a.java", 2, 7).orElseThrow();
+        assertEquals(2, anchor.newLine());
+        assertNull(anchor.endNewLine());
+    }
+
     private static final String MODIFIED_LINE = """
             diff --git a/a.java b/a.java
             --- a/a.java

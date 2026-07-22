@@ -133,6 +133,10 @@ class ReviewWorkerTest {
         worker.mapper = new ObjectMapper();
         worker.inlinePostThrottleMs = 0;
         worker.rateLimitRetryCapSeconds = 0;
+        // Large so the per-message budget guard never trips in existing tests (every wait here
+        // is already capped to 0 seconds by rateLimitRetryCapSeconds — this just keeps the
+        // budget itself from being the reason a retry is skipped).
+        worker.rateLimitBudgetSeconds = 180;
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
@@ -302,6 +306,18 @@ class ReviewWorkerTest {
 
         assertEquals(3, sink.inlineAttempts, "3 bounded attempts");
         assertTrue(sink.summaryBody.contains("Could not be posted inline"));
+    }
+
+    @Test
+    void inlineBackoffStopsWhenTheMessageBudgetIsExhausted() {
+        worker.rateLimitBudgetSeconds = 0; // budget already exhausted before the first retry
+        sink.failInlineTimes = Integer.MAX_VALUE; // would loop forever if ever retried
+        sink.inlineFailure = new TestScmException(429, true, 0);
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        assertEquals(1, sink.inlineAttempts,
+                "budget already exhausted — the first rate-limit hit gives up without sleeping");
+        assertTrue(sink.summaryBody.contains("Could not be posted inline"), "finding folds into the summary");
     }
 
     @Test

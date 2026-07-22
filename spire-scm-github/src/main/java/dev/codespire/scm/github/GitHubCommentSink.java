@@ -76,6 +76,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         if (!old && anchor.endNewLine() != null && anchor.endNewLine() > anchor.newLine()) {
             // GitHub anchors a multi-line range comment at the LAST line ("line"); the
             // range's first line is carried separately as start_line/start_side.
+            // GitHub may 422 a range whose interior lines aren't ALL present in the diff
+            // (e.g. a line the model cited wasn't actually changed); the caller catches that
+            // and folds the finding into the summary instead of aborting the batch.
             body.put("start_line", anchor.newLine());
             body.put("start_side", "RIGHT");
             body.put("line", anchor.endNewLine());

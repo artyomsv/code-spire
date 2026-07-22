@@ -102,9 +102,15 @@ public class ReviewWorker {
     @ConfigProperty(name = "spire.scm.inline-post-throttle-ms", defaultValue = "500")
     long inlinePostThrottleMs;
 
-    /** Upper bound on the backoff sleep for a rate-limited inline post retry. */
+    /** Upper bound on the backoff sleep for a single rate-limited inline post retry. */
     @ConfigProperty(name = "spire.scm.rate-limit-retry-cap-seconds", defaultValue = "120")
     long rateLimitRetryCapSeconds;
+
+    /** Ceiling on TOTAL inline-retry sleep across every finding in one postComments message —
+     *  keeps cumulative backoff comfortably under Kafka's max.poll.interval.ms (default 300s)
+     *  so a run of rate-limited findings can never trigger a consumer rebalance. */
+    @ConfigProperty(name = "spire.scm.rate-limit-budget-seconds", defaultValue = "180")
+    long rateLimitBudgetSeconds;
 
     /** Idempotency slot for the paid LLM call itself (finding H4). */
     private static final String LLM_KEY = "LLM";
@@ -522,8 +528,10 @@ public class ReviewWorker {
             List<Finding> unanchored = new ArrayList<>();
             List<Finding> failed = new ArrayList<>();
 
+            // Fix 1: one budget per message, shared across every finding's retry loop.
+            BackoffBudget backoffBudget = new BackoffBudget(rateLimitBudgetSeconds);
             for (Finding finding : review.findings()) {
-                postOneInline(commentSink, command, diff, finding, posted, unanchored, failed);
+                postOneInline(commentSink, command, diff, finding, posted, unanchored, failed, backoffBudget);
             }
 
             String summaryCommentId = postSummary(commentSink, command, review, unanchored, failed);
@@ -648,8 +656,8 @@ public class ReviewWorker {
     }
 
     private void postOneInline(CommentSink commentSink, PostComments command, Diff diff, Finding finding,
-                               List<CommentsPosted.PostedInline> posted,
-                               List<Finding> unanchored, List<Finding> failed) {
+                               List<CommentsPosted.PostedInline> posted, List<Finding> unanchored,
+                               List<Finding> failed, BackoffBudget backoffBudget) {
         Optional<InlineAnchor> anchor = Anchors.resolveLine(
                 diff.files(), finding.path(), finding.range().startLine(), finding.range().endLine());
         if (anchor.isEmpty()) {
@@ -666,7 +674,7 @@ public class ReviewWorker {
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
                     CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor.get(),
-                            renderInline(finding));
+                            renderInline(finding), backoffBudget);
                     idempotency.markPosted(command.reviewId(), command.commit(), key, ref.commentId());
                     posted.add(new CommentsPosted.PostedInline(ref.commentId(),
                             finding.path(), finding.range().startLine()));
@@ -684,12 +692,40 @@ public class ReviewWorker {
     private static final int MAX_INLINE_ATTEMPTS = 3;
 
     /**
+     * Shared, mutable per-message backoff ceiling (Fix 1): one instance is created per
+     * {@code postComments} call and threaded through every finding's retry loop, so the TOTAL
+     * sleep across the whole batch is bounded — not just each finding's own attempts.
+     */
+    private static final class BackoffBudget {
+
+        private long remainingSeconds;
+
+        BackoffBudget(long totalSeconds) {
+            this.remainingSeconds = totalSeconds;
+        }
+
+        boolean isExhausted() {
+            return remainingSeconds <= 0;
+        }
+
+        long remainingSeconds() {
+            return remainingSeconds;
+        }
+
+        void spend(long seconds) {
+            remainingSeconds -= seconds;
+        }
+    }
+
+    /**
      * GitHub secondary rate limits hit bursty comment creation; honor Retry-After with a
      * bounded in-loop retry instead of dropping the finding. Non-rate-limit failures keep
-     * the existing fail-fast per-finding isolation.
+     * the existing fail-fast per-finding isolation. The shared {@code budget} bounds the TOTAL
+     * sleep across every finding in the message — once exhausted, this finding gives up
+     * immediately (no sleep) and folds into the summary failed-list like an attempt exhaustion.
      */
-    private CommentRef postInlineWithBackoff(CommentSink sink, PostComments command,
-                                             Diff diff, InlineAnchor anchor, String body) {
+    private CommentRef postInlineWithBackoff(CommentSink sink, PostComments command, Diff diff,
+                                             InlineAnchor anchor, String body, BackoffBudget budget) {
         for (int attempt = 1; ; attempt++) {
             try {
                 return sink.postInline(command.repo(), command.prId(), diff.refs(), anchor, body);
@@ -699,13 +735,26 @@ public class ReviewWorker {
                         || !api.isRateLimited()) {
                     throw e;
                 }
-                long waitSeconds = api.retryAfterSeconds() != null
-                        ? api.retryAfterSeconds() : (1L << attempt);
-                sleepSeconds(Math.min(waitSeconds, rateLimitRetryCapSeconds));
-                LOG.infof("Rate limited posting inline (%s) — retry %d/%d",
-                        api.status(), attempt + 1, MAX_INLINE_ATTEMPTS);
+                if (budget.isExhausted()) {
+                    LOG.infof("Rate-limit backoff budget exhausted posting inline (%s) — giving up without sleeping",
+                            api.status());
+                    throw e;
+                }
+                sleepAndSpendBudget(api, attempt, budget);
             }
         }
+    }
+
+    /** Computes the bounded sleep (single-retry cap AND remaining message budget), sleeps, then
+     *  debits the budget by exactly what was slept. */
+    private void sleepAndSpendBudget(ScmApiException api, int attempt, BackoffBudget budget) {
+        long waitSeconds = api.retryAfterSeconds() != null ? api.retryAfterSeconds() : (1L << attempt);
+        long cappedSeconds = Math.min(waitSeconds, Math.min(rateLimitRetryCapSeconds, budget.remainingSeconds()));
+        long sleepSeconds = Math.max(0, cappedSeconds);
+        sleepSeconds(sleepSeconds);
+        budget.spend(sleepSeconds);
+        LOG.infof("Rate limited posting inline (%s) — retry %d/%d",
+                api.status(), attempt + 1, MAX_INLINE_ATTEMPTS);
     }
 
     private void sleepSeconds(long seconds) {
