@@ -22,7 +22,9 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -235,6 +237,51 @@ class GitHubApiTest {
                 .willReturn(aResponse().withStatus(429)));
         GitHubApiException e = assertThrows(GitHubApiException.class,
                 () -> commentSink.getPullRequestAuthor(REPO, 42));
+        assertTrue(e.isRateLimited());
+    }
+
+    @Test
+    void secondaryRateLimit403WithRetryAfterIsRateLimited() {
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(403)
+                        .withHeader("Retry-After", "37")
+                        .withBody("You have exceeded a secondary rate limit.")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> diffSource.fetchPullRequest(REPO, 42));
+        assertTrue(e.isRateLimited());
+        assertEquals(37, e.retryAfterSeconds());
+    }
+
+    @Test
+    void rateLimit403WithZeroRemainingHeaderIsRateLimited() {
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(403)
+                        .withHeader("x-ratelimit-remaining", "0")
+                        .withBody("API rate limit exceeded")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> diffSource.fetchPullRequest(REPO, 42));
+        assertTrue(e.isRateLimited());
+        assertNull(e.retryAfterSeconds());
+    }
+
+    @Test
+    void permission403IsNotRateLimited() {
+        server.stubFor(get(urlEqualTo("/repos/sandbox/demo-repo/pulls/42"))
+                .willReturn(aResponse().withStatus(403)
+                        .withBody("Resource not accessible by integration")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> diffSource.fetchPullRequest(REPO, 42));
+        assertFalse(e.isRateLimited());
+    }
+
+    @Test
+    void graphQlRateLimitedErrorIsRateLimited() {
+        server.stubFor(post(urlPathEqualTo("/graphql"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"errors\":[{\"type\":\"RATE_LIMITED\",\"message\":\"API rate limit exceeded\"}]}")));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> commentSink.resolveThread(REPO, 42, new ThreadRef("42")));
         assertTrue(e.isRateLimited());
     }
 

@@ -13,6 +13,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -82,9 +83,14 @@ public class GitHubClient {
         try {
             String body = mapper.writeValueAsString(Map.of("query", query, "variables", variables));
             JsonNode response = parse(send("POST", path, target, JSON_MEDIA, body));
-            if (response.has("errors") && !response.path("errors").isEmpty()) {
-                throw new GitHubApiException(200, "POST", path,
-                        "GraphQL errors: " + response.path("errors").toString());
+            JsonNode errors = response.path("errors");
+            if (!errors.isEmpty()) {
+                boolean rateLimited = false;
+                for (JsonNode error : errors) {
+                    rateLimited |= "RATE_LIMITED".equals(error.path("type").asText(""));
+                }
+                throw new GitHubApiException(200, "POST", path, "GraphQL errors: " + errors,
+                        rateLimited, null);
             }
             return response.path("data");
         } catch (JsonProcessingException e) {
@@ -132,7 +138,7 @@ public class GitHubClient {
                 continue;
             }
             if (status / 100 != 2) {
-                throw new GitHubApiException(status, method, path, bodySnippet(response.body()));
+                throw failure(status, method, path, response);
             }
             return response.body();
         }
@@ -182,6 +188,27 @@ public class GitHubClient {
         }
         String cleaned = body.replaceAll("\\s+", " ").trim();
         return cleaned.length() <= 500 ? cleaned : cleaned.substring(0, 500) + "...";
+    }
+
+    /** GitHub signals rate limits mostly as 403 (+Retry-After / x-ratelimit-remaining: 0), not 429. */
+    private static GitHubApiException failure(int status, String method, String path,
+                                              HttpResponse<String> response) {
+        String snippet = bodySnippet(response.body());
+        Integer retryAfter = response.headers().firstValue("Retry-After")
+                .map(GitHubClient::parseSecondsOrNull).orElse(null);
+        boolean zeroRemaining = response.headers().firstValue("x-ratelimit-remaining")
+                .map("0"::equals).orElse(false);
+        boolean rateLimited = status == 429 || (status == 403 && (retryAfter != null || zeroRemaining
+                || snippet.toLowerCase(Locale.ROOT).contains("rate limit")));
+        return new GitHubApiException(status, method, path, snippet, rateLimited, retryAfter);
+    }
+
+    private static Integer parseSecondsOrNull(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private HttpResponse<String> execute(String method, String path, URI target, String accept, String jsonBody) {

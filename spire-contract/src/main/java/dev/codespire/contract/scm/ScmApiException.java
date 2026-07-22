@@ -18,4 +18,9 @@ public interface ScmApiException {
     default boolean isRateLimited() {
         return status() == 429;
     }
+
+    /** Seconds the provider asked us to wait (Retry-After); null when unknown. */
+    default Integer retryAfterSeconds() {
+        return null;
+    }
 }
