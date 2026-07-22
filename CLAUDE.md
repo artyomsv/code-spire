@@ -122,6 +122,9 @@ The design is fully specified in `docs/` — **treat those files as the source o
   counts and cumulative LLM cost instead of overwritten last-run columns; `STILL_OPEN` downgrades
   to `UNCHANGED` at hunk (not file) granularity; the Findings card shows an in-progress state
   instead of a false clean; a transient `answering` flag (V21) drives a responding indicator.
+- **PR-state badge (2026-07-23):** a distinct `pr_state` (OPEN/MERGED/CLOSED, V22) on the review
+  read-model, set from the open/close webhook events across all three SCMs, shown as its own
+  badge separate from the review status; cancel-on-close is unchanged.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 

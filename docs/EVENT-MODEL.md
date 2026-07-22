@@ -110,6 +110,10 @@
 - **Saga:** on `PullRequestClosed` → `CancelReview` → Decider emits `ReviewCancelled` → CANCELLED.
   In-flight workers see the stale/cancelled run at their next stage boundary and abandon (ADR-013) —
   no LLM spend completes, no comment lands on a closed PR.
+- `PullRequestClosed` also stamps the read-model's `pr_state` (MERGED/CLOSED, by `reason`) — this
+  is independent of the cancel-only-when-in-flight rule above, which is unchanged (a review already
+  COMPLETED just gets its `pr_state` updated, no `ReviewCancelled`). Symmetrically, a
+  `PullRequestEventReceived` (S1) stamps `pr_state=OPEN` on the registered review.
 - Manual re-review: `ManualCommandReceived{review}` → (saga) → `RequestReview{force=true}` (FR-12).
 
 ### S10 — (later) Memory & analytics
