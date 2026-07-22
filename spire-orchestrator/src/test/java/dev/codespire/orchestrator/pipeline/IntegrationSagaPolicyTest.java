@@ -40,6 +40,7 @@ class IntegrationSagaPolicyTest {
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
     private final List<String> headerProviderTypes = new ArrayList<>();
+    private final List<String> rerunInvocations = new ArrayList<>();
     private boolean reviewRegistered;
 
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
@@ -109,6 +110,13 @@ class IntegrationSagaPolicyTest {
             }
         };
         saga.policy = policy;
+        saga.rerunService = new ReviewRerunService() {
+            @Override
+            public boolean rerun(String workspace, String slug, long pr) {
+                rerunInvocations.add(workspace + "/" + slug + "#" + pr);
+                return true;
+            }
+        };
         return saga;
     }
 
@@ -233,6 +241,38 @@ class IntegrationSagaPolicyTest {
         saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("human-1", "alice", "Alice")));
         assertFalse(notes.contains("SelfLoopDropped"), "a human /command is not a self-loop");
+    }
+
+    @Test
+    void reviewCommandTriggersARerun() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("human-1", "alice", "Alice")));
+        assertEquals(List.of("acme/web#412"), rerunInvocations, "the rerun service is called with repo + PR");
+        assertFalse(notes.contains("SelfLoopDropped"), "a human /review is not a self-loop");
+    }
+
+    @Test
+    void reviewCommandOnUnknownPrIsSkippedNotFatal() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.rerunService = new ReviewRerunService() {
+            @Override
+            public boolean rerun(String workspace, String slug, long pr) {
+                throw new jakarta.ws.rs.NotFoundException("no review for " + workspace + "/" + slug + "#" + pr);
+            }
+        };
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("human-1", "alice", "Alice")));
+        assertTrue(notes.contains("skipped:/review"), "an unknown PR is recorded as skipped, not fatal");
+    }
+
+    @Test
+    void botAuthoredReviewCommandStaysDropped() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acct", "spire-bot", "Bot")));
+        assertTrue(notes.contains("SelfLoopDropped"), "bot-authored /review is still dropped by the self-loop guard");
+        assertTrue(rerunInvocations.isEmpty(), "the rerun service is never called for a bot-authored /review");
     }
 
     @Test

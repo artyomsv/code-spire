@@ -61,6 +61,9 @@ public class IntegrationSaga {
     @Inject
     ConversationSaga conversation;
 
+    @Inject
+    ReviewRerunService rerunService;
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -86,8 +89,10 @@ public class IntegrationSaga {
             case ManualCommandReceived e -> {
                 if (isBotAuthored(e.repo().workspace(), e.author())) {
                     dropSelfLoop(reviewIdOf(e), "/" + e.command());
+                } else if ("review".equals(e.command())) {
+                    triggerManualReview(e);
                 } else {
-                    LOG.infof("Manual /%s command received — handled in P2", e.command());
+                    LOG.infof("Manual /%s command received — no handler", e.command());
                 }
             }
             case AuthorReplied e -> {
@@ -110,6 +115,19 @@ public class IntegrationSaga {
     private void dropSelfLoop(String reviewId, String what) {
         timeline.record("integration", "SelfLoopDropped", reviewId, "bot-authored " + what + " ignored");
         LOG.debugf("Dropping bot-authored %s (self-loop guard) on %s", what, reviewId);
+    }
+
+    /** A /review PR comment forces a re-review of the PR's last-known commit (FR-12). */
+    private void triggerManualReview(ManualCommandReceived e) {
+        String reviewId = reviewIdOf(e);
+        try {
+            boolean started = rerunService.rerun(e.repo().workspace(), e.repo().slug(), e.prId());
+            projection.appendEvent(reviewId, "integration", "ManualReview",
+                    started ? "/review by @" + e.author().username() : "/review refused (already running)");
+        } catch (jakarta.ws.rs.NotFoundException unknown) {
+            timeline.record("integration", "skipped:/review", reviewId,
+                    "no registered review for this PR — open/update it first");
+        }
     }
 
     /**
