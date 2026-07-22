@@ -29,6 +29,8 @@ import java.util.Map;
  */
 public class GitHubCommentSink implements CommentSink, ThreadSource {
 
+    private static final System.Logger LOG = System.getLogger(GitHubCommentSink.class.getName());
+
     // Bounds thread re-fetch on a pathological PR (100 comments/page × pages).
     private static final int MAX_THREAD_PAGES = 20;
 
@@ -104,7 +106,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
      * comment's {@code databaseId} equals {@code thread}'s value. A human may have
      * already resolved it (ALREADY_RESOLVED, no mutation) or it may be gone entirely —
      * the root comment was deleted, so there is nothing left to act on (also
-     * ALREADY_RESOLVED, not an error).
+     * ALREADY_RESOLVED, not an error). If the pagination cap is exhausted while more
+     * pages remained, the thread's state is genuinely unknown — degrade honestly to
+     * UNSUPPORTED (reply-only) rather than claiming it was already resolved.
      */
     @Override
     public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
@@ -117,11 +121,13 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
                 return found;
             }
             if (!threads.path("pageInfo").path("hasNextPage").asBoolean(false)) {
-                break;
+                return ThreadResolution.ALREADY_RESOLVED; // walked everything; comment is gone
             }
             cursor = threads.path("pageInfo").path("endCursor").asText(null);
         }
-        return ThreadResolution.ALREADY_RESOLVED; // thread gone (comment deleted) — nothing to resolve
+        LOG.log(System.Logger.Level.WARNING, "resolveThread " + thread.value() + ": pagination cap ("
+                + MAX_THREAD_PAGES + " pages) exhausted — degrading to reply-only");
+        return ThreadResolution.UNSUPPORTED;
     }
 
     private ThreadResolution resolveInPage(JsonNode nodes, ThreadRef thread) {
@@ -190,6 +196,8 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
         try {
             return client.getJson("/user").path("login").asText("");
         } catch (RuntimeException transientFailure) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "botLogin lookup failed — messages will not be attributed to the bot", transientFailure);
             return "";
         }
     }
@@ -224,6 +232,10 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             }
             if (count < 100) {
                 break; // last page reached
+            }
+            if (page == MAX_THREAD_PAGES) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "thread " + root + " transcript may be truncated after " + MAX_THREAD_PAGES + " pages");
             }
         }
         return new ThreadTranscript(thread, path, line, commit, messages);

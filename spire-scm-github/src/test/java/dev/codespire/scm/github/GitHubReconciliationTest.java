@@ -15,9 +15,11 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.patch;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitHubReconciliationTest {
@@ -94,5 +96,48 @@ class GitHubReconciliationTest {
         assertTrue(wireMock.findAll(com.github.tomakehurst.wiremock.client.WireMock
                 .postRequestedFor(urlPathEqualTo("/graphql"))).stream()
                 .noneMatch(r -> r.getBodyAsString().contains("resolveReviewThread")));
+    }
+
+    @Test
+    void gheBaseUrlRoutesGraphQlToApiGraphql() {
+        GitHubClient ghe = new GitHubClient(
+                new GitHubConfig(wireMock.baseUrl() + "/api/v3", "t", "unused"), new ObjectMapper());
+        wireMock.stubFor(post(urlEqualTo("/api/graphql"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"data":{"repository":{"pullRequest":{"reviewThreads":{
+                                  "pageInfo":{"hasNextPage":false,"endCursor":null},
+                                  "nodes":[]}}}}}""")));
+        assertEquals(ThreadResolution.ALREADY_RESOLVED,
+                new GitHubCommentSink(ghe).resolveThread(repo, 1L, new ThreadRef("42")));
+        assertFalse(wireMock.findAll(postRequestedFor(urlEqualTo("/api/graphql"))).isEmpty());
+    }
+
+    @Test
+    void resolveExhaustedPaginationReportsUnsupportedNotResolved() {
+        // Every page returns a full 100-node page with hasNextPage still true and none of the
+        // nodes' databaseIds matching the target — the loop must hit MAX_THREAD_PAGES and stop.
+        wireMock.stubFor(post(urlPathEqualTo("/graphql"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(nonMatchingPageOfHundred())));
+        ThreadResolution result = new GitHubCommentSink(client)
+                .resolveThread(repo, 1L, new ThreadRef("999999"));
+        assertEquals(ThreadResolution.UNSUPPORTED, result);
+    }
+
+    private static String nonMatchingPageOfHundred() {
+        StringBuilder nodes = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            if (i > 0) {
+                nodes.append(',');
+            }
+            nodes.append("{\"id\":\"RT_").append(i).append("\",\"isResolved\":false,")
+                    .append("\"comments\":{\"nodes\":[{\"databaseId\":").append(i).append("}]}}");
+        }
+        return "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{"
+                + "\"pageInfo\":{\"hasNextPage\":true,\"endCursor\":\"c\"},"
+                + "\"nodes\":[" + nodes + "]}}}}}";
     }
 }
