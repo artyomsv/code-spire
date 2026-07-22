@@ -8,6 +8,9 @@ export type ReviewStatus =
 
 export type StageState = 'done' | 'active' | 'pending' | 'failed';
 
+/** The pull/merge request's own state — distinct from the review-processing `status`. */
+export type PrState = 'OPEN' | 'MERGED' | 'CLOSED';
+
 export interface ReviewSummary {
   id: string; // full reviewId, e.g. "review::acme/web#412" (display/metadata only)
   workspace: string; // e.g. "acme"
@@ -22,6 +25,7 @@ export interface ReviewSummary {
   sha: string; // commit hash (12-char on Bitbucket, 40-char on GitHub)
   htmlUrl: string; // the PR's web URL — provider badge falls back to its host when providerType is empty
   providerType: string; // stored SCM type: 'github' | 'gitlab' | 'bitbucket-cloud' | 'bitbucket-dc' | ''
+  prState: PrState; // the PR/MR's own state — rendered as a badge distinct from `status`
   status: ReviewStatus;
   stage: number; // 0..6 index into [Received, Diff, Context, Review, Comments, Done]
   findings: number;

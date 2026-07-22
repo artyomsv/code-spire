@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Bot, CheckCircle2, Cpu, MessageCircle } from 'lucide-react';
+import { Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -7,6 +7,7 @@ import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
   Finding,
   LlmCall,
+  PrState,
   ReconciliationItem,
   ReviewDetail,
   ReviewEvent,
@@ -66,6 +67,24 @@ export function providerBadge(r: ProviderSource | undefined) {
   const p = providerLabel(r);
   if (p === '—') return null;
   return <span className={`prov-badge prov-${p}`}>{p}</span>;
+}
+
+/**
+ * The pull/merge request's own state (open/merged/closed) — a badge distinct from the
+ * review-outcome/status badge (`outcomeBadge`/`statusCell`), shown beside it in the
+ * reviews-list row and the detail header.
+ */
+export function prStateBadge(prState: PrState) {
+  const [cls, Icon, label] =
+    prState === 'MERGED' ? ['pr-merged', GitMerge, 'Merged'] :
+    prState === 'CLOSED' ? ['pr-closed', GitPullRequestClosed, 'Closed'] :
+    ['pr-open', GitPullRequest, 'Open'];
+  return (
+    <span className={`pr-state ${cls}`} title={`Pull request ${label.toLowerCase()}`}>
+      <Icon size={13} aria-hidden="true" />
+      {label}
+    </span>
+  );
 }
 
 /** The LLM vendor behind a model — from the catalogued provider type, else inferred from the name. */

@@ -400,6 +400,24 @@
   }
   .responding svg { flex: none; }
 
+  /* Status cell wraps the outcome/status badge, the PR-state badge, and the responding
+     indicator onto multiple lines when the column is narrower than their combined width. */
+  .status-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+
+  /* PR-state badge (open/merged/closed) — the pull/merge request's own state, distinct
+     from the review-outcome/status badge (`.pill`) shown beside it. */
+  .pr-state {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 2px 7px; border-radius: 6px;
+    background: var(--pr-soft); color: var(--pr); border: 1px solid color-mix(in srgb, var(--pr) 28%, transparent);
+    white-space: nowrap;
+  }
+  .pr-state svg { flex: none; }
+  .pr-state.pr-open { --pr: var(--good); --pr-soft: var(--good-soft); }
+  .pr-state.pr-merged { --pr: var(--iris); --pr-soft: var(--iris-soft); }
+  .pr-state.pr-closed { --pr: var(--crit); --pr-soft: var(--crit-soft); }
+
   /* mini pipeline in row */
   .mini { display: flex; align-items: center; gap: 4px; }
   .mini .seg { height: 5px; flex: 1; border-radius: 3px; background: var(--border-strong); position: relative; overflow: hidden; }

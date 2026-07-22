@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ReviewStatus, ReviewSummary } from '../api';
-import { ago, CopyableValue, findCell, llmIcon, miniPipeline, providerBadge, shortSha, statusCell } from '../render';
+import { ago, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
 import { formatCost } from '../money';
 
 type ChipFilter = 'all' | 'reviewing' | 'completed' | 'failed' | 'closed';
@@ -168,7 +168,10 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                   if (e.key === 'Enter') open(r);
                 }}
               >
-                <div>{statusCell(r)}</div>
+                <div className="status-cell">
+                  {statusCell(r)}
+                  {prStateBadge(r.prState)}
+                </div>
                 <div className="prov-cell">
                   {providerBadge(r) ?? <span className="prov-none">—</span>}
                 </div>
