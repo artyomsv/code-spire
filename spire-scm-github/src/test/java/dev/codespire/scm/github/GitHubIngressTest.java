@@ -128,6 +128,40 @@ class GitHubIngressTest {
         assertTrue(ingress.translate(webhook(pr("opened", false), Map.of())).isEmpty());
     }
 
+    // --- translation: draft-PR policy ---
+
+    @Test
+    void draftPrOpenedIsSkippedByDefault() {
+        assertTrue(ingress.translate(webhook(pr("opened", false, true), "pull_request")).isEmpty());
+    }
+
+    @Test
+    void draftPrSynchronizeIsSkippedByDefault() {
+        assertTrue(ingress.translate(webhook(pr("synchronize", false, true), "pull_request")).isEmpty());
+    }
+
+    @Test
+    void readyForReviewTriggersAnOpenedEvent() {
+        List<IntegrationEvent> events = ingress.translate(webhook(pr("ready_for_review", false, false), "pull_request"));
+        assertEquals(1, events.size());
+        assertEquals(IntegrationEvent.PrAction.OPENED,
+                ((IntegrationEvent.PullRequestEventReceived) events.getFirst()).action());
+    }
+
+    @Test
+    void draftClosedStillCancels() {
+        List<IntegrationEvent> events = ingress.translate(webhook(pr("closed", false, true), "pull_request"));
+        assertEquals(1, events.size());
+        assertInstanceOf(IntegrationEvent.PullRequestClosed.class, events.getFirst());
+    }
+
+    @Test
+    void reviewDraftsTrueRestoresTodaysBehavior() {
+        GitHubIngress permissive = new GitHubIngress(SECRET, new ObjectMapper(), Set.of("review"), true);
+        assertEquals(1, permissive.translate(webhook(pr("opened", false, true), "pull_request")).size());
+        assertTrue(permissive.translate(webhook(pr("ready_for_review", false, false), "pull_request")).isEmpty());
+    }
+
     // --- fixtures ---
 
     private static byte[] pr(String action, boolean merged) {
@@ -147,6 +181,30 @@ class GitHubIngressTest {
                   }
                 }
                 """.formatted(action, merged).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] pr(String action, boolean merged, boolean draft) {
+        return """
+                {
+                  "action": "%s",
+                  "repository": { "full_name": "artyomsv/spire-test" },
+                  "pull_request": {
+                    "number": 7,
+                    "title": "Add feature",
+                    "body": "Adds the feature.",
+                    "merged": %s,
+                    "draft": %s,
+                    "head": { "ref": "feature/x", "sha": "abc123def4567890" },
+                    "base": { "ref": "main" },
+                    "user": { "id": 1234, "login": "octocat" },
+                    "html_url": "https://github.com/artyomsv/spire-test/pull/7"
+                  }
+                }
+                """.formatted(action, merged, draft).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static RawWebhook webhook(byte[] body, String event) {
+        return new RawWebhook(Map.of("X-GitHub-Event", event), body);
     }
 
     private static byte[] issueComment(String text, boolean onPullRequest) {

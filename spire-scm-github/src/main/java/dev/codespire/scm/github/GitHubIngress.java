@@ -57,11 +57,23 @@ public class GitHubIngress implements ScmIngress {
     private final String webhookSecret;
     private final ObjectMapper mapper;
     private final Set<String> commands;
+    private final boolean reviewDrafts;
 
     public GitHubIngress(String webhookSecret, ObjectMapper mapper, Set<String> commands) {
+        this(webhookSecret, mapper, commands, false);
+    }
+
+    /**
+     * @param reviewDrafts draft-PR policy (config {@code spire.review.draft-prs}): {@code false}
+     *                     (default) skips draft opened/reopened/synchronize and instead reviews on
+     *                     {@code ready_for_review}; {@code true} restores reviewing drafts immediately
+     *                     (and then ignores {@code ready_for_review}, since the PR was already reviewed).
+     */
+    public GitHubIngress(String webhookSecret, ObjectMapper mapper, Set<String> commands, boolean reviewDrafts) {
         this.webhookSecret = webhookSecret;
         this.mapper = mapper;
         this.commands = Set.copyOf(commands);
+        this.reviewDrafts = reviewDrafts;
     }
 
     @Override
@@ -111,11 +123,23 @@ public class GitHubIngress implements ScmIngress {
         };
     }
 
+    /**
+     * Draft-PR policy (config {@code spire.review.draft-prs}): with
+     * {@link #reviewDrafts} false (default), a draft never triggers a review on
+     * open/reopen/synchronize — it fires instead when the author flips the PR to
+     * {@code ready_for_review}. With {@code reviewDrafts} true, drafts are reviewed
+     * immediately (today's behavior) and {@code ready_for_review} is then a no-op,
+     * since the PR was already reviewed on open. Closing always cancels regardless
+     * of draft state.
+     */
     private List<IntegrationEvent> pullRequest(JsonNode payload) {
         String action = payload.path("action").asText("");
+        boolean draft = payload.path("pull_request").path("draft").asBoolean(false);
+        boolean skipDraft = draft && !reviewDrafts;
         return switch (action) {
-            case "opened", "reopened" -> prEvent(payload, PrAction.OPENED);
-            case "synchronize" -> prEvent(payload, PrAction.UPDATED);
+            case "opened", "reopened" -> skipDraft ? List.<IntegrationEvent>of() : prEvent(payload, PrAction.OPENED);
+            case "synchronize" -> skipDraft ? List.<IntegrationEvent>of() : prEvent(payload, PrAction.UPDATED);
+            case "ready_for_review" -> reviewDrafts ? List.<IntegrationEvent>of() : prEvent(payload, PrAction.OPENED);
             case "closed" -> List.of(new PullRequestClosed(repo(payload), prNumber(payload),
                     payload.path("pull_request").path("merged").asBoolean(false)
                             ? CloseReason.MERGED : CloseReason.DECLINED));

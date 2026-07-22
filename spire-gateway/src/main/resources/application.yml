@@ -32,6 +32,12 @@ quarkus:
 # gateway's own webhook_repo table. Which SCMs are reviewed is the UI registry; no
 # provider flag or global webhook secret exists.
 
+spire:
+  review:
+    # Draft PRs are skipped on open/synchronize by default; the review fires on
+    # ready_for_review instead. Set true to review drafts immediately (old behavior).
+    draft-prs: false
+
 # cs.integration: keyed by reviewId, JSON-serialized IntegrationEvent
 # (CONTRACT §9). Broker address comes from KAFKA_BOOTSTRAP_SERVERS
 # (kafka.bootstrap.servers); Dev Services boots a broker in dev/test when unset.
