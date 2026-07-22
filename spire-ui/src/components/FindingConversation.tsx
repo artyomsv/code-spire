@@ -89,6 +89,11 @@ export function FindingConversation({
     return () => {
       cancelled = true;
     };
+    // `state`/`setState` are intentionally NOT dependencies: the effect writes state, so depending
+    // on it would re-run the effect on its own setState and re-fetch in a loop. The fetch decision
+    // reads only `open`, `replyCount`, and the `loadedAtCount` ref — do not let an exhaustive-deps
+    // autofix add `state` here, or the stuck-loading/refetch-loop bug returns (no jsdom test guards it).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, replyCount, workspace, slug, pr, threadRef]);
 
   function handleToggle(e: SyntheticEvent<HTMLDetailsElement>) {
