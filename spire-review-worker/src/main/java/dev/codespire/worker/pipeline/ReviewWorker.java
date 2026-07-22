@@ -41,6 +41,7 @@ import dev.codespire.llm.ReviewPromptBuilder;
 import dev.codespire.llm.VerdictsParser;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.io.UncheckedIOException;
@@ -95,6 +96,15 @@ public class ReviewWorker {
 
     @Inject
     ObjectMapper mapper;
+
+    /** Fixed pacing sleep between successful inline posts — avoids GitHub's secondary rate
+     *  limit on bursty comment creation. 0 disables it (tests). */
+    @ConfigProperty(name = "spire.scm.inline-post-throttle-ms", defaultValue = "500")
+    long inlinePostThrottleMs;
+
+    /** Upper bound on the backoff sleep for a rate-limited inline post retry. */
+    @ConfigProperty(name = "spire.scm.rate-limit-retry-cap-seconds", defaultValue = "120")
+    long rateLimitRetryCapSeconds;
 
     /** Idempotency slot for the paid LLM call itself (finding H4). */
     private static final String LLM_KEY = "LLM";
@@ -655,11 +665,12 @@ public class ReviewWorker {
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
-                    CommentRef ref = commentSink.postInline(command.repo(), command.prId(),
-                            diff.refs(), anchor.get(), renderInline(finding));
+                    CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor.get(),
+                            renderInline(finding));
                     idempotency.markPosted(command.reviewId(), command.commit(), key, ref.commentId());
                     posted.add(new CommentsPosted.PostedInline(ref.commentId(),
                             finding.path(), finding.range().startLine()));
+                    pace();
                 } catch (RuntimeException e) {
                     // Per-finding isolation: one failure never aborts the batch.
                     // The NULL claim row stays reclaimable for a retry.
@@ -667,6 +678,54 @@ public class ReviewWorker {
                     failed.add(finding);
                 }
             }
+        }
+    }
+
+    private static final int MAX_INLINE_ATTEMPTS = 3;
+
+    /**
+     * GitHub secondary rate limits hit bursty comment creation; honor Retry-After with a
+     * bounded in-loop retry instead of dropping the finding. Non-rate-limit failures keep
+     * the existing fail-fast per-finding isolation.
+     */
+    private CommentRef postInlineWithBackoff(CommentSink sink, PostComments command,
+                                             Diff diff, InlineAnchor anchor, String body) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return sink.postInline(command.repo(), command.prId(), diff.refs(), anchor, body);
+            } catch (RuntimeException e) {
+                Throwable cause = unwrap(e);
+                if (attempt >= MAX_INLINE_ATTEMPTS || !(cause instanceof ScmApiException api)
+                        || !api.isRateLimited()) {
+                    throw e;
+                }
+                long waitSeconds = api.retryAfterSeconds() != null
+                        ? api.retryAfterSeconds() : (1L << attempt);
+                sleepSeconds(Math.min(waitSeconds, rateLimitRetryCapSeconds));
+                LOG.infof("Rate limited posting inline (%s) — retry %d/%d",
+                        api.status(), attempt + 1, MAX_INLINE_ATTEMPTS);
+            }
+        }
+    }
+
+    private void sleepSeconds(long seconds) {
+        try {
+            Thread.sleep(seconds * 1000L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted during rate-limit backoff", e);
+        }
+    }
+
+    /** Fixed pacing delay after a successful inline post; 0 disables it (tests). */
+    private void pace() {
+        if (inlinePostThrottleMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(inlinePostThrottleMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -745,7 +804,7 @@ public class ReviewWorker {
             sb.append("\n**Findings:** ").append(review.findings().size()).append('\n');
         }
         appendFindingList(sb, "\nNot anchorable to the diff (cited lines not in the change):\n", unanchored);
-        appendFindingList(sb, "\nCould not be posted inline (SCM error — will appear on retry):\n", failed);
+        appendFindingList(sb, "\nCould not be posted inline (SCM error):\n", failed);
         return sb.toString();
     }
 

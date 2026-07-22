@@ -34,6 +34,7 @@ import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
@@ -130,6 +131,8 @@ class ReviewWorkerTest {
 
         worker = new ReviewWorker();
         worker.mapper = new ObjectMapper();
+        worker.inlinePostThrottleMs = 0;
+        worker.rateLimitRetryCapSeconds = 0;
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
@@ -267,6 +270,38 @@ class ReviewWorkerTest {
         assertEquals(1, posted.inline().size(), "second finding still posted");
         assertTrue(sink.summaryBody.contains("Could not be posted inline"), "failed finding listed in summary");
         assertTrue(sink.summaryBody.contains("msg 1"));
+    }
+
+    @Test
+    void rateLimited403RetriesWithBackoffAndSucceeds() {
+        sink.failInlineTimes = 1;
+        sink.inlineFailure = new TestScmException(403, true, 0);
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        assertEquals(2, sink.inlineAttempts);
+        assertEquals(1, sink.inlinePosts.size());
+        assertEquals(1, lastCommentsPosted().inline().size(), "finding posted after backoff");
+    }
+
+    @Test
+    void nonRateLimitFailureStillFailsFastPerFinding() {
+        sink.failInlineTimes = Integer.MAX_VALUE; // would loop forever if ever retried
+        sink.inlineFailure = new RuntimeException("boom");
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        assertEquals(1, sink.inlineAttempts, "no retry for non-rate-limit errors");
+        assertTrue(sink.summaryBody.contains("Could not be posted inline (SCM error):"));
+        assertFalse(sink.summaryBody.contains("will appear on retry"));
+    }
+
+    @Test
+    void rateLimitExhaustionLandsInFailedList() {
+        sink.failInlineTimes = Integer.MAX_VALUE;
+        sink.inlineFailure = new TestScmException(429, true, 0);
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        assertEquals(3, sink.inlineAttempts, "3 bounded attempts");
+        assertTrue(sink.summaryBody.contains("Could not be posted inline"));
     }
 
     @Test
@@ -721,6 +756,36 @@ class ReviewWorkerTest {
 
     // --- test doubles ---
 
+    /** Minimal ScmApiException double for scripting rate-limit backoff without a real adapter type. */
+    private static final class TestScmException extends RuntimeException implements ScmApiException {
+
+        private final int status;
+        private final boolean limited;
+        private final Integer retryAfter;
+
+        TestScmException(int status, boolean limited, Integer retryAfter) {
+            super("test scm exception status=" + status);
+            this.status = status;
+            this.limited = limited;
+            this.retryAfter = retryAfter;
+        }
+
+        @Override
+        public int status() {
+            return status;
+        }
+
+        @Override
+        public boolean isRateLimited() {
+            return limited;
+        }
+
+        @Override
+        public Integer retryAfterSeconds() {
+            return retryAfter;
+        }
+    }
+
     private static final class RecordingSink implements CommentSink, ThreadSource {
 
         final List<String> repliedThreads = new ArrayList<>();
@@ -731,6 +796,9 @@ class ReviewWorkerTest {
 
         int inlineAttempts; // 1-based count of postInline calls, including the one that fails
         int failOnInline; // 1-based index of the inline post that throws; 0 = never
+        int failInlineTimes; // number of LEADING postInline calls that throw inlineFailure; 0 = never
+        RuntimeException inlineFailure; // exception thrown while inlineAttempts <= failInlineTimes
+        final List<Long> inlinePostTimestamps = new ArrayList<>(); // one per postInline invocation
         boolean failSummary;
         boolean failUpdateComment;
         CommentSink.ThreadResolution resolveResult = CommentSink.ThreadResolution.RESOLVED_NOW;
@@ -756,8 +824,12 @@ class ReviewWorkerTest {
         @Override
         public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
             inlineAttempts++;
+            inlinePostTimestamps.add(System.nanoTime());
             if (inlineAttempts == failOnInline) {
                 throw new BitbucketApiException(500, "POST", "/comments");
+            }
+            if (inlineAttempts <= failInlineTimes) {
+                throw inlineFailure;
             }
             String id = "c-" + ids++;
             inlinePosts.add(id);
