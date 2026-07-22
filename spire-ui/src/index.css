@@ -275,10 +275,10 @@
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
   .thead, .row {
     display: grid;
-    grid-template-columns: 128px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 44px 72px 80px;
+    grid-template-columns: 116px 84px 92px minmax(150px, 1fr) 124px minmax(0, 1.25fr) 148px minmax(104px, 0.7fr) 78px 44px 72px 80px;
     align-items: center; gap: 14px;
     padding: 0 18px;
-    min-width: 984px;
+    min-width: 1052px;
   }
   .thead .h-model { text-align: center; }
   .model-cell { display: flex; align-items: center; justify-content: center; }
@@ -402,7 +402,8 @@
 
   /* Status cell wraps the outcome/status badge, the PR-state badge, and the responding
      indicator onto multiple lines when the column is narrower than their combined width. */
-  .status-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .status-cell { display: flex; align-items: center; gap: 6px; }
+  .state-cell { display: flex; align-items: center; }
 
   /* PR-state badge (open/merged/closed) — the pull/merge request's own state, distinct
      from the review-outcome/status badge (`.pill`) shown beside it. */
@@ -663,6 +664,7 @@
     .thead .h-mini, .row .cell-mini,
     .thead .h-title, .row .title-cell,
     .thead .h-commit, .row .commit-cell,
+    .thead .h-state, .row .state-cell,
     .thead .h-prov, .row .prov-cell,
     .thead .h-model, .row .model-cell,
     .thead .h-author, .row .author-cell { display: none; }

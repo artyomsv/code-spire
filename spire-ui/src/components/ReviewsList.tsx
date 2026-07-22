@@ -139,6 +139,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
       <div className="tablewrap">
         <div className="thead">
           <div>Status</div>
+          <div className="h-state">PR</div>
           <div className="h-prov">Provider</div>
           <div>Pull request</div>
           <div className="h-author">Author</div>
@@ -170,6 +171,8 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
               >
                 <div className="status-cell">
                   {statusCell(r)}
+                </div>
+                <div className="state-cell">
                   {prStateBadge(r.prState)}
                 </div>
                 <div className="prov-cell">
