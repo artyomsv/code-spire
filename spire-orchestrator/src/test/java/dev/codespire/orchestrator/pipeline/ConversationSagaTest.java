@@ -160,6 +160,50 @@ class ConversationSagaTest {
     }
 
     @Test
+    void blankBotAccountIdFailsClosedBeforeAnyThreadResolution() {
+        List<String> notes = new ArrayList<>();
+        List<String> details = new ArrayList<>();
+        ConversationSaga saga = new ConversationSaga();
+        saga.providers = new ProviderRegistry() {
+            @Override
+            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+                return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "acme",
+                        "bearer", null, "secret", "", true, List.of(), "code-spire", "EXPLAIN"));
+            }
+        };
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+                notes.add(type);
+                details.add(detail);
+            }
+        };
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public int turnCount(String reviewId, ThreadRef thread) {
+                throw new AssertionError("blank bot identity must short-circuit before thread resolution");
+            }
+
+            @Override
+            public boolean isOurThread(String reviewId, ThreadRef thread) {
+                throw new AssertionError("blank bot identity must short-circuit before thread resolution");
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                throw new AssertionError("blank bot identity must short-circuit before summary lookup");
+            }
+        };
+
+        Optional<ActionCommand.AnswerFollowUp> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
+
+        assertTrue(cmd.isEmpty(), "blank botAccountId must fail closed with no command");
+        assertTrue(notes.contains("skipped:AnswerFollowUp"));
+        assertTrue(details.contains("bot identity unknown — re-save the provider to resolve it"));
+    }
+
+    @Test
     void topLevelReplyWithNoPostedSummaryIsSkippedWithATimelineNote() {
         List<String> notes = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();

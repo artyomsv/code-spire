@@ -58,6 +58,11 @@ public class ConversationSaga {
             return Optional.empty();
         }
         ScmProvider provider = providerOpt.get();
+        if (provider.botAccountId() == null || provider.botAccountId().isBlank()) {
+            timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
+                    "bot identity unknown — re-save the provider to resolve it");
+            return Optional.empty();
+        }
 
         Optional<ThreadTarget> targetOpt = resolveThread(e);
         if (targetOpt.isEmpty()) {
