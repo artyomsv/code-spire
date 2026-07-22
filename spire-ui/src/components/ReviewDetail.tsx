@@ -103,7 +103,12 @@ export default function ReviewDetail({ reviews }: Props) {
             <span className="repo">
               {r.repo}#{r.pr}
             </span>
-            {statusCell(r)}
+            {statusCell({
+              status: r.status,
+              findings: r.openFindings,
+              blockerCount: r.openBlockers,
+              answering: r.answering,
+            })}
             <span className="sep">·</span>
             <span>@{r.author}</span>
             <span className="sep">·</span>

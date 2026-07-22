@@ -71,7 +71,13 @@ public class ReviewProjection {
 
     // ---- writes (called by the sagas) --------------------------------------
 
-    /** Upsert the header of a review and reset its status/stage for a (re)run. */
+    /**
+     * Upsert the header of a review and reset its status/stage for a (re)run. Also resets
+     * {@code answering} to false: the reviewId is stable per PR, so a fresh push re-enters this
+     * upsert, and without the reset a stuck "responding…" flag (e.g. a follow-up that terminally
+     * DLQs without ever posting {@code FollowUpPosted}) would otherwise bleed into the new,
+     * unrelated run.
+     */
     public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                String authorId, String sourceBranch, String destBranch, String sha,
                                String htmlUrl, String providerType, String status, int stage) {
@@ -86,7 +92,7 @@ public class ReviewProjection {
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
                         status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1,
-                        error_detail = NULL, updated_at = now()
+                        error_detail = NULL, answering = FALSE, updated_at = now()
                 """;
         update(sql, ps -> {
             ps.setString(1, reviewId);
@@ -154,10 +160,12 @@ public class ReviewProjection {
 
     /**
      * Transient "the bot is answering a reply" hint (fix #5): set true when a follow-up is
-     * dispatched, cleared when it posts or terminally fails. Best-effort UI signal, not part
-     * of the aggregate — a missed clear only means a stale indicator, never a stuck pipeline.
-     * Also bumps updated_at and broadcasts, so callers should not additionally call
-     * {@link #touch} for the same state change (would double-broadcast).
+     * dispatched. Best-effort UI signal, not part of the aggregate — cleared on
+     * {@code FollowUpPosted} (normal completion) and, failing that, reset on the NEXT review run
+     * via {@link #registerHeader}: a follow-up that terminally DLQs (no {@code ReviewFailed}
+     * reaches this flag) leaves it set only until that next run, never indefinitely. Also bumps
+     * updated_at and broadcasts, so callers should not additionally call {@link #touch} for the
+     * same state change (would double-broadcast).
      */
     public void setAnswering(String reviewId, boolean answering) {
         update("UPDATE review_status SET answering = ?, updated_at = now() WHERE review_id = ?", ps -> {
@@ -1036,15 +1044,20 @@ public class ReviewProjection {
      * The review's currently-open findings — this run's new findings plus reconciliation
      * entries still open (still-open/unchanged), deduped by thread. This is what the list row
      * must show (fixes #3): a review with a carried-forward open critical is NOT "passed".
+     *
+     * <p>Inserts with {@code putIfAbsent} (first-wins), not {@code put}: new findings are added
+     * before reconciliation entries, so a same-key collision keeps the NEW finding's severity —
+     * matching {@code dedupeByAnchor}/{@code mergeFindingGroup}'s first-wins rule for duplicate
+     * anchors, so the list and detail can never disagree on a shared anchor's severity.
      */
     private OpenCounts openCounts(ReviewRow row) {
         Map<String, String> openSevByKey = new java.util.LinkedHashMap<>();
         for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
-            openSevByKey.put(keyOf(f.threadRef(), f.loc()), f.sev());
+            openSevByKey.putIfAbsent(keyOf(f.threadRef(), f.loc()), f.sev());
         }
         for (ReviewDetail.ReconciliationView r : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
             if ("still open".equals(r.status()) || "unchanged".equals(r.status())) {
-                openSevByKey.put(keyOf(r.threadRef(), r.loc()), r.sev());
+                openSevByKey.putIfAbsent(keyOf(r.threadRef(), r.loc()), r.sev());
             }
         }
         int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
@@ -1106,9 +1119,13 @@ public class ReviewProjection {
     private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events, List<ReviewDetail.LlmCall> llmCalls,
                                   List<ReviewDetail.FindingView> findings,
                                   List<ReviewDetail.ReconciliationView> reconciliation) {
+        // Same reconciled-open figures the list row shows (openCounts) — the header badge must
+        // agree with the list instead of quoting this run's raw (possibly stale) outcome.
+        OpenCounts openCounts = openCounts(r);
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.answering, r.stage, r.findings,
-                blockerCount(r), r.updatedAt, r.attempt, computeStages(r.status, r.stage),
+                blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
+                computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation, usageView(r),
                 withReviewCall(r, llmCalls), r.note, decryptError(r.errorDetail, r.id), events);
     }

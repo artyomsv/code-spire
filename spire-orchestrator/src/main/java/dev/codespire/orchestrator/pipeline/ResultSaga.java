@@ -210,8 +210,8 @@ public class ResultSaga {
                 // Normal-completion clear (fix #5) — also bumps the live dashboard, replacing the
                 // plain touch() that used to sit here (avoid double-broadcast). A follow-up's
                 // terminal failure never reaches this saga as an event (FollowUpWorker re-throws
-                // straight to cs.dlq, no ReviewFailed) — the flag is best-effort there and relies
-                // on the next dashboard activity to clear it.
+                // straight to cs.dlq, no ReviewFailed), so that path relies instead on the next
+                // review run's registerHeader reset to clear the flag.
                 projection.setAnswering(e.reviewId(), false);
             }
             case ReviewFailed e -> onReviewFailed(e);

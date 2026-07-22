@@ -114,6 +114,12 @@ export interface ReviewEvent {
 }
 
 export interface ReviewDetail extends ReviewSummary {
+  // findings/blockerCount (from ReviewSummary) stay this RUN's raw counts — the findings card's
+  // "+ N more" math depends on that meaning. openFindings/openBlockers are the reconciled
+  // currently-open counts (this run's new findings + still-open/unchanged reconciliation,
+  // deduped) — the same figures the list row shows, driving the detail HEADER badge instead.
+  openFindings: number;
+  openBlockers: number;
   attempt: number; // pipeline run count (1 = first run; bumped by each bounded auto-retry)
   stages: StageState[]; // length 6, aligns to the 6 pipeline steps
   timings: string[]; // length 6, e.g. "0.8s" or ""

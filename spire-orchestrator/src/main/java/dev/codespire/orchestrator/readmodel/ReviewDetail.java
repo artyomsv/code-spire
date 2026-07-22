@@ -7,6 +7,13 @@ import java.util.List;
  * The per-PR detail payload (GET /api/reviews/{workspace}/{slug}/{pr}). Flat —
  * carries every {@link ReviewSummary} field plus the detail-only extras — so it
  * matches the frontend's {@code ReviewDetail extends ReviewSummary} shape.
+ *
+ * <p>{@code findings}/{@code blockerCount} are this RUN's raw counts (the findings card's
+ * "+ N more" math depends on that meaning). {@code openFindings}/{@code openBlockers} are the
+ * reconciled currently-open counts (this run's new findings + still-open/unchanged
+ * reconciliation, deduped) — the same figures the reviews list shows via
+ * {@code ReviewProjection.openCounts}, so the header badge agrees with the list row instead of
+ * quoting a stale per-run outcome.
  */
 public record ReviewDetail(
         String id,
@@ -27,6 +34,8 @@ public record ReviewDetail(
         int stage,
         int findings,
         int blockerCount,
+        int openFindings,
+        int openBlockers,
         Instant updatedAt,
         int attempt,
         List<String> stages,

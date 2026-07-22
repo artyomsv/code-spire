@@ -73,6 +73,30 @@ class ReviewProjectionPriorRunIT {
                 "answering must clear on the detail payload");
     }
 
+    /**
+     * Fix #2: reviewId is stable per PR, so a fresh push re-enters registerHeader's
+     * ON CONFLICT DO UPDATE for the SAME review — that upsert must reset a stuck "answering"
+     * flag (e.g. left set by a follow-up that terminally DLQs without ever posting
+     * FollowUpPosted), so it never bleeds into an unrelated new run.
+     */
+    @Test
+    void registerHeaderResetsAnsweringOnANewRun() {
+        String reviewId = "review::ws/prior-run-it#17";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 17L,
+                "t", "a", "aid", "src", "dst", "c16", "http://x", "github", "reviewing", 0);
+        projection.setAnswering(reviewId, true);
+
+        // A fresh push re-enters registerHeader for the same reviewId.
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 17L,
+                "t", "a", "aid", "src", "dst", "c17", "http://x", "github", "reviewing", 0);
+
+        ReviewSummary summary = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        assertFalse(summary.answering(), "a new review run must reset the stale answering flag");
+        assertFalse(projection.loadDetail("ws", "prior-run-it", 17L).orElseThrow().answering(),
+                "detail must also show the reset answering flag");
+    }
+
     @Test
     void priorRunJoinsPostedFindingsWithTheirThreads() {
         String reviewId = "review::ws/prior-run-it#1";
@@ -494,5 +518,37 @@ class ReviewProjectionPriorRunIT {
         assertEquals(1, summary.findings());
         assertEquals(1, summary.blockerCount());
         assertEquals(500, summary.costMillicents(), "no llm_call rows -> falls back to cost_millicents");
+    }
+
+    /**
+     * Fix #1: the detail header badge must show the same reconciled OPEN counts as the list row,
+     * not this run's raw findings_count/blocker count — otherwise a carried-forward open critical
+     * shows "Changes" in the list but "Passed" in the detail header.
+     */
+    @Test
+    void detailHeaderOpenCountsMatchTheListRow() {
+        String reviewId = "review::ws/list-recon-it#4";
+        projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 4L,
+                "t", "a", "aid", "src", "dst", "c4b", "http://x", "github", "completed", 6);
+        // last run found no new findings...
+        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum",
+                new ModelUsage("m", 1, 1, 100)), 6);
+        // ...but reconciliation carries one STILL_OPEN critical from a prior run.
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-cf", "src/A.java", 5,
+                        FindingVerdict.Status.STILL_OPEN, "still there")),
+                List.of(new PriorFinding("src/A.java", 5, Severity.BLOCKER, "npe", "t-cf")));
+
+        ReviewSummary listRow = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+        ReviewDetail detail = projection.loadDetail("ws", "list-recon-it", 4L).orElseThrow();
+
+        assertEquals(1, listRow.blockerCount(), "list row shows the carried-forward open critical");
+        assertEquals(listRow.blockerCount(), detail.openBlockers(),
+                "detail header's open blocker count must agree with the list row");
+        assertEquals(listRow.findings(), detail.openFindings(),
+                "detail header's open findings count must agree with the list row");
+        assertEquals(0, detail.findings(),
+                "findings stays the raw per-run new-findings count (findings card math depends on it)");
     }
 }
