@@ -400,8 +400,8 @@
   }
   .responding svg { flex: none; }
 
-  /* Status cell wraps the outcome/status badge, the PR-state badge, and the responding
-     indicator onto multiple lines when the column is narrower than their combined width. */
+  /* Status cell holds the outcome/status badge and the responding indicator on one line;
+     the PR-state badge lives in its own .state-cell column so it aligns down the list. */
   .status-cell { display: flex; align-items: center; gap: 6px; }
   .state-cell { display: flex; align-items: center; }
 
