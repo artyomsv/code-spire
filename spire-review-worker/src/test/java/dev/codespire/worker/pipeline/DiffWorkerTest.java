@@ -161,4 +161,13 @@ class DiffWorkerTest {
         ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
         assertFalse(failed.retryable());
     }
+
+    @Test
+    void oversizedDiff406FailsTerminallyWithAnActionableMessage() {
+        failure = new GitHubApiException(406, "GET", "/repos/ws/repo/pulls/1");
+        worker.fetchDiff(COMMAND);
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertFalse(failed.retryable());
+        assertTrue(failed.error().contains("too large to review"));
+    }
 }

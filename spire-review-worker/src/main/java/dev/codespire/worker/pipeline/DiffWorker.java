@@ -66,6 +66,13 @@ public class DiffWorker {
 
     private void fail(FetchDiff command, RuntimeException e) {
         LOG.warnf(e, "FetchDiff failed for %s", command.reviewId());
+        if (e instanceof ScmApiException api && api.status() == 406) {
+            results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
+                    "PR diff exceeds the provider's diff-generation limit — the PR is too large "
+                            + "to review as one unit; split it or exclude generated files",
+                    false, 1));
+            return;
+        }
         // retryable=true lets the orchestrator's ResultSaga re-run the pipeline under its
         // bounded retry budget (ADR-016); transient (5xx / 429 / I/O) -> retryable, else terminal.
         boolean retryable = e instanceof ScmApiException api
