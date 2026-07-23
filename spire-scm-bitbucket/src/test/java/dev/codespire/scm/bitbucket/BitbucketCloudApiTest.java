@@ -238,6 +238,17 @@ class BitbucketCloudApiTest {
     }
 
     @Test
+    void rateLimitCarriesRetryAfter() {
+        server.stubFor(get(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/7/diff"))
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "17").withBody("rate limited")));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> diffSource.fetchDiff(REPO, 7, "abc123"));
+        assertEquals(429, e.status());
+        assertTrue(e.isRateLimited());
+        assertEquals(17, e.retryAfterSeconds());
+    }
+
+    @Test
     void malformed2xxWithoutCommentIdIsRejected() {
         server.stubFor(post(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/comments"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{}")));

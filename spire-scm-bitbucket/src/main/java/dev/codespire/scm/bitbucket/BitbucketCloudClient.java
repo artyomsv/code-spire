@@ -87,11 +87,26 @@ public class BitbucketCloudClient {
                 continue;
             }
             if (status / 100 != 2) {
-                throw new BitbucketApiException(status, method, path, bodySnippet(response.body()));
+                throw failure(status, method, path, response);
             }
             return response.body();
         }
         throw new BitbucketApiException(310, method, path); // too many redirects
+    }
+
+    private static BitbucketApiException failure(int status, String method, String path,
+                                                 HttpResponse<String> response) {
+        Integer retryAfter = response.headers().firstValue("Retry-After")
+                .map(BitbucketCloudClient::parseSecondsOrNull).orElse(null);
+        return new BitbucketApiException(status, method, path, bodySnippet(response.body()), retryAfter);
+    }
+
+    private static Integer parseSecondsOrNull(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**

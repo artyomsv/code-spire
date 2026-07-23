@@ -6,20 +6,31 @@ import dev.codespire.contract.scm.ScmApiException;
 public class BitbucketApiException extends RuntimeException implements ScmApiException {
 
     private final int status;
+    private final Integer retryAfterSeconds;
 
     public BitbucketApiException(int status, String method, String path) {
-        this(status, method, path, null);
+        this(status, method, path, null, null);
     }
 
     /** {@code detail} is a truncated, secret-free response-body snippet or guard reason. */
     public BitbucketApiException(int status, String method, String path, String detail) {
+        this(status, method, path, detail, null);
+    }
+
+    public BitbucketApiException(int status, String method, String path, String detail, Integer retryAfterSeconds) {
         super("Bitbucket API " + method + " " + path + " failed with HTTP " + status
                 + (detail == null || detail.isBlank() ? "" : ": " + detail));
         this.status = status;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
 
     @Override
     public int status() {
         return status;
+    }
+
+    @Override
+    public Integer retryAfterSeconds() {
+        return retryAfterSeconds;
     }
 }
