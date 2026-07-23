@@ -138,6 +138,31 @@ class BitbucketCloudIngressTest {
         assertTrue(ingress.translate(webhook(PR_CREATED, Map.of())).isEmpty());
     }
 
+    @Test
+    void plainTopLevelCommentIsTopLevel() {
+        var events = ingress.translate(webhook(commentWith("what about nulls?", null, null),
+                Map.of("X-Event-Key", "pullrequest:comment_created")));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertTrue(e.topLevel());
+    }
+
+    @Test
+    void inlineCommentIsNotTopLevel() {
+        var events = ingress.translate(webhook(commentWith("NPE here", null, "src/App.java"),
+                Map.of("X-Event-Key", "pullrequest:comment_created")));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertFalse(e.topLevel());
+    }
+
+    @Test
+    void replyIsNotTopLevel() {
+        var events = ingress.translate(webhook(commentWith("agreed", "100", null),
+                Map.of("X-Event-Key", "pullrequest:comment_created")));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertFalse(e.topLevel());
+        assertEquals("100", e.threadRef().value());
+    }
+
     // --- fixtures ---
 
     private static final byte[] PR_CREATED = """
@@ -168,6 +193,18 @@ class BitbucketCloudIngressTest {
                   }
                 }
                 """.formatted(text, accountId, parent);
+    }
+
+    private static byte[] commentWith(String body, String parentId, String inlinePath) {
+        String parent = parentId == null ? "" : ", \"parent\": { \"id\": " + parentId + " }";
+        String inline = inlinePath == null ? "" : ", \"inline\": { \"path\": \"" + inlinePath + "\", \"to\": 5 }";
+        return ("""
+                {
+                  "repository": { "full_name": "sandbox/demo-repo" },
+                  "pullrequest": { "id": 7 },
+                  "comment": { "id": 900, "content": { "raw": "%s" },
+                    "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" }%s%s }
+                }""").formatted(body, parent, inline).getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static RawWebhook webhook(byte[] body, Map<String, String> headers) {

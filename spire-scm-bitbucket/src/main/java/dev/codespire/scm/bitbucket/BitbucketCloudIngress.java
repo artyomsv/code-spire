@@ -140,15 +140,18 @@ public class BitbucketCloudIngress implements ScmIngress {
 
         // Reply threads anchor on the ROOT comment id (SCM-MAPPING §6).
         JsonNode parent = comment.path("parent").path("id");
-        String threadRef = parent.isMissingNode() || parent.isNull()
-                ? comment.path("id").asText()
-                : parent.asText();
+        boolean hasParent = !(parent.isMissingNode() || parent.isNull());
+        boolean inline = comment.path("inline").isObject();
+        // A plain top-level PR comment (no parent, not inline) is answered in the summary thread (topLevel).
+        boolean topLevel = !hasParent && !inline;
+        String threadRef = hasParent ? parent.asText() : comment.path("id").asText();
         return List.of(new AuthorReplied(repo, prId,
                 ReviewIds.reviewId(repo, prId),
                 new ThreadRef(threadRef),
                 comment.path("id").asText(),
                 text,
-                author));
+                author,
+                topLevel));
     }
 
     /**
