@@ -41,6 +41,9 @@ class BitbucketReconciliationTest {
     void fetchCompareDiffUsesTheTwoDotSpec() {
         wireMock.stubFor(get(urlEqualTo("/repositories/ws/repo/diff/bbb..aaa"))
                 .willReturn(aResponse().withStatus(200).withBody("diff --git a/x b/x")));
+        // Bitbucket diff spec is {source}..{destination} and additions come from the SOURCE (first token),
+        // so {head}..{base} yields the new commit's changes as additions — the reconciliation lens.
+        // Verified against Bitbucket's REST docs; confirmed live per SMOKE-TEST.md Mode B step "compare direction".
         assertEquals("diff --git a/x b/x",
                 new BitbucketCloudDiffSource(client).fetchCompareDiff(repo, "aaa", "bbb"));
     }

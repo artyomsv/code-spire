@@ -1,9 +1,9 @@
 # Smoke Test Runbook
 
-Five modes: **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
+Six modes: **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
 **C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
-PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel). Do A first — it validates
-your local stack in ~2 minutes.
+PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via
+webhook (Tailscale Funnel). Do A first — it validates your local stack in ~2 minutes.
 
 Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
 
@@ -136,9 +136,14 @@ Missing keys fail the affected service at startup naming the exact key — that'
 
 ### Known v1 limits (expected, not bugs)
 
-- Draft PRs are skipped until the author marks them `ready_for_review`, unless
-  `SPIRE_REVIEW_DRAFT_PRS=true` (GitHub currently — see SMOKE-TEST.md Mode E and ROADMAP.md item 13
-  for GitLab/Bitbucket parity).
+- Draft/WIP PRs and MRs are skipped until marked ready, on **all three** SCMs (GitHub
+  `draft`, GitLab `draft`/`Draft:`/`WIP:` title prefix, Bitbucket draft flag), unless
+  `SPIRE_REVIEW_DRAFT_PRS=true`.
+- Bitbucket reconciliation is **reply-only** — there is no Bitbucket API to resolve a comment
+  thread, so a fixed finding gets a reply saying so instead of being closed/collapsed (GitLab
+  resolves the discussion instead — see "Conversation + reconciliation" below).
+- Bitbucket inline comments are **single-line** — a finding spanning multiple lines anchors to
+  its last line rather than a range (GitHub and GitLab both support multi-line ranges).
 - A PR whose diff exceeds the provider's diff-generation limit fails with an explicit "too large to
   review" error instead of the raw HTTP response.
 - A transient SCM/LLM failure auto-retries the pipeline up to `spire.review.max-attempts` (default 3);
@@ -360,6 +365,108 @@ laptop is off, deliveries fail and can be redelivered later.
 
 Delete the GitHub webhook + stop the funnel; remove the row in Settings → Webhooks (its key stops
 working immediately). Flip the **Review-mode** slider to observe to return to a no-write posture.
+
+## Mode F — real GitLab MR via **webhook** (Tailscale Funnel)
+
+The GitLab equivalent of Mode E: open (or update) an MR → GitLab delivers a webhook → the gateway
+verifies it and publishes the same `PullRequestEventReceived` the manual path (Mode D) does → diff
+→ LLM → inline discussions + summary note — **no manual Register PR**. Same shared registry edge,
+same `RegistryWebhookEdge` resolve → verify → translate → scope → publish tail as GitHub/Bitbucket —
+only the verification scheme and the payload shape differ.
+
+### 1. One-time prerequisites
+
+1. Provider + LLM: exactly as **Mode D**, step 1 (register the GitLab provider) and **Mode C**
+   step 2 (LLM model + provider, `SPIRE_LLM_PROVIDER=registry`). Review mode is the sidebar slider.
+2. **Webhook keyset (gateway only):** the same `SPIRE_ENCRYPTION_WEBHOOK_KEYSET` as Mode E — reuse
+   it if the gateway is already configured from Mode E; otherwise generate and set it per Mode E
+   step 1.2.
+3. **Register the repository webhook:** Settings → **Webhooks** → Add → provider `gitlab`, enter
+   the project path (`group[/subgroup]/project`), and set a **secret** — unlike GitHub/Bitbucket
+   this secret is **not** used to compute a signature: GitLab sends it back verbatim in the
+   `X-Gitlab-Token` header, so the value itself *is* the shared secret (constant-time compared,
+   never an HMAC). Save. The row shows the **Payload URL path** `/webhooks/gitlab/<key>`.
+
+### 2. Tunnel — Tailscale Funnel (stable URL)
+
+```bash
+tailscale funnel 34081          # exposes the gateway on https://<host>.ts.net — same as Mode E
+```
+
+### 3. Configure the GitLab webhook
+
+Project → Settings → Webhooks → Add new webhook:
+- **URL:** `https://<host>.ts.net/webhooks/gitlab/<key>` (the path from step 1.3)
+- **Secret token:** the secret from step 1.3 (pasted verbatim — this is compared, not hashed)
+- **Trigger:** **Merge request events** and **Comments** (note events) — a `/review` note forces a
+  full re-run of the MR's latest commit; any other MR note starts (or continues) a conversation
+- **SSL verification:** enabled (the funnel presents a valid cert)
+
+GitLab has no ping-on-save the way GitHub does; the row's delivery log fills in once the first real
+event (or a manual **Test** send) arrives.
+
+### 4. Run all three services
+
+```bash
+./gradlew :spire-orchestrator:quarkusDev    # :34080 dashboard + registry
+./gradlew :spire-gateway:quarkusDev         # :34081 webhook edge (behind the funnel)
+./gradlew :spire-review-worker:quarkusDev   # :34082
+```
+
+### 5. The test
+
+Open (or update, or comment on) an MR on the sandbox project as an allowlisted author. GitLab
+delivers `merge_request` → the gateway returns **202** and the review appears on the dashboard,
+then progresses diff → LLM → **inline discussions + summary note** — with no manual step. A draft
+MR (or a `Draft:`/`WIP:` title) is skipped until it is marked ready, same policy as GitHub (unless
+`SPIRE_REVIEW_DRAFT_PRS=true`).
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| GitLab shows **401**-equivalent (delivery marked failed) | the secret in Settings → Webhooks ≠ the **Secret token** pasted into GitLab |
+| **404** | wrong/rotated key in the payload URL, or the webhook row is disabled |
+| **400** | the delivery's project ≠ the registered path (wrong key pasted into another project) |
+| **202** but nothing on the dashboard | MR author not in the provider allowlist, or the Review-mode slider is on observe |
+
+### Cleanup
+
+Delete the GitLab webhook + stop the funnel; remove the row in Settings → Webhooks (its key stops
+working immediately). Flip the **Review-mode** slider to observe to return to a no-write posture.
+
+## Conversation + reconciliation (all real modes)
+
+Both GitLab (Mode D or F) and Bitbucket (Mode B) now carry the same two conversational
+capabilities as GitHub — implemented per-adapter via `ThreadSource`, so `FollowUpWorker`,
+`ConversationSaga`, and `ReviewWorker` are unchanged; only the SCM adapters differ.
+
+**Conversation:** reply under a bot inline finding (a GitLab discussion note or a Bitbucket PR
+comment), or leave a plain top-level MR/PR comment. Within ~LLM latency the bot answers in-thread
+(the "smart 1:1" scope — it stays quiet in a multi-party thread unless @-mentioned). Verify: the
+reply appears nested under the finding's discussion (GitLab) or comment thread (Bitbucket), or in
+the summary-comment/note thread for a top-level comment.
+
+**Reconciliation:** push a follow-up commit that fixes one finding and leaves another open — a
+re-review runs against the incremental diff since the prior reviewed commit.
+- **GitLab:** the fixed finding's discussion is **resolved** and the still-open finding gets a
+  reply; the summary **note** is updated in place.
+- **Bitbucket:** the fixed finding's thread gets a **reply** only — there is no Bitbucket API to
+  resolve a PR comment thread (`resolveThread` returns `UNSUPPORTED`, degrading to reply-only); the
+  summary **comment** is updated in place.
+- Both: the still-open finding always gets a reply (`STILL_OPEN`), whether or not the thread could
+  be resolved.
+
+**Bitbucket compare direction (live gate):** Bitbucket's compare-diff spec is `{source}..{destination}`
+with additions attributed to the source; `BitbucketCloudDiffSource.fetchCompareDiff` calls it as
+`{head}..{base}`, so the new commit's lines should show as **additions** — this is verified against
+Bitbucket's REST docs (see the comment on `BitbucketReconciliationTest.fetchCompareDiffUsesTheTwoDotSpec`)
+but has not been observed against a live workspace, so treat it as a runbook gate, not a closed
+question. After a Bitbucket re-review, open the worker log or the reconcile prompt and confirm the
+incremental diff shows the new commit's lines as `+` (additions), not reversed. If reversed, the
+remedy is to swap the argument order — `head + ".." + base` → `base + ".." + head` — in
+`BitbucketCloudDiffSource.fetchCompareDiff`; the expected (and currently coded) result is that no
+change is needed.
 
 ## Context enrichment (Jira) — add-on to any mode
 
