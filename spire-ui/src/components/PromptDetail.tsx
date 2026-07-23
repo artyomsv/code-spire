@@ -10,6 +10,7 @@ import {
   type PromptView,
 } from '../api';
 import Tooltip from './Tooltip';
+import AutoTextarea from './AutoTextarea';
 import { KIND_LABELS } from './promptKinds';
 
 // Matches the server's PromptValidation token pattern — used only for the client-side
@@ -155,13 +156,13 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       <div className="body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <label className="field">
           <span>Instructions (system)</span>
-          <textarea value={system} onChange={(e) => setSystem(e.target.value)} rows={4} disabled={busy !== null} />
+          <AutoTextarea value={system} onChange={(e) => setSystem(e.target.value)} rows={4} disabled={busy !== null} />
           <small className="field-hint">Persona and instructions — variables may only appear in the body.</small>
         </label>
 
         <label className="field">
           <span>Body</span>
-          <textarea
+          <AutoTextarea
             ref={bodyRef}
             className="mono"
             value={body}
