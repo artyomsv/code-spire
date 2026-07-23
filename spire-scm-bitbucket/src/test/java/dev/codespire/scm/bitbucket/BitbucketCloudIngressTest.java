@@ -29,11 +29,11 @@ class BitbucketCloudIngressTest {
     private static final String SECRET = "test-webhook-secret";
     private static final String BOT_ACCOUNT_ID = "bot-account-000";
 
+    private static final BitbucketCloudConfig CONFIG = new BitbucketCloudConfig(
+            "https://api.example.invalid/2.0", "test-bot", "test-app-password", SECRET);
+
     private final BitbucketCloudIngress ingress = new BitbucketCloudIngress(
-            new BitbucketCloudConfig("https://api.example.invalid/2.0",
-                    "test-bot", "test-app-password", SECRET),
-            new ObjectMapper(),
-            Set.of("review"));
+            CONFIG, new ObjectMapper(), Set.of("review"));
 
     // --- signature ---
 
@@ -133,6 +133,25 @@ class BitbucketCloudIngressTest {
     }
 
     @Test
+    void draftPrCreatedIsSkippedByDefault() {
+        assertTrue(ingress.translate(webhook(prDraft(true), Map.of("X-Event-Key", "pullrequest:created"))).isEmpty());
+    }
+
+    @Test
+    void draftClearedOnUpdateIsReviewed() {
+        assertEquals(1, ingress.translate(webhook(prDraft(false),
+                Map.of("X-Event-Key", "pullrequest:updated"))).size());
+    }
+
+    @Test
+    void reviewDraftsTrueReviewsBitbucketDrafts() {
+        BitbucketCloudIngress permissive = new BitbucketCloudIngress(
+                CONFIG, new ObjectMapper(), Set.of("review"), true);   // reuse the test's CONFIG constant
+        assertEquals(1, permissive.translate(webhook(prDraft(true),
+                Map.of("X-Event-Key", "pullrequest:created"))).size());
+    }
+
+    @Test
     void unknownEventKeyYieldsNothing() {
         assertTrue(ingress.translate(webhook(PR_CREATED, Map.of("X-Event-Key", "repo:updated"))).isEmpty());
         assertTrue(ingress.translate(webhook(PR_CREATED, Map.of())).isEmpty());
@@ -179,6 +198,17 @@ class BitbucketCloudIngressTest {
               }
             }
             """.getBytes(StandardCharsets.UTF_8);
+
+    private static byte[] prDraft(boolean draft) {
+        return ("""
+                { "repository": { "full_name": "sandbox/demo-repo" },
+                  "pullrequest": { "id": 7, "draft": %b, "title": "Add feature", "description": "d",
+                    "source": { "branch": { "name": "f" }, "commit": { "hash": "abc123" } },
+                    "destination": { "branch": { "name": "main" } },
+                    "author": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" },
+                    "links": { "html": { "href": "http://bb/pr/7" } } } }""")
+                .formatted(draft).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
 
     private static String comment(String accountId, String text, String parentId) {
         String parent = parentId == null ? "" : ", \"parent\": { \"id\": " + parentId + " }";

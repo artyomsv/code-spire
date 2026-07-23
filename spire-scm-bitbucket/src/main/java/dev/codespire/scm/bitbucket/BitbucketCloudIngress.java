@@ -47,11 +47,18 @@ public class BitbucketCloudIngress implements ScmIngress {
     private final ObjectMapper mapper;
     private final BitbucketCloudConfig config;
     private final Set<String> commands;
+    private final boolean reviewDrafts;
 
     public BitbucketCloudIngress(BitbucketCloudConfig config, ObjectMapper mapper, Set<String> commands) {
+        this(config, mapper, commands, false);
+    }
+
+    public BitbucketCloudIngress(BitbucketCloudConfig config, ObjectMapper mapper,
+                                 Set<String> commands, boolean reviewDrafts) {
         this.config = config;
         this.mapper = mapper;
         this.commands = Set.copyOf(commands);
+        this.reviewDrafts = reviewDrafts;
     }
 
     @Override
@@ -89,13 +96,22 @@ public class BitbucketCloudIngress implements ScmIngress {
         }
         JsonNode payload = parse(raw.body());
         return switch (eventKey) {
-            case "pullrequest:created" -> pullRequestEvent(payload, PrAction.OPENED);
-            case "pullrequest:updated" -> pullRequestEvent(payload, PrAction.UPDATED);
+            case "pullrequest:created" -> maybeReview(payload, PrAction.OPENED);
+            case "pullrequest:updated" -> maybeReview(payload, PrAction.UPDATED);
             case "pullrequest:fulfilled" -> closed(payload, CloseReason.MERGED);
             case "pullrequest:rejected" -> closed(payload, CloseReason.DECLINED);
             case "pullrequest:comment_created" -> comment(payload);
             default -> List.of();
         };
+    }
+
+    /** A draft PR is skipped unless reviewDrafts; an un-draft arrives as a non-draft pullrequest:updated. */
+    private List<IntegrationEvent> maybeReview(JsonNode payload, PrAction action) {
+        boolean draft = payload.path("pullrequest").path("draft").asBoolean(false);
+        if (draft && !reviewDrafts) {
+            return List.of();
+        }
+        return pullRequestEvent(payload, action);
     }
 
     private List<IntegrationEvent> pullRequestEvent(JsonNode payload, PrAction action) {

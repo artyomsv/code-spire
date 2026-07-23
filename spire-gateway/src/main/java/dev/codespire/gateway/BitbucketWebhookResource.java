@@ -11,6 +11,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.util.Set;
 
@@ -42,11 +43,15 @@ public class BitbucketWebhookResource {
     @Inject
     RegistryWebhookEdge edge;
 
+    /** Draft-PR policy: default false skips drafts; Bitbucket has no separate ready event. */
+    @ConfigProperty(name = "spire.review.draft-prs", defaultValue = "false")
+    boolean reviewDrafts;
+
     @POST
     public Response receive(@PathParam("key") String key, @Context HttpHeaders headers, byte[] body) {
         IngressFactory ingress = secret -> new BitbucketCloudIngress(
                 new BitbucketCloudConfig(API_BASE, "unused-by-gateway", "unused-by-gateway", secret),
-                mapper, COMMANDS);
+                mapper, COMMANDS, reviewDrafts);
         return edge.handle(PROVIDER, key, ingress, headers, body);
     }
 }
