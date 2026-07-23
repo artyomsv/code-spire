@@ -125,6 +125,24 @@ The design is fully specified in `docs/` — **treat those files as the source o
 - **PR-state badge (2026-07-23):** a distinct `pr_state` (OPEN/MERGED/CLOSED, V22) on the review
   read-model, set from the open/close webhook events across all three SCMs, shown as its own
   badge separate from the review status; cancel-on-close is unchanged.
+- **GitLab + Bitbucket full-flow parity (2026-07-23, ROADMAP item 13):** both adapters brought to
+  the finalized GitHub adapter's feature set so the full loop (webhook → review → conversation →
+  reconciliation) can be manually tested on each. `GitLabCommentSink`/`BitbucketCloudCommentSink`
+  now implement `ThreadSource` (the shared `FollowUpWorker`/`ConversationSaga` were untouched — the
+  conversation loop lights up purely via the `instanceof ThreadSource` gate); GitLab uses a
+  discussion-vs-plain-note 404 fallback for summary-thread reads/replies, Bitbucket rebuilds the
+  comment subtree by `parent.id`. GitLab ingress now emits `AuthorReplied` for non-command MR notes
+  (threaded→`topLevel=false` keyed to `discussion_id`, individual→`topLevel=true`); Bitbucket sets
+  `topLevel=true` for plain PR comments. Draft/WIP skip now covers all three SCMs (reuses
+  `spire.review.draft-prs`; GitLab handles the draft→ready flip, Bitbucket the non-draft
+  `pullrequest:updated`). GitLab/Bitbucket API exceptions now carry `retryAfterSeconds`
+  (`Retry-After`, plus GitLab `RateLimit-Reset` epoch fallback). GitLab posts NEW-side multi-line
+  findings as a `position.line_range`. Bitbucket reconciliation stays **reply-only** (no
+  PR-comment-resolve API) and inline stays single-anchor (API constraints). Bitbucket's compare
+  spec `{head}..{base}` is verified correct against the REST docs; a **live-verify gate** in
+  SMOKE-TEST.md settles it against a real workspace. New runbook Mode F (GitLab webhook) +
+  conversation/reconciliation steps for GitLab/Bitbucket. WireMock-tested per adapter; live testing
+  is the operator's runbook pass.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
 

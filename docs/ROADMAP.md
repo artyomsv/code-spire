@@ -172,11 +172,19 @@ down is the original design-time roadmap (kept for reference).
     ✅ **GitHub half done (2026-07-21..22)** — the live-use audit's 12 findings are fixed: truthful
     403/GraphQL rate-limit detection + posting backoff, `/review` wired to a forced re-run, draft-PR
     skip (`SPIRE_REVIEW_DRAFT_PRS`), honest 406/pagination failures, OLD-side/multi-line anchors,
-    and summary-comment conversations. GitLab/Bitbucket parity stays open: run the SAME end-to-end
-    flow on **GitLab** (webhook ingress, review, thread replies, reconciliation incl. discussion
-    resolve + compare + note update — all WireMock-tested, never live-tested) and **Bitbucket**
-    (reply-only reconciliation degradation; **verify the compare-spec direction `{head}..{base}`
-    against a live workspace** — currently documented-but-unverified).
+    and summary-comment conversations.
+    ✅ **GitLab + Bitbucket parity code delivered (2026-07-23)** — both adapters now match the GitHub
+    feature set: `ThreadSource` on each CommentSink (the shared `FollowUpWorker`/`ConversationSaga`
+    untouched — conversation lights up via the `instanceof ThreadSource` gate), GitLab `AuthorReplied`
+    ingress + Bitbucket `topLevel` flag, draft/WIP skip on all three SCMs (reuses
+    `spire.review.draft-prs`), `Retry-After` (+ GitLab `RateLimit-Reset`) classification, GitLab
+    NEW-side `line_range` multi-line comments. Bitbucket reconciliation stays reply-only (no
+    PR-comment-resolve API) and inline single-anchor (API constraints). New SMOKE-TEST.md **Mode F**
+    (GitLab webhook) + conversation/reconciliation steps. WireMock-tested per adapter.
+    **Remaining = the operator's live pass**: run the SAME end-to-end flow (webhook → review → thread
+    replies → reconciliation) on a real GitLab MR and Bitbucket PR, and honor the runbook's
+    **Bitbucket compare-direction live gate** (`{head}..{base}` is reasoned-correct against the REST
+    docs but only a live re-review settles it).
 14. **Ticket-reference context providers: GitHub Issues + GitLab Issues** · M. Extend the proven
     ContextProvider SPI (Jira/Confluence precedent — zero core changes expected): resolve issue
     references from PR title/branch/description (`#123`, `GH-123`, `org/repo#123`, GitLab `#123` /
