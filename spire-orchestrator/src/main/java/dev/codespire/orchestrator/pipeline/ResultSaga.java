@@ -72,6 +72,9 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
+    @Inject
+    dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
+
     /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
     @ConfigProperty(name = "spire.review.max-attempts", defaultValue = "3")
     int maxAttempts;
@@ -125,9 +128,13 @@ public class ResultSaga {
                     return;
                 }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
+                dev.codespire.contract.llm.PromptTemplate reviewPrompt =
+                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW);
+                dev.codespire.contract.llm.PromptTemplate reconcilePrompt =
+                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE);
                 emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.contextRef(), 1, null, scmCred, llmCred.get(), prior));
+                        e.contextRef(), 1, null, scmCred, llmCred.get(), prior, reviewPrompt, reconcilePrompt));
             });
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",

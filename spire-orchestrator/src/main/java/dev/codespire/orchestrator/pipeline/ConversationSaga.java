@@ -51,6 +51,9 @@ public class ConversationSaga {
     @Inject
     ReviewProjection projection;
 
+    @Inject
+    dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
+
     /** The AnswerFollowUp to emit for a non-bot reply, or empty when policy says stay quiet. */
     public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
         Optional<ScmProvider> providerOpt = providers.resolveByWorkspace(e.repo().workspace());
@@ -82,7 +85,8 @@ public class ConversationSaga {
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(provider), llmCred.get(), botMentioned,
-                levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor()));
+                levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP)));
     }
 
     /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */

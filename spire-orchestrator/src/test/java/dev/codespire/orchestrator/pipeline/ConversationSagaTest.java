@@ -11,6 +11,7 @@ import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
+import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
@@ -148,6 +149,12 @@ class ConversationSagaTest {
             @Override
             public Optional<String> summaryRefOf(String reviewId) {
                 return Optional.of("sum-1");
+            }
+        };
+        saga.promptTemplates = new WorkerPromptTemplates() {
+            @Override
+            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+                return null;
             }
         };
 
