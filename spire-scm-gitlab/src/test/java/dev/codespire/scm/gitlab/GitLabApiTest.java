@@ -16,6 +16,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
@@ -300,6 +302,19 @@ class GitLabApiTest {
         assertEquals(429, e.status());
         assertTrue(e.isRateLimited());
         assertEquals(42, e.retryAfterSeconds());
+    }
+
+    @Test
+    void rateLimitFallsBackToRateLimitReset() {
+        long resetEpoch = Instant.now().getEpochSecond() + 120;
+        server.stubFor(get(urlEqualTo(MR + "/changes")).willReturn(aResponse()
+                .withStatus(429).withHeader("RateLimit-Reset", String.valueOf(resetEpoch)).withBody("{}")));
+        GitLabApiException e = assertThrows(GitLabApiException.class,
+                () -> diffSource.fetchDiff(REPO, 42, "abc123"));
+        assertEquals(429, e.status());
+        assertTrue(e.isRateLimited());
+        assertTrue(e.retryAfterSeconds() > 0 && e.retryAfterSeconds() <= 120,
+                "expected a positive, bounded retryAfterSeconds but got " + e.retryAfterSeconds());
     }
 
     @Test

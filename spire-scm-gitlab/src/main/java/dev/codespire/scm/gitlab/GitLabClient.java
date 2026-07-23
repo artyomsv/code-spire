@@ -12,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
 
 /**
  * Thin HTTP layer over the GitLab REST API (v4). As in the GitHub adapter,
@@ -91,6 +92,12 @@ public class GitLabClient {
                                               HttpResponse<String> response) {
         Integer retryAfter = response.headers().firstValue("Retry-After")
                 .map(GitLabClient::parseSecondsOrNull).orElse(null);
+        if (retryAfter == null) {
+            // GitLab often omits Retry-After on 429s, sending only RateLimit-Reset (an
+            // absolute Unix epoch second) instead — convert it to a relative delay.
+            retryAfter = response.headers().firstValue("RateLimit-Reset")
+                    .map(GitLabClient::secondsUntilEpochOrNull).orElse(null);
+        }
         return new GitLabApiException(status, method, path, bodySnippet(response.body()), retryAfter);
     }
 
@@ -100,6 +107,14 @@ public class GitLabClient {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private static Integer secondsUntilEpochOrNull(String raw) {
+        Integer resetEpoch = parseSecondsOrNull(raw);
+        if (resetEpoch == null) {
+            return null;
+        }
+        return (int) Math.max(0, resetEpoch - Instant.now().getEpochSecond());
     }
 
     /**

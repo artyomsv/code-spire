@@ -36,7 +36,8 @@ import java.util.concurrent.TimeoutException;
 /**
  * Answers a reviewer's follow-up in a review thread (spec §4-§5): claim per-triggering-comment
  * idempotency, re-fetch the thread + its anchored diff (never persisted, ADR-011), one bounded LLM call,
- * then reply in the thread. GitHub-only in Plan 1 (the CommentSink must also be a ThreadSource).
+ * then reply in the thread. Works for any provider whose CommentSink also implements ThreadSource
+ * (GitHub, GitLab, Bitbucket).
  */
 @ApplicationScoped
 public class FollowUpWorker {
@@ -89,7 +90,7 @@ public class FollowUpWorker {
     private void doAnswer(AnswerFollowUp command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
         if (!(clients.comments() instanceof ThreadSource threadSource)) {
-            LOG.debugf("No ThreadSource for %s — conversational replies need a GitHub provider (Plan 1)",
+            LOG.debugf("No ThreadSource for %s — conversational replies unsupported for this provider",
                     command.reviewId());
             return;
         }
