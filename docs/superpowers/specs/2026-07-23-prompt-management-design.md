@@ -207,8 +207,11 @@ Follows the structure of the existing Settings → Providers and Settings → Co
 - **Renderer units:** variable substitution; auto-fencing + `neutralizeSentinels` on untrusted
   variables; literal variables rendered verbatim; unknown-variable rejection; missing-required
   rejection; variable-in-system rejection; locked security clause and output contract always present.
-- **Characterization golden tests:** each kind's built-in default renders byte-identical to the
-  current hardcoded output.
+- **Characterization tests:** each kind's built-in default preserves the security-and-parsing
+  properties of the current hardcoded prompt (persona + locked security clause + output contract
+  present; every untrusted value fenced and sentinel-neutralized; the real parser accepts a
+  well-formed response) — properties, not byte-for-byte equality, since the user-message layout
+  legitimately moves to the template-rendered form.
 - **Registry:** CRUD + reset + effective resolution (Testcontainers Postgres).
 - **Resource:** validation error responses; preview assembly.
 - **Worker:** builder uses an attached template; falls back to the default on `null`.
