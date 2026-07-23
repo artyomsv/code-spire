@@ -10,6 +10,7 @@ import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.Side;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
@@ -67,6 +68,12 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
         }
         if (anchor.newLine() != null) {
             position.put("new_line", anchor.newLine());
+        }
+        // A NEW-side finding spanning multiple lines within one hunk posts a GitLab line_range.
+        if (anchor.side() == Side.NEW && anchor.endNewLine() != null && anchor.endNewLine() > anchor.newLine()) {
+            position.put("line_range", Map.of(
+                    "start", Map.of("type", "new", "new_line", anchor.newLine()),
+                    "end", Map.of("type", "new", "new_line", anchor.endNewLine())));
         }
 
         String path = GitLabDiffSource.mrPath(repo, prId) + "/discussions";

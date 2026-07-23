@@ -167,6 +167,24 @@ class GitLabApiTest {
     }
 
     @Test
+    void postsMultiLineRangeAsLineRange() {
+        server.stubFor(post(urlEqualTo(MR + "/discussions")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{ \"id\": \"DISC1\", \"notes\": [ { \"id\": 100 } ] }")));
+
+        InlineAnchor range = new InlineAnchor("src/App.java", "src/App.java", null, 10, Side.NEW, 14);
+        DiffRefs refs = new DiffRefs("base000", "start000", "abc123");
+        commentSink.postInline(REPO, 42, refs, range, "range finding");
+
+        server.verify(postRequestedFor(urlEqualTo(MR + "/discussions")).withRequestBody(equalToJson("""
+                { "body": "range finding",
+                  "position": { "position_type": "text", "base_sha": "base000", "start_sha": "start000",
+                    "head_sha": "abc123", "old_path": "src/App.java", "new_path": "src/App.java", "new_line": 10,
+                    "line_range": { "start": { "type": "new", "new_line": 10 },
+                                    "end": { "type": "new", "new_line": 14 } } } }""", true, true)));
+    }
+
+    @Test
     void inlineReturnsNoteIdAndDiscussionThread() {
         stubDiscussionCreated();
         CommentRef ref = commentSink.postInline(REPO, 42, new DiffRefs("b", "s", "h"),
