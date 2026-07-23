@@ -10,6 +10,10 @@ const orchestratorWs = process.env.ORCHESTRATOR_WS_URL ?? 'ws://localhost:34080'
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/vitest.setup.ts'],
+  },
   server: {
     port: Number(process.env.UI_PORT ?? 34000),
     host: true,

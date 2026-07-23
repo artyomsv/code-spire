@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { GitPullRequest } from 'lucide-react';
+import { FileText, GitPullRequest } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
@@ -12,6 +12,7 @@ import SettingsLlmProviders from './components/SettingsLlmProviders';
 import SettingsContextProviders from './components/SettingsContextProviders';
 import SettingsWebhookRepos from './components/SettingsWebhookRepos';
 import SettingsDlq from './components/SettingsDlq';
+import PromptsSettings from './components/PromptsSettings';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -32,7 +33,8 @@ export default function App() {
   const onContext = location.pathname.startsWith('/settings/context');
   const onWebhooks = location.pathname.startsWith('/settings/webhooks');
   const onDlq = location.pathname.startsWith('/settings/dlq');
-  const onSettings = onGeneral || onProviders || onLlm || onContext || onWebhooks || onDlq;
+  const onPrompts = location.pathname.startsWith('/settings/prompts');
+  const onSettings = onGeneral || onProviders || onLlm || onContext || onWebhooks || onDlq || onPrompts;
   const onReviews = location.pathname === '/';
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
@@ -48,7 +50,9 @@ export default function App() {
               ? 'Webhooks'
               : onDlq
                 ? 'Dead-letter'
-                : 'Reviews';
+                : onPrompts
+                  ? 'Prompts'
+                  : 'Reviews';
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -138,6 +142,10 @@ export default function App() {
             </svg>
             LLM
           </a>
+          <a className={onPrompts ? 'active' : ''} href="#/settings/prompts">
+            <FileText className="ic" />
+            Prompts
+          </a>
           <a className={onDlq ? 'active' : ''} href="#/settings/dlq">
             <svg
               className="ic"
@@ -198,6 +206,7 @@ export default function App() {
           <Route path="/settings/webhooks" element={<SettingsWebhookRepos />} />
           <Route path="/settings/llm" element={<SettingsLlmProviders />} />
           <Route path="/settings/context" element={<SettingsContextProviders />} />
+          <Route path="/settings/prompts" element={<PromptsSettings />} />
           <Route path="/settings/dlq" element={<SettingsDlq />} />
         </Routes>
       </main>

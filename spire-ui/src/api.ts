@@ -717,3 +717,96 @@ export async function discardDlqEntry(id: string): Promise<void> {
   const res = await fetch(`/api/dlq/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to discard dead-letter entry');
 }
+
+// ---- prompts (per-kind system/body templates, with a locked suffix + variable palette) ----
+
+/** One `{{name}}` slot the body may reference — clickable in the editor's palette. */
+export interface PromptVariable {
+  name: string;
+  required: boolean;
+  fenced: boolean;
+  maxTokens: number;
+  description: string;
+}
+
+export interface PromptView {
+  kind: string;
+  customized: boolean; // false = showing the built-in default (not a stored override)
+  system: string;
+  body: string;
+  updatedAt: string | null;
+  palette: PromptVariable[];
+  lockedSuffixPreview: string; // always appended server-side — shown read-only, never editable
+}
+
+/** The assembled text a real review call would send, with variable slots annotated. */
+export interface PromptPreview {
+  system: string;
+  user: string;
+  errors: string[];
+}
+
+export async function fetchPrompts(): Promise<PromptView[]> {
+  const res = await fetch('/api/prompts');
+  if (!res.ok) return throwResponse(res, 'Failed to load prompts');
+  return res.json();
+}
+
+export async function fetchPrompt(kind: string): Promise<PromptView> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}`);
+  if (!res.ok) return throwResponse(res, 'Failed to load prompt');
+  return res.json();
+}
+
+/**
+ * A rejected save's 400 body is a JSON array of validation messages (the orchestrator's
+ * `PromptResource#badRequest` sets the raw list as the entity — not wrapped in an object).
+ * Join them into one readable message; any other shape (HTML error page, empty body) falls
+ * back to the generic single-line message like the rest of this file's error handling.
+ */
+async function saveErrorMessage(res: Response): Promise<string> {
+  const fallback = `Failed to save prompt (${res.status})`;
+  try {
+    const text = (await res.text()).trim();
+    if (!text) return fallback;
+    const contentType = res.headers.get('content-type') ?? '';
+    if (contentType.includes('text/html') || text.startsWith('<')) return fallback;
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((m) => typeof m === 'string')) {
+        return parsed.join('\n');
+      }
+    } catch {
+      // Not a JSON array of messages — fall through and show the raw text below.
+    }
+    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function savePrompt(kind: string, system: string, body: string): Promise<PromptView> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system, body }),
+  });
+  if (!res.ok) throw new Error(await saveErrorMessage(res));
+  return res.json();
+}
+
+/** Reset a kind back to its built-in default. Callers must re-fetch to get the default text. */
+export async function resetPrompt(kind: string): Promise<void> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}`, { method: 'DELETE' });
+  if (!res.ok) await throwResponse(res, 'Failed to reset prompt');
+}
+
+export async function previewPrompt(kind: string, system: string, body: string): Promise<PromptPreview> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system, body }),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to preview prompt');
+  return res.json();
+}
