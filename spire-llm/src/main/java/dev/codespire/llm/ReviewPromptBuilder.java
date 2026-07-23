@@ -74,10 +74,4 @@ public final class ReviewPromptBuilder {
         }
         return out.toString();
     }
-
-    // TEMPORARY: retained so ReconcilePrompt/FollowUpPrompt still compile until Tasks 3-4 refactor
-    // them off it; deleted in Task 4. The renderer is the real owner of sentinel neutralization.
-    static String neutralizeSentinels(String untrusted) {
-        return untrusted == null ? "" : untrusted.replace("UNTRUSTED_DATA", "UNTRUSTED-DATA");
-    }
 }
