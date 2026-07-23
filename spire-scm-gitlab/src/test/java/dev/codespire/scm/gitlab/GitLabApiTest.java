@@ -274,6 +274,17 @@ class GitLabApiTest {
     }
 
     @Test
+    void rateLimitCarriesRetryAfter() {
+        server.stubFor(get(urlEqualTo(MR + "/changes")).willReturn(aResponse()
+                .withStatus(429).withHeader("Retry-After", "42").withBody("{}")));
+        GitLabApiException e = assertThrows(GitLabApiException.class,
+                () -> diffSource.fetchDiff(REPO, 42, "abc123"));
+        assertEquals(429, e.status());
+        assertTrue(e.isRateLimited());
+        assertEquals(42, e.retryAfterSeconds());
+    }
+
+    @Test
     void malformed2xxWithoutIdIsRejected() {
         server.stubFor(post(urlEqualTo(MR + "/notes"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{}")));

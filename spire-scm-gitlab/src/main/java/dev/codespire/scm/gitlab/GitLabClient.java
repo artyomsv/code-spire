@@ -80,11 +80,26 @@ public class GitLabClient {
                 continue;
             }
             if (status / 100 != 2) {
-                throw new GitLabApiException(status, method, path, bodySnippet(response.body()));
+                throw failure(status, method, path, response);
             }
             return response.body();
         }
         throw new GitLabApiException(310, method, path); // too many redirects
+    }
+
+    private static GitLabApiException failure(int status, String method, String path,
+                                              HttpResponse<String> response) {
+        Integer retryAfter = response.headers().firstValue("Retry-After")
+                .map(GitLabClient::parseSecondsOrNull).orElse(null);
+        return new GitLabApiException(status, method, path, bodySnippet(response.body()), retryAfter);
+    }
+
+    private static Integer parseSecondsOrNull(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**
