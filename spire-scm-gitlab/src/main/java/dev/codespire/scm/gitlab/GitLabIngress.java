@@ -49,11 +49,23 @@ public class GitLabIngress implements ScmIngress {
     private final String webhookSecret;
     private final ObjectMapper mapper;
     private final Set<String> commands;
+    private final boolean reviewDrafts;
 
     public GitLabIngress(String webhookSecret, ObjectMapper mapper, Set<String> commands) {
+        this(webhookSecret, mapper, commands, false);
+    }
+
+    /**
+     * @param reviewDrafts draft-PR policy (config {@code spire.review.draft-prs}): {@code false}
+     *                     (default) skips draft open/update and instead reviews on the draft→ready
+     *                     flip (GitLab has no {@code ready_for_review} event, so the flip is detected
+     *                     from {@code changes}); {@code true} restores reviewing drafts immediately.
+     */
+    public GitLabIngress(String webhookSecret, ObjectMapper mapper, Set<String> commands, boolean reviewDrafts) {
         this.webhookSecret = webhookSecret;
         this.mapper = mapper;
         this.commands = Set.copyOf(commands);
+        this.reviewDrafts = reviewDrafts;
     }
 
     @Override
@@ -91,17 +103,58 @@ public class GitLabIngress implements ScmIngress {
         };
     }
 
+    /**
+     * Draft-PR policy (config {@code spire.review.draft-prs}): with {@link #reviewDrafts}
+     * false (default), a draft/WIP MR never triggers a review on open/reopen/update — it
+     * fires instead when the author flips the MR to ready (detected from {@code changes},
+     * since GitLab has no {@code ready_for_review} event). With {@code reviewDrafts} true,
+     * drafts are reviewed immediately. Closing/merging always cancels regardless of draft
+     * state.
+     */
     private List<IntegrationEvent> mergeRequest(JsonNode payload) {
         JsonNode attrs = payload.path("object_attributes");
+        boolean skipDraft = isDraft(attrs) && !reviewDrafts;
         return switch (attrs.path("action").asText("")) {
-            case "open", "reopen" -> prEvent(payload, attrs, PrAction.OPENED);
-            // A bare "update" also fires on label/description edits; only a push (which
-            // GitLab flags by including oldrev) moves the diff and warrants a re-review.
-            case "update" -> attrs.has("oldrev") ? prEvent(payload, attrs, PrAction.UPDATED) : List.of();
+            case "open", "reopen" -> skipDraft ? List.of() : prEvent(payload, attrs, PrAction.OPENED);
+            case "update" -> updateEvent(payload, attrs, skipDraft);
             case "close" -> List.of(new PullRequestClosed(repo(payload), iid(attrs), CloseReason.DECLINED));
             case "merge" -> List.of(new PullRequestClosed(repo(payload), iid(attrs), CloseReason.MERGED));
             default -> List.of(); // approved / unapproved / ...
         };
+    }
+
+    /** A draft→ready flip reviews even without a new push (GitLab has no ready_for_review event); otherwise
+     *  only a push (flagged by oldrev) moves the diff. */
+    private List<IntegrationEvent> updateEvent(JsonNode payload, JsonNode attrs, boolean skipDraft) {
+        if (becameReady(payload) && !reviewDrafts) {
+            return prEvent(payload, attrs, PrAction.OPENED);
+        }
+        if (skipDraft) {
+            return List.of();
+        }
+        // A bare "update" also fires on label/description edits; only a push (which
+        // GitLab flags by including oldrev) moves the diff and warrants a re-review.
+        return attrs.has("oldrev") ? prEvent(payload, attrs, PrAction.UPDATED) : List.of();
+    }
+
+    private static boolean isDraft(JsonNode attrs) {
+        if (attrs.path("work_in_progress").asBoolean(false) || attrs.path("draft").asBoolean(false)) {
+            return true;
+        }
+        String title = attrs.path("title").asText("");
+        return title.startsWith("Draft:") || title.startsWith("WIP:");
+    }
+
+    /** GitLab signals an un-draft on an update via changes.draft (or changes.work_in_progress) flipping to false. */
+    private static boolean becameReady(JsonNode payload) {
+        JsonNode changes = payload.path("changes");
+        for (String key : new String[]{"draft", "work_in_progress"}) {
+            JsonNode change = changes.path(key);
+            if (change.path("previous").asBoolean(false) && !change.path("current").asBoolean(true)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<IntegrationEvent> prEvent(JsonNode payload, JsonNode attrs, PrAction action) {

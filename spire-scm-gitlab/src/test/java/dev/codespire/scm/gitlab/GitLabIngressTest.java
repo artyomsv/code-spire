@@ -106,6 +106,32 @@ class GitLabIngressTest {
         assertTrue(ingress.translate(webhook(mr("unapproved", null), Map.of())).isEmpty());
     }
 
+    // --- translation: draft/WIP policy ---
+
+    @Test
+    void draftMrOpenIsSkippedByDefault() {
+        assertTrue(ingress.translate(webhook(mrDraft("open", true))).isEmpty());
+    }
+
+    @Test
+    void nonDraftMrOpenIsReviewed() {
+        assertEquals(1, ingress.translate(webhook(mrDraft("open", false))).size());
+    }
+
+    @Test
+    void draftToReadyFlipEmitsOpened() {
+        var events = ingress.translate(webhook(mrReadyFlip()));
+        assertEquals(1, events.size());
+        assertEquals(IntegrationEvent.PrAction.OPENED,
+                ((IntegrationEvent.PullRequestEventReceived) events.getFirst()).action());
+    }
+
+    @Test
+    void reviewDraftsTrueReviewsDraftsImmediately() {
+        GitLabIngress permissive = new GitLabIngress(SECRET, new ObjectMapper(), Set.of("review"), true);
+        assertEquals(1, permissive.translate(webhook(mrDraft("open", true))).size());
+    }
+
     // --- translation: note (comment) ---
 
     @Test
@@ -199,6 +225,29 @@ class GitLabIngressTest {
                   }
                 }
                 """.formatted(oldrevField, action);
+    }
+
+    private static byte[] mrDraft(String action, boolean draft) {
+        return ("""
+                { "object_kind": "merge_request",
+                  "project": { "path_with_namespace": "sandbox/demo-repo" },
+                  "user": { "id": 42, "username": "jdoe", "name": "Jane" },
+                  "object_attributes": { "iid": 7, "action": "%s", "work_in_progress": %b,
+                    "title": "%sAdd feature", "source_branch": "f", "target_branch": "main",
+                    "last_commit": { "id": "abc123" }, "url": "http://gl/mr/7" } }""")
+                .formatted(action, draft, draft ? "Draft: " : "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static byte[] mrReadyFlip() {
+        return """
+                { "object_kind": "merge_request",
+                  "project": { "path_with_namespace": "sandbox/demo-repo" },
+                  "user": { "id": 42, "username": "jdoe", "name": "Jane" },
+                  "changes": { "draft": { "previous": true, "current": false } },
+                  "object_attributes": { "iid": 7, "action": "update", "work_in_progress": false,
+                    "title": "Add feature", "source_branch": "f", "target_branch": "main",
+                    "last_commit": { "id": "abc123" }, "url": "http://gl/mr/7" } }"""
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static byte[] note(String text, String noteableType) {
