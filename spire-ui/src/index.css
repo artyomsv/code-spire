@@ -919,3 +919,23 @@
   @media (max-width: 560px) {
     .field-row-2, .field-row-12, .field-row-13 { grid-template-columns: 1fr; }
   }
+
+  /* Settings → Prompts: list of prompt kinds, each a link into its detail/edit page */
+  .prompt-list { display: flex; flex-direction: column; }
+  .prompt-row {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    text-align: left; background: none; border: none;
+    border-top: 1px solid var(--border);
+    padding: 14px 18px; cursor: pointer; color: var(--text); font: inherit;
+  }
+  .prompt-row:hover { background: var(--hover); }
+  .prompt-row-icon, .prompt-row-chev { color: var(--text-3); flex-shrink: 0; }
+  .prompt-row-main { flex: 1; min-width: 0; }
+  .prompt-row-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; color: var(--text); }
+  .prompt-row-sub { color: var(--text-3); font-size: 12px; margin-top: 2px; line-height: 1.45; }
+  .prompt-tag {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-3);
+  }
+  .prompt-tag.is-custom { color: var(--iris); border-color: var(--iris); background: var(--iris-soft); }
+  .prompt-back { margin-bottom: 12px; }

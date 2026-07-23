@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import PromptsSettings from './PromptsSettings';
+import PromptDetail from './PromptDetail';
 import * as api from '../api';
 
-const view: api.PromptView = {
+const reviewView: api.PromptView = {
   kind: 'review',
   customized: false,
   system: 'persona',
@@ -12,19 +14,48 @@ const view: api.PromptView = {
   palette: [{ name: 'diff', required: true, fenced: true, maxTokens: 24000, description: 'The diff.' }],
   lockedSuffixPreview: 'SECURITY: ... "findings"',
 };
+const reconcileView: api.PromptView = { ...reviewView, kind: 'reconcile', customized: true };
+const followupView: api.PromptView = { ...reviewView, kind: 'followup' };
 
-describe('PromptsSettings', () => {
+describe('PromptsSettings (list)', () => {
   beforeEach(() => {
-    vi.spyOn(api, 'fetchPrompts').mockResolvedValue([view]);
+    vi.spyOn(api, 'fetchPrompts').mockResolvedValue([reviewView, reconcileView, followupView]);
   });
 
-  it('renders a kind with its variable palette', async () => {
-    render(<PromptsSettings />);
-    // Scoped to the heading/button roles rather than plain getByText: the fixture's body
-    // text ("review {{diff}}") legitimately renders inside the body <textarea> too, so an
-    // unscoped getByText(/review/i) or getByText(/\{\{diff\}\}/) would match that textarea
-    // as well as the intended heading/chip and throw on multiple matches.
+  it('lists each prompt kind as a link, tagged Default/Custom', async () => {
+    render(
+      <MemoryRouter>
+        <PromptsSettings />
+      </MemoryRouter>,
+    );
+    // One clickable row per kind. Names are anchored at the start (the label leads the button's
+    // accessible name, which concatenates without a space as "ReviewDefault…") so a "Re-review"
+    // in a blurb can't collide.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Review/ })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /^Reconcile/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Follow-up/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button')).toHaveLength(3);
+    // The customized kind is tagged Custom; the list no longer shows editors/palettes.
+    expect(screen.getByText('Custom')).toBeInTheDocument();
+  });
+});
+
+describe('PromptDetail (edit)', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchPrompt').mockResolvedValue(reviewView);
+  });
+
+  it('loads the kind from the route and renders its variable palette', async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings/prompts/review']}>
+        <Routes>
+          <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    // The editor heading + the palette chip live on the detail page now.
     await waitFor(() => expect(screen.getByRole('heading', { name: /review/i })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /\{\{diff\}\}/ })).toBeInTheDocument();
+    expect(api.fetchPrompt).toHaveBeenCalledWith('review');
   });
 });

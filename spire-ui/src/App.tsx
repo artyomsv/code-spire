@@ -13,6 +13,7 @@ import SettingsContextProviders from './components/SettingsContextProviders';
 import SettingsWebhookRepos from './components/SettingsWebhookRepos';
 import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
+import PromptDetail from './components/PromptDetail';
 import { useLiveReviews } from './useLiveReviews';
 
 function toggleTheme() {
@@ -207,6 +208,7 @@ export default function App() {
           <Route path="/settings/llm" element={<SettingsLlmProviders />} />
           <Route path="/settings/context" element={<SettingsContextProviders />} />
           <Route path="/settings/prompts" element={<PromptsSettings />} />
+          <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
           <Route path="/settings/dlq" element={<SettingsDlq />} />
         </Routes>
       </main>
