@@ -143,7 +143,7 @@ Missing keys fail the affected service at startup naming the exact key — that'
   thread, so a fixed finding gets a reply saying so instead of being closed/collapsed (GitLab
   resolves the discussion instead — see "Conversation + reconciliation" below).
 - Bitbucket inline comments are **single-line** — a finding spanning multiple lines anchors to
-  its last line rather than a range (GitHub and GitLab both support multi-line ranges).
+  its first line rather than a range (GitHub and GitLab both support multi-line ranges).
 - A PR whose diff exceeds the provider's diff-generation limit fails with an explicit "too large to
   review" error instead of the raw HTTP response.
 - A transient SCM/LLM failure auto-retries the pipeline up to `spire.review.max-attempts` (default 3);
