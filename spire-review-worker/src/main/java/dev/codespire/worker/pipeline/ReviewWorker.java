@@ -185,7 +185,8 @@ public class ReviewWorker {
     private void runReviewCall(GenerateReview command, PullRequest pr, Diff diff, List<ContextItem> context,
                                Reconciliation reconciliation, WorkerLlmProvider.LlmClient client) {
         ReviewPromptBuilder.Built built =
-                ReviewPromptBuilder.build(pr, diff.files(), context, reconciliation.exclusions());
+                ReviewPromptBuilder.build(pr, diff.files(), context, reconciliation.exclusions(),
+                        command.reviewPrompt());
         Completion completion = client.provider().complete(built.prompt(), client.params())
                 .toCompletableFuture().join();
 
@@ -237,7 +238,8 @@ public class ReviewWorker {
         List<PriorFinding> remapped = remapRenames(prior.findings(), renameMap(incremental));
         String diffText = incremental != null ? incremental : DiffRenderer.render(diff.files());
         Map<String, ThreadTranscript> transcripts = fetchTranscripts(clients, command, remapped);
-        Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText, incremental != null);
+        Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText,
+                incremental != null, command.reconcilePrompt());
         Completion completion = client.provider().complete(prompt, client.params())
                 .toCompletableFuture().join();
         List<FindingVerdict> verdicts = downgradeUntouched(

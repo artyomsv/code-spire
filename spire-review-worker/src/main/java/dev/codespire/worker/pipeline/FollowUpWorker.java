@@ -6,6 +6,7 @@ import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
+import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
@@ -111,7 +112,8 @@ public class FollowUpWorker {
         }
         WorkerLlmProvider.LlmClient client = llm.forCommand(command);
         FollowUpResult result = answer(command.repo(), command.prId(), command.threadRef(),
-                transcript, clients.diff(), client.provider(), client.params(), clients.comments());
+                transcript, clients.diff(), client.provider(), client.params(), clients.comments(),
+                command.followUpPrompt());
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
                 result.usage()));
@@ -170,12 +172,13 @@ public class FollowUpWorker {
      * no anchor commit, so the PR's current head is resolved first.
      */
     static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
-                                 DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink) {
+                                 DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
+                                 PromptTemplate followUpPrompt) {
         String commit = transcript.commit() != null
                 ? transcript.commit() : diffs.fetchPullRequest(repo, prId).diffRefs().headSha();
         Diff diff = diffs.fetchDiff(repo, prId, commit);
         String diffText = DiffRenderer.render(diff.files());
-        Prompt prompt = FollowUpPrompt.render(transcript, diffText);
+        Prompt prompt = FollowUpPrompt.render(transcript, diffText, followUpPrompt);
         Completion completion = llmProvider.complete(prompt, params).toCompletableFuture().join();
         FollowUpAnswer parsed = FollowUpAnswer.of(completion.text());
         // Post the answer as Markdown as-is. The SCM renders + sanitizes HTML in comments (no active markup

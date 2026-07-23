@@ -46,7 +46,7 @@ class FollowUpWorkerTest {
                 .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
 
         FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(
-                repo, 5L, thread, transcript, diffs, llm, params, sink);
+                repo, 5L, thread, transcript, diffs, llm, params, sink, null);
 
         verify(diffs).fetchDiff(repo, 5L, "abc123");                       // diff fetched by the thread's anchor commit
         verify(sink).replyInThread(eq(repo), eq(5L), eq(thread), contains("caller can pass null"));
@@ -80,7 +80,7 @@ class FollowUpWorkerTest {
                 .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
 
         FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(
-                repo, 5L, thread, transcript, diffs, llm, params, sink);
+                repo, 5L, thread, transcript, diffs, llm, params, sink, null);
 
         verify(diffs).fetchPullRequest(repo, 5L);            // null commit -> PR head resolved first
         verify(diffs).fetchDiff(repo, 5L, "head-9");          // diff fetched by the resolved head
