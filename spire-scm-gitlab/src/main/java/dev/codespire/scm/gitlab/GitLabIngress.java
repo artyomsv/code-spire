@@ -3,17 +3,20 @@ package dev.codespire.scm.gitlab;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
+import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.RawWebhook;
 import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -117,12 +120,14 @@ public class GitLabIngress implements ScmIngress {
     }
 
     /**
-     * A merge-request comment. Only "/command" notes matter (a registered command
-     * becomes ManualCommandReceived; the saga maps "review" -> force review). Notes on
-     * issues/commits/snippets are ignored via {@code noteable_type}, and non-command
-     * replies are not emitted (AuthorReplied is a parked roadmap item, so emitting them
-     * would be dead output today). The MR number is {@code merge_request.iid}, not the
-     * note's own id.
+     * A merge-request comment. A "/command" note becomes ManualCommandReceived when
+     * registered (the saga maps "review" -> force review), dropped when unregistered.
+     * Any other note becomes {@code AuthorReplied}: a threaded reply (GitLab {@code type}
+     * of {@code DiffNote}/{@code DiscussionNote}) is keyed to its {@code discussion_id}
+     * ({@code topLevel = false}); an individual top-level note ({@code type} absent/null)
+     * is {@code topLevel = true}. Notes on issues/commits/snippets are ignored via
+     * {@code noteable_type}. The MR number is {@code merge_request.iid}, not the note's
+     * own id.
      */
     private List<IntegrationEvent> note(JsonNode payload) {
         JsonNode attrs = payload.path("object_attributes");
@@ -130,16 +135,22 @@ public class GitLabIngress implements ScmIngress {
             return List.of();
         }
         String text = attrs.path("note").asText("").trim();
+        long iid = payload.path("merge_request").path("iid").asLong();
+        RepoRef repo = repo(payload);
         if (!text.startsWith("/")) {
-            return List.of();
+            String noteType = attrs.path("type").asText(null);       // DiffNote/DiscussionNote => threaded; null => top-level
+            boolean topLevel = noteType == null || noteType.isBlank();
+            String discussionId = attrs.path("discussion_id").asText("");
+            String noteId = attrs.path("id").asText("");
+            return List.of(new AuthorReplied(repo, iid, ReviewIds.reviewId(repo, iid),
+                    new ThreadRef(discussionId), noteId, text, author(payload.path("user")), topLevel));
         }
         String[] parts = text.substring(1).split("\\s+", 2);
         String command = parts[0].toLowerCase(Locale.ROOT);
         if (!commands.contains(command)) {
             return List.of();
         }
-        long iid = payload.path("merge_request").path("iid").asLong();
-        return List.of(new ManualCommandReceived(repo(payload), iid, command,
+        return List.of(new ManualCommandReceived(repo, iid, command,
                 parts.length > 1 ? parts[1] : "", author(payload.path("user"))));
     }
 

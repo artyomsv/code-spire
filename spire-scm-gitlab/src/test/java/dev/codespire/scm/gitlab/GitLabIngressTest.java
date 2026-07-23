@@ -1,6 +1,7 @@
 package dev.codespire.scm.gitlab;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
@@ -121,10 +122,37 @@ class GitLabIngressTest {
     void ignoresNoteOnANonMergeRequestOrWithoutACommand() {
         // A note on an Issue/Commit/Snippet is not a MR comment.
         assertTrue(ingress.translate(webhook(note("/review", "Issue"), Map.of())).isEmpty());
-        // A non-command note produces nothing (AuthorReplied is a parked feature).
-        assertTrue(ingress.translate(webhook(note("looks good", MR_NOTEABLE), Map.of())).isEmpty());
         // An unregistered command is not forwarded.
         assertTrue(ingress.translate(webhook(note("/deploy now", MR_NOTEABLE), Map.of())).isEmpty());
+    }
+
+    @Test
+    void threadedReplyEmitsAuthorRepliedKeyedToDiscussion() {
+        var events = ingress.translate(webhook(noteWith("looks fine to me", "DiffNote", "DISC42", 900)));
+        assertEquals(1, events.size());
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertFalse(e.topLevel());
+        assertEquals("DISC42", e.threadRef().value());
+        assertEquals("900", e.commentId());
+        assertEquals("looks fine to me", e.text());
+        assertEquals(7, e.prId());
+        assertEquals("42", e.author().providerUserId());   // from the note fixture's user.id
+    }
+
+    @Test
+    void topLevelNoteEmitsTopLevelAuthorReplied() {
+        var events = ingress.translate(webhook(noteWith("what about edge cases?", null, "DISC7", 901)));
+        assertEquals(1, events.size());
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertTrue(e.topLevel());
+        assertEquals("what about edge cases?", e.text());
+    }
+
+    @Test
+    void slashCommandNoteStillEmitsManualCommand() {
+        var events = ingress.translate(webhook(noteWith("/review please", null, "DISC7", 902)));
+        assertEquals(1, events.size());
+        assertInstanceOf(IntegrationEvent.ManualCommandReceived.class, events.getFirst());
     }
 
     // --- malformed / uninteresting ---
@@ -186,6 +214,27 @@ class GitLabIngressTest {
                   "merge_request": { "iid": 7 }
                 }
                 """.formatted(BOT_ACCOUNT_ID, text, noteableType).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Unlike {@link #note}, carries the {@code type}/{@code discussion_id}/{@code id} fields
+     *  a threaded reply (DiffNote/DiscussionNote) or top-level note (null type) needs. */
+    private static byte[] noteWith(String body, String type, String discussionId, long noteId) {
+        String typeField = type == null ? "null" : "\"" + type + "\"";
+        return ("""
+                {
+                  "object_kind": "note",
+                  "project": { "path_with_namespace": "sandbox/demo-repo" },
+                  "user": { "id": 42, "username": "jdoe", "name": "Jane Doe" },
+                  "merge_request": { "iid": 7 },
+                  "object_attributes": {
+                    "noteable_type": "MergeRequest",
+                    "note": "%s", "type": %s, "discussion_id": "%s", "id": %d
+                  }
+                }""").formatted(body, typeField, discussionId, noteId).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static RawWebhook webhook(byte[] body) {
+        return webhook(body, Map.of());
     }
 
     private static RawWebhook webhook(byte[] body, Map<String, String> headers) {
