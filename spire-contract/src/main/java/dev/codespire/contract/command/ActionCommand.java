@@ -2,6 +2,7 @@ package dev.codespire.contract.command;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
@@ -83,13 +84,23 @@ public sealed interface ActionCommand {
      */
     record GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
                           int attempt, String providerOverride, String scmCredential,
-                          String llmCredential, PriorRun priorRun) implements ActionCommand {
+                          String llmCredential, PriorRun priorRun,
+                          PromptTemplate reviewPrompt, PromptTemplate reconcilePrompt) implements ActionCommand {
 
+        // 10-arg: prior-run flow without prompt overrides (built-in defaults).
+        public GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
+                              int attempt, String providerOverride, String scmCredential,
+                              String llmCredential, PriorRun priorRun) {
+            this(reviewId, repo, prId, commit, contextRef, attempt, providerOverride,
+                    scmCredential, llmCredential, priorRun, null, null);
+        }
+
+        // 9-arg: first review, no prior run, built-in default prompts.
         public GenerateReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
                               int attempt, String providerOverride, String scmCredential,
                               String llmCredential) {
             this(reviewId, repo, prId, commit, contextRef, attempt, providerOverride,
-                    scmCredential, llmCredential, null);
+                    scmCredential, llmCredential, null, null, null);
         }
     }
 
@@ -121,6 +132,16 @@ public sealed interface ActionCommand {
     record AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String triggeringCommentId, String question,
                           String scmCredential, String llmCredential, boolean mentioned,
-                          int maxAttempts, long backoffBaseMs, double backoffFactor) implements ActionCommand {
+                          int maxAttempts, long backoffBaseMs, double backoffFactor,
+                          PromptTemplate followUpPrompt) implements ActionCommand {
+
+        // Without a prompt override — the worker uses the built-in default follow-up prompt.
+        public AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                              String triggeringCommentId, String question,
+                              String scmCredential, String llmCredential, boolean mentioned,
+                              int maxAttempts, long backoffBaseMs, double backoffFactor) {
+            this(reviewId, repo, prId, threadRef, triggeringCommentId, question,
+                    scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor, null);
+        }
     }
 }
