@@ -132,6 +132,19 @@ class GitLabIngressTest {
         assertEquals(1, permissive.translate(webhook(mrDraft("open", true))).size());
     }
 
+    @Test
+    void draftMrUpdateWithPushStaysSkipped() {
+        // A push to a still-draft MR ("update" action, oldrev present -> a real push,
+        // no draft->ready flip in "changes") must stay suppressed: only the ready flip
+        // (or reviewDrafts=true) reviews a draft.
+        assertTrue(ingress.translate(webhook(mrDraft("update", true, "abc123def4567890"))).isEmpty());
+    }
+
+    @Test
+    void draftMrReopenIsSkippedByDefault() {
+        assertTrue(ingress.translate(webhook(mrDraft("reopen", true))).isEmpty());
+    }
+
     // --- translation: note (comment) ---
 
     @Test
@@ -228,14 +241,20 @@ class GitLabIngressTest {
     }
 
     private static byte[] mrDraft(String action, boolean draft) {
+        return mrDraft(action, draft, null);
+    }
+
+    /** @param oldrev present -> the update also carries a push (a real head move); null -> omit it. */
+    private static byte[] mrDraft(String action, boolean draft, String oldrev) {
+        String oldrevField = oldrev == null ? "" : "\"oldrev\": \"" + oldrev + "\", ";
         return ("""
                 { "object_kind": "merge_request",
                   "project": { "path_with_namespace": "sandbox/demo-repo" },
                   "user": { "id": 42, "username": "jdoe", "name": "Jane" },
-                  "object_attributes": { "iid": 7, "action": "%s", "work_in_progress": %b,
+                  "object_attributes": { %s"iid": 7, "action": "%s", "work_in_progress": %b,
                     "title": "%sAdd feature", "source_branch": "f", "target_branch": "main",
                     "last_commit": { "id": "abc123" }, "url": "http://gl/mr/7" } }""")
-                .formatted(action, draft, draft ? "Draft: " : "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                .formatted(oldrevField, action, draft, draft ? "Draft: " : "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static byte[] mrReadyFlip() {
