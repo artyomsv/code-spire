@@ -3,6 +3,7 @@ package dev.codespire.scm.bitbucket;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
@@ -10,8 +11,13 @@ import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
+import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.contract.scm.ThreadTranscript;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,7 +27,10 @@ import java.util.Map;
  * are sent, so we send exactly one). Replies inherit the parent's anchor and
  * must NOT resend {@code inline}.
  */
-public class BitbucketCloudCommentSink implements CommentSink {
+public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
+
+    private static final int MAX_THREAD_PAGES = 20;
+    private static final System.Logger LOG = System.getLogger(BitbucketCloudCommentSink.class.getName());
 
     private final BitbucketCloudClient client;
 
@@ -106,5 +115,85 @@ public class BitbucketCloudCommentSink implements CommentSink {
 
     private String commentsPath(RepoRef repo, long prId) {
         return prPath(repo, prId) + "/comments";
+    }
+
+    @Override
+    public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
+        String botAccountId = botAccountId();
+        List<JsonNode> all = new ArrayList<>();
+        for (int page = 1; page <= MAX_THREAD_PAGES; page++) {
+            JsonNode body = client.getJson(commentsPath(repo, prId) + "?pagelen=100&page=" + page);
+            JsonNode values = body.path("values");
+            values.forEach(all::add);
+            if (body.path("next").isMissingNode() || body.path("next").asText("").isBlank()) {
+                break;
+            }
+            if (page == MAX_THREAD_PAGES) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "thread " + thread.value() + " transcript may be truncated after " + MAX_THREAD_PAGES + " pages");
+            }
+        }
+        return subtree(all, thread, botAccountId);
+    }
+
+    /** Collect the root plus every descendant (linked by parent.id), preserving list order; anchor from the root. */
+    private static ThreadTranscript subtree(List<JsonNode> all, ThreadRef thread, String botAccountId) {
+        Map<String, JsonNode> byId = new LinkedHashMap<>();
+        for (JsonNode c : all) {
+            byId.put(c.path("id").asText(), c);
+        }
+        String root = thread.value();
+        String path = null;
+        int line = 0;
+        List<ThreadMessage> messages = new ArrayList<>();
+        for (JsonNode c : all) {
+            if (!inThread(c, root, byId)) {
+                continue;
+            }
+            if (root.equals(c.path("id").asText()) && c.path("inline").isObject()) {
+                path = c.path("inline").path("path").asText(null);
+                line = c.path("inline").path("to").asInt(c.path("inline").path("from").asInt(0));
+            }
+            messages.add(toMessage(c, botAccountId));
+        }
+        return new ThreadTranscript(thread, path, line, null, messages);
+    }
+
+    /** True if the comment is the root or chains up to it through parent.id (bounded by the map size). */
+    private static boolean inThread(JsonNode comment, String root, Map<String, JsonNode> byId) {
+        String id = comment.path("id").asText();
+        for (int hop = 0; hop <= byId.size(); hop++) {
+            if (root.equals(id)) {
+                return true;
+            }
+            JsonNode ancestor = byId.get(id);
+            if (ancestor == null) {
+                return false;           // parent paged out of the fetched set — treat as a different thread
+            }
+            JsonNode parent = ancestor.path("parent").path("id");
+            if (parent.isMissingNode() || parent.isNull()) {
+                return false;
+            }
+            id = parent.asText();
+        }
+        return false;
+    }
+
+    private static ThreadMessage toMessage(JsonNode c, String botAccountId) {
+        String accountId = c.path("user").path("account_id").asText("");
+        String display = c.path("user").path("nickname").asText(accountId);
+        return new ThreadMessage(display, c.path("content").path("raw").asText("").trim(),
+                !accountId.isEmpty() && accountId.equals(botAccountId));
+    }
+
+    /** Best-effort token-owner account id to label the bot's own turns; a transient failure degrades to "". */
+    private String botAccountId() {
+        try {
+            return client.getJson("/user").path("account_id").asText("");
+        } catch (RuntimeException transientFailure) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "botAccountId lookup failed — messages will not be attributed to the bot", transientFailure);
+            return "";
+        }
     }
 }
