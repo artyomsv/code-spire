@@ -34,4 +34,15 @@ describe('WebhookRepoFormModal — provider picker', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
     await waitFor(() => expect(screen.getByText(/register a provider first/i)).toBeInTheDocument());
   });
+
+  it('verifies the repository via the selected provider', async () => {
+    const spy = vi.spyOn(api, 'verifyRepo').mockResolvedValue({ ok: true, detail: null });
+    render(<SettingsWebhookRepos />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
+    await screen.findByText('acme/');
+    fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('p1', 'acme/widgets'));
+    expect(await screen.findByText(/repository found/i)).toBeInTheDocument();
+  });
 });

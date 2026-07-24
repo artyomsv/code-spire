@@ -333,6 +333,22 @@ export async function checkProvider(id: string): Promise<ProviderCheck> {
   return res.json();
 }
 
+export interface RepoCheck {
+  ok: boolean;
+  detail: string | null;
+}
+
+// Live check that a repo exists and is reachable with the provider's token (no webhook is created).
+export async function verifyRepo(providerId: string, repo: string): Promise<RepoCheck> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/verify-repo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo }),
+  });
+  if (!res.ok) await throwResponse(res, 'Failed to verify repository');
+  return res.json();
+}
+
 // ---- Webhook repositories (per-repo webhook registrations) ----
 
 export type WebhookScope = 'repo' | 'org';

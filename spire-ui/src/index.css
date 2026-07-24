@@ -774,6 +774,10 @@
   .wh-repo-input { display: flex; align-items: center; gap: 6px; }
   .wh-repo-input .wh-owner { color: var(--text-3); white-space: nowrap; font-size: 12.5px; }
   .wh-repo-input input { flex: 1; min-width: 0; }
+  .wh-repo-input .wh-verify-btn { flex: none; white-space: nowrap; }
+  .wh-verify { margin-top: 6px; font-size: 12px; }
+  .wh-verify.ok { color: var(--good); }
+  .wh-verify.fail { color: var(--crit); }
 
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;

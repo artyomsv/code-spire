@@ -7,7 +7,9 @@ import {
   fetchWebhookRepos,
   rotateWebhookSecret,
   updateWebhookRepo,
+  verifyRepo,
   type ProviderView,
+  type RepoCheck,
   type WebhookRepoInput,
   type WebhookRepoSecret,
   type WebhookRepoView,
@@ -249,6 +251,13 @@ function WebhookRepoFormModal({
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
 
+  const [verify, setVerify] = useState<{ state: 'idle' | 'checking' | 'ok' | 'fail'; detail?: string }>({
+    state: 'idle',
+  });
+
+  // A changed provider / scope / slug invalidates a prior verify result.
+  useEffect(() => setVerify({ state: 'idle' }), [providerId, scope, slug]);
+
   const selectedProvider = providers.find((p) => p.id === providerId) ?? null;
   // On edit, if the provider was deleted we can't derive the owner — fall back to the stored row (read-only).
   const legacyEdit = editing && providersLoaded && !selectedProvider;
@@ -294,6 +303,17 @@ function WebhookRepoFormModal({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onVerify() {
+    if (!selectedProvider) return;
+    setVerify({ state: 'checking' });
+    try {
+      const result: RepoCheck = await verifyRepo(selectedProvider.id, target);
+      setVerify(result.ok ? { state: 'ok' } : { state: 'fail', detail: result.detail ?? 'Not reachable' });
+    } catch (err) {
+      setVerify({ state: 'fail', detail: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -363,8 +383,17 @@ function WebhookRepoFormModal({
                       disabled={legacyEdit}
                       autoFocus
                     />
-                    {/* Task 4 inserts the Verify button here */}
+                    <button
+                      type="button"
+                      className="btn-ghost wh-verify-btn"
+                      onClick={() => void onVerify()}
+                      disabled={legacyEdit || !selectedProvider || !/^[^/\s]+$/.test(slug.trim()) || verify.state === 'checking'}
+                    >
+                      {verify.state === 'checking' ? 'Verifying…' : 'Verify'}
+                    </button>
                   </div>
+                  {verify.state === 'ok' && <div className="wh-verify ok">Repository found</div>}
+                  {verify.state === 'fail' && <div className="wh-verify fail">{verify.detail}</div>}
                   <small className="field-hint">{targetHelp.hint}</small>
                 </label>
               ) : (
