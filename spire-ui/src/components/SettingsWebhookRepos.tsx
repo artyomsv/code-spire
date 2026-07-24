@@ -3,9 +3,11 @@ import { Check, Copy, RotateCw } from 'lucide-react';
 import {
   createWebhookRepo,
   deleteWebhookRepo,
+  fetchProviders,
   fetchWebhookRepos,
   rotateWebhookSecret,
   updateWebhookRepo,
+  type ProviderView,
   type WebhookRepoInput,
   type WebhookRepoSecret,
   type WebhookRepoView,
@@ -16,7 +18,6 @@ import IconButton from './IconButton';
 import Tooltip from './Tooltip';
 import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
 
-const PROVIDER_TYPES = ['github', 'gitlab', 'bitbucket-cloud'] as const;
 const SCOPES: { value: WebhookScope; label: string }[] = [
   { value: 'repo', label: 'Repository' },
   { value: 'org', label: 'Organization' },
@@ -200,26 +201,64 @@ function WebhookRepoFormModal({
 }) {
   const editing = initial !== null;
 
-  const [providerType, setProviderType] = useState(initial?.providerType ?? PROVIDER_TYPES[0]);
+  const [providers, setProviders] = useState<ProviderView[]>([]);
+  const [providersLoaded, setProvidersLoaded] = useState(false);
+  const [providerId, setProviderId] = useState('');
   const [scope, setScope] = useState<WebhookScope>(initial?.scope ?? 'repo');
-  const [target, setTarget] = useState(initial?.target ?? '');
+  const [slug, setSlug] = useState(() => {
+    if (initial && initial.scope === 'repo') {
+      const i = initial.target.indexOf('/');
+      return i >= 0 ? initial.target.slice(i + 1) : '';
+    }
+    return '';
+  });
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Set after create/rotate — the one time the secret is visible; swaps the form for the reveal panel.
   const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
 
+  useEffect(() => {
+    let alive = true;
+    fetchProviders()
+      .then((all) => {
+        if (!alive) return;
+        const usable = all.filter((p) => p.enabled);
+        setProviders(usable);
+        if (initial) {
+          const owner = initial.scope === 'org' ? initial.target : initial.target.split('/')[0];
+          const match = usable.find((p) => p.type === initial.providerType && p.workspace === owner);
+          setProviderId(match?.id ?? '');
+        } else if (usable.length > 0) {
+          setProviderId(usable[0].id);
+        }
+      })
+      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => alive && setProvidersLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, [initial]);
+
+  const selectedProvider = providers.find((p) => p.id === providerId) ?? null;
+  // On edit, if the provider was deleted we can't derive the owner — fall back to the stored row (read-only).
+  const legacyEdit = editing && providersLoaded && !selectedProvider;
+  const owner = selectedProvider?.workspace ?? (legacyEdit ? initial!.target.split('/')[0] : '');
+  const providerType = selectedProvider?.type ?? initial?.providerType ?? '';
+  const target = legacyEdit ? initial!.target : scope === 'org' ? owner : `${owner}/${slug.trim()}`;
   const targetHelp = webhookTargetHelp(providerType, scope);
-  const valid = scope === 'org' ? /^[^/\s]+$/.test(target.trim()) : /^[^/\s]+\/[^/\s]+$/.test(target.trim());
+  const valid = legacyEdit
+    ? true
+    : selectedProvider != null && (scope === 'org' ? owner.length > 0 : /^[^/\s]+$/.test(slug.trim()));
+  const noProviders = providersLoaded && providers.length === 0 && !legacyEdit;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!valid) {
-      setError(scope === 'org' ? 'Organization must be an owner (no slash).' : 'Repository must be owner/repo.');
+      setError(selectedProvider == null ? 'Select a provider first.' : 'Repository must be a single name (no slash).');
       return;
     }
-    const input: WebhookRepoInput = { providerType, scope, target: target.trim(), enabled };
+    const input: WebhookRepoInput = { providerType, scope, target, enabled };
     setBusy(true);
     setError(null);
     try {
@@ -227,7 +266,6 @@ function WebhookRepoFormModal({
         await updateWebhookRepo(initial.id, input);
         onSaved();
       } else {
-        // The server mints the secret; reveal it once instead of closing.
         setRevealed(await createWebhookRepo(input));
       }
     } catch (err) {
@@ -264,70 +302,101 @@ function WebhookRepoFormModal({
           </button>
         </div>
         <form className="modal-body scroll" onSubmit={submit}>
-          <div className="field-row-2">
-            <label className="field">
-              <span>Provider type</span>
-              <select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
-                {PROVIDER_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Scope</span>
-              <select value={scope} onChange={(e) => setScope(e.target.value as WebhookScope)}>
-                {SCOPES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <label className="field">
-            <span>{scope === 'org' ? 'Organization' : 'Repository'}</span>
-            <input
-              className="mono"
-              placeholder={targetHelp.placeholder}
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              autoFocus
-            />
-            <small className="field-hint">{targetHelp.hint}</small>
-          </label>
-
-          {editing && initial && (
-            <div className="field">
-              <span>Webhook secret</span>
-              <div className="secret-row">
-                <div className="mono field-static">Stored — write-only</div>
-                <button type="button" className="btn-ghost" onClick={rotate} disabled={busy}>
-                  <RotateCw size={14} />
-                  Rotate
-                </button>
-              </div>
-              <small className="field-hint">
-                The secret is never shown after creation. Rotate to mint a new one — paste it into the provider’s
-                webhook settings (the old value stops working).
-              </small>
+          {noProviders ? (
+            <div className="modal-msg">
+              Register a provider first under Settings → Providers, then add a webhook for one of its repositories.
             </div>
-          )}
+          ) : (
+            <>
+              <div className="field-row-2">
+                <label className="field">
+                  <span>Provider</span>
+                  {legacyEdit ? (
+                    <div className="mono field-static">
+                      {initial!.providerType} · {owner}
+                    </div>
+                  ) : (
+                    <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+                      {providers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.type} · {p.workspace}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+                <label className="field">
+                  <span>Scope</span>
+                  <select
+                    value={scope}
+                    onChange={(e) => setScope(e.target.value as WebhookScope)}
+                    disabled={legacyEdit}
+                  >
+                    {SCOPES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
-          {editing && initial && (
-            <label className="field">
-              <span>Payload URL (path)</span>
-              <div className="mono field-static">{webhookPath(initial)}</div>
-              <small className="field-hint">Prefix with your public webhook base to get the full payload URL.</small>
-            </label>
-          )}
+              {scope === 'repo' ? (
+                <label className="field">
+                  <span>Repository</span>
+                  <div className="wh-repo-input">
+                    <span className="wh-owner mono">{owner || '—'}/</span>
+                    <input
+                      className="mono"
+                      placeholder="repo-name"
+                      value={slug}
+                      onChange={(e) => setSlug(e.target.value)}
+                      disabled={legacyEdit}
+                      autoFocus
+                    />
+                    {/* Task 4 inserts the Verify button here */}
+                  </div>
+                  <small className="field-hint">{targetHelp.hint}</small>
+                </label>
+              ) : (
+                <label className="field">
+                  <span>Organization</span>
+                  <div className="mono field-static">{owner || '—'}</div>
+                  <small className="field-hint">{targetHelp.hint}</small>
+                </label>
+              )}
 
-          <label className="field-check">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            <span>Enabled</span>
-          </label>
+              {editing && initial && (
+                <div className="field">
+                  <span>Webhook secret</span>
+                  <div className="secret-row">
+                    <div className="mono field-static">Stored — write-only</div>
+                    <button type="button" className="btn-ghost" onClick={rotate} disabled={busy}>
+                      <RotateCw size={14} />
+                      Rotate
+                    </button>
+                  </div>
+                  <small className="field-hint">
+                    The secret is never shown after creation. Rotate to mint a new one — paste it into the provider’s
+                    webhook settings (the old value stops working).
+                  </small>
+                </div>
+              )}
+
+              {editing && initial && (
+                <label className="field">
+                  <span>Payload URL (path)</span>
+                  <div className="mono field-static">{webhookPath(initial)}</div>
+                  <small className="field-hint">Prefix with your public webhook base to get the full payload URL.</small>
+                </label>
+              )}
+
+              <label className="field-check">
+                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+                <span>Enabled</span>
+              </label>
+            </>
+          )}
 
           {error && <div className="modal-msg modal-error">{error}</div>}
 
@@ -335,7 +404,7 @@ function WebhookRepoFormModal({
             <button type="button" className="btn-ghost" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn" disabled={busy}>
+            <button type="submit" className="btn" disabled={busy || (!editing && noProviders)}>
               {busy ? 'Saving…' : editing ? 'Save changes' : 'Add webhook'}
             </button>
           </div>

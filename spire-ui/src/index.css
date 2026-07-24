@@ -770,6 +770,11 @@
   .wh-step .chips { margin-top: 7px; }
   .wh-step .chip { cursor: default; }
 
+  /* Fixed-owner repo input: read-only owner prefix + the repo-name field. */
+  .wh-repo-input { display: flex; align-items: center; gap: 6px; }
+  .wh-repo-input .wh-owner { color: var(--text-3); white-space: nowrap; font-size: 12.5px; }
+  .wh-repo-input input { flex: 1; min-width: 0; }
+
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 18px; border-bottom: 1px solid var(--border);
