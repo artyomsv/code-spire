@@ -15,6 +15,7 @@ import {
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
 import Tooltip from './Tooltip';
+import Select from './Select';
 
 const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence'];
 
@@ -335,20 +336,24 @@ function ContextProviderForm({
           <div className="field-row-2">
             <label className="field">
               <span>Type</span>
-              <select value={type} onChange={(e) => setType(e.target.value as ContextType)}>
-                {CONTEXT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Type"
+                value={type}
+                options={CONTEXT_TYPES.map((t) => ({ value: t, label: t }))}
+                onChange={(v) => setType(v as ContextType)}
+              />
             </label>
             <label className="field">
               <span>Auth</span>
-              <select value={authKind} onChange={(e) => setAuthKind(e.target.value as ContextAuthKind)}>
-                <option value="basic">basic · email + API token (Cloud)</option>
-                <option value="bearer">bearer · personal access token (Data Center)</option>
-              </select>
+              <Select
+                ariaLabel="Auth"
+                value={authKind}
+                options={[
+                  { value: 'basic', label: 'basic · email + API token (Cloud)' },
+                  { value: 'bearer', label: 'bearer · personal access token (Data Center)' },
+                ]}
+                onChange={(v) => setAuthKind(v as ContextAuthKind)}
+              />
             </label>
           </div>
 

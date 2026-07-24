@@ -5,6 +5,7 @@ import {
   type ConversationLevel,
   type ConversationSettings as ConversationSettingsShape,
 } from '../api';
+import Select from './Select';
 
 const LEVELS: ConversationLevel[] = ['REPORT_ONLY', 'EXPLAIN', 'INTERACTIVE'];
 
@@ -75,17 +76,13 @@ export default function ConversationSettings() {
     <div className="conv-default">
       <label className="field">
         <span>Interaction level</span>
-        <select
+        <Select
+          ariaLabel="Interaction level"
           value={settings.level}
           disabled={busy}
-          onChange={(e) => update('level', normalizeLevel(e.target.value))}
-        >
-          {LEVELS.map((l) => (
-            <option key={l} value={l}>
-              {LABELS[l]}
-            </option>
-          ))}
-        </select>
+          options={LEVELS.map((l) => ({ value: l, label: LABELS[l] }))}
+          onChange={(v) => update('level', normalizeLevel(v))}
+        />
         <small className="field-hint">
           The default applied to every provider that doesn&apos;t set its own conversation level.
         </small>
