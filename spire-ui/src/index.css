@@ -400,9 +400,10 @@
   }
   .responding svg { flex: none; }
 
-  /* Status cell holds the outcome/status badge and the responding indicator on one line;
-     the PR-state badge lives in its own .state-cell column so it aligns down the list. */
-  .status-cell { display: flex; align-items: center; gap: 6px; }
+  /* Status cell holds the outcome/status badge and the responding indicator. The status
+     column is narrow (116px), so let the responding pill WRAP onto a second line inside the
+     cell rather than overflow into the adjacent .state-cell (which corrupted the row). */
+  .status-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; row-gap: 4px; min-width: 0; }
   .state-cell { display: flex; align-items: center; }
 
   /* PR-state badge (open/merged/closed) — the pull/merge request's own state, distinct
