@@ -200,6 +200,15 @@ class ProviderResourceTest {
     }
 
     @Test
+    void verifyRepoRejectsAMultiSegmentRepo() {
+        String id = given().contentType("application/json").body(body("rest-verify-multi", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(Map.of("repo", "owner/group/repo"))
+                .when().post("/api/providers/" + id + "/verify-repo")
+                .then().statusCode(400);
+    }
+
+    @Test
     void listsCreatedProvider() {
         given().contentType("application/json").body(body("rest-list", "bearer", "tok", null))
                 .when().post("/api/providers").then().statusCode(201);

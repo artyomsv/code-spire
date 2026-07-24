@@ -162,7 +162,7 @@ public class ProviderResource {
     private static RepoRef parseRepo(VerifyRepoRequest req) {
         String repo = req == null || req.repo() == null ? "" : req.repo().trim();
         int slash = repo.indexOf('/');
-        if (slash <= 0 || slash >= repo.length() - 1) {
+        if (slash <= 0 || slash >= repo.length() - 1 || repo.indexOf('/', slash + 1) != -1) {
             throw new BadRequestException("repo must be 'owner/repo'");
         }
         return new RepoRef(repo.substring(0, slash), repo.substring(slash + 1));
