@@ -96,6 +96,7 @@ export default function Select({
   useEffect(() => {
     if (open && active >= 0) {
       const el = document.getElementById(`${baseId}-opt-${active}`);
+      // Optional-chained: jsdom (test env) has no scrollIntoView; a no-op there, always present in real browsers.
       el?.scrollIntoView?.({ block: 'nearest' });
     }
   }, [open, active, baseId]);
