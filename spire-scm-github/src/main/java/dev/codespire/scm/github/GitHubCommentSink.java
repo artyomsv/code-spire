@@ -121,12 +121,12 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
 
     /**
      * Walks review threads by GraphQL cursor looking for the one whose FIRST (root)
-     * comment's {@code databaseId} equals {@code thread}'s value. A human may have
-     * already resolved it (ALREADY_RESOLVED, no mutation) or it may be gone entirely —
-     * the root comment was deleted, so there is nothing left to act on (also
-     * ALREADY_RESOLVED, not an error). If the pagination cap is exhausted while more
-     * pages remained, the thread's state is genuinely unknown — degrade honestly to
-     * UNSUPPORTED (reply-only) rather than claiming it was already resolved.
+     * comment's {@code databaseId} equals {@code thread}'s value. A match that is already
+     * resolved (a human beat us to it) is ALREADY_RESOLVED with no mutation. If NO thread
+     * matches — the comment was deleted, or the finding was re-posted under a new id so the
+     * carried thread ref is stale — we CANNOT resolve it, so degrade to UNSUPPORTED (reply-only)
+     * rather than falsely reporting {@code resolved:true} while doing nothing. Same when the
+     * pagination cap is exhausted with pages remaining.
      */
     @Override
     public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
@@ -139,7 +139,11 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
                 return found;
             }
             if (!threads.path("pageInfo").path("hasNextPage").asBoolean(false)) {
-                return ThreadResolution.ALREADY_RESOLVED; // walked everything; comment is gone
+                // No thread matched this ref (deleted, or re-posted under a new id). Don't fake
+                // success — degrade to reply-only so the outcome is an honest resolved:false.
+                LOG.log(System.Logger.Level.WARNING, "resolveThread " + thread.value()
+                        + ": no matching review thread — degrading to reply-only");
+                return ThreadResolution.UNSUPPORTED;
             }
             cursor = threads.path("pageInfo").path("endCursor").asText(null);
         }

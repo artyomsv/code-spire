@@ -109,9 +109,32 @@ class GitHubReconciliationTest {
                                 {"data":{"repository":{"pullRequest":{"reviewThreads":{
                                   "pageInfo":{"hasNextPage":false,"endCursor":null},
                                   "nodes":[]}}}}}""")));
-        assertEquals(ThreadResolution.ALREADY_RESOLVED,
+        // No matching thread (empty nodes) now degrades to reply-only (UNSUPPORTED), not a fake
+        // ALREADY_RESOLVED — this test only cares that the query reached /api/graphql.
+        assertEquals(ThreadResolution.UNSUPPORTED,
                 new GitHubCommentSink(ghe).resolveThread(repo, 1L, new ThreadRef("42")));
         assertFalse(wireMock.findAll(postRequestedFor(urlEqualTo("/api/graphql"))).isEmpty());
+    }
+
+    @Test
+    void resolveThreadWithNoMatchingThreadDegradesToUnsupported() {
+        // The carried threadRef matches no current review thread (deleted, or the finding was
+        // re-posted under a new id). Don't fake resolved:true — degrade to reply-only so the
+        // outcome is honest and the finding still gets a reply.
+        wireMock.stubFor(post(urlPathEqualTo("/graphql"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"data":{"repository":{"pullRequest":{"reviewThreads":{
+                                  "pageInfo":{"hasNextPage":false,"endCursor":null},
+                                  "nodes":[{"id":"RT_9","isResolved":false,
+                                            "comments":{"nodes":[{"databaseId":777}]}}]}}}}}""")));
+        ThreadResolution result = new GitHubCommentSink(client)
+                .resolveThread(repo, 1L, new ThreadRef("42"));
+        assertEquals(ThreadResolution.UNSUPPORTED, result);
+        assertTrue(wireMock.findAll(com.github.tomakehurst.wiremock.client.WireMock
+                .postRequestedFor(urlPathEqualTo("/graphql"))).stream()
+                .noneMatch(r -> r.getBodyAsString().contains("resolveReviewThread")));
     }
 
     @Test
