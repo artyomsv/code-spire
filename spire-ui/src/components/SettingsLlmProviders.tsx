@@ -19,6 +19,7 @@ import {
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
+import Select from './Select';
 import Tooltip from './Tooltip';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
@@ -357,34 +358,31 @@ function LlmProviderForm({
           <div className="field-row-2">
             <label className="field">
               <span>Type</span>
-              <select
+              <Select
+                ariaLabel="Type"
                 value={type}
-                onChange={(e) => {
-                  const t = e.target.value as LlmType;
+                options={LLM_TYPES.map((t) => ({ value: t, label: t }))}
+                onChange={(v) => {
+                  const t = v as LlmType;
                   setType(t);
                   if (!baseUrl.trim() || Object.values(DEFAULT_BASE_URLS).includes(baseUrl)) {
                     setBaseUrl(defaultBaseUrl(t));
                   }
                 }}
-              >
-                {LLM_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
             <label className="field">
               <span>Model</span>
               {typeModels.length > 0 ? (
-                <select value={model} onChange={(e) => setModel(e.target.value)}>
-                  <option value="">— select a model —</option>
-                  {typeModels.map((m) => (
-                    <option key={m.id} value={m.name}>
-                      {m.label} ({m.name})
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  ariaLabel="Model"
+                  value={model}
+                  options={[
+                    { value: '', label: '— select a model —' },
+                    ...typeModels.map((m) => ({ value: m.name, label: `${m.label} (${m.name})` })),
+                  ]}
+                  onChange={setModel}
+                />
               ) : (
                 <input
                   className="mono"
@@ -557,13 +555,12 @@ function LlmModelForm({
           <div className="field-row-2">
             <label className="field">
               <span>Type</span>
-              <select value={type} onChange={(e) => setType(e.target.value as LlmType)}>
-                {LLM_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Type"
+                value={type}
+                options={LLM_TYPES.map((t) => ({ value: t, label: t }))}
+                onChange={(v) => setType(v as LlmType)}
+              />
             </label>
             <label className="field">
               <span>Model name</span>
@@ -612,34 +609,27 @@ function LlmModelForm({
             <div className="field-row-2">
               <label className="field">
                 <span>Output token limit</span>
-                <select
+                <Select
+                  ariaLabel="Output token limit"
                   value={outputTokenParam}
-                  onChange={(e) => {
-                    const v = e.target.value as OutputTokenParam;
-                    setOutputTokenParam(v);
-                    // Reasoning models that require max_completion_tokens also reject a custom
-                    // temperature — preset the toggle so it's not a second thing to remember.
-                    if (v === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
+                  options={TOKEN_PARAMS.map((t) => ({ value: t.value, label: t.label }))}
+                  onChange={(v) => {
+                    const next = v as OutputTokenParam;
+                    setOutputTokenParam(next);
+                    if (next === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
                   }}
-                >
-                  {TOKEN_PARAMS.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label className="field">
                 <span>
                   Reasoning effort <span className="field-optional">optional</span>
                 </span>
-                <select value={reasoningEffort} onChange={(e) => setReasoningEffort(e.target.value)}>
-                  {REASONING_EFFORTS.map((r) => (
-                    <option key={r} value={r}>
-                      {r === '' ? '— none —' : r}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  ariaLabel="Reasoning effort"
+                  value={reasoningEffort}
+                  options={REASONING_EFFORTS.map((r) => ({ value: r, label: r === '' ? '— none —' : r }))}
+                  onChange={setReasoningEffort}
+                />
               </label>
             </div>
           )}
