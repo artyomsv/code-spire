@@ -74,6 +74,32 @@ class BitbucketThreadFetchTest {
     }
 
     @Test
+    void fromAMidThreadReplyWalksUpToRootAndReturnsTheWholeThread() {
+        // A human replied to the bot's OWN answer (id 250), so the fetch ref is mid-thread. The
+        // transcript must still be the WHOLE conversation rooted at the finding (100) — parity with
+        // GitHub/GitLab — not just the branch under 250.
+        server.stubFor(get(urlPathEqualTo(COMMENTS)).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("""
+                        { "values": [
+                          { "id": 100, "content": { "raw": "possible NPE" },
+                            "user": { "account_id": "BOT-1" }, "inline": { "path": "src/App.java", "to": 42 } },
+                          { "id": 200, "parent": { "id": 100 }, "content": { "raw": "why?" },
+                            "user": { "account_id": "HUM-9" } },
+                          { "id": 250, "parent": { "id": 200 }, "content": { "raw": "here is why" },
+                            "user": { "account_id": "BOT-1" } },
+                          { "id": 300, "parent": { "id": 250 }, "content": { "raw": "explain again" },
+                            "user": { "account_id": "HUM-9" } } ] }""")));
+
+        ThreadTranscript t = sink.fetchThread(REPO, 7, new ThreadRef("250"));
+
+        assertEquals("src/App.java", t.path(), "anchor resolves from the true root (100), not the mid ref");
+        assertEquals(42, t.line());
+        assertEquals(4, t.messages().size(), "the whole thread (100+200+250+300), not just 250's branch");
+        assertTrue(t.messages().get(0).fromBot());          // 100 BOT-1 finding
+        assertEquals("explain again", t.messages().get(3).text());
+    }
+
+    @Test
     void followsPaginationViaNextAndCollectsFullSubtree() {
         server.stubFor(get(urlEqualTo(COMMENTS + "?pagelen=100&page=1")).willReturn(aResponse()
                 .withHeader("Content-Type", "application/json").withBody("""

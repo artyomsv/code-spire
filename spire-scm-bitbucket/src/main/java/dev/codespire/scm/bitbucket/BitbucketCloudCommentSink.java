@@ -142,7 +142,10 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
         for (JsonNode c : all) {
             byId.put(c.path("id").asText(), c);
         }
-        String root = thread.value();
+        // A reply can land on the bot's own answer (Bitbucket threads by immediate parent), so the
+        // caller's ref may be mid-thread. Walk up to the top-level comment so the transcript is the
+        // WHOLE conversation (parity with GitHub/GitLab), not just the branch under the replied-to comment.
+        String root = rootOf(thread.value(), byId);
         String path = null;
         int line = 0;
         List<ThreadMessage> messages = new ArrayList<>();
@@ -157,6 +160,24 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
             messages.add(toMessage(c, botAccountId));
         }
         return new ThreadTranscript(thread, path, line, null, messages);
+    }
+
+    /** Walk parent.id up to the thread's top-level comment (bounded by the map size); returns the
+     *  input id when it has no parent, or when the parent paged out of the fetched set. */
+    private static String rootOf(String commentId, Map<String, JsonNode> byId) {
+        String id = commentId;
+        for (int hop = 0; hop <= byId.size(); hop++) {
+            JsonNode node = byId.get(id);
+            if (node == null) {
+                return id; // not in the fetched set — treat as its own root
+            }
+            JsonNode parent = node.path("parent").path("id");
+            if (parent.isMissingNode() || parent.isNull()) {
+                return id; // no parent → top-level comment
+            }
+            id = parent.asText();
+        }
+        return id;
     }
 
     /** True if the comment is the root or chains up to it through parent.id (bounded by the map size). */

@@ -314,13 +314,15 @@ class ResultSagaRetryTest {
     }
 
     /**
-     * The bot's reply actually landing on the SCM (FollowUpPosted) must clear the "answering"
-     * flag — the normal-completion clear (fix #5) — which also bumps the dashboard's live feed,
-     * same rationale as {@link #followUpGenerated_touchesTheProjectionForLiveUpdate}.
+     * The bot's reply actually landing on the SCM (FollowUpPosted) must (a) clear the "answering"
+     * flag — the normal-completion clear (fix #5), which also bumps the dashboard's live feed — and
+     * (b) mark the bot's own answer comment as an owned thread, so a reply to that answer is
+     * recognized as ours and multi-turn continues (Bitbucket threads by immediate parent).
      */
     @Test
-    void followUpPosted_setsAnsweringFalse() {
+    void followUpPosted_setsAnsweringFalseAndMarksTheAnswerOwned() {
         List<Boolean> answeringCalls = new ArrayList<>();
+        List<String> markedOwned = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
         saga.timeline = new TimelineBroadcaster() {
             @Override
@@ -330,6 +332,11 @@ class ResultSagaRetryTest {
         saga.threads = new ReviewThreadView() {
             @Override
             public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
+            }
+
+            @Override
+            public void markOurThread(String reviewId, ThreadRef thread) {
+                markedOwned.add(thread.value());
             }
         };
         saga.lifecycle = new ReviewLifecycleService() {
@@ -350,5 +357,7 @@ class ResultSagaRetryTest {
 
         assertEquals(List.of(false), answeringCalls,
                 "the bot's reply landing must clear the answering flag (and bump the live dashboard)");
+        assertEquals(List.of("c-1"), markedOwned,
+                "the bot's answer comment is marked owned so a reply to it continues the conversation");
     }
 }
