@@ -357,17 +357,18 @@ public class ReviewProjection {
     }
 
     /**
-     * loc is "path:line" (existing format) split at the LAST ':'. Prefers the entry's own STORED
-     * threadRef (set by {@link #recordOpenFindings} for a carried-forward still-open finding) so a
-     * finding's original thread survives without needing a {@code review_thread} row; falls back to
-     * the path:line thread-index join for a finding that has never been through carry-forward (e.g.
-     * this round's brand-new findings, or a first-review row predating {@link #recordOpenFindings}).
+     * loc is "path:line" (existing format) split at the LAST ':'. Prefers the CURRENT thread for the
+     * loc from the {@code review_thread} index (the freshest posted comment — so a finding re-posted
+     * across rounds reconciles against its LATEST thread, not a stale, already-resolved earlier one),
+     * and falls back to the entry's STORED threadRef only when it has no current review_thread row
+     * (pure carry-forward — a still-open finding's original thread survives even with no row for its loc).
      */
     private PriorFinding toPriorFinding(ReviewDetail.FindingView f, ThreadIndex index) {
         int splitAt = f.loc().lastIndexOf(':');
         String path = f.loc().substring(0, splitAt);
         int line = Integer.parseInt(f.loc().substring(splitAt + 1));
-        String threadRef = f.threadRef() != null ? f.threadRef() : index.threadByLoc().get(f.loc());
+        String current = index.threadByLoc().get(f.loc());
+        String threadRef = current != null ? current : f.threadRef();
         return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), threadRef);
     }
 
@@ -898,13 +899,25 @@ public class ReviewProjection {
                 resolvedRefs.add(t.threadRef());
             }
             if (t.path() != null && t.line() != null) {
-                // Deterministic tie-break by thread_ref order (loadThreadRows' ORDER BY) for the rare
-                // same-line collision — either thread is a valid nesting; what matters is that a
-                // review renders the same way every load.
-                threadByLoc.putIfAbsent(t.path() + ":" + t.line(), t.threadRef());
+                // A finding re-posted at the same loc across re-review rounds (e.g. a rename made the
+                // exclusion miss it) leaves several review_thread rows for one anchor. Keep the NEWEST
+                // comment id — ids are monotonic — so a verdict targets the CURRENT finding's thread,
+                // not a stale, already-resolved older one (the "outdated instead of resolved" bug).
+                threadByLoc.merge(t.path() + ":" + t.line(), t.threadRef(), ReviewProjection::newerThreadRef);
             }
         }
         return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs);
+    }
+
+    /** The newer of two SCM comment ids for one loc — ids are monotonic, so the numerically larger is
+     *  the most recently posted comment (the current finding). Non-numeric ids keep the first seen. */
+    static String newerThreadRef(String existing, String incoming) {
+        try {
+            return new java.math.BigInteger(incoming).compareTo(new java.math.BigInteger(existing)) > 0
+                    ? incoming : existing;
+        } catch (NumberFormatException nonNumeric) {
+            return existing;
+        }
     }
 
     /** Findings with their owned threadRefs attached, plus the set of threadRefs a CURRENT finding
