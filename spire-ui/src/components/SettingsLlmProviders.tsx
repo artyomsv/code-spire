@@ -616,6 +616,8 @@ function LlmModelForm({
                   onChange={(v) => {
                     const next = v as OutputTokenParam;
                     setOutputTokenParam(next);
+                    // Reasoning models that require max_completion_tokens also reject a custom
+                    // temperature — preset the toggle so it's not a second thing to remember.
                     if (next === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
                   }}
                 />
