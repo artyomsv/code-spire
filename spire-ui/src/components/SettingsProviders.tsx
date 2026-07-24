@@ -10,6 +10,7 @@ import {
   type ProviderView,
 } from '../api';
 import IconButton from './IconButton';
+import Select from './Select';
 import Tooltip from './Tooltip';
 
 // Options for the per-provider conversation-level override ('' = inherit the global default).
@@ -372,13 +373,12 @@ function ProviderFormModal({
           <div className="field-row-12">
             <label className="field">
               <span>Type</span>
-              <select value={type} onChange={(e) => changeType(e.target.value)}>
-                {PROVIDER_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="Type"
+                value={type}
+                options={PROVIDER_TYPES.map((t) => ({ value: t, label: t }))}
+                onChange={changeType}
+              />
             </label>
             <label className="field">
               <span>Workspace</span>
@@ -404,14 +404,16 @@ function ProviderFormModal({
           <div className="field-row-13">
             <label className="field">
               <span>Auth kind</span>
-              <select
+              <Select
+                ariaLabel="Auth kind"
                 value={authKind}
                 disabled={BEARER_ONLY.has(type)}
-                onChange={(e) => setAuthKind(e.target.value as AuthKind)}
-              >
-                <option value="bearer">bearer</option>
-                {!BEARER_ONLY.has(type) && <option value="basic">basic</option>}
-              </select>
+                options={[
+                  { value: 'bearer', label: 'bearer' },
+                  ...(BEARER_ONLY.has(type) ? [] : [{ value: 'basic', label: 'basic' }]),
+                ]}
+                onChange={(v) => setAuthKind(v as AuthKind)}
+              />
             </label>
             <label className="field">
               <span>Secret / token</span>
@@ -432,13 +434,12 @@ function ProviderFormModal({
 
           <label className="field">
             <span>Conversation level</span>
-            <select value={conversationLevel} onChange={(e) => setConversationLevel(e.target.value)}>
-              {CONVERSATION_OPTIONS.map((lvl) => (
-                <option key={lvl || 'inherit'} value={lvl}>
-                  {conversationLabel(lvl)}
-                </option>
-              ))}
-            </select>
+            <Select
+              ariaLabel="Conversation level"
+              value={conversationLevel}
+              options={CONVERSATION_OPTIONS.map((lvl) => ({ value: lvl, label: conversationLabel(lvl) }))}
+              onChange={setConversationLevel}
+            />
             <small className="field-hint">
               How deeply the bot converses in this provider&apos;s review threads. Inherit uses the global default.
             </small>
