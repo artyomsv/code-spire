@@ -14,11 +14,12 @@ import {
 import { CopyableValue } from '../render';
 import IconButton from './IconButton';
 import Tooltip from './Tooltip';
+import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
 
 const PROVIDER_TYPES = ['github', 'gitlab', 'bitbucket-cloud'] as const;
-const SCOPES: { value: WebhookScope; label: string; hint: string; placeholder: string }[] = [
-  { value: 'repo', label: 'Repository', hint: 'One repo. Paste into that repo’s webhook settings.', placeholder: 'owner/repo' },
-  { value: 'org', label: 'Organization', hint: 'Every repo in the org. Paste into the org’s webhook settings.', placeholder: 'owner (org login)' },
+const SCOPES: { value: WebhookScope; label: string }[] = [
+  { value: 'repo', label: 'Repository' },
+  { value: 'org', label: 'Organization' },
 ];
 
 const scopeLabel = (s: WebhookScope) => SCOPES.find((x) => x.value === s)?.label ?? s;
@@ -209,7 +210,7 @@ function WebhookRepoFormModal({
   // Set after create/rotate — the one time the secret is visible; swaps the form for the reveal panel.
   const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
 
-  const scopeMeta = SCOPES.find((s) => s.value === scope)!;
+  const targetHelp = webhookTargetHelp(providerType, scope);
   const valid = scope === 'org' ? /^[^/\s]+$/.test(target.trim()) : /^[^/\s]+\/[^/\s]+$/.test(target.trim());
 
   async function submit(e: React.FormEvent) {
@@ -290,12 +291,12 @@ function WebhookRepoFormModal({
             <span>{scope === 'org' ? 'Organization' : 'Repository'}</span>
             <input
               className="mono"
-              placeholder={scopeMeta.placeholder}
+              placeholder={targetHelp.placeholder}
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               autoFocus
             />
-            <small className="field-hint">{scopeMeta.hint}</small>
+            <small className="field-hint">{targetHelp.hint}</small>
           </label>
 
           {editing && initial && (
@@ -372,6 +373,38 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
   );
 }
 
+/** Provider-specific "what to do on the portal" steps, shown under the freshly revealed URL + secret. */
+function WebhookSetupChecklist({ providerType }: { providerType: string }) {
+  const guide = webhookSetupGuide(providerType);
+  if (!guide) {
+    return null;
+  }
+  return (
+    <div className="wh-setup">
+      <div className="wh-setup-title">Next — set up on {guide.providerLabel}</div>
+      <ol className="wh-steps">
+        {guide.steps.map((step, i) => (
+          <li className="wh-step" key={i}>
+            <div className="wh-step-body">
+              <div className="wh-step-title">{step.title}</div>
+              {step.detail && <div className="wh-step-detail">{step.detail}</div>}
+              {step.events && (
+                <div className="chips">
+                  {step.events.map((event) => (
+                    <span className="chip on" key={event}>
+                      <Check size={11} aria-hidden="true" /> {event}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /** One-time reveal of a freshly minted secret + its payload URL — the only time the secret is visible. */
 function SecretRevealModal({
   result,
@@ -392,7 +425,7 @@ function SecretRevealModal({
             ✕
           </button>
         </div>
-        <div className="modal-body">
+        <div className="modal-body scroll">
           <div className="reveal-warn">
             Copy the secret now — it won’t be shown again. Add both values to the provider’s webhook settings,
             prefixing the path with your public webhook base (e.g. your Cloudflare tunnel URL).
@@ -404,6 +437,8 @@ function SecretRevealModal({
             hint="Prefix with your public webhook base (e.g. your Cloudflare tunnel URL)."
           />
           <CopyField label="Secret" value={result.secret} />
+
+          <WebhookSetupChecklist providerType={result.repo.providerType} />
 
           <div className="modal-actions">
             <button type="button" className="btn" onClick={onDone}>

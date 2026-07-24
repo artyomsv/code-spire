@@ -745,6 +745,31 @@
   .wh-empty-text { margin: 0; max-width: 46ch; font-size: 12.5px; line-height: 1.6; color: var(--text-3); }
   .wh-empty .btn { margin-top: 12px; }
 
+  /* Provider setup checklist shown in the one-time reveal after a webhook is created. */
+  .wh-setup { border-top: 1px solid var(--border); padding-top: 14px; }
+  .wh-setup-title {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--text-3); margin-bottom: 10px;
+  }
+  .wh-steps { list-style: none; margin: 0; padding: 0; counter-reset: wh-step; display: flex; flex-direction: column; }
+  .wh-step {
+    display: grid; grid-template-columns: 22px 1fr; gap: 10px;
+    padding: 10px 0; border-top: 1px dashed var(--border);
+  }
+  .wh-step:first-child { border-top: 0; padding-top: 0; }
+  .wh-step::before {
+    counter-increment: wh-step; content: counter(wh-step);
+    width: 21px; height: 21px; border-radius: 6px;
+    background: var(--iris-soft); color: var(--iris-ink);
+    border: 1px solid color-mix(in srgb, var(--iris) 30%, transparent);
+    font-family: var(--font-mono); font-weight: 700; font-size: 11px;
+    display: grid; place-items: center;
+  }
+  .wh-step-title { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 1.45; }
+  .wh-step-detail { font-size: 11.5px; color: var(--text-2); margin-top: 3px; line-height: 1.5; }
+  .wh-step .chips { margin-top: 7px; }
+  .wh-step .chip { cursor: default; }
+
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 18px; border-bottom: 1px solid var(--border);
