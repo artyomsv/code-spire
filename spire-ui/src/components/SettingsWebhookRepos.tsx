@@ -254,9 +254,13 @@ function WebhookRepoFormModal({
   const [verify, setVerify] = useState<{ state: 'idle' | 'checking' | 'ok' | 'fail'; detail?: string }>({
     state: 'idle',
   });
+  const verifyReq = useRef(0);
 
-  // A changed provider / scope / slug invalidates a prior verify result.
-  useEffect(() => setVerify({ state: 'idle' }), [providerId, scope, slug]);
+  // A changed provider / scope / slug invalidates any prior/in-flight verify result.
+  useEffect(() => {
+    verifyReq.current += 1;
+    setVerify({ state: 'idle' });
+  }, [providerId, scope, slug]);
 
   const selectedProvider = providers.find((p) => p.id === providerId) ?? null;
   // On edit, if the provider was deleted we can't derive the owner — fall back to the stored row (read-only).
@@ -265,9 +269,8 @@ function WebhookRepoFormModal({
   const providerType = selectedProvider?.type ?? initial?.providerType ?? '';
   const target = legacyEdit ? initial!.target : scope === 'org' ? owner : `${owner}/${slug.trim()}`;
   const targetHelp = webhookTargetHelp(providerType, scope);
-  const valid = legacyEdit
-    ? true
-    : selectedProvider != null && (scope === 'org' ? owner.length > 0 : /^[^/\s]+$/.test(slug.trim()));
+  const validSlug = /^[^/\s]+$/.test(slug.trim());
+  const valid = legacyEdit ? true : selectedProvider != null && (scope === 'org' ? owner.length > 0 : validSlug);
   const noProviders = providersLoaded && providers.length === 0 && !legacyEdit;
 
   async function submit(e: React.FormEvent) {
@@ -308,11 +311,14 @@ function WebhookRepoFormModal({
 
   async function onVerify() {
     if (!selectedProvider) return;
+    const reqId = ++verifyReq.current;
     setVerify({ state: 'checking' });
     try {
       const result: RepoCheck = await verifyRepo(selectedProvider.id, target);
+      if (reqId !== verifyReq.current) return; // input changed while in flight — drop the stale result
       setVerify(result.ok ? { state: 'ok' } : { state: 'fail', detail: result.detail ?? 'Not reachable' });
     } catch (err) {
+      if (reqId !== verifyReq.current) return;
       setVerify({ state: 'fail', detail: err instanceof Error ? err.message : String(err) });
     }
   }
@@ -387,7 +393,7 @@ function WebhookRepoFormModal({
                       type="button"
                       className="btn-ghost wh-verify-btn"
                       onClick={() => void onVerify()}
-                      disabled={legacyEdit || !selectedProvider || !/^[^/\s]+$/.test(slug.trim()) || verify.state === 'checking'}
+                      disabled={legacyEdit || !selectedProvider || !validSlug || verify.state === 'checking'}
                     >
                       {verify.state === 'checking' ? 'Verifying…' : 'Verify'}
                     </button>

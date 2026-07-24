@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import SettingsWebhookRepos from './SettingsWebhookRepos';
 import * as api from '../api';
 
@@ -44,5 +44,45 @@ describe('WebhookRepoFormModal — provider picker', () => {
     fireEvent.click(screen.getByRole('button', { name: /verify/i }));
     await waitFor(() => expect(spy).toHaveBeenCalledWith('p1', 'acme/widgets'));
     expect(await screen.findByText(/repository found/i)).toBeInTheDocument();
+  });
+
+  it('shows the failure detail when verification fails', async () => {
+    vi.spyOn(api, 'verifyRepo').mockResolvedValue({
+      ok: false,
+      detail: 'Repository not found, or the token cannot see it (HTTP 404).',
+    });
+    render(<SettingsWebhookRepos />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
+    await screen.findByText('acme/');
+    fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+    expect(
+      await screen.findByText(/Repository not found, or the token cannot see it \(HTTP 404\)\./i),
+    ).toBeInTheDocument();
+  });
+
+  it('drops a stale verify response after the slug changes while in flight', async () => {
+    let resolveVerify: (value: api.RepoCheck) => void = () => {};
+    const pending = new Promise<api.RepoCheck>((resolve) => {
+      resolveVerify = resolve;
+    });
+    vi.spyOn(api, 'verifyRepo').mockReturnValue(pending);
+    render(<SettingsWebhookRepos />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
+    await screen.findByText('acme/');
+    fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+    expect(await screen.findByRole('button', { name: /verifying/i })).toBeInTheDocument();
+
+    // The user edits the slug while the verify call is still in flight — this resets the indicator to idle.
+    fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets2' } });
+
+    // The original (now-stale) request resolves after the reset; flush it and confirm it was dropped.
+    await act(async () => {
+      resolveVerify({ ok: true, detail: null });
+      await pending;
+    });
+
+    expect(screen.queryByText(/repository found/i)).not.toBeInTheDocument();
   });
 });
