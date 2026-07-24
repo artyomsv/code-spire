@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.put;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,8 +63,29 @@ class BitbucketReconciliationTest {
     }
 
     @Test
-    void resolveThreadStaysUnsupported() {
-        assertEquals(ThreadResolution.UNSUPPORTED,
+    void resolveThreadResolvesAnUnresolvedComment() {
+        wireMock.stubFor(get(urlEqualTo("/repositories/ws/repo/pullrequests/1/comments/42"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json").withBody("{\"id\":42}")));
+        wireMock.stubFor(post(urlEqualTo("/repositories/ws/repo/pullrequests/1/comments/42/resolve"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"type\":\"pullrequest_comment_resolution\"}")));
+
+        assertEquals(ThreadResolution.RESOLVED_NOW,
+                new BitbucketCloudCommentSink(client).resolveThread(repo, 1L, new ThreadRef("42")));
+        wireMock.verify(postRequestedFor(urlEqualTo("/repositories/ws/repo/pullrequests/1/comments/42/resolve")));
+    }
+
+    @Test
+    void resolveThreadReportsAlreadyResolvedWhenAHumanBeatUs() {
+        // The comment already carries a resolution -> don't re-resolve; the caller skips the reply.
+        wireMock.stubFor(get(urlEqualTo("/repositories/ws/repo/pullrequests/1/comments/42"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"id\":42,\"resolution\":{\"type\":\"pullrequest_comment_resolution\"}}")));
+
+        assertEquals(ThreadResolution.ALREADY_RESOLVED,
                 new BitbucketCloudCommentSink(client).resolveThread(repo, 1L, new ThreadRef("42")));
     }
 }

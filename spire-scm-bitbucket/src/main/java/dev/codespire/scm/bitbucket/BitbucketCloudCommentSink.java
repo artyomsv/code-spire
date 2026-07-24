@@ -100,6 +100,23 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
         return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
     }
 
+    /**
+     * Resolve a PR comment thread. Bitbucket Cloud gained this API
+     * ({@code POST .../comments/{id}/resolve}), so a fixed finding shows "Resolved", not just the
+     * SCM's auto-"Outdated" badge. A GET first distinguishes a human (or a prior redelivery) who
+     * already resolved it — {@code resolution} present → ALREADY_RESOLVED, so the caller skips the
+     * reply — from a thread we resolve now.
+     */
+    @Override
+    public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
+        String commentPath = prPath(repo, prId) + "/comments/" + thread.value();
+        if (client.getJson(commentPath).path("resolution").isObject()) {
+            return ThreadResolution.ALREADY_RESOLVED;
+        }
+        client.postJson(commentPath + "/resolve", Map.of());
+        return ThreadResolution.RESOLVED_NOW;
+    }
+
     @Override
     public Author getPullRequestAuthor(RepoRef repo, long prId) {
         JsonNode author = client.getJson(prPath(repo, prId)).path("author");
