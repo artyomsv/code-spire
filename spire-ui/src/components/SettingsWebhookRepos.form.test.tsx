@@ -21,10 +21,10 @@ describe('WebhookRepoFormModal — provider picker', () => {
   it('lists registered providers and fixes the owner for repo scope', async () => {
     render(<SettingsWebhookRepos />);
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
-    // both registered providers are offered
+    // open the provider dropdown, then assert both are offered
+    fireEvent.click(await screen.findByRole('combobox', { name: /provider/i }));
     await waitFor(() => expect(screen.getByRole('option', { name: /Acme Bot · github · acme/ })).toBeInTheDocument());
     expect(screen.getByRole('option', { name: /Lab Bot · gitlab · my-team/ })).toBeInTheDocument();
-    // repo scope shows the fixed owner prefix from the first provider's workspace
     expect(screen.getByText('acme/')).toBeInTheDocument();
   });
 

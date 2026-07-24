@@ -17,6 +17,7 @@ import {
 } from '../api';
 import { CopyableValue } from '../render';
 import IconButton from './IconButton';
+import Select from './Select';
 import Tooltip from './Tooltip';
 import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
 
@@ -351,28 +352,23 @@ function WebhookRepoFormModal({
                       {initial!.providerType} · {owner}
                     </div>
                   ) : (
-                    <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-                      {providers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} · {p.type} · {p.workspace}
-                        </option>
-                      ))}
-                    </select>
+                    <Select
+                      ariaLabel="Provider"
+                      value={providerId}
+                      options={providers.map((p) => ({ value: p.id, label: `${p.name} · ${p.type} · ${p.workspace}` }))}
+                      onChange={setProviderId}
+                    />
                   )}
                 </label>
                 <label className="field">
                   <span>Scope</span>
-                  <select
+                  <Select
+                    ariaLabel="Scope"
                     value={scope}
-                    onChange={(e) => setScope(e.target.value as WebhookScope)}
+                    options={SCOPES.map((s) => ({ value: s.value, label: s.label }))}
+                    onChange={(v) => setScope(v as WebhookScope)}
                     disabled={legacyEdit}
-                  >
-                    {SCOPES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
               </div>
 
