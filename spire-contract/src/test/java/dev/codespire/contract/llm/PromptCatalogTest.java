@@ -36,7 +36,10 @@ class PromptCatalogTest {
         assertTrue(review.contains("BEGIN_UNTRUSTED_DATA"), "security clause");
         assertTrue(review.contains("\"findings\""), "review JSON contract");
         assertTrue(PromptCatalog.lockedSystemSuffix(PromptKind.RECONCILE).contains("\"verdicts\""));
-        assertTrue(PromptCatalog.lockedSystemSuffix(PromptKind.FOLLOWUP).toLowerCase().contains("plain-text"));
+        // The follow-up contract must MANDATE fenced code blocks — an earlier "no markdown fences"
+        // wording made the model indent code, which Bitbucket renders as plain text (issue: lost formatting).
+        String followup = PromptCatalog.lockedSystemSuffix(PromptKind.FOLLOWUP).toLowerCase();
+        assertTrue(followup.contains("```"), "follow-up must require fenced code blocks");
     }
 
     @Test

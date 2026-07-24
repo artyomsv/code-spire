@@ -40,7 +40,9 @@ public final class PromptCatalog {
             "Respond ONLY with JSON: {\"verdicts\":[{\"id\":<finding number>,\"status\":\"...\",\"note\":\"...\"}]}";
 
     private static final String FOLLOWUP_CONTRACT =
-            "Respond with ONLY the plain-text reply to post in the thread — no markdown fences, no JSON.";
+            "Respond with ONLY the reply to post in the thread — no JSON, no surrounding quotes. Write "
+            + "Markdown; put every code snippet in a fenced ``` block (never rely on indentation) so it "
+            + "renders as code on the SCM.";
 
     private static final String REVIEW_PERSONA = """
             You are Code Spire, an automated code reviewer. Review the pull-request diff and report \
