@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.provider;
 
 import dev.codespire.contract.scm.Author;
+import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.inject.Inject;
@@ -39,6 +40,9 @@ public class ProviderResource {
 
     @Inject
     ProviderIdentityResolver identity;
+
+    @Inject
+    ProviderClients clients;
 
     /**
      * SSRF guard (CWE-918) escape hatch: create/update immediately issues a
@@ -126,15 +130,57 @@ public class ProviderResource {
     public record CheckResult(boolean ok, String account, String detail) {
     }
 
+    /**
+     * Confirm a specific repository exists and is reachable with the provider's stored token — a
+     * pre-flight for webhook registration. No webhook is created; only a category of the failure is
+     * returned. Repo scope only; org reachability is covered by {@link #check}.
+     */
+    @POST
+    @Path("/{id}/verify-repo")
+    public RepoCheck verifyRepo(@PathParam("id") String id, VerifyRepoRequest req) {
+        RepoRef repo = parseRepo(req);
+        ScmProvider provider = registry.resolveById(uuid(id))
+                .orElseThrow(() -> new NotFoundException("No provider " + id));
+        try {
+            clients.diffSource(provider).assertRepoAccessible(repo);
+            return new RepoCheck(true, null);
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "Repo verify failed for %s (type %s) repo %s", id, provider.type(), repo.full());
+            return new RepoCheck(false,
+                    reasonWithNotFound(e, "Repository not found, or the token cannot see it (HTTP 404)."));
+        }
+    }
+
+    /** The repository to verify: a full {@code owner/repo} path (repo scope). */
+    public record VerifyRepoRequest(String repo) {
+    }
+
+    /** Result of {@link #verifyRepo}: {@code detail} carries the failure reason (null when ok). */
+    public record RepoCheck(boolean ok, String detail) {
+    }
+
+    private static RepoRef parseRepo(VerifyRepoRequest req) {
+        String repo = req == null || req.repo() == null ? "" : req.repo().trim();
+        int slash = repo.indexOf('/');
+        if (slash <= 0 || slash >= repo.length() - 1) {
+            throw new BadRequestException("repo must be 'owner/repo'");
+        }
+        return new RepoRef(repo.substring(0, slash), repo.substring(slash + 1));
+    }
+
     /** A non-leaky, actionable reason — status codes are safe; upstream bodies are not echoed. */
     private static String reason(RuntimeException e) {
+        return reasonWithNotFound(e, "Not found (HTTP 404) — check the base URL.");
+    }
+
+    private static String reasonWithNotFound(RuntimeException e, String notFound) {
         if (e instanceof ScmApiException api) {
             int status = api.status();
             if (status == 401 || status == 403) {
                 return "Authentication failed (HTTP " + status + ") — check the token and its scopes.";
             }
             if (status == 404) {
-                return "Not found (HTTP 404) — check the base URL.";
+                return notFound;
             }
             if (status == 429) {
                 return "Rate limited (HTTP 429) — try again shortly.";

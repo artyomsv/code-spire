@@ -156,6 +156,50 @@ class ProviderResourceTest {
     }
 
     @Test
+    void verifyRepoReportsOkWhenRepoExists() {
+        String id = given().contentType("application/json").body(body("rest-verify-ok", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201).extract().path("id");
+        scm.stubFor(get(urlEqualTo("/repositories/rest-verify-ok/widgets")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{ \"full_name\": \"rest-verify-ok/widgets\" }")));
+        given().contentType("application/json").body(Map.of("repo", "rest-verify-ok/widgets"))
+                .when().post("/api/providers/" + id + "/verify-repo")
+                .then().statusCode(200).body("ok", is(true));
+    }
+
+    @Test
+    void verifyRepoReportsNotFound() {
+        String id = given().contentType("application/json").body(body("rest-verify-404", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201).extract().path("id");
+        scm.stubFor(get(urlEqualTo("/repositories/rest-verify-404/ghost")).willReturn(aResponse().withStatus(404)));
+        given().contentType("application/json").body(Map.of("repo", "rest-verify-404/ghost"))
+                .when().post("/api/providers/" + id + "/verify-repo")
+                .then().statusCode(200)
+                .body("ok", is(false))
+                .body("detail", org.hamcrest.Matchers.containsString("not found"));
+    }
+
+    @Test
+    void verifyRepoReportsUnauthorized() {
+        String id = given().contentType("application/json").body(body("rest-verify-401", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201).extract().path("id");
+        scm.stubFor(get(urlEqualTo("/repositories/rest-verify-401/secret")).willReturn(aResponse().withStatus(403)));
+        given().contentType("application/json").body(Map.of("repo", "rest-verify-401/secret"))
+                .when().post("/api/providers/" + id + "/verify-repo")
+                .then().statusCode(200)
+                .body("ok", is(false))
+                .body("detail", org.hamcrest.Matchers.containsString("Authentication failed"));
+    }
+
+    @Test
+    void verifyRepoRejectsABlankRepo() {
+        String id = given().contentType("application/json").body(body("rest-verify-blank", "bearer", "tok", null))
+                .when().post("/api/providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(Map.of("repo", ""))
+                .when().post("/api/providers/" + id + "/verify-repo")
+                .then().statusCode(400);
+    }
+
+    @Test
     void listsCreatedProvider() {
         given().contentType("application/json").body(body("rest-list", "bearer", "tok", null))
                 .when().post("/api/providers").then().statusCode(201);
