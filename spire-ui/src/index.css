@@ -850,6 +850,36 @@
     font-family: var(--font-sans);
   }
   .field select:focus { border-color: var(--iris); }
+
+  /* Reusable custom Select — trigger mirrors .field select; the list is a portalled popover. */
+  .select {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 11px; color: var(--text); font-size: 13px; font-family: var(--font-sans);
+    text-align: left; cursor: pointer; outline: none;
+  }
+  .select:hover { border-color: var(--border-strong); }
+  .select:focus-visible { border-color: var(--iris); box-shadow: 0 0 0 2px var(--iris-soft); }
+  .select[aria-expanded="true"] { border-color: var(--iris); }
+  .select:disabled { opacity: 0.55; cursor: default; }
+  .select .select-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .select .select-val.placeholder { color: var(--text-3); }
+  .select .select-chev { flex: none; color: var(--text-3); transition: transform 0.15s ease; }
+  .select[aria-expanded="true"] .select-chev { transform: rotate(180deg); }
+
+  .select-pop {
+    z-index: 60; margin: 0; padding: 4px; list-style: none;
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: 9px;
+    box-shadow: var(--shadow); overflow-y: auto; overscroll-behavior: contain;
+  }
+  .select-opt {
+    padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--text); cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .select-opt.active { background: var(--hover); }
+  .select-opt[aria-selected="true"] { color: var(--iris-ink); background: var(--iris-soft); }
+  .select-opt.disabled { color: var(--text-3); cursor: default; }
+  @media (prefers-reduced-motion: reduce) { .select .select-chev { transition: none; } }
   .field textarea {
     background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
     padding: 9px 11px; color: var(--text); font-size: 12.5px; outline: none; width: 100%;
