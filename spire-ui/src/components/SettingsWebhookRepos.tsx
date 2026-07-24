@@ -190,33 +190,13 @@ export default function SettingsWebhookRepos() {
   );
 }
 
-function WebhookRepoFormModal({
-  initial,
-  onClose,
-  onSaved,
-}: {
-  initial: WebhookRepoView | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const editing = initial !== null;
-
+/** Loads enabled providers and preselects one — the row's provider on edit (matched by type + owner),
+ *  else the first. Keeps the modal under the max-8 useState rule. */
+function useWebhookProviders(initial: WebhookRepoView | null) {
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [providersLoaded, setProvidersLoaded] = useState(false);
   const [providerId, setProviderId] = useState('');
-  const [scope, setScope] = useState<WebhookScope>(initial?.scope ?? 'repo');
-  const [slug, setSlug] = useState(() => {
-    if (initial && initial.scope === 'repo') {
-      const i = initial.target.indexOf('/');
-      return i >= 0 ? initial.target.slice(i + 1) : '';
-    }
-    return '';
-  });
-  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
-
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -233,12 +213,41 @@ function WebhookRepoFormModal({
           setProviderId(usable[0].id);
         }
       })
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)))
+      .catch((err) => alive && setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => alive && setProvidersLoaded(true));
     return () => {
       alive = false;
     };
   }, [initial]);
+
+  return { providers, providersLoaded, providerId, setProviderId, loadError };
+}
+
+function WebhookRepoFormModal({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: WebhookRepoView | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const editing = initial !== null;
+
+  const { providers, providersLoaded, providerId, setProviderId, loadError } = useWebhookProviders(initial);
+  const [scope, setScope] = useState<WebhookScope>(initial?.scope ?? 'repo');
+  const [slug, setSlug] = useState(() => {
+    if (initial && initial.scope === 'repo') {
+      const i = initial.target.indexOf('/');
+      return i >= 0 ? initial.target.slice(i + 1) : '';
+    }
+    return '';
+  });
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
 
   const selectedProvider = providers.find((p) => p.id === providerId) ?? null;
   // On edit, if the provider was deleted we can't derive the owner — fall back to the stored row (read-only).
@@ -398,7 +407,7 @@ function WebhookRepoFormModal({
             </>
           )}
 
-          {error && <div className="modal-msg modal-error">{error}</div>}
+          {(error ?? loadError) && <div className="modal-msg modal-error">{error ?? loadError}</div>}
 
           <div className="modal-actions">
             <button type="button" className="btn-ghost" onClick={onClose}>
