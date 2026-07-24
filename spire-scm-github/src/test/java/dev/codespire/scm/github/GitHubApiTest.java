@@ -209,6 +209,21 @@ class GitHubApiTest {
         assertEquals(401, e.status());
     }
 
+    @Test
+    void assertRepoAccessibleReturnsOnA200() {
+        server.stubFor(get(urlEqualTo("/repos/acme/widgets")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{ \"full_name\": \"acme/widgets\" }")));
+        diffSource.assertRepoAccessible(new RepoRef("acme", "widgets")); // no throw
+    }
+
+    @Test
+    void assertRepoAccessibleThrowsNotFoundOn404() {
+        server.stubFor(get(urlEqualTo("/repos/acme/ghost")).willReturn(aResponse().withStatus(404)));
+        GitHubApiException e = assertThrows(GitHubApiException.class,
+                () -> diffSource.assertRepoAccessible(new RepoRef("acme", "ghost")));
+        assertTrue(e.isNotFound());
+    }
+
     // --- redirect + error handling (security review L5/L7) ---
 
     @Test

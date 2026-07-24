@@ -236,6 +236,21 @@ class GitLabApiTest {
         assertEquals(401, e.status());
     }
 
+    @Test
+    void assertRepoAccessibleReturnsOnA200() {
+        server.stubFor(get(urlEqualTo("/projects/acme%2Fwidgets")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{ \"id\": 1 }")));
+        diffSource.assertRepoAccessible(new RepoRef("acme", "widgets"));
+    }
+
+    @Test
+    void assertRepoAccessibleThrowsNotFoundOn404() {
+        server.stubFor(get(urlEqualTo("/projects/acme%2Fghost")).willReturn(aResponse().withStatus(404)));
+        GitLabApiException e = assertThrows(GitLabApiException.class,
+                () -> diffSource.assertRepoAccessible(new RepoRef("acme", "ghost")));
+        assertTrue(e.isNotFound());
+    }
+
     // --- redirect + error handling (security review L5/L7) ---
 
     @Test

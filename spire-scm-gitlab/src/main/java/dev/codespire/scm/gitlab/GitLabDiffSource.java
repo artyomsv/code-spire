@@ -49,6 +49,11 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
     }
 
     @Override
+    public void assertRepoAccessible(RepoRef repo) {
+        client.getJson("/projects/" + encodedProject(repo));
+    }
+
+    @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode mr = client.getJson(mrPath(repo, prId));
         return new PullRequest(

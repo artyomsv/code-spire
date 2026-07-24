@@ -176,6 +176,21 @@ class BitbucketCloudApiTest {
         assertEquals(401, e.status());
     }
 
+    @Test
+    void assertRepoAccessibleReturnsOnA200() {
+        server.stubFor(get(urlEqualTo("/repositories/acme/widgets")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{ \"full_name\": \"acme/widgets\" }")));
+        diffSource.assertRepoAccessible(new RepoRef("acme", "widgets"));
+    }
+
+    @Test
+    void assertRepoAccessibleThrowsNotFoundOn404() {
+        server.stubFor(get(urlEqualTo("/repositories/acme/ghost")).willReturn(aResponse().withStatus(404)));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> diffSource.assertRepoAccessible(new RepoRef("acme", "ghost")));
+        assertTrue(e.isNotFound());
+    }
+
     // --- redirect + error handling (security review L5/L7) ---
 
     @Test

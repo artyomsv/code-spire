@@ -56,6 +56,11 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
     }
 
     @Override
+    public void assertRepoAccessible(RepoRef repo) {
+        client.getJson("/repositories/" + repo.full());
+    }
+
+    @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode pr = client.getJson(prPath(repo, prId));
         JsonNode author = pr.path("author");

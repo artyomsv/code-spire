@@ -23,4 +23,14 @@ public interface DiffSource {
     default String fetchCompareDiff(RepoRef repo, String base, String head) {
         return null;
     }
+
+    /**
+     * Confirm the repository exists and is reachable with the configured token. Implementations GET the
+     * repo resource; a non-2xx surfaces as the adapter's {@code ScmApiException} (404 = missing or not
+     * visible to the token, 401/403 = no access), which the caller classifies. Default is unsupported so
+     * stub and other DiffSource impls are unaffected — only the real SCM adapters override it.
+     */
+    default void assertRepoAccessible(RepoRef repo) {
+        throw new UnsupportedOperationException(type() + " cannot verify a repository");
+    }
 }

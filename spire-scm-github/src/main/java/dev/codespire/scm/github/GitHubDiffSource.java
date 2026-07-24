@@ -43,6 +43,11 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
     }
 
     @Override
+    public void assertRepoAccessible(RepoRef repo) {
+        client.getJson("/repos/" + repo.full());
+    }
+
+    @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode pr = client.getJson(prPath(repo, prId));
         JsonNode user = pr.path("user");
