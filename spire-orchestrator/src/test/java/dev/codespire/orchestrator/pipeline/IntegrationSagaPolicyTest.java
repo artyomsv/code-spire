@@ -16,6 +16,7 @@ import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -110,6 +111,13 @@ class IntegrationSagaPolicyTest {
         saga.providers = new ProviderRegistry() {
             @Override
             public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+                return provider;
+            }
+        };
+        // The self-loop guard resolves the review's bot by the review's stored SCM type.
+        saga.reviewProviders = new ReviewProviderResolver() {
+            @Override
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return provider;
             }
         };
@@ -334,9 +342,9 @@ class IntegrationSagaPolicyTest {
                 emitted.add(command);
             }
         };
-        saga.providers = new ProviderRegistry() {
+        saga.reviewProviders = new ReviewProviderResolver() {
             @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.empty(); // no provider resolved -> isBotAuthored() is false, not a self-loop
             }
         };

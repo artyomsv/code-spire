@@ -3,11 +3,12 @@ package dev.codespire.orchestrator.web;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.pipeline.ReviewRerunService;
 import dev.codespire.orchestrator.provider.ProviderClients;
-import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.readmodel.ReviewDetail;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -39,7 +40,7 @@ public class ReviewsResource {
     ReviewRerunService rerunService;
 
     @Inject
-    ProviderRegistry providers;
+    ReviewProviderResolver reviewProviders;
 
     @Inject
     ProviderClients clients;
@@ -61,16 +62,30 @@ public class ReviewsResource {
                                       @PathParam("slug") String slug,
                                       @PathParam("pr") long pr,
                                       @PathParam("threadRef") String threadRef) {
-        ScmProvider provider = providers.resolveByWorkspace(workspace)
+        // Resolve by the review's stored SCM type — NOT workspace alone, which picks the oldest
+        // provider and cross-wires SCMs when a workspace name is shared (e.g. a GitHub org and a
+        // Bitbucket workspace both named "acme"), calling the wrong API and 404-ing.
+        String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
+        ScmProvider provider = reviewProviders.resolveForReview(reviewId)
                 .orElseThrow(() -> new NotFoundException("No provider registered for workspace " + workspace));
         ThreadSource source;
         try {
             source = clients.threadSource(provider);
         } catch (UnsupportedOperationException e) {
-            // Provider doesn't support thread re-fetch (only GitHub does today) — the UI keeps the preview.
+            // Provider's comment sink doesn't implement ThreadSource — the UI keeps the preview.
             throw new WebApplicationException(e.getMessage(), Response.Status.NOT_IMPLEMENTED);
         }
-        return source.fetchThread(new RepoRef(workspace, slug), pr, new ThreadRef(threadRef)).messages();
+        try {
+            return source.fetchThread(new RepoRef(workspace, slug), pr, new ThreadRef(threadRef)).messages();
+        } catch (RuntimeException e) {
+            // A genuine SCM failure (deleted PR, transient, mis-scoped token) must not 500 the detail
+            // view — the UI falls back to the stored preview on any non-2xx. Non-SCM bugs still surface.
+            if (e instanceof ScmApiException) {
+                throw new WebApplicationException("Thread re-fetch failed: " + e.getMessage(),
+                        Response.Status.BAD_GATEWAY);
+            }
+            throw e;
+        }
     }
 
     @GET

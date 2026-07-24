@@ -5,10 +5,8 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmCredential;
 import dev.codespire.encryption.EncryptionService;
-import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,32 +58,19 @@ class WorkerCredentialsTest {
     }
 
     @Test
-    void packForReview_resolvesByTheReviewsStoredScmType() {
+    void packForReview_packsTheProviderTheResolverReturns() {
+        // Disambiguation-by-stored-type now lives in ReviewProviderResolver (its own test);
+        // WorkerCredentials just packs whatever the resolver returns for the review.
         WorkerCredentials wc = packer();
-        wc.projection = new ReviewProjection() {
+        wc.reviewProviders = new ReviewProviderResolver() {
             @Override
-            public Optional<String> providerTypeOf(String reviewId) {
-                return Optional.of("bitbucket-cloud");
-            }
-        };
-        List<String> resolvedByType = new ArrayList<>();
-        wc.providers = new ProviderRegistry() {
-            @Override
-            public Optional<ScmProvider> resolve(String type, String workspace) {
-                resolvedByType.add(type + "@" + workspace);
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.of(provider());
-            }
-
-            @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
-                throw new AssertionError("must resolve by (type, workspace) when the review stores a type");
             }
         };
 
         Optional<String> cred = wc.packForReview(ReviewIds.reviewId(new RepoRef("acme", "web"), 5L));
 
         assertTrue(cred.isPresent(), "a resolvable provider yields a packed credential");
-        assertEquals(List.of("bitbucket-cloud@acme"), resolvedByType,
-                "the workspace-shared collision is disambiguated by the review's stored SCM type");
     }
 }

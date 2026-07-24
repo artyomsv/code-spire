@@ -2,11 +2,8 @@ package dev.codespire.orchestrator.provider;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.codespire.contract.event.ReviewIds;
-import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmCredential;
 import dev.codespire.encryption.EncryptionService;
-import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -23,10 +20,7 @@ import java.util.Optional;
 public class WorkerCredentials {
 
     @Inject
-    ProviderRegistry providers;
-
-    @Inject
-    ReviewProjection projection;
+    ReviewProviderResolver reviewProviders;
 
     @Inject
     EncryptionService encryption;
@@ -53,16 +47,6 @@ public class WorkerCredentials {
      * disabled/removed mid-review, so the caller skips rather than emit uncredentialed.
      */
     public Optional<String> packForReview(String reviewId) {
-        return resolveForReview(reviewId).map(this::pack);
-    }
-
-    private Optional<ScmProvider> resolveForReview(String reviewId) {
-        RepoRef repo = ReviewIds.parse(reviewId).repo();
-        // Prefer the review's stored SCM type (registered header); fall back to
-        // workspace-only for reviews that predate a stored type.
-        String type = projection.providerTypeOf(reviewId).filter(t -> !t.isBlank()).orElse(null);
-        return type == null
-                ? providers.resolveByWorkspace(repo.workspace())
-                : providers.resolve(type, repo.workspace());
+        return reviewProviders.resolveForReview(reviewId).map(this::pack);
     }
 }

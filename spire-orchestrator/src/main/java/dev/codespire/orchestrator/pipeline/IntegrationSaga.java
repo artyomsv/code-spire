@@ -14,6 +14,7 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -57,6 +58,9 @@ public class IntegrationSaga {
     ProviderRegistry providers;
 
     @Inject
+    ReviewProviderResolver reviewProviders;
+
+    @Inject
     WorkerCredentials workerCredentials;
 
     @Inject
@@ -92,7 +96,7 @@ public class IntegrationSaga {
                         e.reason() == CloseReason.MERGED ? "MERGED" : "CLOSED");
             }
             case ManualCommandReceived e -> {
-                if (isBotAuthored(e.repo().workspace(), e.author())) {
+                if (isBotAuthored(reviewIdOf(e), e.author())) {
                     dropSelfLoop(reviewIdOf(e), "/" + e.command());
                 } else if ("review".equals(e.command())) {
                     triggerManualReview(e);
@@ -101,7 +105,7 @@ public class IntegrationSaga {
                 }
             }
             case AuthorReplied e -> {
-                if (isBotAuthored(e.repo().workspace(), e.author())) {
+                if (isBotAuthored(e.reviewId(), e.author())) {
                     dropSelfLoop(e.reviewId(), "reply");
                 } else {
                     conversation.planFollowUp(e).ifPresent(cmd -> {
@@ -139,15 +143,17 @@ public class IntegrationSaga {
 
     /**
      * Self-loop guard (ADR-013): true when a comment-derived event was authored by
-     * the workspace's registered bot. Moved here from the gateway ingress — the
-     * bot account id lives in the provider registry (whoami-resolved), which only
-     * the orchestrator can read, so the internet-facing gateway holds no identity.
+     * the review's registered bot. Moved here from the gateway ingress — the bot
+     * account id lives in the provider registry (whoami-resolved), which only the
+     * orchestrator can read, so the internet-facing gateway holds no identity.
+     * Resolves by the review's stored SCM type so a workspace name shared across
+     * SCMs still checks the RIGHT bot (not the oldest provider on that workspace).
      */
-    private boolean isBotAuthored(String workspace, Author author) {
+    private boolean isBotAuthored(String reviewId, Author author) {
         if (author == null || author.providerUserId() == null || author.providerUserId().isBlank()) {
             return false;
         }
-        return providers.resolveByWorkspace(workspace)
+        return reviewProviders.resolveForReview(reviewId)
                 .map(p -> author.providerUserId().equals(p.botAccountId()))
                 .orElse(false);
     }

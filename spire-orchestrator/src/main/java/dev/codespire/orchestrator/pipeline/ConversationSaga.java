@@ -8,7 +8,7 @@ import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ConversationPolicy;
-import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -16,6 +16,7 @@ import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Optional;
@@ -30,8 +31,10 @@ import java.util.regex.Pattern;
 @ApplicationScoped
 public class ConversationSaga {
 
+    private static final Logger LOG = Logger.getLogger(ConversationSaga.class);
+
     @Inject
-    ProviderRegistry providers;
+    ReviewProviderResolver reviewProviders;
 
     @Inject
     ConversationLevels levels;
@@ -56,11 +59,15 @@ public class ConversationSaga {
 
     /** The AnswerFollowUp to emit for a non-bot reply, or empty when policy says stay quiet. */
     public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
-        Optional<ScmProvider> providerOpt = providers.resolveByWorkspace(e.repo().workspace());
+        Optional<ScmProvider> providerOpt = reviewProviders.resolveForReview(e.reviewId());
         if (providerOpt.isEmpty()) {
+            LOG.infof("Follow-up skipped for %s — no enabled provider for workspace '%s'",
+                    e.reviewId(), e.repo().workspace());
             return Optional.empty();
         }
         ScmProvider provider = providerOpt.get();
+        LOG.debugf("Follow-up on %s resolved provider %s/%s (comment %s, topLevel=%b)",
+                e.reviewId(), provider.type(), provider.workspace(), e.commentId(), e.topLevel());
         if (botIdentityUnknown(provider, e)) {
             return Optional.empty();
         }
@@ -70,7 +77,7 @@ public class ConversationSaga {
             return Optional.empty();
         }
         ThreadTarget target = targetOpt.get();
-        boolean botMentioned = mentionsBot(e.text(), provider.botUsername());
+        boolean botMentioned = mentionsBot(e.text(), provider.botUsername(), provider.botAccountId());
 
         if (!decideToAnswer(e, provider, target, botMentioned)) {
             return Optional.empty();
@@ -80,8 +87,11 @@ public class ConversationSaga {
         if (llmCred.isEmpty()) {
             timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
                     "no default LLM provider configured");
+            LOG.infof("Follow-up skipped for %s — no default LLM provider configured for workspace '%s'",
+                    e.reviewId(), e.repo().workspace());
             return Optional.empty();
         }
+        LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(provider), llmCred.get(), botMentioned,
@@ -96,6 +106,9 @@ public class ConversationSaga {
         }
         timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
                 "bot identity unknown — re-save the provider to resolve it");
+        LOG.infof("Follow-up skipped for %s — bot identity unknown for provider %s/%s "
+                + "(botAccountId blank; re-save the provider to resolve it)",
+                e.reviewId(), provider.type(), provider.workspace());
         return true;
     }
 
@@ -112,6 +125,12 @@ public class ConversationSaga {
         if (decision.capReached()) {
             timeline.record("integration", "conversation:cap", e.reviewId(),
                     "turn cap reached — deferring to the team");
+        }
+        if (!decision.answer()) {
+            LOG.infof("Follow-up declined for %s — level=%s authorAllowed=%b threadIsOurs=%b mentioned=%b "
+                    + "priorTurns=%d/%d capReached=%b",
+                    e.reviewId(), level, authorAllowed, target.isOurs(), botMentioned,
+                    priorTurns, levels.turnCap(), decision.capReached());
         }
         return decision.answer();
     }
@@ -134,21 +153,30 @@ public class ConversationSaga {
         if (summaryRef.isEmpty()) {
             timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
                     "top-level comment but no posted summary to converse on");
+            LOG.infof("Follow-up skipped for %s — top-level comment but no posted summary to converse on",
+                    e.reviewId());
             return Optional.empty();
         }
         return Optional.of(new ThreadTarget(new ThreadRef(summaryRef.get()), true));
     }
 
     /**
-     * Scope B: a human explicitly @-mentions the bot's login. Case-insensitive and word-bounded, so
-     * {@code @code-spire} matches but {@code @code-spireworks} does not; blank login never matches.
+     * Scope B: a human explicitly @-mentions the bot. GitHub/GitLab render the mention as
+     * {@code @<login>} in the raw text — case-insensitive and word-bounded, so {@code @code-spire}
+     * matches but {@code @code-spireworks} does not. Bitbucket renders it as {@code @{account_id}}
+     * (no login in the raw text), so the account id is matched too. A blank login/id never matches.
      */
-    static boolean mentionsBot(String text, String botUsername) {
-        if (text == null || botUsername == null || botUsername.isBlank()) {
+    static boolean mentionsBot(String text, String botUsername, String botAccountId) {
+        if (text == null) {
             return false;
         }
-        return Pattern.compile("@" + Pattern.quote(botUsername) + "(?![A-Za-z0-9_-])",
-                Pattern.CASE_INSENSITIVE).matcher(text).find();
+        if (botUsername != null && !botUsername.isBlank()
+                && Pattern.compile("@" + Pattern.quote(botUsername) + "(?![A-Za-z0-9_-])",
+                        Pattern.CASE_INSENSITIVE).matcher(text).find()) {
+            return true;
+        }
+        // Bitbucket Cloud writes a mention in the comment's raw text as @{account_id}.
+        return botAccountId != null && !botAccountId.isBlank() && text.contains("@{" + botAccountId + "}");
     }
 
     /** An empty allowlist answers everyone; else match by account id or username (mirrors the PR gate). */

@@ -7,7 +7,7 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.provider.ConversationLevels;
-import dev.codespire.orchestrator.provider.ProviderRegistry;
+import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
@@ -33,19 +33,30 @@ class ConversationSagaTest {
 
     @Test
     void mentionsBotIsCaseInsensitiveAndNeedsTheAtPrefix() {
-        assertTrue(ConversationSaga.mentionsBot("hey @code-spire what about this?", "code-spire"));
-        assertTrue(ConversationSaga.mentionsBot("HEY @Code-Spire", "code-spire"));
-        assertFalse(ConversationSaga.mentionsBot("code-spire without the at sign", "code-spire"));
-        assertFalse(ConversationSaga.mentionsBot("hi there", "code-spire"));
-        assertFalse(ConversationSaga.mentionsBot("@code-spireworks contribute", "code-spire")); // word-bounded
+        assertTrue(ConversationSaga.mentionsBot("hey @code-spire what about this?", "code-spire", null));
+        assertTrue(ConversationSaga.mentionsBot("HEY @Code-Spire", "code-spire", null));
+        assertFalse(ConversationSaga.mentionsBot("code-spire without the at sign", "code-spire", null));
+        assertFalse(ConversationSaga.mentionsBot("hi there", "code-spire", null));
+        assertFalse(ConversationSaga.mentionsBot("@code-spireworks contribute", "code-spire", null)); // word-bounded
 
     }
 
     @Test
     void mentionsBotNeverMatchesOnBlankOrNull() {
-        assertFalse(ConversationSaga.mentionsBot("@ nobody", ""));
-        assertFalse(ConversationSaga.mentionsBot("@bot", null));
-        assertFalse(ConversationSaga.mentionsBot(null, "code-spire"));
+        assertFalse(ConversationSaga.mentionsBot("@ nobody", "", null));
+        assertFalse(ConversationSaga.mentionsBot("@bot", null, null));
+        assertFalse(ConversationSaga.mentionsBot(null, "code-spire", null));
+    }
+
+    @Test
+    void mentionsBotMatchesBitbucketAccountIdSyntax() {
+        // Bitbucket renders a mention in the comment's raw text as @{account_id}, not @login.
+        String botId = "712020:20976caa-f4d5-48f5-9f4e-3b1c7ecee49d";
+        assertTrue(ConversationSaga.mentionsBot("@{" + botId + "} can you look?", null, botId));
+        assertTrue(ConversationSaga.mentionsBot("@{" + botId + "} help", "code-spire-bot", botId));
+        assertFalse(ConversationSaga.mentionsBot("@{557058:someone-else} help", "code-spire-bot", botId));
+        assertFalse(ConversationSaga.mentionsBot("no mention here", "code-spire-bot", botId));
+        assertFalse(ConversationSaga.mentionsBot("@{" + botId + "} help", "code-spire-bot", ""));
     }
 
     @Test
@@ -108,9 +119,9 @@ class ConversationSagaTest {
     void topLevelReplyRoutesToThePostedSummaryThread() {
         List<String> notes = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();
-        saga.providers = new ProviderRegistry() {
+        saga.reviewProviders = new ReviewProviderResolver() {
             @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.of(githubProvider());
             }
         };
@@ -171,9 +182,9 @@ class ConversationSagaTest {
         List<String> notes = new ArrayList<>();
         List<String> details = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();
-        saga.providers = new ProviderRegistry() {
+        saga.reviewProviders = new ReviewProviderResolver() {
             @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "acme",
                         "bearer", null, "secret", "", true, List.of(), "code-spire", "EXPLAIN"));
             }
@@ -214,9 +225,9 @@ class ConversationSagaTest {
     void topLevelReplyWithNoPostedSummaryIsSkippedWithATimelineNote() {
         List<String> notes = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();
-        saga.providers = new ProviderRegistry() {
+        saga.reviewProviders = new ReviewProviderResolver() {
             @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.of(githubProvider());
             }
         };
