@@ -686,6 +686,8 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
     box-shadow: var(--shadow); overflow: hidden;
   }
+  /* Roomier variant for content-heavy dialogs (e.g. the webhook-created reveal + setup checklist). */
+  .modal.wide { max-width: 600px; }
   .modal-head {
     display: flex; align-items: center; gap: 12px;
     padding: 15px 18px; border-bottom: 1px solid var(--border);
@@ -767,8 +769,9 @@
   }
   .wh-step-title { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 1.45; }
   .wh-step-detail { font-size: 11.5px; color: var(--text-2); margin-top: 3px; line-height: 1.5; }
-  .wh-step .chips { margin-top: 7px; }
-  .wh-step .chip { cursor: default; }
+  .wh-step .chips { margin-top: 7px; gap: 5px; }
+  /* Compact so a provider's full event list fits on one line in the reveal. */
+  .wh-step .chip { cursor: default; padding: 3px 8px; font-size: 11px; gap: 4px; }
 
   /* Fixed-owner repo input: read-only owner prefix + the repo-name field. */
   .wh-repo-input { display: flex; align-items: center; gap: 6px; }

@@ -501,7 +501,7 @@ function WebhookSetupChecklist({ providerType }: { providerType: string }) {
                 <div className="chips">
                   {step.events.map((event) => (
                     <span className="chip on" key={event}>
-                      <Check size={11} aria-hidden="true" /> {event}
+                      <Check size={10} aria-hidden="true" /> {event}
                     </span>
                   ))}
                 </div>
@@ -527,7 +527,7 @@ function SecretRevealModal({
   const path = webhookPath(result.repo);
   return (
     <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="modal wide" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <h3>{rotated ? 'New secret generated' : 'Webhook created'}</h3>
           <button className="iconbtn" onClick={onDone} aria-label="Close">
@@ -535,17 +535,12 @@ function SecretRevealModal({
           </button>
         </div>
         <div className="modal-body scroll">
-          <div className="reveal-warn">
-            Copy the secret now — it won’t be shown again. Add both values to the provider’s webhook settings,
-            prefixing the path with your public webhook base (e.g. your Cloudflare tunnel URL).
-          </div>
-
           <CopyField
             label="Payload URL (path)"
             value={path}
             hint="Prefix with your public webhook base (e.g. your Cloudflare tunnel URL)."
           />
-          <CopyField label="Secret" value={result.secret} />
+          <CopyField label="Secret" value={result.secret} hint="Copy it now — it won’t be shown again." />
 
           <WebhookSetupChecklist providerType={result.repo.providerType} />
 
