@@ -144,7 +144,9 @@
 - **Event:** `ReviewGenerated {..., verdicts, reconcileUsage}`.
 - **Saga:** on `ReviewGenerated` → `PostComments {..., verdicts, priorSummaryRef}`.
 - **Plugin (`CommentSink`):** acts per verdict — closing verdicts resolve-first (`resolveThread`;
-  GitHub GraphQL, GitLab discussion PUT, Bitbucket Cloud `UNSUPPORTED` → reply-only); a thread a human
+  GitHub GraphQL, GitLab discussion PUT, Bitbucket Cloud comment-resolve POST — an unknown provider, or
+  a thread the adapter cannot find, degrades to `UNSUPPORTED` → reply-only rather than reporting a
+  resolve it did not perform); a thread a human
   already resolved (`ALREADY_RESOLVED`) skips the reply; `STILL_OPEN` always replies without resolving;
   `UNCHANGED` findings get no thread interaction at all — no claim, no reply, no resolve; genuinely new
   findings post fresh inline comments; the summary is rewritten in place (`updateComment`, fresh-post

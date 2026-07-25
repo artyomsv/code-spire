@@ -139,9 +139,9 @@ Missing keys fail the affected service at startup naming the exact key — that'
 - Draft/WIP PRs and MRs are skipped until marked ready, on **all three** SCMs (GitHub
   `draft`, GitLab `draft`/`Draft:`/`WIP:` title prefix, Bitbucket draft flag), unless
   `SPIRE_REVIEW_DRAFT_PRS=true`.
-- Bitbucket reconciliation is **reply-only** — there is no Bitbucket API to resolve a comment
-  thread, so a fixed finding gets a reply saying so instead of being closed/collapsed (GitLab
-  resolves the discussion instead — see "Conversation + reconciliation" below).
+- Bitbucket reconciliation **resolves** the thread like GitHub and GitLab (comment-resolve API,
+  added 2026-07-25) — a fixed finding is both replied to and closed. Note the SCM's own *Outdated*
+  badge is separate: it only means the code under the comment changed.
 - Bitbucket inline comments are **single-line** — a finding spanning multiple lines anchors to
   its first line rather than a range (GitHub and GitLab both support multi-line ranges).
 - A PR whose diff exceeds the provider's diff-generation limit fails with an explicit "too large to
@@ -451,22 +451,78 @@ the summary-comment/note thread for a top-level comment.
 re-review runs against the incremental diff since the prior reviewed commit.
 - **GitLab:** the fixed finding's discussion is **resolved** and the still-open finding gets a
   reply; the summary **note** is updated in place.
-- **Bitbucket:** the fixed finding's thread gets a **reply** only — there is no Bitbucket API to
-  resolve a PR comment thread (`resolveThread` returns `UNSUPPORTED`, degrading to reply-only); the
-  summary **comment** is updated in place.
+- **Bitbucket:** the fixed finding's thread is **resolved too** (`POST .../comments/{id}/resolve`) and
+  the summary **comment** is updated in place. A thread a human resolved first is left alone
+  (`ALREADY_RESOLVED`, no reply).
 - Both: the still-open finding always gets a reply (`STILL_OPEN`), whether or not the thread could
   be resolved.
 
-**Bitbucket compare direction (live gate):** Bitbucket's compare-diff spec is `{source}..{destination}`
-with additions attributed to the source; `BitbucketCloudDiffSource.fetchCompareDiff` calls it as
-`{head}..{base}`, so the new commit's lines should show as **additions** — this is verified against
-Bitbucket's REST docs (see the comment on `BitbucketReconciliationTest.fetchCompareDiffUsesTheTwoDotSpec`)
-but has not been observed against a live workspace, so treat it as a runbook gate, not a closed
-question. After a Bitbucket re-review, open the worker log or the reconcile prompt and confirm the
-incremental diff shows the new commit's lines as `+` (additions), not reversed. If reversed, the
-remedy is to swap the argument order — `head + ".." + base` → `base + ".." + head` — in
-`BitbucketCloudDiffSource.fetchCompareDiff`; the expected (and currently coded) result is that no
-change is needed.
+A `RESOLVED` verdict whose thread cannot be found (deleted, or the finding was re-posted under a new
+id) degrades to reply-only and reports `resolved: false` — it never claims success it didn't achieve,
+so `threadOutcomes` in the `CommentsPosted` event is the honest record of what happened.
+
+**Bitbucket compare direction — settled (2026-07-25).** Bitbucket's compare-diff spec is
+`{source}..{destination}` with additions attributed to the source, and
+`BitbucketCloudDiffSource.fetchCompareDiff` calls it as `{head}..{base}`. This was previously only
+verified against the REST docs (see `BitbucketReconciliationTest.fetchCompareDiffUsesTheTwoDotSpec`);
+it is now confirmed live: across four reconciliation rounds on a real workspace every verdict read the
+change in the correct direction (a fix was reported as fixed, an untouched finding as `UNCHANGED`, a
+partial fix as `STILL_OPEN` naming exactly what remained). A reversed diff would have inverted those
+notes. No change needed. If a future run ever shows inverted reasoning, the remedy is to swap the
+argument order — `head + ".." + base` → `base + ".." + head`.
+
+## Mode G — provider parity (run the SAME script on two SCMs)
+
+Regression script for "does provider X behave like GitHub?". Open **one PR per provider with identical
+file content** and run S1–S11 **in this order on both** — the order matters: the conversation scenarios
+must run before the fix commits, which change the code and resolve threads.
+
+Expect the *finding counts to differ* between the two PRs (LLM non-determinism); that is not a parity
+failure. What must match is the behaviour.
+
+**Prep.** Both providers registered and **enabled** (a shared workspace name across SCMs is fine and
+worth testing — resolution disambiguates by the review's stored SCM type). Tunnel up, webhooks
+registered. **Do not rename or move the file** during the run: a rename churns finding identity, which
+is a separate known limitation (`techdebt/`), not what this script measures.
+
+Diagnosis one-liners for any failure:
+
+```bash
+docker logs <orchestrator> --since 5m 2>&1 | grep -iE "Answering|declined|Follow-up|skipped"
+docker logs <worker>       --since 5m 2>&1 | grep -iE "Staying|resolve|reply|WARN|ERROR"
+```
+
+| # | Action | Expected on every provider |
+|---|---|---|
+| S1 | Open the PR | Inline comment per finding + exactly one summary comment; `findings` == inline count; PR badge **Open**; no `ReviewFailed` |
+| S2 | Expand a finding's conversation in the UI | Full untruncated text (`GET /api/reviews/{ws}/{slug}/{pr}/threads/{ref}` → 200), not the ≤160-char preview |
+| S3 | Reply under one finding (no @-mention) | Bot answers in the same thread; code arrives in a ```` ``` ```` fence and renders as code; the row shows `responding…` without breaking the table layout |
+| S4 | Reply to **the bot's answer** (twice) | Bot keeps answering, and the answer reflects the whole thread. Provider-specific ref in the log — GitHub normalizes to the thread root, Bitbucket keys off the answer's id; both must resolve to one conversation |
+| S5 | Turn cap | Turns accumulate on the conversation **root**: `turn_count` on that row rises per turn (a per-answer row must not reset it), and the cap eventually defers to the team |
+| S6 | New thread on an **unflagged** line, @-mention the bot | Bot answers even though it isn't a finding thread (`mentioned=true` in the log). GitHub renders `@<login>`; Bitbucket inserts `@{account_id}` from its picker — both must match. It does **not** create a finding (by design) |
+| S7 | Plain top-level PR comment | Answered in the **summary** thread |
+| S8 | Post `/review` | New run on the same commit; summary comment **updated in place**, never duplicated |
+| S9 | Fix **one finding fully**, push (same path) | Verdict `RESOLVED`; thread gets a closing reply and is **resolved on the SCM** (`resolved: true` in `threadOutcomes`); untouched findings `UNCHANGED`; a partially-fixed finding is `STILL_OPEN` with a note naming what remains |
+| S10 | Fix the rest over several commits — deliberately leave some unfixed and introduce new issues | Each round: real fixes → `RESOLVED` + `resolved: true`; unfixed → `STILL_OPEN`; new issues → new findings with their own threads, reconciled in later rounds. Ends at `findings: 0`, `blockerCount: 0`, `status: completed` |
+| S11 | Merge one PR, decline/close the other | PR badge flips **MERGED** / **CLOSED**, independent of the review status (stays `completed`); no further review runs |
+
+**Where providers legitimately differ** (not failures): Bitbucket inline findings are single-anchor
+(GitHub/GitLab render a multi-line range); mention syntax (`@{account_id}` vs `@login`); the resolve
+mechanism (GitHub GraphQL review threads, Bitbucket the comment-resolve API, GitLab discussion resolve)
+— but all three must end **resolved**. An SCM's own "Outdated" badge is orthogonal to resolution: it
+means the code under the comment changed, and a thread can be both Outdated and Resolved.
+
+**Verify from the event stream** rather than the UI alone — `threadOutcomes` is the honest record:
+
+```bash
+docker exec <redpanda> rpk topic consume cs.results --offset start --num 500 --format '%v\n' \
+  | grep -E "CommentsPosted" | tail -5
+```
+
+Every closing verdict should carry `"resolved":true`. A `RESOLVED` with `"resolved":false` means the
+thread could not be found — reply-only degradation, worth investigating (usually a stale thread ref).
+
+**Last full pass:** 2026-07-25 — GitHub + Bitbucket Cloud, 11/11 on both.
 
 ## Context enrichment (Jira) — add-on to any mode
 
