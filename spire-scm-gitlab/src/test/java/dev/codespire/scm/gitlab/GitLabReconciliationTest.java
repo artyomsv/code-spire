@@ -67,6 +67,22 @@ class GitLabReconciliationTest {
     }
 
     @Test
+    void resolveThreadOnANonResolvableThreadDegradesToReplyOnly() {
+        // Only diff discussions are resolvable; a plain MR-note thread (the summary thread) has no
+        // resolvable note. Reporting ALREADY_RESOLVED there would claim a resolve we never performed
+        // AND suppress the reply, because the caller reads that status as "a human closed it".
+        wireMock.stubFor(get(urlEqualTo("/projects/ws%2Frepo/merge_requests/1/discussions/d1"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"id\":\"d1\",\"notes\":[{\"id\":5,\"resolvable\":false}]}")));
+
+        assertEquals(ThreadResolution.UNSUPPORTED,
+                new GitLabCommentSink(client).resolveThread(repo, 1L, new ThreadRef("d1")));
+        assertTrue(wireMock.findAll(com.github.tomakehurst.wiremock.client.WireMock
+                .putRequestedFor(urlEqualTo("/projects/ws%2Frepo/merge_requests/1/discussions/d1"))).isEmpty());
+    }
+
+    @Test
     void resolveThreadDetectsHumanResolution() {
         wireMock.stubFor(get(urlEqualTo("/projects/ws%2Frepo/merge_requests/1/discussions/d1"))
                 .willReturn(aResponse().withStatus(200)

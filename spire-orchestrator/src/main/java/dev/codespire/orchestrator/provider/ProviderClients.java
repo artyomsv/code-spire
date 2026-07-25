@@ -47,10 +47,15 @@ public class ProviderClients {
      * throws so the caller degrades gracefully (falls back to the stored preview).
      */
     public ThreadSource threadSource(ScmProvider provider) {
+        // The registry's bot identity is passed straight in, so the review detail's thread re-fetch
+        // attributes the bot's turns without a live GET /user (matched per API: login/username/account id).
         return switch (provider.type()) {
-            case "github" -> new GitHubCommentSink(new GitHubClient(githubConfig(provider), mapper));
-            case "bitbucket-cloud" -> new BitbucketCloudCommentSink(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
-            case "gitlab" -> new GitLabCommentSink(new GitLabClient(gitlabConfig(provider), mapper));
+            case "github" -> new GitHubCommentSink(
+                    new GitHubClient(githubConfig(provider), mapper), provider.botUsername());
+            case "bitbucket-cloud" -> new BitbucketCloudCommentSink(
+                    new BitbucketCloudClient(bitbucketConfig(provider), mapper), provider.botAccountId());
+            case "gitlab" -> new GitLabCommentSink(
+                    new GitLabClient(gitlabConfig(provider), mapper), provider.botUsername());
             default -> throw new UnsupportedOperationException(
                     "Thread re-fetch is not supported for provider type: " + provider.type());
         };

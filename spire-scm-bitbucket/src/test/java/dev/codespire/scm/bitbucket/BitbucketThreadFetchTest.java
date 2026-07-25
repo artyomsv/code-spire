@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BitbucketThreadFetchTest {
 
     private static WireMockServer server;
+    private static BitbucketCloudClient client;
     private static BitbucketCloudCommentSink sink;
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final String COMMENTS = "/repositories/sandbox/demo-repo/pullrequests/7/comments";
@@ -32,7 +33,7 @@ class BitbucketThreadFetchTest {
     static void start() {
         server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();
-        BitbucketCloudClient client = new BitbucketCloudClient(
+        client = new BitbucketCloudClient(
                 new BitbucketCloudConfig("http://localhost:" + server.port(),
                         "test-bot", "test-app-password", "test-secret"), new ObjectMapper());
         sink = new BitbucketCloudCommentSink(client);
@@ -121,6 +122,27 @@ class BitbucketThreadFetchTest {
         assertEquals(42, t.line());
         assertEquals(3, t.messages().size());               // 100 + 200 (page 1) + 400 (page 2)
         assertEquals("reply on page2", t.messages().get(2).text());
+    }
+
+    @Test
+    void aBrokeredBotAccountIdAttributesWithoutCallingUser() {
+        // The orchestrator already knows the bot from the provider registry. Using it removes a per-fetch
+        // call AND the failure mode that silenced conversations when a scoped token could not read /user.
+        server.stubFor(get(urlPathEqualTo("/user")).willReturn(aResponse().withStatus(403)));
+        server.stubFor(get(urlPathEqualTo(COMMENTS)).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("""
+                        { "values": [
+                          { "id": 100, "content": { "raw": "possible NPE" },
+                            "user": { "account_id": "BOT-1" }, "inline": { "path": "src/App.java", "to": 42 } },
+                          { "id": 200, "parent": { "id": 100 }, "content": { "raw": "why?" },
+                            "user": { "account_id": "HUM-9" } } ] }""")));
+
+        ThreadTranscript t = new BitbucketCloudCommentSink(client, "BOT-1").fetchThread(REPO, 7, new ThreadRef("100"));
+
+        assertTrue(t.messages().get(0).fromBot(), "attributed from the brokered id despite /user being 403");
+        assertFalse(t.messages().get(1).fromBot());
+        assertTrue(server.findAll(com.github.tomakehurst.wiremock.client.WireMock
+                .getRequestedFor(urlPathEqualTo("/user"))).isEmpty(), "no per-fetch identity lookup");
     }
 
     @Test

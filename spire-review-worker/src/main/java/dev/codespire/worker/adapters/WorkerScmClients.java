@@ -66,17 +66,21 @@ public class WorkerScmClients {
             return stub; // no credential — active mode never emits these; safe fallback
         }
         return switch (cred.type()) {
+            // The sinks take the brokered bot identity so a thread transcript can attribute the bot's
+            // own turns without a live GET /user per fetch (matched per API: Bitbucket account_id,
+            // GitHub login, GitLab username).
             case "bitbucket-cloud" -> {
                 BitbucketCloudClient c = new BitbucketCloudClient(bitbucketConfig(cred), mapper);
-                yield new Clients(new BitbucketCloudDiffSource(c), new BitbucketCloudCommentSink(c));
+                yield new Clients(new BitbucketCloudDiffSource(c),
+                        new BitbucketCloudCommentSink(c, cred.botAccountId()));
             }
             case "github" -> {
                 GitHubClient c = new GitHubClient(githubConfig(cred), mapper);
-                yield new Clients(new GitHubDiffSource(c), new GitHubCommentSink(c));
+                yield new Clients(new GitHubDiffSource(c), new GitHubCommentSink(c, cred.botUsername()));
             }
             case "gitlab" -> {
                 GitLabClient c = new GitLabClient(gitlabConfig(cred), mapper);
-                yield new Clients(new GitLabDiffSource(c), new GitLabCommentSink(c));
+                yield new Clients(new GitLabDiffSource(c), new GitLabCommentSink(c, cred.botUsername()));
             }
             default -> throw new IllegalStateException("Unsupported provider type: " + cred.type());
         };

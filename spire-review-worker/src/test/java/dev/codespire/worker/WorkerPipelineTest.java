@@ -65,7 +65,7 @@ class WorkerPipelineTest {
      */
     private String cred() throws Exception {
         ScmCredential c = new ScmCredential("bitbucket-cloud", "http://localhost:" + BitbucketWireMockResource.server.port(),
-                "basic", "e2e-bot", "e2e-app-password");
+                "basic", "e2e-bot", "e2e-app-password", "e2e-bot-account-id", "e2e-bot");
         return encryption.encryptString(mapper.writeValueAsString(c), ScmCredential.aad("sandbox"));
     }
 

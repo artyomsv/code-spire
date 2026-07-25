@@ -35,9 +35,20 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
     private static final System.Logger LOG = System.getLogger(GitLabCommentSink.class.getName());
 
     private final GitLabClient client;
+    private final String brokeredBotUsername;
 
     public GitLabCommentSink(GitLabClient client) {
+        this(client, null);
+    }
+
+    /**
+     * @param botUsername the registry's bot username — GitLab exposes a note's author as a username, so
+     *                    this is what attributes the bot's own turns without a live {@code GET /user}
+     *                    per fetch. Null falls back to that lookup.
+     */
+    public GitLabCommentSink(GitLabClient client, String botUsername) {
         this.client = client;
+        this.brokeredBotUsername = botUsername;
     }
 
     @Override
@@ -109,11 +120,23 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
     public ThreadResolution resolveThread(RepoRef repo, long prId, ThreadRef thread) {
         String path = GitLabDiffSource.mrPath(repo, prId) + "/discussions/" + thread.value();
         JsonNode discussion = client.getJson(path);
+        boolean anyResolvable = false;
         boolean anyUnresolved = false;
         for (JsonNode note : discussion.path("notes")) {
-            if (note.path("resolvable").asBoolean(false) && !note.path("resolved").asBoolean(false)) {
+            if (!note.path("resolvable").asBoolean(false)) {
+                continue;
+            }
+            anyResolvable = true;
+            if (!note.path("resolved").asBoolean(false)) {
                 anyUnresolved = true;
             }
+        }
+        if (!anyResolvable) {
+            // Only diff discussions are resolvable in GitLab; a plain MR-note thread (the summary
+            // thread, or a reply chain on an individual note) cannot be resolved at all. Reporting
+            // ALREADY_RESOLVED here would claim a resolve we never performed AND suppress the reply,
+            // since the caller reads that status as "a human closed it, stay quiet".
+            return ThreadResolution.UNSUPPORTED;
         }
         if (!anyUnresolved) {
             return ThreadResolution.ALREADY_RESOLVED;
@@ -225,8 +248,12 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
                 !username.isEmpty() && username.equals(botUsername));
     }
 
-    /** Best-effort token-owner username to label the bot's own turns; a transient failure degrades to "". */
+    /** The username used to label the bot's own turns: the brokered one when the orchestrator supplied
+     *  it, else a best-effort token-owner lookup whose failure degrades to "" (nothing attributed). */
     private String botUsername() {
+        if (brokeredBotUsername != null && !brokeredBotUsername.isBlank()) {
+            return brokeredBotUsername;
+        }
         try {
             return client.getJson("/user").path("username").asText("");
         } catch (RuntimeException transientFailure) {

@@ -10,12 +10,18 @@ package dev.codespire.contract.scm;
  * <p>{@code type} is the provider type ({@code "bitbucket-cloud"} | {@code "github"} |
  * {@code "gitlab"}) — the worker uses it to pick the SCM adapter. {@code authKind} is
  * {@code "bearer"} (secret is an access token) or {@code "basic"} (secret is a
- * password/app-password paired with {@code username}). The bot account id is NOT
- * carried: the self-loop guard runs in the orchestrator against the provider
- * registry, so the worker never needs it.
+ * password/app-password paired with {@code username}).
+ *
+ * <p>The bot's identity rides along because a worker reading a thread transcript has to know which
+ * turns are its own — {@code fromBot} decides whether the bot is talking to one human or butting into
+ * a discussion. Each adapter matches on what its API exposes on a comment: GitHub a login, GitLab a
+ * username, Bitbucket an {@code account_id}, so both are carried. Without them a sink had to re-derive
+ * the identity with a live {@code GET /user} per fetch and silently attributed nothing when that call
+ * failed. Either may be null (a credential packed before this field, or an identity the provider never
+ * resolved), in which case the sink falls back to that lookup.
  */
 public record ScmCredential(String type, String baseUrl, String authKind, String username,
-                            String secret) {
+                            String secret, String botAccountId, String botUsername) {
 
     /**
      * The Tink associated-data for a worker credential, binding the ciphertext

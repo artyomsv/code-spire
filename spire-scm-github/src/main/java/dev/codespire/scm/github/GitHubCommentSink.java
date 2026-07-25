@@ -48,9 +48,20 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}""";
 
     private final GitHubClient client;
+    private final String brokeredBotLogin;
 
     public GitHubCommentSink(GitHubClient client) {
+        this(client, null);
+    }
+
+    /**
+     * @param botLogin the registry's bot username — GitHub exposes a comment's author as a login, so
+     *                 this is what attributes the bot's own turns without a live {@code GET /user} per
+     *                 fetch. Null falls back to that lookup.
+     */
+    public GitHubCommentSink(GitHubClient client, String botLogin) {
         this.client = client;
+        this.brokeredBotLogin = botLogin;
     }
 
     @Override
@@ -215,6 +226,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
      * conversation is still answered, the prompt just doesn't distinguish the bot's prior messages.
      */
     private String botLogin() {
+        if (brokeredBotLogin != null && !brokeredBotLogin.isBlank()) {
+            return brokeredBotLogin; // brokered from the registry — no per-fetch lookup needed
+        }
         try {
             return client.getJson("/user").path("login").asText("");
         } catch (RuntimeException transientFailure) {

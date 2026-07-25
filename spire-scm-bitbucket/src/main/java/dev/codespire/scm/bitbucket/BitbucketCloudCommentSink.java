@@ -33,9 +33,20 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
     private static final System.Logger LOG = System.getLogger(BitbucketCloudCommentSink.class.getName());
 
     private final BitbucketCloudClient client;
+    private final String brokeredBotAccountId;
 
     public BitbucketCloudCommentSink(BitbucketCloudClient client) {
+        this(client, null);
+    }
+
+    /**
+     * @param botAccountId the registry's bot account id, so a thread transcript can be attributed
+     *                     without a live {@code GET /user} — the call Bitbucket's scoped tokens reject
+     *                     unless they carry {@code read:account}. Null falls back to that lookup.
+     */
+    public BitbucketCloudCommentSink(BitbucketCloudClient client, String botAccountId) {
         this.client = client;
+        this.brokeredBotAccountId = botAccountId;
     }
 
     @Override
@@ -224,8 +235,12 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
                 !accountId.isEmpty() && accountId.equals(botAccountId));
     }
 
-    /** Best-effort token-owner account id to label the bot's own turns; a transient failure degrades to "". */
+    /** The bot's account id used to label its own turns: the brokered one when the orchestrator supplied
+     *  it, else a best-effort token-owner lookup whose failure degrades to "" (nothing attributed). */
     private String botAccountId() {
+        if (brokeredBotAccountId != null && !brokeredBotAccountId.isBlank()) {
+            return brokeredBotAccountId;
+        }
         try {
             return client.getJson("/user").path("account_id").asText("");
         } catch (RuntimeException transientFailure) {
