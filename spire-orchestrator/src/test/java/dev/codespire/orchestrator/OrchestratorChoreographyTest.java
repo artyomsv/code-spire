@@ -16,6 +16,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -24,7 +26,9 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
@@ -44,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @QuarkusTest
 class OrchestratorChoreographyTest {
 
+    private static final String COMMANDS_TOPIC = "cs.commands";
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final String REVIEW_ID = "review::sandbox/demo-repo#77";
     private static final String COMMIT_A = "aaa111aaa111";
@@ -62,6 +67,19 @@ class OrchestratorChoreographyTest {
     dev.codespire.orchestrator.llm.LlmProviderRegistry llmProviders;
 
     private KafkaProducer<String, String> producer;
+
+    /**
+     * Where this test's own commands start on cs.commands. The broker is shared by every
+     * {@code @QuarkusTest} class in the module, so counting from the beginning of the topic picked up
+     * whichever class wrote first — {@link ConversationE2ETest}'s {@code AnswerFollowUp} would arrive
+     * as "command #1" and the exact-sequence assertions failed depending on class order.
+     */
+    private Map<TopicPartition, Long> commandsFrom;
+
+    @org.junit.jupiter.api.BeforeEach
+    void captureCommandBaseline() {
+        commandsFrom = endOffsets(COMMANDS_TOPIC);
+    }
 
     @org.junit.jupiter.api.BeforeEach
     void registerProvider() {
@@ -182,19 +200,38 @@ class OrchestratorChoreographyTest {
         producer.send(new ProducerRecord<>(topic, REVIEW_ID, json)).get();
     }
 
-    /** Reads cs.commands from the beginning until {@code total} records; asserts the last one's type. */
-    private List<String> expectCommands(int total, String expectedLastType) {
+    private Properties consumerProps() {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        return props;
+    }
 
+    /** End offsets per partition now; all-zero when the topic does not exist yet (nothing to skip). */
+    private Map<TopicPartition, Long> endOffsets(String topic) {
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProps())) {
+            List<PartitionInfo> partitions = consumer.partitionsFor(topic);
+            if (partitions == null || partitions.isEmpty()) {
+                return Map.of(new TopicPartition(topic, 0), 0L);
+            }
+            return new HashMap<>(consumer.endOffsets(partitions.stream()
+                    .map(p -> new TopicPartition(p.topic(), p.partition())).toList()));
+        }
+    }
+
+    /** Reads the commands THIS test produced (from {@link #commandsFrom}) until {@code total} records;
+     *  asserts the last one's type. */
+    private List<String> expectCommands(int total, String expectedLastType) {
         List<String> values = new ArrayList<>();
         long deadline = System.currentTimeMillis() + 30_000;
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            consumer.subscribe(List.of("cs.commands"));
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProps())) {
+            // assign + seek, not subscribe: start at this test's baseline so another class's records
+            // can never be counted as ours.
+            consumer.assign(commandsFrom.keySet());
+            commandsFrom.forEach(consumer::seek);
             while (values.size() < total && System.currentTimeMillis() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
                     values.add(record.value());
