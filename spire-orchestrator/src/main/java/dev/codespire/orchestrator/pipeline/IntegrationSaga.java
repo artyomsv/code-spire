@@ -189,21 +189,35 @@ public class IntegrationSaga {
         }
 
         boolean observe = policy.observeOnly();
-        // Register in the read model (header + first event) so the review is
-        // visible on the dashboard whether or not any work runs.
-        projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
-                e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
-                observe ? "observed" : "reviewing",
-                observe ? ReviewProjection.STAGE_RECEIVED : ReviewProjection.STAGE_DIFF);
+        // Ask the aggregate FIRST, so the read model only ever claims a run that is actually starting.
+        // Observe-only must not advance the aggregate at all: emitting ReviewRequested here would lock
+        // the review into REVIEWING, so a later active registration of the same commit would find it
+        // "already requested" and never dispatch FetchDiff. The review must stay un-started so
+        // activating it later runs a fresh pipeline.
+        boolean started = !observe && lifecycle.handle(reviewId,
+                        new RecordCommand.RequestReview(commit, e.action().name(), false))
+                .stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+
+        // Make the review visible on the dashboard whether or not any work runs — but a re-delivered
+        // event for a commit the aggregate has already reviewed only refreshes the PR metadata. Claiming
+        // "reviewing" there would overwrite the finished outcome, and because no run starts, nothing
+        // would ever move it on again (a permanent "reviewing" with no command on the bus).
+        if (observe) {
+            projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
+                    "observed", ReviewProjection.STAGE_RECEIVED);
+        } else if (started) {
+            projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
+                    "reviewing", ReviewProjection.STAGE_DIFF);
+        } else {
+            projection.refreshHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type());
+        }
         projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
                 e.action().name().toLowerCase(Locale.ROOT) + " · head " + commit);
         projection.setPrState(reviewId, "OPEN");
 
-        // Observe-only gate: register on the dashboard but do NOT advance the
-        // aggregate. Emitting ReviewRequested here would lock the review into
-        // REVIEWING, so a later active registration of the same commit would find
-        // it "already requested" and never dispatch FetchDiff (stuck in DIFF). The
-        // review must stay un-started so activating it later runs a fresh pipeline.
         if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,
                     "observe-only: registered, no review run");
@@ -212,12 +226,8 @@ public class IntegrationSaga {
             LOG.infof("Observe-only: registered %s, no review started", reviewId);
             return;
         }
-
-        var emitted = lifecycle.handle(reviewId,
-                new RecordCommand.RequestReview(commit, e.action().name(), false));
-
-        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
         if (!started) {
+            LOG.infof("Re-delivered event for %s at commit %s — already reviewed, no new run", reviewId, commit);
             return;
         }
 

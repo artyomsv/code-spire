@@ -43,6 +43,7 @@ class IntegrationSagaPolicyTest {
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
     private final List<String> headerProviderTypes = new ArrayList<>();
+    private final List<String> refreshedProviderTypes = new ArrayList<>();
     private final List<String> rerunInvocations = new ArrayList<>();
     private final List<RecordCommand> handledCommands = new ArrayList<>();
     private final List<String> prStateCalls = new ArrayList<>();
@@ -85,6 +86,13 @@ class IntegrationSagaPolicyTest {
                                        String authorId, String sourceBranch, String destBranch, String sha,
                                        String htmlUrl, String providerType, String status, int stage) {
                 headerProviderTypes.add(providerType);
+            }
+
+            @Override
+            public void refreshHeader(String reviewId, RepoRef repo, long prId, String title, String author,
+                                     String authorId, String sourceBranch, String destBranch, String sha,
+                                     String htmlUrl, String providerType) {
+                refreshedProviderTypes.add(providerType);
             }
 
             @Override
@@ -294,16 +302,29 @@ class IntegrationSagaPolicyTest {
     }
 
     @Test
-    void redeliveredSameCommit_registersHeaderButEmitsNoWork() {
-        // A GitHub re-delivery (or a duplicate `synchronize`) for the same head SHA
-        // reaches the saga again. The decider no-ops it (proven in ReviewLifecycleTest:
-        // sameCommitIsIdempotentNoOp) — modeled here by an empty lifecycle result — so
-        // the saga registers no new work: no second FetchDiff, no second review run.
+    void redeliveredSameCommit_refreshesMetadataWithoutClaimingARun() {
+        // The decider no-ops a same-commit re-delivery (proven in ReviewLifecycleTest), so no run starts.
+        // Claiming "reviewing" here overwrote a COMPLETED review and, with nothing dispatched, left it
+        // stuck in "reviewing" forever — observed live after a provider's webhook "test" delivery.
         var saga = sagaWith(policyMode(false), provider(List.of("alice")), List.of());
         saga.on(pr("acc-1", "alice"));
-        assertEquals(List.of("bitbucket-cloud"), headerProviderTypes,
-                "the header upsert is idempotent — the row is refreshed, not duplicated");
+
+        assertTrue(headerProviderTypes.isEmpty(), "must not re-claim status/stage for a review already done");
+        assertEquals(List.of("bitbucket-cloud"), refreshedProviderTypes,
+                "the PR metadata is still refreshed, leaving the existing outcome intact");
         assertTrue(emitted.isEmpty(), "a re-delivered same-commit event dispatches no FetchDiff");
+    }
+
+    @Test
+    void firstDeliveryClaimsTheRunAndDispatchesWork() {
+        // The contrast to the re-delivery above: a decider that DOES emit ReviewRequested means a run is
+        // genuinely starting, so claiming "reviewing" on the row is correct and FetchDiff goes out.
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        saga.on(pr("acc-1", "alice"));
+        assertEquals(List.of("bitbucket-cloud"), headerProviderTypes, "status/stage claimed for a real run");
+        assertTrue(refreshedProviderTypes.isEmpty(), "no metadata-only refresh when a run starts");
+        assertEquals(1, emitted.size());
+        assertInstanceOf(ActionCommand.FetchDiff.class, emitted.get(0));
     }
 
     @Test

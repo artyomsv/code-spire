@@ -81,6 +81,36 @@ public class ReviewProjection {
     public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                String authorId, String sourceBranch, String destBranch, String sha,
                                String htmlUrl, String providerType, String status, int stage) {
+        upsertHeader(reviewId, repo, prId, title, author, authorId, sourceBranch, destBranch, sha,
+                htmlUrl, providerType, status, stage, true);
+    }
+
+    /**
+     * Refresh a review's PR metadata WITHOUT claiming a run: status, stage, attempt, error detail and the
+     * answering flag are left exactly as they were.
+     *
+     * <p>Used when an event arrives for a commit the aggregate has already reviewed (a re-delivered
+     * webhook, a provider's "test" delivery). {@link #registerHeader} would overwrite the finished
+     * outcome with {@code reviewing}, and since no run starts, nothing ever moves it on again — the
+     * review sat in "reviewing" forever with no command on the bus.
+     */
+    public void refreshHeader(String reviewId, RepoRef repo, long prId, String title, String author,
+                              String authorId, String sourceBranch, String destBranch, String sha,
+                              String htmlUrl, String providerType) {
+        upsertHeader(reviewId, repo, prId, title, author, authorId, sourceBranch, destBranch, sha,
+                htmlUrl, providerType, "reviewing", STAGE_DIFF, false);
+    }
+
+    /** @param claimRun whether this write may set status/stage — false preserves the row's outcome
+     *                  (the status/stage arguments then apply only to a first INSERT). */
+    private void upsertHeader(String reviewId, RepoRef repo, long prId, String title, String author,
+                              String authorId, String sourceBranch, String destBranch, String sha,
+                              String htmlUrl, String providerType, String status, int stage,
+                              boolean claimRun) {
+        String outcomeColumns = claimRun
+                ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
+                        + "error_detail = NULL, answering = FALSE,"
+                : "";
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,
                         source_branch, dest_branch, commit_sha, html_url, provider_type, status, stage,
@@ -91,9 +121,8 @@ public class ReviewProjection {
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
-                        status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1,
-                        error_detail = NULL, answering = FALSE, updated_at = now()
-                """;
+                        %s updated_at = now()
+                """.formatted(outcomeColumns);
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
