@@ -23,4 +23,14 @@ class ReviewPolicyTest {
         assertEquals(ReviewPolicy.ACTIVE, ReviewPolicy.normalize(null));
         assertEquals(ReviewPolicy.ACTIVE, ReviewPolicy.normalize("bogus"));
     }
+
+    @Test
+    void attemptBudgetIsClampedToAUsableRange() {
+        // 1 means "never retry"; the ceiling stops a typo parking a review on a dead provider, since
+        // every attempt re-runs the pipeline from the diff fetch.
+        assertEquals(3, ReviewPolicy.clampAttempts(3));
+        assertEquals(ReviewPolicy.MIN_ATTEMPTS, ReviewPolicy.clampAttempts(0));
+        assertEquals(ReviewPolicy.MIN_ATTEMPTS, ReviewPolicy.clampAttempts(-5));
+        assertEquals(ReviewPolicy.MAX_ATTEMPTS, ReviewPolicy.clampAttempts(999));
+    }
 }

@@ -74,14 +74,12 @@ export default function ConversationSettings() {
 
   return (
     <div className="conv-default">
-      {/* Scope matters: every field here tunes REPLIES to humans. The review pipeline's own retry
-          budget is separate (SPIRE_REVIEW_MAX_ATTEMPTS) and a review never dead-letters — it ends as
-          a failed review with the provider's error. Without saying so, "Retry attempts … before
-          dead-lettering" reads as app-wide. */}
+      {/* Scope matters: every field here tunes REPLIES to humans, and its retry budget is NOT the
+          review pipeline's (see the Code review group above). Without saying so, "Retry attempts …
+          before dead-lettering" reads as app-wide. */}
       <p className="settings-scope">
-        These govern how the bot <strong>replies to comments</strong>. Review retries are configured
-        separately (<code>SPIRE_REVIEW_MAX_ATTEMPTS</code>, default 3); a failed review is reported on
-        its own card, not dead-lettered.
+        These govern how the bot <strong>replies to comments</strong> — a reply that runs out of attempts
+        is dead-lettered for replay. Review retries are set under <strong>Code review</strong> above.
       </p>
       <label className="field">
         <span>Interaction level</span>

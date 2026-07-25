@@ -470,6 +470,30 @@ export async function setConversationSettings(settings: ConversationSettings): P
   return res.json();
 }
 
+// ---- review settings (the review pipeline's own retry budget) ----
+
+/** Deliberately separate from ConversationSettings: a review that exhausts its attempts ends as a
+ *  failed review carrying the provider's error, while a follow-up answer dead-letters for replay. */
+export interface ReviewSettings {
+  maxAttempts: number;
+}
+
+export async function getReviewSettings(): Promise<ReviewSettings> {
+  const res = await fetch('/api/settings/review');
+  if (!res.ok) return throwResponse(res, 'Failed to load review settings');
+  return res.json();
+}
+
+export async function setReviewSettings(settings: ReviewSettings): Promise<ReviewSettings> {
+  const res = await fetch('/api/settings/review', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update review settings');
+  return res.json();
+}
+
 // ---- LLM providers ----
 
 export type LlmType = 'openai' | 'anthropic' | 'gemini';

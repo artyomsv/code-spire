@@ -75,9 +75,14 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
 
-    /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
-    @ConfigProperty(name = "spire.review.max-attempts", defaultValue = "3")
-    int maxAttempts;
+    /** Max pipeline runs before a retryable failure fails terminally (C8) — read from the policy on each
+     *  failure, so changing it in Settings takes effect without a restart. */
+    @Inject
+    dev.codespire.orchestrator.policy.ReviewPolicy reviewPolicy;
+
+    int maxAttempts() {
+        return reviewPolicy.maxAttempts();
+    }
 
     @Incoming("results-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
@@ -246,17 +251,20 @@ public class ResultSaga {
         projection.appendEvent(e.reviewId(), "result", "ReviewFailed", "failed at " + e.phase());
         ReviewIds.Parsed parsed = ReviewIds.parse(e.reviewId());
         int attempt = projection.currentAttempt(e.reviewId());
+        // Read once per failure so the decision, the log and the operator-facing note cannot disagree
+        // if Settings changes the budget mid-flight.
+        int budget = maxAttempts();
 
-        if (e.retryable() && attempt < maxAttempts) {
+        if (e.retryable() && attempt < budget) {
             java.util.Optional<String> cred = workerCredentials.packForReview(e.reviewId());
             if (cred.isPresent()) {
                 int next = attempt + 1;
                 LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d (error: %s)",
-                        e.reviewId(), e.phase(), next, maxAttempts, e.error());
+                        e.reviewId(), e.phase(), next, budget, e.error());
                 projection.retryPipeline(e.reviewId(), next,
-                        "Transient failure at " + e.phase() + " — retrying (attempt " + next + "/" + maxAttempts + ").");
+                        "Transient failure at " + e.phase() + " — retrying (attempt " + next + "/" + budget + ").");
                 timeline.record("result", "retry:" + e.phase(), e.reviewId(),
-                        "retryable failure — auto-retry " + next + "/" + maxAttempts);
+                        "retryable failure — auto-retry " + next + "/" + budget);
                 commands.emit(new ActionCommand.FetchDiff(
                         e.reviewId(), parsed.repo(), parsed.prId(), e.commit(), cred.get()));
                 return;
@@ -264,9 +272,9 @@ public class ResultSaga {
         }
 
         // Terminal: budget exhausted, provider gone, or a permanent failure.
-        String note = terminalNote(e, attempt);
+        String note = terminalNote(e, attempt, budget);
         LOG.errorf("Review %s failed terminally at %s (attempt %d/%d, retryable=%s, error: %s) — %s",
-                e.reviewId(), e.phase(), attempt, maxAttempts, e.retryable(), e.error(), note);
+                e.reviewId(), e.phase(), attempt, budget, e.retryable(), e.error(), note);
         projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
         projection.setNote(e.reviewId(), note);
         // Persist the actual provider/worker error so the UI can show why it failed (not just the log).
@@ -275,7 +283,7 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
     }
 
-    private String terminalNote(ReviewFailed e, int attempt) {
+    private String terminalNote(ReviewFailed e, int attempt, int maxAttempts) {
         if (e.retryable() && attempt >= maxAttempts) {
             return "Failed at " + e.phase() + " after " + attempt + " attempts (retry budget exhausted).";
         }

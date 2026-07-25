@@ -52,7 +52,13 @@ class ResultSagaRetryTest {
 
     private ResultSaga sagaWith(int storedAttempt, int maxAttempts, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
-        saga.maxAttempts = maxAttempts;
+        // The budget is read from the policy on each failure, so Settings changes it without a restart.
+        saga.reviewPolicy = new dev.codespire.orchestrator.policy.ReviewPolicy() {
+            @Override
+            public int maxAttempts() {
+                return maxAttempts;
+            }
+        };
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
