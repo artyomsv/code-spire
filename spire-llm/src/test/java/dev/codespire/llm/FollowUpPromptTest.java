@@ -25,7 +25,9 @@ class FollowUpPromptTest {
 
         assertTrue(p.user().contains("BEGIN_UNTRUSTED_DATA"), "fenced");
         assertTrue(p.user().contains("a.java line 12 (commit abc123)"), p.user());
-        assertTrue(p.system().toLowerCase().contains("plain-text"), "locked contract");
+        // The locked contract must MANDATE fenced code blocks: an earlier "no markdown fences" wording
+        // made the model indent code, which Bitbucket renders as prose.
+        assertTrue(p.system().contains("```"), "locked contract requires fenced code blocks");
         assertFalse(p.system().contains("a.java"), "anchor is untrusted data, not system content");
     }
 
