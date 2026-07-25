@@ -137,14 +137,47 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `spire.review.draft-prs`; GitLab handles the draft→ready flip, Bitbucket the non-draft
   `pullrequest:updated`). GitLab/Bitbucket API exceptions now carry `retryAfterSeconds`
   (`Retry-After`, plus GitLab `RateLimit-Reset` epoch fallback). GitLab posts NEW-side multi-line
-  findings as a `position.line_range`. Bitbucket reconciliation stays **reply-only** (no
-  PR-comment-resolve API) and inline stays single-anchor (API constraints). Bitbucket's compare
-  spec `{head}..{base}` is verified correct against the REST docs; a **live-verify gate** in
-  SMOKE-TEST.md settles it against a real workspace. New runbook Mode F (GitLab webhook) +
-  conversation/reconciliation steps for GitLab/Bitbucket. WireMock-tested per adapter; live testing
-  is the operator's runbook pass.
+  findings as a `position.line_range`. Bitbucket inline stays single-anchor (API constraint). New
+  runbook Mode F (GitLab webhook) + conversation/reconciliation steps for GitLab/Bitbucket.
+  WireMock-tested per adapter; live testing is the operator's runbook pass. (Two claims here were
+  superseded on 2026-07-25 — see the next entry: Bitbucket reconciliation is no longer reply-only,
+  and the compare-direction gate is settled live.)
+- **Parity verified live on two SCMs + 10 fixes (2026-07-25):** the full loop was run end-to-end on a
+  real GitHub PR and a real Bitbucket PR with identical file content — 11/11 scenarios on both
+  (runbook **Mode G**, `docs/SMOKE-TEST.md`). Everything the run exposed is fixed, each with tests:
+  - **Cross-provider resolution.** A workspace name registered on two SCMs (a GitHub org and a
+    Bitbucket workspace both `artyomsv`) resolved to the *oldest* provider, cross-wiring SCMs. The
+    conversation saga, the self-loop guard and the thread-refetch endpoint now share
+    `ReviewProviderResolver`, which disambiguates by the review's stored `provider_type` — the way the
+    credential path already did.
+  - **Conversation is keyed to its root thread (V24 `review_thread.root_ref`).** Bitbucket threads by
+    *immediate parent*, so a reply to the bot's own answer carried that answer's id: multi-turn died
+    after one exchange, the turn counter never accumulated (the cap could not fire), later turns were
+    stored under a non-finding ref, and `fetchThread` saw only the last branch. Answers are now linked
+    to their conversation root, and turn counting / ownership / the command's `threadRef` / event
+    attribution all normalize to it — the single stable id GitHub's `in_reply_to_id` already gave us.
+  - **Bitbucket thread resolve** (`POST .../comments/{id}/resolve`) — a fixed finding now shows
+    **Resolved**, not just the SCM's auto-*Outdated* badge. **GitHub `resolveThread`** no longer
+    reports `ALREADY_RESOLVED` when it matched *nothing* (a fake `resolved:true` that silently skipped
+    both the resolve and the reply); it degrades honestly to reply-only.
+  - **Re-posted findings reconcile against their current thread.** Several `review_thread` rows can
+    share one anchor across rounds; the loc→thread index kept an arbitrary older id and a stale carried
+    ref won over the live one, so verdicts targeted an already-resolved thread. Newest id per loc wins.
+  - **Bitbucket `@{account_id}` mentions** are recognized (it renders no `@login` in raw text), so an
+    @-mention on an unflagged line engages the bot as on GitHub.
+  - **Follow-up replies must fence code** — the locked FOLLOWUP contract said *"no markdown fences"*,
+    so the model indented code and Bitbucket rendered it as prose.
+  - **UI:** general-discussion threads re-fetch their full text (they showed only the ≤160-char
+    preview) with the opening message always visible and replies behind the toggle; a finding's
+    conversation no longer also appears under General discussion (both cards now derive from one row
+    set); a reconciliation reply is reachable from the findings card ("View thread"); the
+    `responding…` pill wraps instead of overflowing the reviews table.
+  - **Diagnosability:** `ConversationSaga` now logs every decision with its factors
+    (`level/authorAllowed/threadIsOurs/mentioned/priorTurns`) — the skips used to reach only the
+    dashboard, which is why several of these bugs were invisible.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
-  in `techdebt/global/`); cost table for `ModelUsage.costMillicents`.
+  in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
+  (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.
 
 ## Build & run
 

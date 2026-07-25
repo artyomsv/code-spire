@@ -121,8 +121,9 @@ down is the original design-time roadmap (kept for reference).
   reconcile instead of blind re-review — command-carried prior-run snapshot, two claim-guarded LLM
   calls (reconcile verdicts on the incremental diff + review with an exclusion list), per-verdict
   posting (reply/auto-resolve fixed findings, quiet `UNCHANGED` on untouched ones, in-place summary
-  update), `resolveThread`/`updateComment`/`fetchCompareDiff` SPI capabilities (Bitbucket degrades to
-  reply-only). Hardened through live multi-round testing: carry-forward open-findings baseline, file
+  update), `resolveThread`/`updateComment`/`fetchCompareDiff` SPI capabilities (all three SCMs resolve
+  since 2026-07-25; an unresolvable thread degrades to reply-only). Hardened through live multi-round
+  testing: carry-forward open-findings baseline, file
   rename following, same-anchor merging + ghost cleanup, unified findings list in the UI, live
   dashboard updates on conversation activity. V17–V20; verified live on GitHub (`artyomsv/spire-test`
   PRs #8–#11).
@@ -178,13 +179,20 @@ down is the original design-time roadmap (kept for reference).
     untouched — conversation lights up via the `instanceof ThreadSource` gate), GitLab `AuthorReplied`
     ingress + Bitbucket `topLevel` flag, draft/WIP skip on all three SCMs (reuses
     `spire.review.draft-prs`), `Retry-After` (+ GitLab `RateLimit-Reset`) classification, GitLab
-    NEW-side `line_range` multi-line comments. Bitbucket reconciliation stays reply-only (no
-    PR-comment-resolve API) and inline single-anchor (API constraints). New SMOKE-TEST.md **Mode F**
-    (GitLab webhook) + conversation/reconciliation steps. WireMock-tested per adapter.
-    **Remaining = the operator's live pass**: run the SAME end-to-end flow (webhook → review → thread
-    replies → reconciliation) on a real GitLab MR and Bitbucket PR, and honor the runbook's
-    **Bitbucket compare-direction live gate** (`{head}..{base}` is reasoned-correct against the REST
-    docs but only a live re-review settles it).
+    NEW-side `line_range` multi-line comments. Bitbucket inline stays single-anchor (API constraint).
+    New SMOKE-TEST.md **Mode F** (GitLab webhook) + conversation/reconciliation steps. WireMock-tested
+    per adapter.
+    ✅ **Bitbucket live pass done (2026-07-25)** — the same script run on a real GitHub PR and a real
+    Bitbucket PR with identical content, 11/11 on both (new SMOKE-TEST.md **Mode G — provider parity**,
+    now the reusable regression script). The **compare-direction gate is settled live**: across four
+    reconciliation rounds every verdict read the change in the correct direction. Ten defects the run
+    exposed are fixed with tests — cross-provider resolution by the review's stored SCM type,
+    conversation root-keying (V24 `review_thread.root_ref`: multi-turn, turn cap, thread attribution),
+    **Bitbucket thread resolve** (so "reply-only" above no longer holds), GitHub's false-success
+    `resolveThread`, re-posted-finding reconciliation, Bitbucket `@{account_id}` mentions, fenced code
+    in follow-ups, and four UI conversation-display bugs. See CLAUDE.md for the itemized list.
+    **Remaining = the GitLab live pass**: run Mode G on a real GitLab MR (the adapter is code-complete
+    and WireMock-tested; only the live end-to-end pass is outstanding).
 14. **Ticket-reference context providers: GitHub Issues + GitLab Issues** · M. Extend the proven
     ContextProvider SPI (Jira/Confluence precedent — zero core changes expected): resolve issue
     references from PR title/branch/description (`#123`, `GH-123`, `org/repo#123`, GitLab `#123` /
