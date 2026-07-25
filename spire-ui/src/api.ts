@@ -476,6 +476,8 @@ export async function setConversationSettings(settings: ConversationSettings): P
  *  failed review carrying the provider's error, while a follow-up answer dead-letters for replay. */
 export interface ReviewSettings {
   maxAttempts: number;
+  backoffBaseMs: number;
+  backoffFactor: number;
 }
 
 export async function getReviewSettings(): Promise<ReviewSettings> {

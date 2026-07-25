@@ -28,24 +28,37 @@ public class ReviewSettingsResource {
     @Inject
     ReviewPolicy policy;
 
-    public record ReviewSettingsView(int maxAttempts) {
+    public record ReviewSettingsView(int maxAttempts, long backoffBaseMs, double backoffFactor) {
     }
 
     @GET
     public ReviewSettingsView get() {
-        return new ReviewSettingsView(policy.maxAttempts());
+        return current();
     }
 
     @PUT
     public ReviewSettingsView set(ReviewSettingsView body) {
         if (body == null) {
-            throw new BadRequestException("maxAttempts is required");
+            throw new BadRequestException("maxAttempts, backoffBaseMs and backoffFactor are required");
         }
         if (body.maxAttempts() < ReviewPolicy.MIN_ATTEMPTS || body.maxAttempts() > ReviewPolicy.MAX_ATTEMPTS) {
             throw new BadRequestException("maxAttempts must be between " + ReviewPolicy.MIN_ATTEMPTS
                     + " and " + ReviewPolicy.MAX_ATTEMPTS);
         }
+        if (body.backoffBaseMs() < 0 || body.backoffBaseMs() > ReviewPolicy.MAX_BACKOFF_MS) {
+            throw new BadRequestException("backoffBaseMs must be between 0 and " + ReviewPolicy.MAX_BACKOFF_MS);
+        }
+        if (body.backoffFactor() < ReviewPolicy.MIN_BACKOFF_FACTOR
+                || body.backoffFactor() > ReviewPolicy.MAX_BACKOFF_FACTOR) {
+            throw new BadRequestException("backoffFactor must be between " + ReviewPolicy.MIN_BACKOFF_FACTOR
+                    + " and " + ReviewPolicy.MAX_BACKOFF_FACTOR);
+        }
         policy.setMaxAttempts(body.maxAttempts());
-        return new ReviewSettingsView(policy.maxAttempts());
+        policy.setBackoff(body.backoffBaseMs(), body.backoffFactor());
+        return current();
+    }
+
+    private ReviewSettingsView current() {
+        return new ReviewSettingsView(policy.maxAttempts(), policy.backoffBaseMs(), policy.backoffFactor());
     }
 }

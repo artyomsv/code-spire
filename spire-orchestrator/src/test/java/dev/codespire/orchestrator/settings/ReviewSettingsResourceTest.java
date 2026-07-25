@@ -25,7 +25,7 @@ class ReviewSettingsResourceTest {
     // Restore the seed default so sibling orchestrator tests see the budget they expect.
     @AfterEach
     void resetToDefault() {
-        given().contentType("application/json").body(Map.of("maxAttempts", 3))
+        given().contentType("application/json").body(Map.of("maxAttempts", 3, "backoffBaseMs", 5000, "backoffFactor", 2.0))
                 .when().put("/api/settings/review").then().statusCode(200);
     }
 
@@ -37,9 +37,9 @@ class ReviewSettingsResourceTest {
 
     @Test
     void putPersistsWithoutRestart() {
-        given().contentType("application/json").body(Map.of("maxAttempts", 5))
+        given().contentType("application/json").body(Map.of("maxAttempts", 5, "backoffBaseMs", 10000, "backoffFactor", 3.0))
                 .when().put("/api/settings/review")
-                .then().statusCode(200).body("maxAttempts", equalTo(5));
+                .then().statusCode(200).body("maxAttempts", equalTo(5)).body("backoffBaseMs", equalTo(10000)).body("backoffFactor", equalTo(3.0f));
 
         when().get("/api/settings/review")
                 .then().statusCode(200).body("maxAttempts", equalTo(5));
@@ -47,16 +47,28 @@ class ReviewSettingsResourceTest {
 
     @Test
     void rejectsZeroOrNegative() {
-        given().contentType("application/json").body(Map.of("maxAttempts", 0))
+        given().contentType("application/json").body(Map.of("maxAttempts", 0, "backoffBaseMs", 5000, "backoffFactor", 2.0))
                 .when().put("/api/settings/review").then().statusCode(400);
-        given().contentType("application/json").body(Map.of("maxAttempts", -1))
+        given().contentType("application/json").body(Map.of("maxAttempts", -1, "backoffBaseMs", 5000, "backoffFactor", 2.0))
                 .when().put("/api/settings/review").then().statusCode(400);
     }
 
     @Test
     void rejectsAnAbsurdBudget() {
         // Every attempt re-runs the whole pipeline, so a typo here would hammer a dead provider.
-        given().contentType("application/json").body(Map.of("maxAttempts", 1000))
+        given().contentType("application/json").body(Map.of("maxAttempts", 1000, "backoffBaseMs", 5000, "backoffFactor", 2.0))
+                .when().put("/api/settings/review").then().statusCode(400);
+    }
+
+    @Test
+    void rejectsABackoffThatWouldStrandOrHammerTheReview() {
+        // A negative base would schedule the retry in the past; an hour would look like a hung review.
+        given().contentType("application/json").body(Map.of("maxAttempts", 3, "backoffBaseMs", -1, "backoffFactor", 2.0))
+                .when().put("/api/settings/review").then().statusCode(400);
+        given().contentType("application/json").body(Map.of("maxAttempts", 3, "backoffBaseMs", 3600000, "backoffFactor", 2.0))
+                .when().put("/api/settings/review").then().statusCode(400);
+        // A factor below 1 would shrink the wait on each attempt instead of growing it.
+        given().contentType("application/json").body(Map.of("maxAttempts", 3, "backoffBaseMs", 5000, "backoffFactor", 0.5))
                 .when().put("/api/settings/review").then().statusCode(400);
     }
 }

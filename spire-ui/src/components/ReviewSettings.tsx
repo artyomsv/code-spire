@@ -32,7 +32,42 @@ export default function ReviewSettings({ value, disabled, onChange }: Props) {
           max={10}
           value={value.maxAttempts}
           disabled={disabled}
-          onChange={(e) => onChange({ maxAttempts: Number(e.target.value) })}
+          onChange={(e) => onChange({ ...value, maxAttempts: Number(e.target.value) })}
+        />
+      </SettingField>
+
+      <SettingField
+        scope="code review"
+        label="Backoff base (ms)"
+        hint={
+          'Wait before the second attempt; later attempts multiply it by the factor, capped at 5 minutes. ' +
+          'The wait is stored on the review, so it survives a restart rather than being lost.'
+        }
+      >
+        <input
+          type="number"
+          min={0}
+          max={300000}
+          step={1000}
+          value={value.backoffBaseMs}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...value, backoffBaseMs: Number(e.target.value) })}
+        />
+      </SettingField>
+
+      <SettingField
+        scope="code review"
+        label="Backoff factor"
+        hint="Multiplier applied to the wait on each further attempt — 2 doubles it (5s, 10s, 20s…)."
+      >
+        <input
+          type="number"
+          min={1}
+          max={10}
+          step={0.5}
+          value={value.backoffFactor}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...value, backoffFactor: Number(e.target.value) })}
         />
       </SettingField>
     </div>

@@ -10,7 +10,7 @@ import * as api from '../api';
 describe('SettingsGeneral', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn(api, 'getReviewSettings').mockResolvedValue({ maxAttempts: 3 });
+    vi.spyOn(api, 'getReviewSettings').mockResolvedValue({ maxAttempts: 3, backoffBaseMs: 5000, backoffFactor: 2 });
     vi.spyOn(api, 'getConversationSettings').mockResolvedValue({
       level: 'REPORT_ONLY', turnCap: 4, maxAttempts: 5, backoffBaseMs: 2000, backoffFactor: 2,
     });
@@ -24,7 +24,7 @@ describe('SettingsGeneral', () => {
   });
 
   it('writes only the group that changed', async () => {
-    const putReview = vi.spyOn(api, 'setReviewSettings').mockResolvedValue({ maxAttempts: 6 });
+    const putReview = vi.spyOn(api, 'setReviewSettings').mockResolvedValue({ maxAttempts: 6, backoffBaseMs: 5000, backoffFactor: 2 });
     const putConversation = vi.spyOn(api, 'setConversationSettings');
     render(<SettingsGeneral />);
     await screen.findByText('Code review');
@@ -34,7 +34,7 @@ describe('SettingsGeneral', () => {
     fireEvent.change(reviewAttempts, { target: { value: '6' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(putReview).toHaveBeenCalledWith({ maxAttempts: 6 }));
+    await waitFor(() => expect(putReview).toHaveBeenCalledWith({ maxAttempts: 6, backoffBaseMs: 5000, backoffFactor: 2 }));
     expect(putConversation).not.toHaveBeenCalled();
   });
 

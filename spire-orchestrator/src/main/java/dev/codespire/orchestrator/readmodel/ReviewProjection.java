@@ -22,6 +22,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -254,6 +255,71 @@ public class ReviewProjection {
             ps.setString(4, reviewId);
         });
         broadcast(reviewId);
+    }
+
+    /**
+     * Schedule the next attempt instead of dispatching it now: bumps the attempt counter, keeps the row
+     * in {@code reviewing} (the run IS still in flight, just waiting) and records when it comes due.
+     */
+    public void scheduleRetry(String reviewId, int attempt, String note, Instant dueAt) {
+        update("""
+                UPDATE review_status
+                   SET attempt = ?, status = 'reviewing', stage = ?, note = ?, retry_at = ?, updated_at = now()
+                 WHERE review_id = ?
+                """, ps -> {
+            ps.setInt(1, attempt);
+            ps.setInt(2, STAGE_DIFF);
+            ps.setString(3, note);
+            ps.setTimestamp(4, Timestamp.from(dueAt));
+            ps.setString(5, reviewId);
+        });
+        broadcast(reviewId);
+    }
+
+    /**
+     * Claim every review whose retry has come due, clearing {@code retry_at} in the SAME statement that
+     * reads it. Only one caller can win a given row, so replicas (or an overlapping sweep) cannot both
+     * dispatch the same attempt — the claim IS the dispatch permit.
+     */
+    public List<String> claimDueRetries(Instant now) {
+        List<String> claimed = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE review_status SET retry_at = NULL, updated_at = now()
+                      WHERE retry_at IS NOT NULL AND retry_at <= ?
+                      RETURNING review_id
+                     """)) {
+            ps.setTimestamp(1, Timestamp.from(now));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    claimed.add(rs.getString(1));
+                }
+            }
+        } catch (SQLException e) {
+            // A sweep that cannot read the DB must not kill the scheduler: the next tick tries again,
+            // and the rows stay claimable because nothing was cleared.
+            LOG.warnf(e, "Could not claim due review retries");
+            return List.of();
+        }
+        claimed.forEach(this::broadcast);
+        return claimed;
+    }
+
+    /** Cancel a scheduled retry — the run reached a terminal state before it came due. */
+    public void clearScheduledRetry(String reviewId) {
+        update("UPDATE review_status SET retry_at = NULL WHERE review_id = ? AND retry_at IS NOT NULL",
+                ps -> ps.setString(1, reviewId));
+    }
+
+    /**
+     * Put a claimed retry back on the clock. The claim already cleared the due time, so a dispatch that
+     * fails afterwards would otherwise leave the review waiting on a retry nobody will send.
+     */
+    public void rescheduleRetry(String reviewId, Instant dueAt) {
+        update("UPDATE review_status SET retry_at = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setTimestamp(1, Timestamp.from(dueAt));
+            ps.setString(2, reviewId);
+        });
     }
 
     /** Record the generated review's findings + usage against the row. */

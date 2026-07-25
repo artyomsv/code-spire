@@ -256,22 +256,29 @@ public class ResultSaga {
         int budget = maxAttempts();
 
         if (e.retryable() && attempt < budget) {
-            java.util.Optional<String> cred = workerCredentials.packForReview(e.reviewId());
-            if (cred.isPresent()) {
+            // The credential is checked NOW rather than at dispatch: a provider that has been removed
+            // makes the retry pointless, and failing here keeps the terminal reason accurate.
+            if (workerCredentials.packForReview(e.reviewId()).isPresent()) {
                 int next = attempt + 1;
-                LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d (error: %s)",
-                        e.reviewId(), e.phase(), next, budget, e.error());
-                projection.retryPipeline(e.reviewId(), next,
-                        "Transient failure at " + e.phase() + " — retrying (attempt " + next + "/" + budget + ").");
+                // Backing off has to outlive this method: the consumer is ordered per partition, so
+                // sleeping here would stall every other review on it. The due time is persisted and a
+                // sweeper dispatches it (ReviewRetryScheduler) — which also survives a restart.
+                java.time.Duration delay = reviewPolicy.retryDelay(next);
+                LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d in %ds (error: %s)",
+                        e.reviewId(), e.phase(), next, budget, delay.toSeconds(), e.error());
+                projection.scheduleRetry(e.reviewId(), next,
+                        "Transient failure at " + e.phase() + " — retrying in " + humanDelay(delay)
+                                + " (attempt " + next + "/" + budget + ").",
+                        java.time.Instant.now().plus(delay));
                 timeline.record("result", "retry:" + e.phase(), e.reviewId(),
-                        "retryable failure — auto-retry " + next + "/" + budget);
-                commands.emit(new ActionCommand.FetchDiff(
-                        e.reviewId(), parsed.repo(), parsed.prId(), e.commit(), cred.get()));
+                        "retryable failure — auto-retry " + next + "/" + budget + " in " + humanDelay(delay));
                 return;
             }
         }
 
-        // Terminal: budget exhausted, provider gone, or a permanent failure.
+        // Terminal: budget exhausted, provider gone, or a permanent failure. Drop any retry that was
+        // already scheduled, so a run that ends here is not resurrected by the sweeper.
+        projection.clearScheduledRetry(e.reviewId());
         String note = terminalNote(e, attempt, budget);
         LOG.errorf("Review %s failed terminally at %s (attempt %d/%d, retryable=%s, error: %s) — %s",
                 e.reviewId(), e.phase(), attempt, budget, e.retryable(), e.error(), note);
@@ -281,6 +288,16 @@ public class ResultSaga {
         projection.setError(e.reviewId(), e.error());
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
+    }
+
+    /** "8s" / "2m 30s" — the note is read by an operator wondering why nothing is happening yet. */
+    static String humanDelay(java.time.Duration delay) {
+        long seconds = Math.max(0, delay.toSeconds());
+        if (seconds < 60) {
+            return seconds + "s";
+        }
+        long remainder = seconds % 60;
+        return remainder == 0 ? (seconds / 60) + "m" : (seconds / 60) + "m " + remainder + "s";
     }
 
     private String terminalNote(ReviewFailed e, int attempt, int maxAttempts) {
