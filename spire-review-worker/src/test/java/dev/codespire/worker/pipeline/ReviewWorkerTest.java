@@ -948,26 +948,28 @@ class ReviewWorkerTest {
     /** In-memory mirror of the store's claim semantics. */
     private static final class InMemoryIdempotency extends CommentIdempotencyStore {
 
-        private final Map<String, String> slots = new HashMap<>(); // key -> commentId or null
+        private final Map<String, PostedSlot> slots = new HashMap<>(); // key -> what was posted, or null
 
         @Override
         public Claim claim(String reviewId, String commit, String anchorKey) {
             String key = reviewId + "|" + commit + "|" + anchorKey;
             if (slots.containsKey(key) && slots.get(key) != null) {
-                return new Claim.AlreadyPosted(slots.get(key));
+                PostedSlot slot = slots.get(key);
+                return new Claim.AlreadyPosted(slot.commentId(), slot.threadRef());
             }
             slots.put(key, null);
             return new Claim.Post();
         }
 
         @Override
-        public void markPosted(String reviewId, String commit, String anchorKey, String commentId) {
-            slots.put(reviewId + "|" + commit + "|" + anchorKey, commentId);
+        public void markPosted(String reviewId, String commit, String anchorKey, String commentId,
+                               String threadRef) {
+            slots.put(reviewId + "|" + commit + "|" + anchorKey, new PostedSlot(commentId, threadRef));
         }
 
         @Override
-        public Map<String, String> postedFor(String reviewId, String commit) {
-            Map<String, String> posted = new HashMap<>();
+        public Map<String, PostedSlot> postedFor(String reviewId, String commit) {
+            Map<String, PostedSlot> posted = new HashMap<>();
             slots.forEach((k, v) -> {
                 if (v != null && k.startsWith(reviewId + "|" + commit + "|")) {
                     posted.put(k.substring((reviewId + "|" + commit + "|").length()), v);

@@ -159,7 +159,21 @@ public sealed interface IntegrationEvent {
             threadOutcomes = threadOutcomes == null ? List.of() : List.copyOf(threadOutcomes);
         }
 
-        public record PostedInline(String commentId, String path, int line) {
+        /**
+         * A posted inline finding. {@code commentId} identifies the comment itself; {@code threadRef}
+         * identifies the THREAD a human's reply will arrive under, and the two are not always the same
+         * value: on GitHub and Bitbucket the comment IS the thread root, but GitLab posts a discussion
+         * whose id differs from the note's. Recording ownership under the comment id therefore made a
+         * GitLab reply unrecognizable ("threadIsOurs=false") and the bot stayed silent. Null threadRef =
+         * an event from before this field, or a claim reconstructed without one; the reader falls back to
+         * the comment id, which is correct for the two SCMs where they coincide.
+         */
+        public record PostedInline(String commentId, String threadRef, String path, int line) {
+
+            /** The thread to key ownership by, tolerating an event that carries no explicit ref. */
+            public String threadRefOrCommentId() {
+                return threadRef == null || threadRef.isBlank() ? commentId : threadRef;
+            }
         }
 
         /** replyCommentId null when the reply was skipped (a human had already resolved the thread). */

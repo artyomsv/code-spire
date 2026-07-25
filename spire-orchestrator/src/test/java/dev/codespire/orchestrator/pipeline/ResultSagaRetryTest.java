@@ -185,6 +185,58 @@ class ResultSagaRetryTest {
     }
 
     @Test
+    void commentsPosted_keysOwnershipByTheThreadNotTheComment() {
+        // GitLab posts a discussion whose id differs from the note's, and a reply arrives under the
+        // discussion. Keying ownership by the comment made the bot decline its own thread
+        // ("threadIsOurs=false") and stay silent — invisible on GitHub/Bitbucket, where they coincide.
+        List<String> ownedThreads = new ArrayList<>();
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
+                return List.of();
+            }
+        };
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public void markFindingThread(String reviewId, ThreadRef thread, String path, int line) {
+                ownedThreads.add(thread.value());
+            }
+
+            @Override
+            public void markSummaryThread(String reviewId, ThreadRef thread) {
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail) {
+            }
+
+            @Override
+            public void updateStage(String reviewId, int stage) {
+            }
+
+            @Override
+            public void recordPosted(String reviewId, String commit, String summaryCommentId) {
+            }
+        };
+
+        saga.on(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted(
+                REVIEW_ID, 412L, COMMIT, "summary-1",
+                List.of(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted.PostedInline(
+                        "note-1", "discussion-1", "src/App.java", 9)),
+                List.of()));
+
+        assertEquals(List.of("discussion-1"), ownedThreads,
+                "the thread a reply arrives under is what must be owned");
+    }
+
+    @Test
     void terminalFailure_cancelsAnyScheduledRetry() {
         // The claim in the sweeper clears retry_at, but a run can also reach a terminal state before the
         // retry comes due — leaving it set would resurrect a finished review.

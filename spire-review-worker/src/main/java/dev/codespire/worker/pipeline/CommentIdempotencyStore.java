@@ -33,7 +33,13 @@ public class CommentIdempotencyStore {
         }
 
         /** A previous attempt already posted; reuse its comment id. */
-        record AlreadyPosted(String commentId) implements Claim {
+        /** threadRef is null for a row written before the column, or an SCM where it equals the comment id. */
+        record AlreadyPosted(String commentId, String threadRef) implements Claim {
+
+            /** The id a human's reply will arrive under. */
+            String threadRefOrCommentId() {
+                return threadRef == null || threadRef.isBlank() ? commentId : threadRef;
+            }
         }
     }
 
@@ -57,13 +63,13 @@ public class CommentIdempotencyStore {
                 }
             }
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT comment_id FROM comment_idempotency WHERE review_id = ? AND commit = ? AND anchor_key = ?")) {
+                    "SELECT comment_id, thread_ref FROM comment_idempotency WHERE review_id = ? AND commit = ? AND anchor_key = ?")) {
                 ps.setString(1, reviewId);
                 ps.setString(2, commit);
                 ps.setString(3, anchorKey);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next() && rs.getString(1) != null) {
-                        return new Claim.AlreadyPosted(rs.getString(1));
+                        return new Claim.AlreadyPosted(rs.getString(1), rs.getString(2));
                     }
                 }
             }
@@ -74,34 +80,52 @@ public class CommentIdempotencyStore {
     }
 
     public void markPosted(String reviewId, String commit, String anchorKey, String commentId) {
+        markPosted(reviewId, commit, anchorKey, commentId, null);
+    }
+
+    /** Records the thread too, so a reconstruction after a partially-completed attempt keeps the id a
+     *  reply will arrive under — on GitLab that is the discussion, not the note. */
+    public void markPosted(String reviewId, String commit, String anchorKey, String commentId,
+                           String threadRef) {
         String sql = """
-                UPDATE comment_idempotency SET comment_id = ?, posted_at = now()
+                UPDATE comment_idempotency SET comment_id = ?, thread_ref = ?, posted_at = now()
                 WHERE review_id = ? AND commit = ? AND anchor_key = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, commentId);
-            ps.setString(2, reviewId);
-            ps.setString(3, commit);
-            ps.setString(4, anchorKey);
+            ps.setString(2, threadRef);
+            ps.setString(3, reviewId);
+            ps.setString(4, commit);
+            ps.setString(5, anchorKey);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("comment_idempotency update failed", e);
         }
     }
 
-    /** anchorKey -> commentId for every successfully posted slot of this run (redelivery reconstruction). */
-    public Map<String, String> postedFor(String reviewId, String commit) {
+    /** A slot already posted by an earlier attempt. {@code threadRef} may be null — see {@link #markPosted}. */
+    public record PostedSlot(String commentId, String threadRef) {
+
+        /** The id a human's reply will arrive under. */
+        public String threadRefOrCommentId() {
+            return threadRef == null || threadRef.isBlank() ? commentId : threadRef;
+        }
+    }
+
+    /** anchorKey -> what was posted there, for every completed slot of this run (redelivery
+     *  reconstruction). Carries the thread as well as the comment, because ownership is keyed by thread. */
+    public Map<String, PostedSlot> postedFor(String reviewId, String commit) {
         String sql = """
-                SELECT anchor_key, comment_id FROM comment_idempotency
+                SELECT anchor_key, comment_id, thread_ref FROM comment_idempotency
                 WHERE review_id = ? AND commit = ? AND comment_id IS NOT NULL
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
             ps.setString(2, commit);
-            Map<String, String> posted = new LinkedHashMap<>();
+            Map<String, PostedSlot> posted = new LinkedHashMap<>();
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    posted.put(rs.getString(1), rs.getString(2));
+                    posted.put(rs.getString(1), new PostedSlot(rs.getString(2), rs.getString(3)));
                 }
             }
             return posted;

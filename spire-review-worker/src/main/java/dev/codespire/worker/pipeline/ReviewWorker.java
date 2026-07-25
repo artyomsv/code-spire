@@ -551,7 +551,8 @@ public class ReviewWorker {
             // Anchors are resolved against the diff — one more idempotent GET.
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
             ReviewResult review = command.findings();
-            Map<String, String> previouslyPosted = idempotency.postedFor(command.reviewId(), command.commit());
+            Map<String, CommentIdempotencyStore.PostedSlot> previouslyPosted =
+                    idempotency.postedFor(command.reviewId(), command.commit());
 
             // Reconciliation (ADR-019): reply into (and where supported, resolve) each
             // verdict's existing thread BEFORE posting genuinely new findings. Idempotent
@@ -575,11 +576,12 @@ public class ReviewWorker {
             // Recover inline comment ids from a previous partially-completed attempt. Skip the
             // non-inline claims (SUMMARY, LLM[:reconcile], reply:, resolve:) — none of those are
             // posted inline comments, so they must never leak into the inline list.
-            previouslyPosted.forEach((key, id) -> {
+            previouslyPosted.forEach((key, slot) -> {
                 if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key) && !RECONCILE_KEY.equals(key)
                         && !key.startsWith("reply:") && !key.startsWith("resolve:")
-                        && posted.stream().noneMatch(p -> p.commentId().equals(id))) {
-                    posted.add(new CommentsPosted.PostedInline(id, key, 0));
+                        && posted.stream().noneMatch(p -> p.commentId().equals(slot.commentId()))) {
+                    posted.add(new CommentsPosted.PostedInline(slot.commentId(),
+                            slot.threadRefOrCommentId(), key, 0));
                 }
             });
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
@@ -703,14 +705,19 @@ public class ReviewWorker {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
                 LOG.debugf("Skipping already-posted inline %s for %s", key, command.reviewId());
                 posted.add(new CommentsPosted.PostedInline(already.commentId(),
-                        finding.path(), finding.range().startLine()));
+                        already.threadRefOrCommentId(), finding.path(), finding.range().startLine()));
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
                     CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor.get(),
                             renderInline(finding), backoffBudget);
-                    idempotency.markPosted(command.reviewId(), command.commit(), key, ref.commentId());
-                    posted.add(new CommentsPosted.PostedInline(ref.commentId(),
+                    // Both ids: the comment identifies what was posted, the thread identifies where a
+                    // reply will land. GitLab's discussion id differs from its note id, and ownership is
+                    // keyed by the thread — recording only the comment left the bot unable to recognize
+                    // its own thread.
+                    idempotency.markPosted(command.reviewId(), command.commit(), key, ref.commentId(),
+                            ref.thread().value());
+                    posted.add(new CommentsPosted.PostedInline(ref.commentId(), ref.thread().value(),
                             finding.path(), finding.range().startLine()));
                     pace();
                 } catch (RuntimeException e) {

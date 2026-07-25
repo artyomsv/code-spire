@@ -186,7 +186,11 @@ public class ResultSaga {
                 // (The partial-retry reconstruction branch in the worker emits (anchorKey, 0); such a row simply
                 //  won't match a finding loc and its thread falls to General discussion — never lost.)
                 for (CommentsPosted.PostedInline inline : e.inline()) {
-                    threads.markFindingThread(e.reviewId(), new ThreadRef(inline.commentId()), inline.path(), inline.line());
+                    // Key ownership by the THREAD, not the comment: GitLab's discussion id differs from
+                    // its note id, and a reply arrives under the discussion — keying by the comment made
+                    // the bot fail to recognize its own thread and stay silent.
+                    threads.markFindingThread(e.reviewId(), new ThreadRef(inline.threadRefOrCommentId()),
+                            inline.path(), inline.line());
                 }
                 // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
                 threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryCommentId()));

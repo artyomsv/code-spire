@@ -1,0 +1,12 @@
+-- The thread a posted inline finding belongs to.
+--
+-- comment_id alone was enough while every SCM made the comment its own thread root (GitHub, Bitbucket).
+-- GitLab posts a DISCUSSION whose id differs from the note's, and a human's reply arrives keyed to the
+-- discussion — so ownership recorded under the note id never matched and the bot stayed silent in its own
+-- thread. The fresh-post path carries both ids in CommentsPosted, but a PostComments attempt that partly
+-- completed rebuilds its inline list from these rows, so the thread has to be persisted here too or the
+-- bug returns on exactly the retry path that makes it most likely.
+--
+-- NULL = a row written before this column, or an SCM where the two ids coincide; readers fall back to
+-- comment_id, which is correct in both cases.
+ALTER TABLE comment_idempotency ADD COLUMN thread_ref TEXT;

@@ -5,6 +5,7 @@ import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,8 +58,38 @@ class CommentIdempotencyStoreTest {
         store.claim(reviewId, "abc", "src/B.java:3:NEW");
         store.markPosted(reviewId, "abc", "src/B.java:3:NEW", "c-2");
 
-        Map<String, String> posted = store.postedFor(reviewId, "abc");
-        assertEquals(Map.of("SUMMARY", "c-1", "src/B.java:3:NEW", "c-2"), posted);
+        Map<String, CommentIdempotencyStore.PostedSlot> posted = store.postedFor(reviewId, "abc");
+        assertEquals(Set.of("SUMMARY", "src/B.java:3:NEW"), posted.keySet());
+        assertEquals("c-1", posted.get("SUMMARY").commentId());
+        assertEquals("c-2", posted.get("src/B.java:3:NEW").commentId());
+    }
+
+    @Test
+    void aRecordedThreadSurvivesReconstruction() {
+        // GitLab's discussion id differs from its note id, and ownership is keyed by the thread. If only
+        // the comment came back here, a retry that rebuilt its inline list would re-introduce the bug
+        // where the bot cannot recognize its own thread.
+        String reviewId = reviewId();
+        store.claim(reviewId, "abc", "src/A.java:1:NEW");
+        store.markPosted(reviewId, "abc", "src/A.java:1:NEW", "note-1", "discussion-1");
+
+        var slot = store.postedFor(reviewId, "abc").get("src/A.java:1:NEW");
+        assertEquals("note-1", slot.commentId());
+        assertEquals("discussion-1", slot.threadRefOrCommentId());
+
+        assertInstanceOf(CommentIdempotencyStore.Claim.AlreadyPosted.class,
+                store.claim(reviewId, "abc", "src/A.java:1:NEW"));
+    }
+
+    @Test
+    void aSlotWithNoRecordedThreadFallsBackToTheComment() {
+        // GitHub and Bitbucket make the comment its own thread root, and rows written before the column
+        // have no thread — both must keep working.
+        String reviewId = reviewId();
+        store.claim(reviewId, "abc", "src/A.java:2:NEW");
+        store.markPosted(reviewId, "abc", "src/A.java:2:NEW", "c-9");
+
+        assertEquals("c-9", store.postedFor(reviewId, "abc").get("src/A.java:2:NEW").threadRefOrCommentId());
     }
 
     @Test
