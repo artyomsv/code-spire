@@ -28,28 +28,41 @@ describe('generalDiscussionCard', () => {
     expect(generalDiscussionCard(detail([ev('AuthorReplied', '@a: x', 'finding')]))).toBeNull();
   });
 
-  it('wraps a threaded conversation so it can re-fetch the full untruncated text', () => {
-    // The stored event detail is only a ≤160-char preview, so a threaded general conversation must
-    // get the same collapsible that re-fetches the full thread from the SCM as a finding's does.
+  it('always shows the opening message and puts the replies behind a re-fetch toggle', () => {
+    // The stored event detail is only a ≤160-char preview, so the replies need the same fetch-on-expand
+    // panel a finding gets — but the opening question must stay visible so the card has context.
     const html = renderToStaticMarkup(
       <>{generalDiscussionCard(detail([
         { ...ev('AuthorReplied', '@a: is this line ok?', 'mention'), threadRef: 'm1' },
         { ...ev('FollowUpGenerated', 'It is fine because …', 'mention'), threadRef: 'm1' },
       ]))}</>,
     );
-    expect(html).toContain('finding-convo'); // the fetch-on-expand panel
-    expect(html).toContain('2 replies');
-    expect(html).toContain('is this line ok?'); // preview until expanded
+    expect(html).toContain('is this line ok?'); // the opener, always visible
+    expect(html).toContain('finding-convo');    // the fetch-on-expand panel for the replies
+    expect(html).toContain('1 reply');          // the opener is not counted as a reply
+  });
+
+  it('shows a lone opening message with no replies toggle', () => {
+    const html = renderToStaticMarkup(
+      <>{generalDiscussionCard(detail([
+        { ...ev('AuthorReplied', '@a: still waiting on an answer', 'mention'), threadRef: 'm1' },
+      ]))}</>,
+    );
+    expect(html).toContain('still waiting on an answer');
+    expect(html).not.toContain('finding-convo'); // nothing to expand yet
   });
 
   it('groups turns per thread so separate conversations stay separate', () => {
     const html = renderToStaticMarkup(
       <>{generalDiscussionCard(detail([
         { ...ev('AuthorReplied', '@a: first thread', 'mention'), threadRef: 'm1' },
+        { ...ev('FollowUpGenerated', 'answer one', 'mention'), threadRef: 'm1' },
         { ...ev('AuthorReplied', '@a: second thread', 'mention'), threadRef: 'm2' },
+        { ...ev('FollowUpGenerated', 'answer two', 'mention'), threadRef: 'm2' },
       ]))}</>,
     );
-    expect(html.match(/class="finding-convo"/g)?.length).toBe(2); // one panel per thread
+    expect(html.match(/class="general-thread"/g)?.length).toBe(2);
+    expect(html.match(/class="finding-convo"/g)?.length).toBe(2); // one replies panel per thread
     expect(html).toContain('first thread');
     expect(html).toContain('second thread');
   });

@@ -12,6 +12,9 @@ interface FindingConversationProps {
   previewTurns: ReviewEvent[]; // stored events for this thread — count the toggle and supply timestamps
   previewBody: ReactNode; // the ≤160-char preview exchanges, shown until (or unless) the full thread loads
   resolved?: boolean; // re-review reconciliation says this thread's finding was closed out
+  // The thread's opening message is already rendered above the panel (general discussion shows the
+  // question for context), so the fetched transcript must always drop its root to avoid repeating it.
+  rootShownAbove?: boolean;
 }
 
 type LoadState =
@@ -66,6 +69,7 @@ export function FindingConversation({
   previewTurns,
   previewBody,
   resolved,
+  rootShownAbove,
 }: FindingConversationProps) {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [open, setOpen] = useState(false);
@@ -120,7 +124,7 @@ export function FindingConversation({
         <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
       </summary>
       {state.status === 'loaded' ? (
-        <ThreadMessages messages={state.messages} previewTurns={previewTurns} />
+        <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove} />
       ) : state.status === 'loading' ? (
         <div className="convo-note">Loading full conversation…</div>
       ) : (
@@ -130,10 +134,14 @@ export function FindingConversation({
   );
 }
 
-/** The thread's root message is the bot's inline finding comment (already shown as the finding body),
- *  so drop a leading bot message and render just the replies. */
-export function conversationReplies(messages: ThreadMessage[]): ThreadMessage[] {
-  return messages.length > 0 && messages[0].fromBot ? messages.slice(1) : messages;
+/** The thread's root message is already shown outside the panel — as the finding body (a bot comment)
+ *  or, for general discussion, as the opening question ({@code rootShownAbove}) — so drop it and
+ *  render just the replies. */
+export function conversationReplies(messages: ThreadMessage[], rootShownAbove = false): ThreadMessage[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+  return rootShownAbove || messages[0].fromBot ? messages.slice(1) : messages;
 }
 
 /** The stored event carrying the timestamp for reply {@code i} — same order, and its kind
@@ -145,8 +153,9 @@ function timestampFor(previewTurns: ReviewEvent[], i: number, fromBot: boolean):
   return turnFromBot === fromBot ? turn : undefined;
 }
 
-function ThreadMessages({ messages, previewTurns }: { messages: ThreadMessage[]; previewTurns: ReviewEvent[] }) {
-  const replies = conversationReplies(messages);
+function ThreadMessages({ messages, previewTurns, rootShownAbove }:
+  { messages: ThreadMessage[]; previewTurns: ReviewEvent[]; rootShownAbove?: boolean }) {
+  const replies = conversationReplies(messages, rootShownAbove);
   if (!replies.length) return <div className="convo-note">No replies in this thread.</div>;
   return (
     <div className="convo">

@@ -760,11 +760,11 @@ export function conversationExchangesBody(turns: ReviewEvent[]) {
 /** Conversations NOT tied to a finding — summary-comment replies, @-mentions, and orphan bot
  *  answers (threadKind !== 'finding', including undefined). Hidden when empty.
  *
- *  Grouped per SCM thread and wrapped in {@link FindingConversation} so each one re-fetches its FULL
- *  text on expand, exactly like a finding's conversation: the stored event detail is only a
- *  ≤160-char preview (ADR-011 — conversation text lives on the SCM), so rendering the events alone
- *  left every general-discussion reply truncated. A turn with no threadRef can't be re-fetched, so it
- *  falls back to the preview body. */
+ *  One block per SCM thread, shaped like a finding: the OPENING message is always visible for
+ *  context, and the remaining turns sit behind a "N replies" toggle that re-fetches the thread's FULL
+ *  text from the SCM ({@link FindingConversation}) — the stored event detail is only a ≤160-char
+ *  preview (ADR-011 keeps conversation text on the SCM), so rendering events alone left every reply
+ *  truncated. A turn with no threadRef can't be re-fetched, so it falls back to the preview body. */
 export function generalDiscussionCard(r: ReviewDetail) {
   const turns = r.events.filter(
     (e: ReviewEvent) =>
@@ -790,17 +790,25 @@ export function generalDiscussionCard(r: ReviewDetail) {
         <span className="badge">{turns.length}</span>
       </div>
       <div className="body">
-        {[...byThread.entries()].map(([threadRef, group]) => (
-          <FindingConversation
-            key={threadRef}
-            workspace={r.workspace}
-            slug={r.slug}
-            pr={r.pr}
-            threadRef={threadRef}
-            previewTurns={group}
-            previewBody={conversationExchangesBody(group)}
-          />
-        ))}
+        {[...byThread.entries()].map(([threadRef, group]) => {
+          const [opening, ...replies] = group;
+          return (
+            <div key={threadRef} className="general-thread">
+              {conversationExchangesBody([opening])}
+              {replies.length > 0 && (
+                <FindingConversation
+                  workspace={r.workspace}
+                  slug={r.slug}
+                  pr={r.pr}
+                  threadRef={threadRef}
+                  previewTurns={replies}
+                  previewBody={conversationExchangesBody(replies)}
+                  rootShownAbove
+                />
+              )}
+            </div>
+          );
+        })}
         {unthreaded.length > 0 && conversationExchangesBody(unthreaded)}
       </div>
     </div>

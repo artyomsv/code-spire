@@ -25,6 +25,18 @@ describe('conversationReplies', () => {
     expect(replies.map((m) => m.text)).toEqual(['a', 'b']);
   });
 
+  it('drops a HUMAN root too when the opener is already shown above the panel', () => {
+    // General discussion renders the opening question for context, so repeating it inside the
+    // expanded transcript would duplicate it.
+    const replies = conversationReplies([human('is this ok?'), bot('yes because'), human('and this?')],
+      true);
+    expect(replies.map((m) => m.text)).toEqual(['yes because', 'and this?']);
+  });
+
+  it('is safe on an empty transcript', () => {
+    expect(conversationReplies([], true)).toEqual([]);
+  });
+
   it('handles an empty thread', () => {
     expect(conversationReplies([])).toEqual([]);
   });

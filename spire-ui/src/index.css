@@ -521,6 +521,13 @@
   }
   .resolved-group > summary:hover { color: var(--text-2); }
   .resolved-group-body { margin-top: 10px; opacity: 0.72; }
+  /* One general-discussion thread: the opening message for context, then its replies toggle.
+     Separated so several threads in the card don't read as one run-on conversation. */
+  .general-thread + .general-thread {
+    margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border);
+  }
+  .general-thread > .finding-convo { margin-top: 8px; }
+
   .finding-convo { margin-top: 12px; }
   .finding-convo > summary {
     cursor: pointer; list-style: none; user-select: none;
