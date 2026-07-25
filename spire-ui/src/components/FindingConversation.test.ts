@@ -25,16 +25,33 @@ describe('conversationReplies', () => {
     expect(replies.map((m) => m.text)).toEqual(['a', 'b']);
   });
 
-  it('drops a HUMAN root too when the opener is already shown above the panel', () => {
-    // General discussion renders the opening question for context, so repeating it inside the
-    // expanded transcript would duplicate it.
-    const replies = conversationReplies([human('is this ok?'), bot('yes because'), human('and this?')],
-      true);
-    expect(replies.map((m) => m.text)).toEqual(['yes because', 'and this?']);
+  it('keeps only the stored replies when the opener is shown above (Bitbucket summary thread)', () => {
+    // Bitbucket returns [summary comment, bot answer] — one stored reply, so just the answer.
+    const replies = conversationReplies([bot('### Code Spire review'), bot('risk is high')], true, 1);
+    expect(replies.map((m) => m.text)).toEqual(['risk is high']);
+  });
+
+  it('does not repeat the opener when the provider returns it inside the transcript (GitHub)', () => {
+    // GitHub returns [summary comment, the question, bot answer]. Dropping a fixed leading message
+    // left the question in the panel while it was also rendered above it.
+    const replies = conversationReplies(
+      [bot('### Code Spire review'), human('overall risk?'), bot('risk is high')], true, 1);
+    expect(replies.map((m) => m.text)).toEqual(['risk is high']);
+  });
+
+  it('keeps every stored turn of a longer general thread in order', () => {
+    const replies = conversationReplies(
+      [bot('summary'), human('q1'), bot('a1'), human('q2'), bot('a2')], true, 3);
+    expect(replies.map((m) => m.text)).toEqual(['a1', 'q2', 'a2']);
+  });
+
+  it('falls back to the whole transcript when it is no longer than the stored replies', () => {
+    const replies = conversationReplies([human('q1'), bot('a1')], true, 3);
+    expect(replies.map((m) => m.text)).toEqual(['q1', 'a1']);
   });
 
   it('is safe on an empty transcript', () => {
-    expect(conversationReplies([], true)).toEqual([]);
+    expect(conversationReplies([], true, 2)).toEqual([]);
   });
 
   it('handles an empty thread', () => {

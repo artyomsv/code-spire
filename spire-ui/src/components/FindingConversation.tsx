@@ -134,14 +134,31 @@ export function FindingConversation({
   );
 }
 
-/** The thread's root message is already shown outside the panel — as the finding body (a bot comment)
- *  or, for general discussion, as the opening question ({@code rootShownAbove}) — so drop it and
- *  render just the replies. */
-export function conversationReplies(messages: ThreadMessage[], rootShownAbove = false): ThreadMessage[] {
+/**
+ * The replies to render inside the panel, given the SCM's full transcript.
+ *
+ * A finding's root is the bot's inline comment already shown as the finding body, so a leading bot
+ * message is dropped.
+ *
+ * For general discussion the opening question is rendered above the panel, but HOW MUCH transcript
+ * precedes it varies by provider — a GitHub summary thread returns the bot's summary comment before
+ * the question, a Bitbucket one does not — so dropping a fixed leading message duplicated the opener
+ * on GitHub. Take the trailing {@code storedReplyCount} messages instead: the replies are always the
+ * tail of the thread, whatever context precedes them, and this keeps them index-aligned with the
+ * stored turns that supply the timestamps. (Trade-off: an SCM message we hold no stored turn for —
+ * e.g. a reply the policy declined to answer — isn't shown.)
+ */
+export function conversationReplies(messages: ThreadMessage[], rootShownAbove = false,
+                                    storedReplyCount = 0): ThreadMessage[] {
   if (messages.length === 0) {
     return messages;
   }
-  return rootShownAbove || messages[0].fromBot ? messages.slice(1) : messages;
+  if (rootShownAbove) {
+    return storedReplyCount > 0 && messages.length > storedReplyCount
+      ? messages.slice(messages.length - storedReplyCount)
+      : messages;
+  }
+  return messages[0].fromBot ? messages.slice(1) : messages;
 }
 
 /** The stored event carrying the timestamp for reply {@code i} — same order, and its kind
@@ -155,7 +172,7 @@ function timestampFor(previewTurns: ReviewEvent[], i: number, fromBot: boolean):
 
 function ThreadMessages({ messages, previewTurns, rootShownAbove }:
   { messages: ThreadMessage[]; previewTurns: ReviewEvent[]; rootShownAbove?: boolean }) {
-  const replies = conversationReplies(messages, rootShownAbove);
+  const replies = conversationReplies(messages, rootShownAbove, previewTurns.length);
   if (!replies.length) return <div className="convo-note">No replies in this thread.</div>;
   return (
     <div className="convo">
