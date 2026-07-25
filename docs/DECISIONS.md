@@ -18,8 +18,10 @@ unrecognisable. Two more leaks had accumulated quietly: `ProviderIdentityResolve
 PR". Each accommodation is individually reasonable; together they make every edit to a shared file a
 risk to the other two providers, and the resulting bug appears on one platform, in production.
 
-**Decision.** Core modules (`spire-contract`, `spire-orchestrator`, `spire-review-worker`) must not
-name an SCM provider. The test is *decisions*, not vocabulary:
+**Decision.** Core modules (`spire-contract`, `spire-orchestrator`, `spire-review-worker`,
+`spire-gateway`) must not name an integration provider — on either plugin axis, the SCM a review runs
+on and the context sources it pulls from, since both pose the identical risk. The test is *decisions*,
+not vocabulary:
 
 - **Rejected** — branching on a provider, or shared code carrying provider-shaped alternatives it
   must choose between. `threadRefOrCommentId()` was this; so was the `"bitbucket-cloud"` branch.
@@ -64,6 +66,16 @@ id to a `ThreadRef`, so one opaque ref serves both questions and the core stops 
 from comment ids; and the gateway brought into scope. The lesson is that the build check bounds the
 blast radius of careless edits but cannot replace review of *semantics* — a provider assumption
 stated without naming the provider is invisible to it, and is exactly where the expensive bugs were.
+
+**The context axis.** The same shape existed for context sources: the pipeline called two specific
+parsers, and `ticketKeys` + `links` were two source-shaped fields riding through three contract types.
+It needed a different mechanism, not just a different port method: extraction runs when the diff is
+fetched, *before* any context credential has been brokered, so there is no configured
+`ContextProvider` to ask. Hence `ContextReferenceSource` — stateless, credential-free, one
+implementation beside each provider — and a single neutral `references` set that each provider narrows
+to what it recognises. Adding a context source is now a provider plus an extractor, with no pipeline
+edit. `ContextProviderResource` and `ContextKeyValidator` stay exempt on the same grounds as
+`ProviderClients`: choosing a provider per type to check or preview it is what a composition root is.
 
 ---
 

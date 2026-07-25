@@ -51,7 +51,7 @@ public class JiraContextProvider implements ContextProvider {
 
     @Override
     public boolean supports(ContextRequest request) {
-        return request.ticketKeys() != null && !matchingKeys(request).isEmpty();
+        return request.references() != null && !matchingKeys(request).isEmpty();
     }
 
     @Override
@@ -59,10 +59,17 @@ public class JiraContextProvider implements ContextProvider {
         return CompletableFuture.supplyAsync(() -> fetch(request));
     }
 
-    /** The request's candidate keys narrowed to the configured project keys (all when unconfigured). */
+    /**
+     * The request's candidates narrowed to what this provider resolves: entries shaped like an issue
+     * key, then filtered to the configured project keys (all when unconfigured). The request carries
+     * every source's candidates, so recognising our own is part of the provider's job.
+     */
     private java.util.Set<String> matchingKeys(ContextRequest request) {
-        java.util.Set<String> keys = request.ticketKeys();
-        return keys == null ? java.util.Set.of() : JiraTicketKeys.filter(keys, projectKeys);
+        java.util.Set<String> references = request.references();
+        if (references == null) {
+            return java.util.Set.of();
+        }
+        return JiraTicketKeys.filter(JiraTicketKeys.candidates(references.toArray(String[]::new)), projectKeys);
     }
 
     private ContextContribution fetch(ContextRequest request) {

@@ -114,8 +114,7 @@ public class ResultSaga {
                 String contextCred = workerContextCredentials.packAll(workspace).orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.ticketKeys() == null ? Set.of() : e.ticketKeys(),
-                        e.links() == null ? List.of() : e.links(), contextCred));
+                        e.references() == null ? Set.of() : e.references(), contextCred));
             });
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");

@@ -13,10 +13,9 @@ import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.ContribStatus;
-import dev.codespire.context.confluence.ConfluenceLinks;
-import dev.codespire.context.jira.JiraTicketKeys;
 import dev.codespire.worker.adapters.PostgresBlobStore;
 import dev.codespire.worker.adapters.WorkerContextClients;
+import dev.codespire.worker.adapters.WorkerContextReferences;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -68,6 +67,10 @@ public class ContextWorker {
     @Inject
     WorkerContextClients contextClients;
 
+    /** Extraction and dedup of references — the only place that knows any source's syntax. */
+    @Inject
+    WorkerContextReferences contextReferences;
+
     @Inject
     PostgresBlobStore blobStore;
 
@@ -80,21 +83,20 @@ public class ContextWorker {
     public void gatherContext(GatherContext command) {
         List<ContextProvider> providers = contextClients.forCommand(command);
 
-        Set<String> l1Keys = command.ticketKeys() == null ? Set.of() : command.ticketKeys();
-        List<String> l1Links = command.links() == null ? List.of() : command.links();
+        Set<String> level1 = command.references() == null ? Set.of() : command.references();
 
         // expectedSources is computed from the PR's own references (level 1) — informational for the timeline.
-        ContextRequest probe = request(command, l1Keys, l1Links, Set.of());
+        ContextRequest probe = request(command, level1, Set.of());
         Set<String> expected = providers.stream().filter(p -> p.supports(probe))
                 .map(ContextProvider::source)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        results.emit(new ContextRequested(request(command, l1Keys, l1Links, expected)));
+        results.emit(new ContextRequested(request(command, level1, expected)));
 
         // Redelivery guard: a re-delivered GatherContext must not accumulate blobs.
         blobStore.deleteByReview(command.reviewId());
 
-        List<ContextContribution> contributions = collect(command, providers, l1Keys, l1Links);
+        List<ContextContribution> contributions = collect(command, providers, level1);
 
         // A provider may contribute at both levels; merge per source into one Contributed event.
         List<ContextItem> items = new ArrayList<>();
@@ -121,22 +123,20 @@ public class ContextWorker {
 
     /**
      * The bounded two-level fetch. Level 1 resolves the PR's own references; each subsequent level mines the
-     * text retrieved so far for NEW references (Jira keys, Confluence links) and resolves those, deduped
+     * text retrieved so far for NEW references and resolves those, deduped
      * against everything already requested. Capped at {@link #MAX_DEPTH} to break reference cycles.
      */
     private List<ContextContribution> collect(GatherContext command, List<ContextProvider> providers,
-                                              Set<String> keys, List<String> links) {
+                                              Set<String> level1) {
         List<ContextContribution> all = new ArrayList<>();
-        Set<String> seenKeys = normalize(keys, ContextWorker::normKey);
-        Set<String> seenLinks = normalize(links, ContextWorker::normLink);
-        Set<String> nextKeys = keys;
-        List<String> nextLinks = links;
+        Set<String> seen = new LinkedHashSet<>(contextReferences.normalizeAll(level1));
+        Set<String> next = level1;
 
         for (int level = 1; level <= MAX_DEPTH; level++) {
-            if (nextKeys.isEmpty() && nextLinks.isEmpty()) {
+            if (next.isEmpty()) {
                 break;
             }
-            ContextRequest request = request(command, nextKeys, nextLinks, Set.of());
+            ContextRequest request = request(command, next, Set.of());
             List<ContextProvider> supported = providers.stream().filter(p -> p.supports(request)).toList();
             List<ContextContribution> round = fanOut(supported, request);
             all.addAll(round);
@@ -144,10 +144,9 @@ public class ContextWorker {
             if (level == MAX_DEPTH) {
                 break; // don't discover a further level we won't fetch
             }
-            // Discover the next level's references from the text retrieved this round.
-            String corpus = corpusOf(round);
-            nextKeys = fresh(JiraTicketKeys.candidates(corpus), seenKeys, ContextWorker::normKey);
-            nextLinks = List.copyOf(fresh(ConfluenceLinks.candidates(corpus), seenLinks, ContextWorker::normLink));
+            // Discover the next level from the text retrieved this round — each extractor mines its
+            // own shapes and dedupes in its own normalized form, so nothing here parses anything.
+            next = contextReferences.freshReferencesIn(seen, corpusOf(round));
         }
         return all;
     }
@@ -201,10 +200,10 @@ public class ContextWorker {
         }
     }
 
-    private static ContextRequest request(GatherContext command, Set<String> keys, List<String> links,
+    private static ContextRequest request(GatherContext command, Set<String> references,
                                           Set<String> expected) {
         return new ContextRequest(command.reviewId(), command.repo(), command.prId(), command.commit(),
-                keys, links, expected);
+                references, expected);
     }
 
     /** All retrieved text this round (title + body + uri of OK items) — the corpus the next level mines. */
@@ -223,35 +222,8 @@ public class ContextWorker {
         return sb.toString();
     }
 
-    /** Candidates whose normalized form has not been requested before; adds the fresh ones to {@code seen}. */
-    private static Set<String> fresh(Collection<String> candidates, Set<String> seen,
-                                     java.util.function.Function<String, String> norm) {
-        Set<String> out = new LinkedHashSet<>();
-        for (String candidate : candidates) {
-            if (seen.add(norm.apply(candidate))) {
-                out.add(candidate);
-            }
-        }
-        return out;
-    }
-
-    private static Set<String> normalize(Collection<String> values, java.util.function.Function<String, String> norm) {
-        Set<String> out = new LinkedHashSet<>();
-        for (String v : values) {
-            out.add(norm.apply(v));
-        }
-        return out;
-    }
-
-    /** Jira keys compare case-insensitively. */
-    private static String normKey(String key) {
-        return key == null ? "" : key.toUpperCase();
-    }
-
-    /** Confluence links compare by page id when they carry one, so two URL shapes for one page dedupe. */
-    private static String normLink(String link) {
-        return ConfluenceLinks.pageId(link).orElse(link == null ? "" : link.trim());
-    }
+    // Dedup across rounds moved to WorkerContextReferences: comparing a reference needs to know its
+    // shape (a case-insensitive key, a link that identifies a page), which is the extractor's to know.
 
     /**
      * Combine a source's contributions across levels into one: items concatenated, latency summed, status OK

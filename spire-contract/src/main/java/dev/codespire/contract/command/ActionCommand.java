@@ -73,7 +73,7 @@ public sealed interface ActionCommand {
     }
 
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
-                         Set<String> ticketKeys, List<String> links,
+                         Set<String> references,
                          String contextCredential) implements ActionCommand {
     }
 

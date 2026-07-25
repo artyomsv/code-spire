@@ -18,13 +18,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The core must not know which SCM it is talking to.
+ * The core must not know which integration it is talking to — the SCM it reviews on, or the context
+ * sources it pulls from.
  *
  * <p>Adapters are swappable only while the shared code makes no provider-dependent
  * decision. Once a saga, worker or read model branches on "is this GitLab?", every
  * later change to that file risks silently breaking the other two providers — and the
  * bug shows up in production, on one platform, not in a test. This check turns that
  * from something a reviewer has to notice into something the build refuses.
+ *
+ * <p>It has a known limit: it matches provider NAMES, and a provider assumption can be stated without
+ * naming one ("ids are monotonic" is true of a comment id and false of a discussion id). Those are
+ * found by reviewing semantics, not by this check — see ADR-020.
  *
  * <p>The rule is about decisions, not vocabulary:
  * <ul>
@@ -50,11 +55,16 @@ class CoreIsProviderNeutralTest {
             List.of("spire-contract", "spire-orchestrator", "spire-review-worker", "spire-gateway");
 
     /**
-     * No word boundaries: the leak may be a type ({@code BitbucketApiException}), a
-     * method ({@code githubConfig}) or a string ({@code "gitlab"}), and an anchored
-     * pattern would miss names embedded in a longer identifier.
+     * Both plugin axes: the SCM the review runs on, and the context sources it pulls from. They pose
+     * the same risk — core code that knows one integration's format or capability — so they get the
+     * same rule.
+     *
+     * <p>No word boundaries: the leak may be a type ({@code BitbucketApiException}), a method
+     * ({@code githubConfig}) or a string ({@code "gitlab"}), and an anchored pattern would miss names
+     * embedded in a longer identifier.
      */
-    private static final Pattern PROVIDER_NAME = Pattern.compile("(?i)(bitbucket|github|gitlab)");
+    private static final Pattern PROVIDER_NAME =
+            Pattern.compile("(?i)(bitbucket|github|gitlab|jira|confluence)");
 
     /**
      * Files permitted to name a provider, each with the reason it is not a leak. Adding
@@ -88,11 +98,25 @@ class CoreIsProviderNeutralTest {
         allowed.put("spire-gateway/src/main/java/dev/codespire/gateway/WebhookProviders.java",
                 "Composition root: enumerates the endpoints above by referencing their own constants, so the "
                         + "shared registry edge validates against them without holding a second list of names.");
+        // The context axis. Same rule, same shape of exemption: the roots that CHOOSE a source are
+        // allowed to name one; the pipeline that runs the review is not.
+        allowed.put("spire-review-worker/src/main/java/dev/codespire/worker/adapters/WorkerContextClients.java",
+                "Composition root: maps a context credential's type to its provider.");
+        allowed.put("spire-review-worker/src/main/java/dev/codespire/worker/adapters/WorkerContextReferences.java",
+                "Composition root: lists the reference extractors. Extraction cannot go through "
+                        + "ContextProvider (it runs before credentials are brokered), so naming them here is "
+                        + "what keeps DiffWorker and ContextWorker free of any source's syntax.");
+        allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextProviderResource.java",
+                "Composition root for the Settings -> Context surface: builds a provider per type to run its "
+                        + "connectivity check and preview. Its operator-facing messages name the source the "
+                        + "operator configured, which is the point of them.");
+        allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextKeyValidator.java",
+                "Composition root: maps a context type to the API path its connectivity check pings.");
         return Collections.unmodifiableMap(allowed);
     }
 
     @Test
-    void coreModulesNameNoScmProviderOutsideTheAllowlist() {
+    void coreModulesNameNoIntegrationProviderOutsideTheAllowlist() {
         List<String> violations = new ArrayList<>();
         for (Path source : coreSources()) {
             String relative = relative(source);
@@ -165,8 +189,8 @@ class CoreIsProviderNeutralTest {
         violations.forEach(violation -> message.append("  ").append(violation).append("\n"));
         message.append("""
 
-                Core modules (spire-contract, spire-orchestrator, spire-review-worker) must not
-                name an SCM provider. A provider-dependent decision in shared code means every
+                Core modules (spire-contract, spire-orchestrator, spire-review-worker, spire-gateway) must not
+                name an SCM or context provider. A provider-dependent decision in shared code means every
                 later edit to that file risks silently breaking the other providers, on one
                 platform, in production. Comments are exempt — documenting WHY a neutral design
                 exists is encouraged.

@@ -47,7 +47,7 @@ class ContextWorkerTest {
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final GatherContext COMMAND = new GatherContext(
             "review::sandbox/demo-repo#7", REPO, 7, "abc123",
-            Set.of("CS-42"), List.of("https://issue/42"), null);
+            Set.of("CS-42", "https://issue/42"), null);
 
     private ContextWorker worker;
     private List<IntegrationEvent> emitted;
@@ -65,6 +65,8 @@ class ContextWorkerTest {
         blobStore = new RecordingBlobStore();
         worker = new ContextWorker();
         worker.contextClients = clients;
+        // The real extractors: reference discovery across levels is what these tests exercise.
+        worker.contextReferences = new dev.codespire.worker.adapters.WorkerContextReferences();
         worker.blobStore = blobStore;
         worker.mapper = new ObjectMapper();
         worker.results = new ResultsEmitter() {
@@ -159,7 +161,7 @@ class ContextWorkerTest {
                 "AB-1", "see CD-2 for the design", "CD-2", "deeper still: EF-3", "EF-3", "must not be fetched"));
         clients.providers = List.of(jira);
         GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
-                Set.of("AB-1"), List.of(), null);
+                Set.of("AB-1"), null);
 
         worker.gatherContext(command);
 
@@ -178,7 +180,7 @@ class ContextWorkerTest {
         LinkProvider confluence = new LinkProvider(Map.of("123", "the design doc"));
         clients.providers = List.of(jira, confluence);
         GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
-                Set.of("AB-1"), List.of(page), null);
+                Set.of("AB-1", page), null);
 
         worker.gatherContext(command);
 
@@ -244,7 +246,11 @@ class ContextWorkerTest {
         }
     }
 
-    /** A Jira-like provider that resolves the request's ticketKeys into items, recording every key fetched. */
+    /**
+     * A Jira-like provider that resolves issue-key references into items, recording every key fetched.
+     * The request carries every source's candidates, so it narrows to the ones shaped like a key —
+     * the same job a real provider does.
+     */
     private static final class KeyProvider implements ContextProvider {
         private final String source;
         private final Map<String, String> bodies; // key -> body (may itself carry the next reference)
@@ -262,13 +268,13 @@ class ContextWorkerTest {
 
         @Override
         public boolean supports(ContextRequest request) {
-            return request.ticketKeys() != null && !request.ticketKeys().isEmpty();
+            return request.references() != null && !matching(request).isEmpty();
         }
 
         @Override
         public CompletionStage<ContextContribution> contribute(ContextRequest request) {
             List<ContextItem> items = new ArrayList<>();
-            for (String key : request.ticketKeys()) {
+            for (String key : matching(request)) {
                 fetched.add(key);
                 String body = bodies.get(key);
                 if (body != null) {
@@ -277,6 +283,12 @@ class ContextWorkerTest {
             }
             ContribStatus status = items.isEmpty() ? ContribStatus.EMPTY : ContribStatus.OK;
             return CompletableFuture.completedFuture(new ContextContribution(source, status, items, 1));
+        }
+
+        /** Candidates shaped like an issue key — anything else belongs to another source. */
+        private static List<String> matching(ContextRequest request) {
+            return request.references() == null ? List.of()
+                    : request.references().stream().filter(r -> r.matches("[A-Z][A-Z0-9]+-\\d+")).toList();
         }
     }
 
@@ -296,14 +308,14 @@ class ContextWorkerTest {
 
         @Override
         public boolean supports(ContextRequest request) {
-            return request.links() != null
-                    && request.links().stream().anyMatch(l -> ConfluenceLinks.pageId(l).isPresent());
+            return request.references() != null
+                    && request.references().stream().anyMatch(l -> ConfluenceLinks.pageId(l).isPresent());
         }
 
         @Override
         public CompletionStage<ContextContribution> contribute(ContextRequest request) {
             List<ContextItem> items = new ArrayList<>();
-            for (String link : request.links()) {
+            for (String link : request.references()) {
                 String pageId = ConfluenceLinks.pageId(link).orElse(null);
                 if (pageId == null) {
                     continue;

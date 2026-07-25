@@ -214,12 +214,19 @@ The design is fully specified in `docs/` — **treat those files as the source o
   - **`spire-gateway` added to the scanned modules**, its shared registry edge no longer holding a
     provider-name list (`WebhookProviders.SUPPORTED_TYPES`, composed from each endpoint's own constant).
   740 tests green across 97 suites. Allowlist: 9 entries, all composition roots or `ScmType`.
-- **Still open on neutrality:** the context axis — `DiffWorker`/`ContextWorker` call `JiraTicketKeys`
-  and `ConfluenceLinks` directly, and `ticketKeys`/`links` are two provider-shaped fields on
-  `DiffFetched`/`GatherContext`/`ContextRequest`. Extraction must stay credential-free (it runs at
-  diff-fetch, before context credentials are brokered), so it needs a separate credential-free SPI
-  rather than a method on `ContextProvider`. `ContextProviderResource`/`ContextKeyValidator` are the
-  context composition root and stay exempt.
+- **Context axis brought under the same rule (2026-07-26):** the check now also fails on `jira` /
+  `confluence` in core, and the pipeline no longer parses either. New credential-free SPI
+  `ContextReferenceSource` (`referencesIn` + `normalize`) — separate from `ContextProvider` because
+  extraction runs at diff-fetch, *before* context credentials are brokered, so there is no configured
+  provider to ask. `JiraReferenceSource` / `ConfluenceReferenceSource` implement it; the
+  `WorkerContextReferences` composition root lists them and does the cross-round dedup in each
+  extractor's own normalized form. `ticketKeys` + `links` collapse to one neutral `references` set on
+  `DiffFetched` / `GatherContext` / `ContextRequest`, which each provider narrows to what it
+  recognises (`JiraContextProvider` to key-shaped entries + project keys, `ConfluenceContextProvider`
+  to page ids on its host). `DiffWorker` and `ContextWorker` are now free of any source's syntax;
+  `WorkerContextClients`, `WorkerContextReferences`, `ContextProviderResource` and
+  `ContextKeyValidator` are the context composition roots and are allowlisted. **747 tests green
+  across 98 suites**; allowlist 13 entries, every one a composition root or `ScmType`.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.

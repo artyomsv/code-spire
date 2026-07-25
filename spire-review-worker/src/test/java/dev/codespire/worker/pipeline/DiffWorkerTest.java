@@ -41,6 +41,7 @@ class DiffWorkerTest {
     void setUp() {
         emitted = new ArrayList<>();
         worker = new DiffWorker();
+        worker.references = new dev.codespire.worker.adapters.WorkerContextReferences();
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
@@ -101,8 +102,8 @@ class DiffWorkerTest {
         prDescription = "context: https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design";
         worker.fetchDiff(COMMAND);
         DiffFetched fetched = assertInstanceOf(DiffFetched.class, emitted.getFirst());
-        assertTrue(fetched.links().contains("https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design"),
-                "Confluence provider narrows these; the worker just supplies candidate URLs");
+        assertTrue(fetched.references().contains("https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design"),
+                "providers narrow these; the worker just supplies candidate references");
     }
 
     @Test

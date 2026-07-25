@@ -30,6 +30,10 @@ public class DiffWorker {
     @Inject
     WorkerScmClients scm;
 
+    /** Extraction is credential-free, so it runs here rather than waiting for GatherContext. */
+    @Inject
+    dev.codespire.worker.adapters.WorkerContextReferences references;
+
     @Inject
     ResultsEmitter results;
 
@@ -47,11 +51,9 @@ public class DiffWorker {
                     diff.files().stream().map(FilePatch::language).distinct().toList(),
                     approximateSize(diff.files()),
                     diff.truncated(),
-                    dev.codespire.context.jira.JiraTicketKeys.candidates(
-                            pr.title(), pr.sourceBranch(), pr.description()),
-                    // URLs the Confluence provider narrows to its own host (Jira keys above; same sources).
-                    List.copyOf(dev.codespire.context.confluence.ConfluenceLinks.candidates(
-                            pr.title(), pr.sourceBranch(), pr.description()))));
+                    // Every registered extractor's candidates, unioned. Which syntax belongs to which
+                    // source is the extractor's business; providers narrow this set later.
+                    references.referencesIn(pr.title(), pr.sourceBranch(), pr.description())));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {
