@@ -229,7 +229,7 @@ class ResultSagaRetryTest {
         saga.on(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted(
                 REVIEW_ID, 412L, COMMIT, "summary-1",
                 List.of(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted.PostedInline(
-                        "note-1", "discussion-1", "src/App.java", 9)),
+                        "discussion-1", "src/App.java", 9)),
                 List.of()));
 
         assertEquals(List.of("discussion-1"), ownedThreads,

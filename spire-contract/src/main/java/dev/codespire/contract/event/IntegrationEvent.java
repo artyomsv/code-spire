@@ -160,20 +160,15 @@ public sealed interface IntegrationEvent {
         }
 
         /**
-         * A posted inline finding. {@code commentId} identifies the comment itself; {@code threadRef}
-         * identifies the THREAD a human's reply will arrive under, and the two are not always the same
-         * value: on GitHub and Bitbucket the comment IS the thread root, but GitLab posts a discussion
-         * whose id differs from the note's. Recording ownership under the comment id therefore made a
-         * GitLab reply unrecognizable ("threadIsOurs=false") and the bot stayed silent. Null threadRef =
-         * an event from before this field, or a claim reconstructed without one; the reader falls back to
-         * the comment id, which is correct for the two SCMs where they coincide.
+         * A posted inline finding, identified by the THREAD a human's reply will arrive under — which is
+         * the only thing the core does with it (ownership, so the bot recognizes its own conversation).
+         *
+         * <p>What that id is belongs to the adapter: GitHub and Bitbucket make the comment its own thread
+         * root, while GitLab posts a discussion whose id differs from the note's. The core deliberately
+         * does not carry the comment id as well; modelling both here would put "some providers have two
+         * ids" into shared code, and keying off the wrong one is what made a GitLab reply unrecognizable.
          */
-        public record PostedInline(String commentId, String threadRef, String path, int line) {
-
-            /** The thread to key ownership by, tolerating an event that carries no explicit ref. */
-            public String threadRefOrCommentId() {
-                return threadRef == null || threadRef.isBlank() ? commentId : threadRef;
-            }
+        public record PostedInline(String threadRef, String path, int line) {
         }
 
         /** replyCommentId null when the reply was skipped (a human had already resolved the thread). */

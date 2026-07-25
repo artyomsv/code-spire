@@ -5,7 +5,6 @@ import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -13,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
  * The "never post twice, never silently lose" store (ADR-013 + review finding
- * H1): posted rows are final and reusable; crashed claims (NULL comment_id)
+ * H1): posted rows are final and reusable; crashed claims (NULL posted_ref)
  * are reclaimable.
  */
 @QuarkusTest
@@ -27,7 +26,7 @@ class CommentIdempotencyStoreTest {
     }
 
     @Test
-    void postedSlotIsNeverReclaimedAndReturnsItsCommentId() {
+    void postedSlotIsNeverReclaimedAndReturnsItsRef() {
         String reviewId = reviewId();
         assertInstanceOf(CommentIdempotencyStore.Claim.Post.class,
                 store.claim(reviewId, "abc", "SUMMARY"));
@@ -35,7 +34,7 @@ class CommentIdempotencyStoreTest {
 
         var second = store.claim(reviewId, "abc", "SUMMARY");
         var already = assertInstanceOf(CommentIdempotencyStore.Claim.AlreadyPosted.class, second);
-        assertEquals("c-991", already.commentId());
+        assertEquals("c-991", already.postedRef());
     }
 
     @Test
@@ -58,38 +57,22 @@ class CommentIdempotencyStoreTest {
         store.claim(reviewId, "abc", "src/B.java:3:NEW");
         store.markPosted(reviewId, "abc", "src/B.java:3:NEW", "c-2");
 
-        Map<String, CommentIdempotencyStore.PostedSlot> posted = store.postedFor(reviewId, "abc");
-        assertEquals(Set.of("SUMMARY", "src/B.java:3:NEW"), posted.keySet());
-        assertEquals("c-1", posted.get("SUMMARY").commentId());
-        assertEquals("c-2", posted.get("src/B.java:3:NEW").commentId());
+        Map<String, String> posted = store.postedFor(reviewId, "abc");
+        assertEquals(Map.of("SUMMARY", "c-1", "src/B.java:3:NEW", "c-2"), posted);
     }
 
     @Test
-    void aRecordedThreadSurvivesReconstruction() {
-        // GitLab's discussion id differs from its note id, and ownership is keyed by the thread. If only
-        // the comment came back here, a retry that rebuilt its inline list would re-introduce the bug
-        // where the bot cannot recognize its own thread.
+    void theRecordedRefSurvivesReconstruction() {
+        // An inline slot records the THREAD a reply will arrive under — a comment id on GitHub and
+        // Bitbucket, a discussion id on GitLab. The store keeps whatever the adapter handed it and
+        // nothing here needs to know which kind it is; that is the point.
         String reviewId = reviewId();
         store.claim(reviewId, "abc", "src/A.java:1:NEW");
-        store.markPosted(reviewId, "abc", "src/A.java:1:NEW", "note-1", "discussion-1");
+        store.markPosted(reviewId, "abc", "src/A.java:1:NEW", "discussion-1");
 
-        var slot = store.postedFor(reviewId, "abc").get("src/A.java:1:NEW");
-        assertEquals("note-1", slot.commentId());
-        assertEquals("discussion-1", slot.threadRefOrCommentId());
-
+        assertEquals("discussion-1", store.postedFor(reviewId, "abc").get("src/A.java:1:NEW"));
         assertInstanceOf(CommentIdempotencyStore.Claim.AlreadyPosted.class,
                 store.claim(reviewId, "abc", "src/A.java:1:NEW"));
-    }
-
-    @Test
-    void aSlotWithNoRecordedThreadFallsBackToTheComment() {
-        // GitHub and Bitbucket make the comment its own thread root, and rows written before the column
-        // have no thread — both must keep working.
-        String reviewId = reviewId();
-        store.claim(reviewId, "abc", "src/A.java:2:NEW");
-        store.markPosted(reviewId, "abc", "src/A.java:2:NEW", "c-9");
-
-        assertEquals("c-9", store.postedFor(reviewId, "abc").get("src/A.java:2:NEW").threadRefOrCommentId());
     }
 
     @Test

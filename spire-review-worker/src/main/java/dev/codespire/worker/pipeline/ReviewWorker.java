@@ -158,7 +158,7 @@ public class ReviewWorker {
             // crashed claim (NULL) stays reclaimable — same semantics as comments.
             switch (idempotency.claim(command.reviewId(), command.commit(), LLM_KEY)) {
                 case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                    reEmitPersistedResult(command, already.commentId(), reconciliation.outcome());
+                    reEmitPersistedResult(command, already.postedRef(), reconciliation.outcome());
                     return;
                 }
                 case CommentIdempotencyStore.Claim.Post ignored -> { }
@@ -229,7 +229,7 @@ public class ReviewWorker {
                                      Diff diff, PriorRun prior, WorkerLlmProvider.LlmClient client) {
         switch (idempotency.claim(command.reviewId(), command.commit(), RECONCILE_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                ReconcileOutcome outcome = readReconcileOutcome(already.commentId());
+                ReconcileOutcome outcome = readReconcileOutcome(already.postedRef());
                 return new Reconciliation(exclusionsFromPersisted(outcome.verdicts(), prior.findings()), outcome);
             }
             case CommentIdempotencyStore.Claim.Post ignored -> { }
@@ -551,8 +551,7 @@ public class ReviewWorker {
             // Anchors are resolved against the diff — one more idempotent GET.
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
             ReviewResult review = command.findings();
-            Map<String, CommentIdempotencyStore.PostedSlot> previouslyPosted =
-                    idempotency.postedFor(command.reviewId(), command.commit());
+            Map<String, String> previouslyPosted = idempotency.postedFor(command.reviewId(), command.commit());
 
             // Reconciliation (ADR-019): reply into (and where supported, resolve) each
             // verdict's existing thread BEFORE posting genuinely new findings. Idempotent
@@ -576,12 +575,11 @@ public class ReviewWorker {
             // Recover inline comment ids from a previous partially-completed attempt. Skip the
             // non-inline claims (SUMMARY, LLM[:reconcile], reply:, resolve:) — none of those are
             // posted inline comments, so they must never leak into the inline list.
-            previouslyPosted.forEach((key, slot) -> {
+            previouslyPosted.forEach((key, ref) -> {
                 if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key) && !RECONCILE_KEY.equals(key)
                         && !key.startsWith("reply:") && !key.startsWith("resolve:")
-                        && posted.stream().noneMatch(p -> p.commentId().equals(slot.commentId()))) {
-                    posted.add(new CommentsPosted.PostedInline(slot.commentId(),
-                            slot.threadRefOrCommentId(), key, 0));
+                        && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
+                    posted.add(new CommentsPosted.PostedInline(ref, key, 0));
                 }
             });
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
@@ -630,8 +628,8 @@ public class ReviewWorker {
             String resolveKey = "resolve:" + verdict.threadRef();
             switch (idempotency.claim(command.reviewId(), command.commit(), resolveKey)) {
                 case CommentIdempotencyStore.Claim.AlreadyPosted a -> {
-                    resolvedByBot = "bot".equals(a.commentId());
-                    humanResolved = "human".equals(a.commentId());
+                    resolvedByBot = "bot".equals(a.postedRef());
+                    humanResolved = "human".equals(a.postedRef());
                 }
                 case CommentIdempotencyStore.Claim.Post ignored -> {
                     CommentSink.ThreadResolution resolution = resolveQuietly(sink, command, thread);
@@ -663,7 +661,7 @@ public class ReviewWorker {
         String replyKey = "reply:" + thread.value();
         switch (idempotency.claim(command.reviewId(), command.commit(), replyKey)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                return already.commentId();
+                return already.postedRef();
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
@@ -704,8 +702,8 @@ public class ReviewWorker {
         switch (idempotency.claim(command.reviewId(), command.commit(), key)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
                 LOG.debugf("Skipping already-posted inline %s for %s", key, command.reviewId());
-                posted.add(new CommentsPosted.PostedInline(already.commentId(),
-                        already.threadRefOrCommentId(), finding.path(), finding.range().startLine()));
+                posted.add(new CommentsPosted.PostedInline(already.postedRef(),
+                        finding.path(), finding.range().startLine()));
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
@@ -715,9 +713,11 @@ public class ReviewWorker {
                     // reply will land. GitLab's discussion id differs from its note id, and ownership is
                     // keyed by the thread — recording only the comment left the bot unable to recognize
                     // its own thread.
-                    idempotency.markPosted(command.reviewId(), command.commit(), key, ref.commentId(),
-                            ref.thread().value());
-                    posted.add(new CommentsPosted.PostedInline(ref.commentId(), ref.thread().value(),
+                    // The THREAD is what gets recorded — the id a human's reply arrives under, and the only
+                    // thing the core does with a posted finding. What that id IS stays the adapter's
+                    // business: a comment id on GitHub and Bitbucket, a discussion id on GitLab.
+                    idempotency.markPosted(command.reviewId(), command.commit(), key, ref.thread().value());
+                    posted.add(new CommentsPosted.PostedInline(ref.thread().value(),
                             finding.path(), finding.range().startLine()));
                     pace();
                 } catch (RuntimeException e) {
@@ -825,7 +825,7 @@ public class ReviewWorker {
         return switch (idempotency.claim(command.reviewId(), command.commit(), SUMMARY_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
                 LOG.debugf("Skipping already-posted summary for %s", command.reviewId());
-                yield already.commentId();
+                yield already.postedRef();
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
