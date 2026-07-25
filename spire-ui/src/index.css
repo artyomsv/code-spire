@@ -902,6 +902,18 @@
     color: var(--text-3); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 2px;
   }
   .field-hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); text-transform: none; letter-spacing: 0; }
+
+  /* Says which part of the system a settings group applies to, so a field like "Retry attempts"
+     is not read as app-wide. */
+  .settings-scope {
+    margin: 0 0 16px; font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+    padding: 9px 12px; border-radius: 8px;
+    background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .settings-scope code {
+    font-family: var(--font-mono); font-size: 11.5px;
+    padding: 1px 5px; border-radius: 4px; background: var(--hover); color: var(--text);
+  }
   /* Stored-secret row paired with a rotate control. */
   .secret-row { display: flex; align-items: center; gap: 8px; }
   .secret-row input,

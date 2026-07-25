@@ -6,7 +6,7 @@ export default function SettingsGeneral() {
     <section className="content">
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">General</h2>
+          <h2 className="prov-title">Conversation defaults</h2>
         </div>
         <div style={{ padding: '4px 18px 18px' }}>
           <ConversationSettings />
