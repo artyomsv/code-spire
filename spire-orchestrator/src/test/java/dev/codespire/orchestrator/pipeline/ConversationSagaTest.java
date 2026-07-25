@@ -137,6 +137,11 @@ class ConversationSagaTest {
             public boolean isOurThread(String reviewId, ThreadRef thread) {
                 throw new AssertionError("topLevel routing must not consult inline thread ownership");
             }
+
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                throw new AssertionError("topLevel routing goes to the summary thread, not a root lookup");
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
@@ -175,6 +180,77 @@ class ConversationSagaTest {
         assertEquals("sum-1", cmd.get().threadRef().value(), "the command threads onto the SUMMARY comment");
         assertEquals("555", cmd.get().triggeringCommentId(), "the triggering id stays the author's own comment");
         assertFalse(notes.contains("skipped:AnswerFollowUp"));
+    }
+
+    /**
+     * Bitbucket threads by immediate parent, so a reply to the bot's own answer arrives with THAT
+     * answer's comment id as the threadRef. The saga must normalize it to the conversation root, so the
+     * command, the turn count and the stored event all key off one id per conversation.
+     */
+    @Test
+    void aReplyOnTheBotsAnswerIsNormalizedToTheConversationRoot() {
+        ConversationSaga saga = new ConversationSaga();
+        saga.reviewProviders = new ReviewProviderResolver() {
+            @Override
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
+                return Optional.of(githubProvider());
+            }
+        };
+        saga.levels = fixedLevel(ConversationLevel.INTERACTIVE);
+        List<String> turnCountedOn = new ArrayList<>();
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return "answer-1".equals(thread.value()) ? new ThreadRef("finding-1") : thread;
+            }
+
+            @Override
+            public boolean isOurThread(String reviewId, ThreadRef thread) {
+                assertEquals("finding-1", thread.value(), "ownership is checked on the root");
+                return true;
+            }
+
+            @Override
+            public int turnCount(String reviewId, ThreadRef thread) {
+                turnCountedOn.add(thread.value());
+                return 0;
+            }
+        };
+        saga.workerCredentials = new WorkerCredentials() {
+            @Override
+            public String pack(ScmProvider p) {
+                return "packed";
+            }
+        };
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public Optional<String> packDefault(String workspace) {
+                return Optional.of("llm-cred");
+            }
+        };
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.promptTemplates = new WorkerPromptTemplates() {
+            @Override
+            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+                return null;
+            }
+        };
+
+        AuthorReplied replyOnAnswer = new AuthorReplied(new RepoRef("acme", "web"), 412L,
+                "review::acme/web#412", new ThreadRef("answer-1"), "c-99", "and the other errors?",
+                Author.of("human-1", "alice", "Alice"), false);
+
+        Optional<ActionCommand.AnswerFollowUp> cmd = saga.planFollowUp(replyOnAnswer);
+
+        assertTrue(cmd.isPresent(), "a reply on the bot's own answer keeps the conversation going");
+        assertEquals("finding-1", cmd.get().threadRef().value(),
+                "the command targets the conversation root, not the answer comment it replied to");
+        assertEquals("c-99", cmd.get().triggeringCommentId(), "the triggering id stays the human's comment");
+        assertEquals(List.of("finding-1"), turnCountedOn, "the turn cap counts on the root");
     }
 
     @Test

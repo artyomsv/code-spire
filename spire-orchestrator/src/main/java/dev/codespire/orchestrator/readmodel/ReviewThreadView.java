@@ -48,6 +48,49 @@ public class ReviewThreadView {
         }
     }
 
+    /**
+     * The conversation root for a thread ref. On SCMs that thread by immediate parent (Bitbucket), a
+     * reply to the bot's own answer carries the ANSWER's comment id; {@code root_ref} maps it back to
+     * the thread it belongs to, so turn counting, event attribution and the reply target all key off
+     * one stable id per conversation (as GitHub's {@code in_reply_to_id} already gives us). An unknown
+     * ref, or a row with no {@code root_ref}, IS its own root.
+     */
+    public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT root_ref FROM review_thread WHERE review_id = ? AND thread_ref = ?")) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            try (ResultSet rs = ps.executeQuery()) {
+                String root = rs.next() ? rs.getString(1) : null;
+                return root == null || root.isBlank() ? thread : new ThreadRef(root);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve the conversation root thread", e);
+        }
+    }
+
+    /**
+     * Record the bot's own answer comment as an owned thread that belongs to {@code root} — so a human
+     * reply landing on that answer resolves back to the same conversation.
+     */
+    public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO review_thread (review_id, thread_ref, is_ours, root_ref)
+                     VALUES (?, ?, TRUE, ?)
+                     ON CONFLICT (review_id, thread_ref)
+                     DO UPDATE SET is_ours = TRUE, root_ref = EXCLUDED.root_ref
+                     """)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, answer.value());
+            ps.setString(3, root.value());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to mark the bot's answer thread", e);
+        }
+    }
+
     public void markOurThread(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""

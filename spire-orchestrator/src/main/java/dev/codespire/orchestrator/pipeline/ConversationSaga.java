@@ -147,7 +147,12 @@ public class ConversationSaga {
      */
     private Optional<ThreadTarget> resolveThread(AuthorReplied e) {
         if (!e.topLevel()) {
-            return Optional.of(new ThreadTarget(e.threadRef(), threads.isOurThread(e.reviewId(), e.threadRef())));
+            // Normalize to the conversation root: on Bitbucket a reply to the bot's own answer carries
+            // that answer's comment id, so keying off it would split one conversation across refs (turn
+            // counter never accumulating, turns stored under a non-finding ref). GitHub already sends
+            // the root, for which rootOf is the identity.
+            ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+            return Optional.of(new ThreadTarget(root, threads.isOurThread(e.reviewId(), root)));
         }
         Optional<String> summaryRef = projection.summaryRefOf(e.reviewId());
         if (summaryRef.isEmpty()) {

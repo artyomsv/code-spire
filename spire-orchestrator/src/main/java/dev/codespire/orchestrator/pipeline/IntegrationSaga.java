@@ -110,8 +110,12 @@ public class IntegrationSaga {
                 } else {
                     conversation.planFollowUp(e).ifPresent(cmd -> {
                         String author = e.author() == null ? "unknown" : e.author().username();
+                        // The COMMAND's threadRef, not the event's: the saga normalized it to the
+                        // conversation root, so every turn of one conversation is stored under the same
+                        // ref — the review detail nests them all under the finding instead of spilling
+                        // later turns into a bogus "General discussion" with an under-counted label.
                         projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
-                                "@" + author + ": " + Previews.of(e.text()), e.threadRef().value());
+                                "@" + author + ": " + Previews.of(e.text()), cmd.threadRef().value());
                         // Flags "answering" AND bumps the live dashboard in one broadcast — replaces
                         // the plain touch() that used to sit here (fix #5, avoid double-broadcast).
                         projection.setAnswering(e.reviewId(), true);

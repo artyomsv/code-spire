@@ -323,6 +323,7 @@ class ResultSagaRetryTest {
     void followUpPosted_setsAnsweringFalseAndMarksTheAnswerOwned() {
         List<Boolean> answeringCalls = new ArrayList<>();
         List<String> markedOwned = new ArrayList<>();
+        List<String> bumpedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
         saga.timeline = new TimelineBroadcaster() {
             @Override
@@ -331,12 +332,18 @@ class ResultSagaRetryTest {
         };
         saga.threads = new ReviewThreadView() {
             @Override
-            public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return thread; // this test's thread IS the root
             }
 
             @Override
-            public void markOurThread(String reviewId, ThreadRef thread) {
-                markedOwned.add(thread.value());
+            public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
+                bumpedThreads.add(thread.value());
+            }
+
+            @Override
+            public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
+                markedOwned.add(answer.value() + "->" + root.value());
             }
         };
         saga.lifecycle = new ReviewLifecycleService() {
@@ -357,7 +364,10 @@ class ResultSagaRetryTest {
 
         assertEquals(List.of(false), answeringCalls,
                 "the bot's reply landing must clear the answering flag (and bump the live dashboard)");
-        assertEquals(List.of("c-1"), markedOwned,
-                "the bot's answer comment is marked owned so a reply to it continues the conversation");
+        assertEquals(List.of("c-1->t-1"), markedOwned,
+                "the answer comment is marked owned AND linked to its conversation root, so a reply to it "
+                        + "continues the same conversation instead of starting a new thread");
+        assertEquals(List.of("t-1"), bumpedThreads,
+                "the turn is counted on the conversation root, so the cap sees one conversation");
     }
 }

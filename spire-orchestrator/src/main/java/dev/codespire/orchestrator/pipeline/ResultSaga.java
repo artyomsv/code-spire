@@ -212,12 +212,16 @@ public class ResultSaga {
                 projection.touch(e.reviewId());
             }
             case FollowUpPosted e -> {
-                threads.bumpTurn(e.reviewId(), e.threadRef(), e.commentId());
+                // One conversation = one thread ref: count the turn on the ROOT, so a Bitbucket chain
+                // (a new comment id per turn) accumulates toward the turn cap like a GitHub thread.
+                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                threads.bumpTurn(e.reviewId(), root, e.commentId());
                 // The bot's answer is itself a comment a human can reply to. On SCMs that thread by
-                // immediate parent (Bitbucket), such a reply keys off the answer's id — so mark it owned,
-                // else a reply to the bot's answer isn't recognized as ours and multi-turn dies after the
-                // first exchange. Harmless on GitHub/GitLab, which key replies off the stable thread root.
-                threads.markOurThread(e.reviewId(), new ThreadRef(e.commentId()));
+                // immediate parent (Bitbucket), such a reply keys off the answer's id — so mark it owned
+                // AND link it to the root, else a reply to the bot's answer isn't recognized as ours and
+                // its turns land under a separate ref. Harmless on GitHub/GitLab, which key replies off
+                // the stable thread root already.
+                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordFollowUp(e.threadRef(), e.commentId()));
                 // Normal-completion clear (fix #5) — also bumps the live dashboard, replacing the
                 // plain touch() that used to sit here (avoid double-broadcast). A follow-up's
