@@ -12,11 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * The auto-resolve/validate step in {@link ProviderResource}: with a token
- * present it fills a blank bot account id from the token owner and surfaces auth
- * failures as 400s; with the id supplied it keeps it; with no token (update
- * keeping the stored one) it is a pass-through. The resolver is faked — no live
- * SCM call, no CDI container.
+ * The auto-resolve/validate step in {@link ProviderResource}: with a token present, the identity the
+ * token resolves to wins over whatever the form carried (so rotating bot accounts cannot leave a stale
+ * id behind), falling back to a submitted id only when the provider cannot resolve one; auth failures
+ * surface as generic 400s; with no token (an update keeping the stored one) it is a pass-through. The
+ * resolver is faked — no live SCM call, no CDI container.
  */
 class ProviderResourceResolveTest {
 
@@ -49,10 +49,22 @@ class ProviderResourceResolveTest {
     }
 
     @Test
-    void providedBotAccountId_isKept() {
+    void aResolvedIdentityOverridesTheSubmittedId() {
+        // Rotating to a different bot account must not leave the previous account's id behind: the
+        // ADR-013 self-loop guard matches a comment's author against it, so a stale id makes the bot
+        // answer its own comments.
         var resource = resourceThatResolvesTo(Author.of("40727", "spire-bot", "Bot"), null);
-        ProviderInput out = resource.resolveIdentity(input("ghp_realtoken", "manual-id-123"));
-        assertEquals("manual-id-123", out.botAccountId(), "an explicit id is respected");
+        ProviderInput out = resource.resolveIdentity(input("ghp_newbot_token", "previous-owner-id"));
+        assertEquals("40727", out.botAccountId(), "the validated token is the authority on who the bot is");
+        assertEquals("spire-bot", out.botUsername());
+    }
+
+    @Test
+    void submittedIdIsKeptWhenTheProviderCannotResolveOne() {
+        // Bitbucket access tokens cannot call /user, so whoami yields no id and the operator supplies it.
+        var resource = resourceThatResolvesTo(Author.of("", "", ""), null);
+        ProviderInput out = resource.resolveIdentity(input("bb_token", "manual-id-123"));
+        assertEquals("manual-id-123", out.botAccountId(), "the hand-entered id survives a blank whoami");
     }
 
     @Test

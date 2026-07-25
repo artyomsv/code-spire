@@ -91,11 +91,14 @@ class ProviderResourceTest {
     }
 
     @Test
-    void keepsAnExplicitBotAccountId() {
+    void theValidatedTokensIdentityOverridesASubmittedBotAccountId() {
+        // The token says who the bot is. Honouring a submitted id instead meant that saving a different
+        // bot's token updated the username but kept the previous account's id, and the ADR-013 self-loop
+        // guard matches on that id — so the bot no longer recognized its own comments.
         given().contentType("application/json").body(body("rest-explicit", "bearer", "tok-abc", null))
                 .when().post("/api/providers")
                 .then().statusCode(201)
-                .body("botAccountId", equalTo("acct-1")); // provided id respected, not overwritten
+                .body("botAccountId", equalTo(RESOLVED_ACCOUNT_ID));
     }
 
     @Test
