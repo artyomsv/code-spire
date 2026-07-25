@@ -27,6 +27,32 @@ describe('generalDiscussionCard', () => {
   it('renders nothing when there are only finding turns', () => {
     expect(generalDiscussionCard(detail([ev('AuthorReplied', '@a: x', 'finding')]))).toBeNull();
   });
+
+  it('wraps a threaded conversation so it can re-fetch the full untruncated text', () => {
+    // The stored event detail is only a ≤160-char preview, so a threaded general conversation must
+    // get the same collapsible that re-fetches the full thread from the SCM as a finding's does.
+    const html = renderToStaticMarkup(
+      <>{generalDiscussionCard(detail([
+        { ...ev('AuthorReplied', '@a: is this line ok?', 'mention'), threadRef: 'm1' },
+        { ...ev('FollowUpGenerated', 'It is fine because …', 'mention'), threadRef: 'm1' },
+      ]))}</>,
+    );
+    expect(html).toContain('finding-convo'); // the fetch-on-expand panel
+    expect(html).toContain('2 replies');
+    expect(html).toContain('is this line ok?'); // preview until expanded
+  });
+
+  it('groups turns per thread so separate conversations stay separate', () => {
+    const html = renderToStaticMarkup(
+      <>{generalDiscussionCard(detail([
+        { ...ev('AuthorReplied', '@a: first thread', 'mention'), threadRef: 'm1' },
+        { ...ev('AuthorReplied', '@a: second thread', 'mention'), threadRef: 'm2' },
+      ]))}</>,
+    );
+    expect(html.match(/class="finding-convo"/g)?.length).toBe(2); // one panel per thread
+    expect(html).toContain('first thread');
+    expect(html).toContain('second thread');
+  });
 });
 
 function detailWith(findingsList: Finding[], events: ReviewEvent[]): ReviewDetail {

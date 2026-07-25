@@ -758,13 +758,30 @@ export function conversationExchangesBody(turns: ReviewEvent[]) {
 }
 
 /** Conversations NOT tied to a finding — summary-comment replies, @-mentions, and orphan bot
- *  answers (threadKind !== 'finding', including undefined). Hidden when empty. */
+ *  answers (threadKind !== 'finding', including undefined). Hidden when empty.
+ *
+ *  Grouped per SCM thread and wrapped in {@link FindingConversation} so each one re-fetches its FULL
+ *  text on expand, exactly like a finding's conversation: the stored event detail is only a
+ *  ≤160-char preview (ADR-011 — conversation text lives on the SCM), so rendering the events alone
+ *  left every general-discussion reply truncated. A turn with no threadRef can't be re-fetched, so it
+ *  falls back to the preview body. */
 export function generalDiscussionCard(r: ReviewDetail) {
   const turns = r.events.filter(
     (e: ReviewEvent) =>
       (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated') && e.threadKind !== 'finding',
   );
   if (!turns.length) return null;
+  const byThread = new Map<string, ReviewEvent[]>();
+  const unthreaded: ReviewEvent[] = [];
+  for (const turn of turns) {
+    if (!turn.threadRef) {
+      unthreaded.push(turn);
+      continue;
+    }
+    const group = byThread.get(turn.threadRef) ?? [];
+    group.push(turn);
+    byThread.set(turn.threadRef, group);
+  }
   return (
     <div className="card">
       <div className="head">
@@ -772,7 +789,20 @@ export function generalDiscussionCard(r: ReviewDetail) {
         <h3>General discussion</h3>
         <span className="badge">{turns.length}</span>
       </div>
-      <div className="body">{conversationExchangesBody(turns)}</div>
+      <div className="body">
+        {[...byThread.entries()].map(([threadRef, group]) => (
+          <FindingConversation
+            key={threadRef}
+            workspace={r.workspace}
+            slug={r.slug}
+            pr={r.pr}
+            threadRef={threadRef}
+            previewTurns={group}
+            previewBody={conversationExchangesBody(group)}
+          />
+        ))}
+        {unthreaded.length > 0 && conversationExchangesBody(unthreaded)}
+      </div>
     </div>
   );
 }
