@@ -439,6 +439,12 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
         (e: ReviewEvent) => e.threadRef === row.threadRef && (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated'),
       )
     : [];
+  // A reconciliation verdict posts a reply into the thread ON THE SCM but stores no conversation turn
+  // (only a ThreadReplied/ThreadResolved marker), so without this the bot's "still open after <sha>"
+  // reply was unreachable from the UI — the panel only appeared once a human had started a discussion.
+  const hasScmReply = !!row.threadRef && r.events.some(
+    (e: ReviewEvent) => e.threadRef === row.threadRef && (e.type === 'ThreadReplied' || e.type === 'ThreadResolved'),
+  );
   const resolvedThread =
     row.resolvedThread ??
     (row.threadRef ? r.reconciliation?.find((item) => item.threadRef === row.threadRef)?.resolvedThread : undefined);
@@ -463,14 +469,20 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
             <MessageText>{row.note}</MessageText>
           </div>
         ) : null}
-        {turns.length > 0 && row.threadRef && (
+        {row.threadRef && (turns.length > 0 || hasScmReply) && (
           <FindingConversation
             workspace={r.workspace}
             slug={r.slug}
             pr={r.pr}
             threadRef={row.threadRef}
             previewTurns={turns}
-            previewBody={conversationExchangesBody(turns)}
+            previewBody={
+              turns.length > 0 ? (
+                conversationExchangesBody(turns)
+              ) : (
+                <div className="convo-note">Couldn’t load this thread from the provider.</div>
+              )
+            }
             resolved={resolvedThread}
           />
         )}

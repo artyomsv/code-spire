@@ -112,9 +112,9 @@ export function FindingConversation({
         ) : (
           <MessagesSquare size={14} className="finding-convo-icon" aria-hidden="true" />
         )}
-        <span>
-          {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
-        </span>
+        {/* With no stored conversation turn the thread still holds the bot's reconciliation reply on
+            the SCM, so offer to open it rather than claiming "0 replies". */}
+        <span>{replyCount > 0 ? `${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : 'View thread'}</span>
         {awaitingReply && (
           <span className="responding" title="Awaiting the bot's reply">
             <MessageCircle size={11} aria-hidden="true" />

@@ -150,3 +150,22 @@ describe('findingsCard nested conversation', () => {
     expect(html).not.toContain('convo-resolved');
   });
 });
+
+describe('findingRow thread access after reconciliation', () => {
+  it('offers the thread when the only reply is the reconciliation one posted on the SCM', () => {
+    // The verdict's reply is stored as a ThreadReplied marker, not a conversation turn, so without
+    // this the bot's "still open after <sha>" reply was invisible in the UI.
+    const finding = { sev: 'critical', loc: 'src/App.java:1', msg: 'no compile', threadRef: 'c1' } as Finding;
+    const html = renderToStaticMarkup(<>{findingsCard(detailWith([finding], [
+      { ts: '2026-07-18T00:00:00Z', at: '+1s', lane: 'result', type: 'ThreadReplied', det: 'still open', threadRef: 'c1' },
+    ]))}</>);
+    expect(html).toContain('finding-convo');
+    expect(html).toContain('View thread'); // not "0 replies"
+  });
+
+  it('still shows no panel for a finding whose thread has no activity at all', () => {
+    const finding = { sev: 'critical', loc: 'src/App.java:1', msg: 'no compile', threadRef: 'c1' } as Finding;
+    const html = renderToStaticMarkup(<>{findingsCard(detailWith([finding], []))}</>);
+    expect(html).not.toContain('finding-convo');
+  });
+});
