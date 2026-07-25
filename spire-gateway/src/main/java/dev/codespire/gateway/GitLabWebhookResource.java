@@ -24,7 +24,8 @@ import java.util.Set;
 @Path("/webhooks/gitlab/{key}")
 public class GitLabWebhookResource {
 
-    private static final String PROVIDER = "gitlab";
+    /** Package-private so {@link WebhookProviders} can enumerate the endpoints without repeating names. */
+    static final String PROVIDER = "gitlab";
 
     /** Registered manual commands (CONTRACT §10); mirrors the other edges. */
     private static final Set<String> COMMANDS = Set.of("review");

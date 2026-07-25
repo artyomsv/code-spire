@@ -70,7 +70,7 @@ class BitbucketCloudIngressTest {
         assertEquals("Add feature", e.title());
         assertEquals("feature/x", e.sourceBranch());
         assertEquals("main", e.targetBranch());
-        assertEquals("abc123def456", e.diffRefs().headSha()); // as delivered (12-char)
+        assertEquals("abc123def456", e.headCommit()); // as delivered (12-char)
         assertEquals("author-account-1", e.author().providerUserId());
         assertEquals("jdoe", e.author().username());
     }
@@ -96,6 +96,31 @@ class BitbucketCloudIngressTest {
                 webhook(payload.getBytes(StandardCharsets.UTF_8),
                         Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+    }
+
+    /**
+     * Bitbucket writes a mention into RAW comment text as {@code @{account_id}} — the login never
+     * appears — so the braced id is what the orchestrator has to be able to compare against the
+     * bot's identity. Extracting it here is what keeps that syntax out of the shared saga, which
+     * previously carried it alongside the other providers' {@code @login} form.
+     */
+    @Test
+    void mentionsAreExtractedFromRawTextInBitbucketsBracedSyntax() {
+        String payload = comment("human-1", "@{TEST-account-0001} can you look? cc @nickname", "77");
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(payload.getBytes(StandardCharsets.UTF_8),
+                        Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
+        assertEquals(List.of("TEST-account-0001", "nickname"), e.mentions(),
+                "the braced account id is collected, and a plain @name alongside it");
+    }
+
+    @Test
+    void aCommentWithNoMentionsCarriesAnEmptyList() {
+        String payload = comment("human-1", "plain reply, no mentions", "77");
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(payload.getBytes(StandardCharsets.UTF_8),
+                        Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
+        assertEquals(List.of(), e.mentions());
     }
 
     @Test

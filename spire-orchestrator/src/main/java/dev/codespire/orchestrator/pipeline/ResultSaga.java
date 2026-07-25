@@ -152,7 +152,7 @@ public class ResultSaga {
                     projection.recordLlmCall(e.reviewId(), "reconcile", priceUsage(e.reconcileUsage()));
                 }
                 java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
-                String priorSummaryRef = prior.map(PriorRun::summaryCommentId).orElse(null);
+                String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
                 if (!e.verdicts().isEmpty()) {
                     projection.recordReconciliation(e.reviewId(), e.verdicts(),
                             prior.map(PriorRun::findings).orElse(List.of()));
@@ -180,7 +180,7 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "CommentsPosted", e.inline().size() + " inline comments");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_POSTING);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordCommentsPosted(
-                        e.commit(), e.summaryCommentId(), e.inline().size()));
+                        e.commit(), e.summaryThreadRef(), e.inline().size()));
                 // Scope A: every inline finding's comment id is a thread we own — a reply there engages the bot.
                 // Record its (path, line) too so the review detail can nest that finding's conversation.
                 // (The partial-retry reconstruction branch in the worker emits (anchorKey, 0); such a row simply
@@ -193,7 +193,7 @@ public class ResultSaga {
                             inline.path(), inline.line());
                 }
                 // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
-                threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryCommentId()));
+                threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryThreadRef()));
                 // ADR-019: a reconciled thread's outcome lands on the timeline and, when the finding
                 // is confirmed fixed, flags the thread resolved for the detail view.
                 for (var outcome : e.threadOutcomes()) {
@@ -209,7 +209,7 @@ public class ResultSaga {
                 // (possible only through the worker's head-re-check race) cannot stamp a
                 // snapshot inconsistent with findings_json, which may already hold the
                 // newer run's findings.
-                projection.recordPosted(e.reviewId(), e.commit(), e.summaryCommentId());
+                projection.recordPosted(e.reviewId(), e.commit(), e.summaryThreadRef());
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",

@@ -136,7 +136,7 @@ public class ReviewWorker {
             WorkerScmClients.Clients clients = scm.forCommand(command);
             DiffSource diffSource = clients.diff();
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
-            if (!Commits.matches(pr.diffRefs().headSha(), command.commit())) {
+            if (!Commits.matches(pr.headCommit(), command.commit())) {
                 LOG.infof("Abandoning GenerateReview for %s: PR head moved past %s",
                         command.reviewId(), command.commit());
                 return;
@@ -543,7 +543,7 @@ public class ReviewWorker {
             DiffSource diffSource = clients.diff();
             CommentSink commentSink = clients.comments();
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
-            if (!Commits.matches(pr.diffRefs().headSha(), command.commit())) {
+            if (!Commits.matches(pr.headCommit(), command.commit())) {
                 LOG.infof("Abandoning PostComments for %s: PR head moved past %s",
                         command.reviewId(), command.commit());
                 return;
@@ -568,8 +568,8 @@ public class ReviewWorker {
                 postOneInline(commentSink, command, diff, finding, posted, unanchored, failed, backoffBudget);
             }
 
-            String summaryCommentId = postSummary(commentSink, command, review, unanchored, failed);
-            if (summaryCommentId == null) {
+            String summaryThreadRef = postSummary(commentSink, command, review, unanchored, failed);
+            if (summaryThreadRef == null) {
                 return; // summary failure already emitted ReviewFailed
             }
             // Recover inline comment ids from a previous partially-completed attempt. Skip the
@@ -583,7 +583,7 @@ public class ReviewWorker {
                 }
             });
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
-                    summaryCommentId, posted, outcomes));
+                    summaryThreadRef, posted, outcomes));
         } catch (RuntimeException e) {
             Throwable cause = unwrap(e);
             LOG.warnf(cause, "PostComments failed for %s", command.reviewId());
@@ -769,7 +769,7 @@ public class ReviewWorker {
                                              InlineAnchor anchor, String body, BackoffBudget budget) {
         for (int attempt = 1; ; attempt++) {
             try {
-                return sink.postInline(command.repo(), command.prId(), diff.refs(), anchor, body);
+                return sink.postInline(command.repo(), command.prId(), diff.headCommit(), anchor, body);
             } catch (RuntimeException e) {
                 Throwable cause = unwrap(e);
                 if (attempt >= MAX_INLINE_ATTEMPTS || !(cause instanceof ScmApiException api)
@@ -819,7 +819,7 @@ public class ReviewWorker {
         }
     }
 
-    /** @return the summary comment id, or null when posting it failed (ReviewFailed emitted). */
+    /** @return the summary THREAD ref, or null when posting it failed (ReviewFailed emitted). */
     private String postSummary(CommentSink commentSink, PostComments command, ReviewResult review,
                                List<Finding> unanchored, List<Finding> failed) {
         return switch (idempotency.claim(command.reviewId(), command.commit(), SUMMARY_KEY)) {
@@ -832,8 +832,13 @@ public class ReviewWorker {
                     String body = renderSummary(review, unanchored, failed, command.commit())
                             + renderReconciliationSection(command.verdicts());
                     CommentRef summary = updateOrPost(commentSink, command, body);
-                    idempotency.markPosted(command.reviewId(), command.commit(), SUMMARY_KEY, summary.commentId());
-                    yield summary.commentId();
+                    // The THREAD, matching what inline slots record: it is what core needs as the
+                    // conversation key AND what updateComment rewrites next round. Recording the
+                    // comment id instead left core casting a comment id to a ThreadRef — the same
+                    // "a comment is its own thread root" assumption that broke inline replies.
+                    idempotency.markPosted(command.reviewId(), command.commit(), SUMMARY_KEY,
+                            summary.thread().value());
+                    yield summary.thread().value();
                 } catch (RuntimeException e) {
                     Throwable cause = unwrap(e);
                     LOG.warnf(cause, "Summary post failed for %s", command.reviewId());
@@ -852,7 +857,8 @@ public class ReviewWorker {
     private CommentRef updateOrPost(CommentSink sink, PostComments command, String body) {
         if (command.priorSummaryRef() != null) {
             try {
-                return sink.updateComment(command.repo(), command.prId(), command.priorSummaryRef(), body);
+                return sink.updateComment(command.repo(), command.prId(),
+                        new ThreadRef(command.priorSummaryRef()), body);
             } catch (RuntimeException e) {
                 if (!(unwrap(e) instanceof ScmApiException api) || !api.isNotFound()) {
                     throw e;   // permission/transient failures classify upstream; don't double-post

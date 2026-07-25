@@ -143,7 +143,7 @@ public class RegistryWebhookEdge {
             case PullRequestEventReceived p -> p.repo();
             case PullRequestClosed p -> p.repo();
             case ManualCommandReceived p -> p.repo();
-            case AuthorReplied p -> p.repo(); // Bitbucket emits comment replies
+            case AuthorReplied p -> p.repo(); // every SCM emits comment replies
             case PushReceived p -> p.repo();  // future push hooks — scope-guard them too
             default -> null;
         };

@@ -65,7 +65,7 @@ class GitHubIngressTest {
         assertEquals("Add feature", e.title());
         assertEquals("feature/x", e.sourceBranch());
         assertEquals("main", e.targetBranch());
-        assertEquals("abc123def4567890", e.diffRefs().headSha());
+        assertEquals("abc123def4567890", e.headCommit());
         assertEquals("1234", e.author().providerUserId()); // numeric id, for the self-loop guard
         assertEquals("octocat", e.author().username());
         assertEquals("https://github.com/artyomsv/spire-test/pull/7", e.htmlUrl());

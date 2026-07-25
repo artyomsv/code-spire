@@ -9,7 +9,6 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +31,7 @@ class WireFormatRoundTripTest {
         IntegrationEvent original = new IntegrationEvent.PullRequestEventReceived(
                 new RepoRef("sandbox", "demo-repo"), 42, IntegrationEvent.PrAction.OPENED,
                 "title", "description", "feature/x", "main",
-                DiffRefs.headOnly("abc123def456"),
+                "abc123def456",
                 Author.of("acc-1", "jdoe", "J. Doe"), "https://example.invalid/pr/42", "bitbucket-cloud");
 
         // Root-level polymorphism needs writerFor — exactly what the Kafka

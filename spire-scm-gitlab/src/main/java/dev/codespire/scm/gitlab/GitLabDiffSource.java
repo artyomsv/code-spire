@@ -6,7 +6,6 @@ import dev.codespire.contract.port.IdentitySource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -23,9 +22,9 @@ import java.util.List;
  * which can be nested — {@code group/subgroup/project}). GitLab returns the diff
  * as per-file JSON with a header-less {@code diff} fragment, so each file is
  * wrapped in a synthesized {@code diff --git} header before the shared
- * {@link UnifiedDiffParser} runs. Unlike GitHub, GitLab needs all three
- * {@link DiffRefs} SHAs to anchor an inline comment, so they are read from the
- * merge request's {@code diff_refs}.
+ * {@link UnifiedDiffParser} runs. Anchoring an inline comment on this API needs a base/start/head
+ * SHA triple rather than the head alone; the extra SHAs are read from the merge request by the
+ * comment sink, so nothing provider-shaped crosses the SPI.
  */
 public class GitLabDiffSource implements DiffSource, IdentitySource {
 
@@ -63,7 +62,7 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
                 mr.path("description").asText(""),
                 mr.path("source_branch").asText(""),
                 mr.path("target_branch").asText(""),
-                diffRefs(mr.path("diff_refs")),
+                headSha(mr.path("diff_refs")),
                 author(mr.path("author")),
                 mr.path("web_url").asText(""));
     }
@@ -75,7 +74,8 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
         // three SHAs are required to post inline discussions.
         JsonNode changes = client.getJson(mrPath(repo, prId) + "/changes");
         List<FilePatch> files = UnifiedDiffParser.parse(synthesizeUnifiedDiff(changes.path("changes")));
-        return new Diff(diffRefs(changes.path("diff_refs")), files, changes.path("overflow").asBoolean(false));
+        return new Diff(headSha(changes.path("diff_refs")), files,
+                changes.path("overflow").asBoolean(false));
     }
 
     /**
@@ -125,11 +125,9 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
         return sb.toString();
     }
 
-    private static DiffRefs diffRefs(JsonNode refs) {
-        return new DiffRefs(
-                nullIfBlank(refs.path("base_sha").asText("")),
-                nullIfBlank(refs.path("start_sha").asText("")),
-                nullIfBlank(refs.path("head_sha").asText("")));
+    /** The reviewed head. The base/start SHAs this API also wants are the sink's to fetch. */
+    private static String headSha(JsonNode refs) {
+        return nullIfBlank(refs.path("head_sha").asText(""));
     }
 
     private static Author author(JsonNode user) {

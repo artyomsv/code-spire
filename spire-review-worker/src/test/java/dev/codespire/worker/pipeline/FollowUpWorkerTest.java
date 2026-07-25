@@ -10,7 +10,6 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.scm.github.GitHubApiException;
 import dev.codespire.contract.scm.RepoRef;
@@ -39,7 +38,7 @@ class FollowUpWorkerTest {
                 List.of(new ThreadMessage("octocat", "why?", false)));
 
         when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123")))
-                .thenReturn(new Diff(DiffRefs.headOnly("abc123"), List.of(), false));
+                .thenReturn(new Diff("abc123", List.of(), false));
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
                 new Completion("Because the caller can pass null.", new ModelUsage("m", 1, 1, 0))));
         when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
@@ -70,10 +69,10 @@ class FollowUpWorkerTest {
                 List.of(new ThreadMessage("octocat", "why?", false)));
 
         when(diffs.fetchPullRequest(eq(repo), eq(5L))).thenReturn(new PullRequest(
-                repo, 5L, "T", "d", "feature", "main", new DiffRefs(null, null, "head-9"),
+                repo, 5L, "T", "d", "feature", "main", "head-9",
                 Author.of("1", "octocat", "Octo Cat"), "https://x"));
         when(diffs.fetchDiff(eq(repo), eq(5L), eq("head-9")))
-                .thenReturn(new Diff(DiffRefs.headOnly("head-9"), List.of(), false));
+                .thenReturn(new Diff("head-9", List.of(), false));
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
                 new Completion("Because the caller can pass null.", new ModelUsage("m", 1, 1, 0))));
         when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))

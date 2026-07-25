@@ -4,6 +4,69 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-020 — No provider-dependent decisions in core, enforced by the build
+
+**Context.** Plugin-first only holds while the shared code makes no provider-dependent
+decision, and by the end of the GitLab parity work it no longer did. `CommentsPosted.PostedInline`
+carried *both* a comment id and a thread ref with a `threadRefOrCommentId()` accessor, because
+GitHub and Bitbucket make a comment its own thread root while GitLab's discussion id differs from
+its note's — so "some providers have two ids" had been modelled in the contract, and the core had to
+choose which one to use. Keying off the wrong one is exactly what made a GitLab reply
+unrecognisable. Two more leaks had accumulated quietly: `ProviderIdentityResolver` branched on
+`"bitbucket-cloud".equals(type)` to reach a whoami fallback, and `ManualRegisterResource` caught
+`BitbucketApiException` — so a GitHub or GitLab PR that 404'd escaped as a 500 rather than "no such
+PR". Each accommodation is individually reasonable; together they make every edit to a shared file a
+risk to the other two providers, and the resulting bug appears on one platform, in production.
+
+**Decision.** Core modules (`spire-contract`, `spire-orchestrator`, `spire-review-worker`) must not
+name an SCM provider. The test is *decisions*, not vocabulary:
+
+- **Rejected** — branching on a provider, or shared code carrying provider-shaped alternatives it
+  must choose between. `threadRefOrCommentId()` was this; so was the `"bitbucket-cloud"` branch.
+- **Allowed** — one rule stated in domain terms that every adapter satisfies. "Ownership is keyed by
+  the thread a reply arrives under" is satisfied by a comment id on GitHub and a discussion id on
+  GitLab, and the core never learns the difference. Where providers genuinely differ in capability,
+  the difference becomes a neutral SPI method the adapter overrides —
+  `IdentitySource.whoamiOrValidate(workspace)`, where Bitbucket's account-less-token fallback lives
+  in the Bitbucket adapter and no caller recognises Bitbucket to get it.
+- **Allowed** — the composition roots (`ProviderClients`, `WorkerScmClients`, `PrUrlParsers`), whose
+  job *is* selecting an adapter, and `ScmType`, which declares the names. Provider-neutral data may
+  carry several attributes (`ScmCredential.botAccountId` + `botUsername`) as long as the *selection*
+  happens in a composition root, not in a saga or worker.
+- Comments are exempt. A comment cannot make a decision, and recording *why* a neutral design exists
+  is knowledge worth keeping.
+
+The rule is enforced, not documented: `spire-arch` fails the build when a core module names a
+provider outside an explicit allowlist, each entry carrying its reason. It scans **source text**
+rather than bytecode, because the leaks that caused real bugs were string literals
+(`"bitbucket-cloud".equals(type)`) that a bytecode rule cannot see. Three guards protect against the
+one failure mode nobody would notice — a silent pass: the comment stripper has its own tests, the
+scan asserts it reached every core module's sources, and a stale allowlist entry fails so exemptions
+cannot quietly become permanent. The scanned tree is a declared Gradle task input, or the check would
+report a cached pass after the very change it exists to catch.
+
+**Consequences.** Adding a provider touches its adapter, the composition roots, and nothing else.
+A capability difference costs one defaulted SPI method instead of a branch in shared code. The cost
+is that a genuine cross-provider difference can no longer be expressed inline where it is noticed —
+it has to be pushed to the port or the composition root first, which is the intended friction.
+
+**The check's known limit.** It matches provider *names*, and the costliest leaks carry none. A
+follow-up audit along four lenses (id/wire formats, capability assumptions, webhook lifecycle,
+contract shape) found six, of which one was a live defect the check passed cleanly: the loc→thread
+index chose the current thread for a re-posted finding by comparing thread refs numerically, which
+holds for a comment id and not for an opaque discussion id — so ADR-019's reconciliation was inert on
+one provider, and the only provider name in the file sat in a comment the scanner strips. Recency is
+now the service's own insertion order. The others: the GitLab `position` SHA triple removed from the
+contract in favour of a single head commit (the adapter reads the rest itself); `@`-mention syntax
+moved from a saga into each ingress, which hands the core a list of mentioned identities; HTTP 406
+replaced by `ScmApiException.isDiffTooLarge()`; `CommentSink.updateComment` retargeted from a comment
+id to a `ThreadRef`, so one opaque ref serves both questions and the core stops minting thread refs
+from comment ids; and the gateway brought into scope. The lesson is that the build check bounds the
+blast radius of careless edits but cannot replace review of *semantics* — a provider assumption
+stated without naming the provider is invisible to it, and is exactly where the expensive bugs were.
+
+---
+
 ## ADR-019 — Re-reviews post deltas, not the full finding set
 
 **Context.** Before this decision, a follow-up commit to an already-reviewed PR triggered the exact

@@ -6,7 +6,6 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -168,7 +167,7 @@ class OrchestratorChoreographyTest {
     private IntegrationEvent prEvent78(PrAction action) {
         return new IntegrationEvent.PullRequestEventReceived(
                 REPO, 78, action, "TEST: cancel flow", "TEST description",
-                "feature/TEST-cancel", "main", DiffRefs.headOnly("ccc333ccc333"),
+                "feature/TEST-cancel", "main", "ccc333ccc333",
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
                 "https://example.invalid/pr/78", null);
     }
@@ -182,7 +181,7 @@ class OrchestratorChoreographyTest {
     private IntegrationEvent prEvent(String commit, PrAction action) {
         return new IntegrationEvent.PullRequestEventReceived(
                 REPO, 77, action, "TEST: choreography", "TEST description",
-                "feature/TEST-x", "main", DiffRefs.headOnly(commit),
+                "feature/TEST-x", "main", commit,
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
                 "https://example.invalid/pr/77", null);
     }

@@ -23,8 +23,11 @@ class ProviderResourceResolveTest {
     private ProviderResource resourceThatResolvesTo(Author owner, RuntimeException failure) {
         ProviderResource resource = new ProviderResource();
         resource.identity = new ProviderIdentityResolver() {
+            // Stubs the entry point the resource actually calls. It used to stub resolve()
+            // and rely on resolveForRegistration() delegating to it — a seam that vanished
+            // when the account-less-token fallback moved into the adapters.
             @Override
-            public Author resolve(ProviderInput in) {
+            public Author resolveForRegistration(ProviderInput in) {
                 if (failure != null) {
                     throw failure;
                 }

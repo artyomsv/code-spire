@@ -12,7 +12,6 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
@@ -48,7 +47,7 @@ class FollowUpWorkerPromptTest {
                 "CUSTOM-FOLLOWUP-PERSONA", "Answer {{thread}}");
 
         when(diffs.fetchDiff(eq(repo), eq(1L), eq("sha")))
-                .thenReturn(new Diff(DiffRefs.headOnly("sha"), List.of(), false));
+                .thenReturn(new Diff("sha", List.of(), false));
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
                 new Completion("ok", new ModelUsage("m", 1, 1, 0))));
         when(sink.replyInThread(eq(repo), eq(1L), eq(thread), anyString()))

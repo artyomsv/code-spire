@@ -7,7 +7,6 @@ import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
@@ -77,11 +76,11 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     }
 
     @Override
-    public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
+    public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
         boolean old = anchor.side() == Side.OLD;
         Map<String, Object> body = new HashMap<>(Map.of(
                 "body", bodyMd,
-                "commit_id", refs.headSha(),
+                "commit_id", headCommit,
                 "path", anchor.path(),
                 "side", old ? "LEFT" : "RIGHT"));
         if (!old && anchor.endNewLine() != null && anchor.endNewLine() > anchor.newLine()) {
@@ -125,7 +124,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
 
     /** In-place summary rewrite on a re-review — the summary is an issue comment (PATCH, not POST). */
     @Override
-    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+    public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        // A GitHub issue comment IS its own thread root, so the thread ref is the comment to patch.
+        String commentId = thread.value();
         client.patchJson(issueCommentByIdPath(repo, commentId), Map.of("body", bodyMd));
         return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
     }

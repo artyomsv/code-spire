@@ -24,7 +24,8 @@ import java.util.Set;
 @Path("/webhooks/github/{key}")
 public class GitHubWebhookResource {
 
-    private static final String PROVIDER = "github";
+    /** Package-private so {@link WebhookProviders} can enumerate the endpoints without repeating names. */
+    static final String PROVIDER = "github";
 
     /** Registered manual commands (CONTRACT §10); mirrors the Bitbucket edge. */
     private static final Set<String> COMMANDS = Set.of("review");

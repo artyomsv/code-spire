@@ -33,7 +33,10 @@ public class ProviderResource {
     private static final Logger LOG = Logger.getLogger(ProviderResource.class);
 
     private static final Set<String> AUTH_KINDS = Set.of("bearer", "basic");
-    private static final Set<String> TYPES = Set.of("bitbucket-cloud", "github", "gitlab");
+
+    // Deliberately not a second list of provider names: a registry that accepts a type
+    // ProviderClients cannot build would fail only later, on the first review.
+    private static final Set<String> TYPES = ProviderClients.SUPPORTED_TYPES;
 
     @Inject
     ProviderRegistry registry;

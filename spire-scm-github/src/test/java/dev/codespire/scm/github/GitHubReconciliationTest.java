@@ -55,7 +55,8 @@ class GitHubReconciliationTest {
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":42}")));
-        CommentRef ref = new GitHubCommentSink(client).updateComment(repo, 1L, "42", "new body");
+        CommentRef ref = new GitHubCommentSink(client)
+                .updateComment(repo, 1L, new ThreadRef("42"), "new body");
         assertEquals("42", ref.commentId());
     }
 

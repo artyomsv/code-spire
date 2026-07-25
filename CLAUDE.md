@@ -17,7 +17,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DATA-MODEL.md` | Value types, event store, object store, read models, encryption boundaries |
 | `docs/SCM-MAPPING.md` | Provider-neutral SCM model verified against Bitbucket/GitHub/GitLab/DC APIs |
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
-| `docs/DECISIONS.md` | ADR-001..019 — every locked decision with its why |
+| `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 
@@ -175,6 +175,51 @@ The design is fully specified in `docs/` — **treat those files as the source o
   - **Diagnosability:** `ConversationSaga` now logs every decision with its factors
     (`level/authorAllowed/threadIsOurs/mentioned/priorTurns`) — the skips used to reach only the
     dashboard, which is why several of these bugs were invisible.
+- **Provider-neutrality enforced by the build (ADR-020, 2026-07-26):** new `spire-arch` module fails
+  the build when a core module (`spire-contract`, `spire-orchestrator`, `spire-review-worker`) names
+  an SCM provider outside an explicit, reasoned allowlist (the composition roots `ProviderClients` /
+  `WorkerScmClients` / `PrUrlParsers`, plus `ScmType` and the dev `StubScm`). It scans **source
+  text**, not bytecode, because the leaks that caused real bugs were string literals; comments are
+  exempt. Guards against a silent pass: the comment stripper is unit-tested, the scan asserts it
+  reached every core module, a stale allowlist entry fails, and the scanned tree is a declared Gradle
+  input (otherwise the check reports a cached pass after the very change it should catch). The three
+  leaks it found are fixed: `ManualRegisterResource` classified only Bitbucket errors, so a
+  GitHub/GitLab 404 escaped as a **500** instead of 404 (real defect, now on the neutral
+  `ScmApiException`); `ProviderIdentityResolver`'s `"bitbucket-cloud"` branch became the defaulted SPI
+  method `IdentitySource.whoamiOrValidate(workspace)`, with the account-less-token fallback moved into
+  `BitbucketCloudDiffSource` (`ProviderClients.assertWorkspaceAccess` deleted); `ProviderResource`'s
+  duplicate type list is now `ProviderClients.SUPPORTED_TYPES`.
+- **Semantic leaks swept (2026-07-26):** a 4-lens audit hunted the leaks that carry NO provider name,
+  which the build check cannot see. Six fixed:
+  - **A live GitLab defect.** `ReviewProjection.newerThreadRef` picked the current thread for a
+    re-posted finding by comparing thread refs as `BigInteger` ("ids are monotonic"). GitLab's thread
+    ref is an opaque discussion id, so every compare threw and fell back to "first seen" — and rows
+    were read `ORDER BY thread_ref`, i.e. the lexicographically smallest. The ADR-019 reconciliation
+    fix was **inert on GitLab**, able to target an already-resolved thread. Recency is now insertion
+    order (`V26 review_thread.seq`, newest row per loc wins); no id arithmetic anywhere.
+  - **`DiffRefs` deleted.** The `(baseSha, startSha, headSha)` triple was GitLab's `position`, non-null
+    at exactly one construction site repo-wide. `Diff`/`PullRequest`/`PullRequestEventReceived` and
+    `CommentSink.postInline` now carry a single `headCommit`; `GitLabCommentSink` reads `diff_refs`
+    from the MR itself, cached per MR (one extra GET per review, not per finding).
+  - **Mention syntax left the core.** Each ingress extracts `@`-mentions in its own syntax into
+    `AuthorReplied.mentions` (Bitbucket's braced `@{account_id}` included); `ConversationSaga`
+    is now a membership test with no regex.
+  - **406 → `ScmApiException.isDiffTooLarge()`** (defaulted false, GitHub overrides) — core no longer
+    interprets one provider's status code, and GitLab already reported the same condition as data.
+  - **Summary thread ref.** `CommentSink.updateComment` takes a `ThreadRef`, so one opaque ref both
+    locates the conversation and names the comment to rewrite; the worker records
+    `summary.thread().value()` and core stops casting a comment id to a `ThreadRef`
+    (`CommentsPosted.summaryThreadRef`). The persisted `ReviewCompleted.summaryCommentId` keeps its
+    name — renaming it would break event-store replay.
+  - **`spire-gateway` added to the scanned modules**, its shared registry edge no longer holding a
+    provider-name list (`WebhookProviders.SUPPORTED_TYPES`, composed from each endpoint's own constant).
+  740 tests green across 97 suites. Allowlist: 9 entries, all composition roots or `ScmType`.
+- **Still open on neutrality:** the context axis — `DiffWorker`/`ContextWorker` call `JiraTicketKeys`
+  and `ConfluenceLinks` directly, and `ticketKeys`/`links` are two provider-shaped fields on
+  `DiffFetched`/`GatherContext`/`ContextRequest`. Extraction must stay credential-free (it runs at
+  diff-fetch, before context credentials are brokered), so it needs a separate credential-free SPI
+  rather than a method on `ContextProvider`. `ContextProviderResource`/`ContextKeyValidator` are the
+  context composition root and stay exempt.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.

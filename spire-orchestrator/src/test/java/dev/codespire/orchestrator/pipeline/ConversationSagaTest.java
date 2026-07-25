@@ -31,32 +31,36 @@ import static org.junit.jupiter.api.Assertions.*;
  * covered by the deferred @QuarkusTest E2E. */
 class ConversationSagaTest {
 
-    @Test
-    void mentionsBotIsCaseInsensitiveAndNeedsTheAtPrefix() {
-        assertTrue(ConversationSaga.mentionsBot("hey @code-spire what about this?", "code-spire", null));
-        assertTrue(ConversationSaga.mentionsBot("HEY @Code-Spire", "code-spire", null));
-        assertFalse(ConversationSaga.mentionsBot("code-spire without the at sign", "code-spire", null));
-        assertFalse(ConversationSaga.mentionsBot("hi there", "code-spire", null));
-        assertFalse(ConversationSaga.mentionsBot("@code-spireworks contribute", "code-spire", null)); // word-bounded
+    // The mention SYNTAX is each ingress's business now (its own tests cover extraction). What the
+    // saga must get right is the comparison: this is a membership test over already-parsed
+    // identities, so no provider's rendering appears here.
 
+    @Test
+    void aMentionedUsernameMatchesRegardlessOfCase() {
+        assertTrue(ConversationSaga.mentionsBot(List.of("code-spire"), "code-spire", null));
+        assertTrue(ConversationSaga.mentionsBot(List.of("Code-Spire"), "code-spire", null));
+        assertTrue(ConversationSaga.mentionsBot(List.of("someone", "code-spire"), "code-spire", null),
+                "the bot counts as mentioned even when it is not the only one");
+        assertFalse(ConversationSaga.mentionsBot(List.of("code-spireworks"), "code-spire", null),
+                "a longer name that merely starts with the bot's is a different account");
     }
 
     @Test
-    void mentionsBotNeverMatchesOnBlankOrNull() {
-        assertFalse(ConversationSaga.mentionsBot("@ nobody", "", null));
-        assertFalse(ConversationSaga.mentionsBot("@bot", null, null));
+    void anAccountIdMustMatchExactlyBecauseItIsAnOpaqueKey() {
+        String botId = "TEST-account-0001";
+        assertTrue(ConversationSaga.mentionsBot(List.of(botId), null, botId));
+        assertTrue(ConversationSaga.mentionsBot(List.of(botId), "code-spire-bot", botId));
+        assertFalse(ConversationSaga.mentionsBot(List.of("TEST-account-0002"), "code-spire-bot", botId));
+    }
+
+    @Test
+    void noMentionsOrAnUnresolvedBotIdentityNeverMatches() {
+        assertFalse(ConversationSaga.mentionsBot(List.of(), "code-spire", null));
         assertFalse(ConversationSaga.mentionsBot(null, "code-spire", null));
-    }
-
-    @Test
-    void mentionsBotMatchesBitbucketAccountIdSyntax() {
-        // Bitbucket renders a mention in the comment's raw text as @{account_id}, not @login.
-        String botId = "712020:20976caa-f4d5-48f5-9f4e-3b1c7ecee49d";
-        assertTrue(ConversationSaga.mentionsBot("@{" + botId + "} can you look?", null, botId));
-        assertTrue(ConversationSaga.mentionsBot("@{" + botId + "} help", "code-spire-bot", botId));
-        assertFalse(ConversationSaga.mentionsBot("@{557058:someone-else} help", "code-spire-bot", botId));
-        assertFalse(ConversationSaga.mentionsBot("no mention here", "code-spire-bot", botId));
-        assertFalse(ConversationSaga.mentionsBot("@{" + botId + "} help", "code-spire-bot", ""));
+        // A blank identity must not turn every mention into a hit.
+        assertFalse(ConversationSaga.mentionsBot(List.of("someone"), "", null));
+        assertFalse(ConversationSaga.mentionsBot(List.of("someone"), null, null));
+        assertFalse(ConversationSaga.mentionsBot(List.of("TEST-account-0001"), "code-spire-bot", ""));
     }
 
     @Test

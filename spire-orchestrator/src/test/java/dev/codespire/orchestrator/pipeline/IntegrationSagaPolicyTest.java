@@ -10,7 +10,6 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
@@ -169,7 +168,7 @@ class IntegrationSagaPolicyTest {
         return new PullRequestEventReceived(
                 new RepoRef("acme", "web"), 412L, PrAction.OPENED,
                 "Refactor checkout", "desc", "feature", "main",
-                DiffRefs.headOnly("cafe123"),
+                "cafe123",
                 Author.of(accountId, username, "Display Name"),
                 "https://example/pr/412", providerType);
     }

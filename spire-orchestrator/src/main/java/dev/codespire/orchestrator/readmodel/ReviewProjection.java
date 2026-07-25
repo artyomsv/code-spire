@@ -995,24 +995,15 @@ public class ReviewProjection {
             }
             if (t.path() != null && t.line() != null) {
                 // A finding re-posted at the same loc across re-review rounds (e.g. a rename made the
-                // exclusion miss it) leaves several review_thread rows for one anchor. Keep the NEWEST
-                // comment id — ids are monotonic — so a verdict targets the CURRENT finding's thread,
-                // not a stale, already-resolved older one (the "outdated instead of resolved" bug).
-                threadByLoc.merge(t.path() + ":" + t.line(), t.threadRef(), ReviewProjection::newerThreadRef);
+                // exclusion miss it) leaves several review_thread rows for one anchor. The LAST row
+                // wins, and rows arrive in insertion order (seq), so a verdict targets the CURRENT
+                // finding's thread rather than a stale, already-resolved older one (the "outdated
+                // instead of resolved" bug). Recency comes from our own write order — never from
+                // comparing thread refs, whose form is the provider's business.
+                threadByLoc.put(t.path() + ":" + t.line(), t.threadRef());
             }
         }
         return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs);
-    }
-
-    /** The newer of two SCM comment ids for one loc — ids are monotonic, so the numerically larger is
-     *  the most recently posted comment (the current finding). Non-numeric ids keep the first seen. */
-    static String newerThreadRef(String existing, String incoming) {
-        try {
-            return new java.math.BigInteger(incoming).compareTo(new java.math.BigInteger(existing)) > 0
-                    ? incoming : existing;
-        } catch (NumberFormatException nonNumeric) {
-            return existing;
-        }
     }
 
     /** Findings with their owned threadRefs attached, plus the set of threadRefs a CURRENT finding
@@ -1287,8 +1278,10 @@ public class ReviewProjection {
     private List<ThreadRow> loadThreadRows(Connection c, String reviewId) throws SQLException {
         List<ThreadRow> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
+                // Insertion order, so the caller's "last row per loc wins" means newest. Ordering by
+                // thread_ref instead would sort by a provider-shaped string.
                 "SELECT thread_ref, path, line, is_summary, resolved FROM review_thread WHERE review_id = ? "
-                        + "ORDER BY thread_ref")) {
+                        + "ORDER BY seq")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {

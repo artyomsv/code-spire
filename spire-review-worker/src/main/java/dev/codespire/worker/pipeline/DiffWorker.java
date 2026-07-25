@@ -66,7 +66,10 @@ public class DiffWorker {
 
     private void fail(FetchDiff command, RuntimeException e) {
         LOG.warnf(e, "FetchDiff failed for %s", command.reviewId());
-        if (e instanceof ScmApiException api && api.status() == 406) {
+        // Terminal, not transient: retrying cannot shrink the PR. Which response carries this
+        // is the adapter's to know — core used to match HTTP 406, which is one provider's
+        // convention (another reports oversize as Diff.truncated and never raises at all).
+        if (e instanceof ScmApiException api && api.isDiffTooLarge()) {
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
                     "PR diff exceeds the provider's diff-generation limit — the PR is too large "
                             + "to review as one unit; split it or exclude generated files",

@@ -7,7 +7,6 @@ import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
@@ -23,10 +22,14 @@ import java.util.Map;
 /**
  * GitLab write adapter (SCM-MAPPING §4-§6). The PR summary is a merge-request
  * NOTE; an inline comment opens a DISCUSSION anchored by a {@code position}
- * carrying all three {@link DiffRefs} SHAs plus the old/new path and line (a
- * wrong line/side combination is rejected with HTTP 400). {@link ThreadRef}
- * carries the {@code discussion_id} — replies POST to
+ * carrying a base/start/head SHA triple plus the old/new path and line (a wrong
+ * line/side combination is rejected with HTTP 400). {@link ThreadRef} carries the
+ * {@code discussion_id} — replies POST to
  * {@code .../discussions/{discussion_id}/notes}.
+ *
+ * <p>The base and start SHAs are read from the merge request here rather than carried in through the
+ * SPI. Only this API needs them, so having the shared contract transport a SHA triple made every
+ * other provider's events carry two permanently-null fields and put a GitLab-shaped type in the core.
  */
 public class GitLabCommentSink implements CommentSink, ThreadSource {
 
@@ -36,6 +39,12 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
 
     private final GitLabClient client;
     private final String brokeredBotUsername;
+
+    /**
+     * The MR's {@code diff_refs}, cached per merge request. A review posts many findings in one batch
+     * and the refs do not move between them, so this is one extra GET per review, not per finding.
+     */
+    private final Map<String, Map<String, Object>> anchorShas = new HashMap<>();
 
     public GitLabCommentSink(GitLabClient client) {
         this(client, null);
@@ -65,12 +74,9 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
     }
 
     @Override
-    public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
-        Map<String, Object> position = new HashMap<>();
+    public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
+        Map<String, Object> position = new HashMap<>(anchorShas(repo, prId, headCommit));
         position.put("position_type", "text");
-        position.put("base_sha", refs.baseSha());
-        position.put("start_sha", refs.startSha());
-        position.put("head_sha", refs.headSha());
         position.put("old_path", anchor.srcPath());
         position.put("new_path", anchor.path());
         // Only the side(s) the line exists on are sent — GitLab 400s on a bad combo.
@@ -92,6 +98,36 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
         String discussionId = requireId(created.path("id"), path);
         String noteId = firstNoteId(created, discussionId);
         return new CommentRef(noteId, new ThreadRef(discussionId), CommentKind.INLINE);
+    }
+
+    /**
+     * The base/start/head triple GitLab's {@code position} requires, read from the merge request.
+     *
+     * <p>The triple must be internally consistent or the API rejects the position, so all three come
+     * from the same {@code diff_refs} read. When GitLab's head no longer matches the commit we were
+     * asked to post against, the MR moved after the caller's head check — logged, because the anchor
+     * then belongs to a newer revision than the one reviewed.
+     */
+    private Map<String, Object> anchorShas(RepoRef repo, long prId, String headCommit) {
+        return anchorShas.computeIfAbsent(repo.full() + "!" + prId, key -> {
+            JsonNode refs = client.getJson(GitLabDiffSource.mrPath(repo, prId)).path("diff_refs");
+            String head = blankToNull(refs.path("head_sha").asText(""));
+            if (headCommit != null && head != null && !head.equals(headCommit)) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "MR " + repo.full() + "!" + prId + " reports head " + head
+                                + " but the run posts against " + headCommit
+                                + " — anchoring to the MR's current revision");
+            }
+            Map<String, Object> shas = new HashMap<>();
+            shas.put("base_sha", blankToNull(refs.path("base_sha").asText("")));
+            shas.put("start_sha", blankToNull(refs.path("start_sha").asText("")));
+            shas.put("head_sha", head);
+            return shas;
+        });
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     @Override
@@ -147,7 +183,10 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
 
     /** In-place summary rewrite on a re-review — the summary is a merge-request note. */
     @Override
-    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+    public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        // A summary is posted as a plain MR note, whose id is also its thread ref (postSummary),
+        // so the note to rewrite is the ref itself — no discussion lookup needed.
+        String commentId = thread.value();
         String path = GitLabDiffSource.mrPath(repo, prId) + "/notes/" + commentId;
         client.putJson(path, Map.of("body", bodyMd));
         return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);

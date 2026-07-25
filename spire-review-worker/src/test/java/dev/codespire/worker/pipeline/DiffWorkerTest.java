@@ -10,7 +10,6 @@ import dev.codespire.contract.port.ScmType;
 import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.diff.UnifiedDiffParser;
@@ -62,7 +61,7 @@ class DiffWorkerTest {
                     throw failure;
                 }
                 return new PullRequest(repo, prId, "Demo PR", prDescription, "feature/demo", "main",
-                        DiffRefs.headOnly("abc123"), Author.of("1", "bot", "bot"), "http://pr");
+                        "abc123", Author.of("1", "bot", "bot"), "http://pr");
             }
 
             @Override
@@ -70,7 +69,7 @@ class DiffWorkerTest {
                 if (failure != null) {
                     throw failure;
                 }
-                return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse("""
+                return new Diff(commit, UnifiedDiffParser.parse("""
                         diff --git a/x.java b/x.java
                         --- a/x.java
                         +++ b/x.java

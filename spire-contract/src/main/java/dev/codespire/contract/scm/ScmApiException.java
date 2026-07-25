@@ -19,6 +19,19 @@ public interface ScmApiException {
         return status() == 429;
     }
 
+    /**
+     * The provider refused to produce the diff because it is too large — terminal, since
+     * retrying cannot shrink the PR.
+     *
+     * <p>Which response means this is the adapter's business: one API answers a status code,
+     * another reports oversize as data on the diff itself (and so never reports it here).
+     * Callers ask this instead of matching a status they would have to know a provider to
+     * interpret.
+     */
+    default boolean isDiffTooLarge() {
+        return false;
+    }
+
     /** Seconds the provider asked us to wait (Retry-After); null when unknown. */
     default Integer retryAfterSeconds() {
         return null;

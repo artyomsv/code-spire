@@ -77,7 +77,7 @@ public class ConversationSaga {
             return Optional.empty();
         }
         ThreadTarget target = targetOpt.get();
-        boolean botMentioned = mentionsBot(e.text(), provider.botUsername(), provider.botAccountId());
+        boolean botMentioned = mentionsBot(e.mentions(), provider.botUsername(), provider.botAccountId());
 
         if (!decideToAnswer(e, provider, target, botMentioned)) {
             return Optional.empty();
@@ -166,22 +166,22 @@ public class ConversationSaga {
     }
 
     /**
-     * Scope B: a human explicitly @-mentions the bot. GitHub/GitLab render the mention as
-     * {@code @<login>} in the raw text — case-insensitive and word-bounded, so {@code @code-spire}
-     * matches but {@code @code-spireworks} does not. Bitbucket renders it as {@code @{account_id}}
-     * (no login in the raw text), so the account id is matched too. A blank login/id never matches.
+     * Scope B: a human explicitly @-mentions the bot — a membership test over the identities the
+     * ingress already extracted, so nothing here knows how any SCM renders a mention.
+     *
+     * <p>A username matches case-insensitively (logins are); an account id must match exactly, since
+     * it is an opaque key rather than a name. A blank login or id never matches, so an unresolved bot
+     * identity cannot make every comment look like a mention.
      */
-    static boolean mentionsBot(String text, String botUsername, String botAccountId) {
-        if (text == null) {
+    static boolean mentionsBot(List<String> mentions, String botUsername, String botAccountId) {
+        if (mentions == null || mentions.isEmpty()) {
             return false;
         }
-        if (botUsername != null && !botUsername.isBlank()
-                && Pattern.compile("@" + Pattern.quote(botUsername) + "(?![A-Za-z0-9_-])",
-                        Pattern.CASE_INSENSITIVE).matcher(text).find()) {
-            return true;
-        }
-        // Bitbucket Cloud writes a mention in the comment's raw text as @{account_id}.
-        return botAccountId != null && !botAccountId.isBlank() && text.contains("@{" + botAccountId + "}");
+        boolean hasUsername = botUsername != null && !botUsername.isBlank();
+        boolean hasAccountId = botAccountId != null && !botAccountId.isBlank();
+        return mentions.stream().anyMatch(mentioned ->
+                (hasUsername && mentioned.equalsIgnoreCase(botUsername))
+                        || (hasAccountId && mentioned.equals(botAccountId)));
     }
 
     /** An empty allowlist answers everyone; else match by account id or username (mirrors the PR gate). */

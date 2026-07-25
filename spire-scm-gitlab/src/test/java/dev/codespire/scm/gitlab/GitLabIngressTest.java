@@ -11,6 +11,7 @@ import dev.codespire.contract.port.RawWebhook;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -66,7 +67,7 @@ class GitLabIngressTest {
         assertEquals("Add feature", e.title());
         assertEquals("feature/x", e.sourceBranch());
         assertEquals("main", e.targetBranch());
-        assertEquals("abc123def4567890", e.diffRefs().headSha());
+        assertEquals("abc123def4567890", e.headCommit());
         assertEquals("1234", e.author().providerUserId()); // numeric id, for the self-loop guard
         assertEquals("octocat", e.author().username());
         assertEquals("https://gitlab.com/acme/team/spire-test/-/merge_requests/7", e.htmlUrl());
@@ -176,6 +177,25 @@ class GitLabIngressTest {
         assertEquals("looks fine to me", e.text());
         assertEquals(7, e.prId());
         assertEquals("42", e.author().providerUserId());   // from the note fixture's user.id
+    }
+
+    /**
+     * The ingress extracts who was @-mentioned, because only it knows GitLab renders a mention as
+     * {@code @username} in the note body. The orchestrator only asks whether the bot is in the list.
+     */
+    @Test
+    void mentionsAreExtractedFromTheNoteInGitLabsOwnSyntax() {
+        var events = ingress.translate(webhook(
+                noteWith("@code-spire.bot and @dev_one please look", "DiffNote", "DISC43", 902)));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertEquals(List.of("code-spire.bot", "dev_one"), e.mentions());
+    }
+
+    @Test
+    void aNoteWithNoMentionsCarriesAnEmptyList() {
+        var events = ingress.translate(webhook(noteWith("plain reply", "DiffNote", "DISC44", 903)));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertEquals(List.of(), e.mentions());
     }
 
     @Test

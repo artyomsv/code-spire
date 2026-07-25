@@ -8,7 +8,6 @@ import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 
@@ -60,7 +59,7 @@ public sealed interface IntegrationEvent {
     record PullRequestEventReceived(RepoRef repo, long prId, PrAction action,
                                     String title, String description,
                                     String sourceBranch, String targetBranch,
-                                    DiffRefs diffRefs, Author author,
+                                    String headCommit, Author author,
                                     String htmlUrl, String providerType) implements IntegrationEvent {
     }
 
@@ -73,16 +72,34 @@ public sealed interface IntegrationEvent {
                                  Author author) implements IntegrationEvent {
     }
 
-    /** {@code topLevel} marks a plain PR (issue) comment — answered in the review's summary
-     *  comment as its conversation "thread" (no SCM threading available for it). {@code false}
-     *  (the 7-arg convenience ctor's default) is an inline review-comment reply, threaded as before. */
+    /**
+     * A human's reply on a review conversation.
+     *
+     * <p>{@code topLevel} marks a plain PR (issue) comment — answered in the review's summary comment
+     * as its conversation "thread", since no SCM threading exists for it. {@code false} (the shorter
+     * ctors' default) is an inline review-comment reply, threaded on its own.
+     *
+     * <p>{@code mentions} is who the comment @-mentioned, already extracted by the ingress that
+     * parsed it. It is a list of identities, not text: an SCM renders a mention in its own syntax
+     * (a login, or an account id in braces), and only the adapter that knows the payload can read
+     * it. Callers ask "is the bot in here?" and never learn how any provider writes it.
+     */
     record AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
                          String commentId, String text, Author author,
-                         boolean topLevel) implements IntegrationEvent {
+                         boolean topLevel, List<String> mentions) implements IntegrationEvent {
+
+        public AuthorReplied {
+            mentions = mentions == null ? List.of() : List.copyOf(mentions);
+        }
+
+        public AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
+                             String commentId, String text, Author author, boolean topLevel) {
+            this(repo, prId, reviewId, threadRef, commentId, text, author, topLevel, List.of());
+        }
 
         public AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
                              String commentId, String text, Author author) {
-            this(repo, prId, reviewId, threadRef, commentId, text, author, false);
+            this(repo, prId, reviewId, threadRef, commentId, text, author, false, List.of());
         }
     }
 
@@ -151,7 +168,7 @@ public sealed interface IntegrationEvent {
                         boolean retryable, int attempt) implements IntegrationEvent {
     }
 
-    record CommentsPosted(String reviewId, long prId, String commit, String summaryCommentId,
+    record CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,
                           List<PostedInline> inline, List<ThreadOutcome> threadOutcomes) implements IntegrationEvent {
 
         public CommentsPosted {
@@ -176,9 +193,9 @@ public sealed interface IntegrationEvent {
                                     String replyCommentId, boolean resolved) {
         }
 
-        public CommentsPosted(String reviewId, long prId, String commit, String summaryCommentId,
+        public CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,
                               List<PostedInline> inline) {
-            this(reviewId, prId, commit, summaryCommentId, inline, List.of());
+            this(reviewId, prId, commit, summaryThreadRef, inline, List.of());
         }
     }
 

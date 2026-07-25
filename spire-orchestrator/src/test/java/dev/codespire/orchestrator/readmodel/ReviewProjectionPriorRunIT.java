@@ -111,10 +111,55 @@ class ReviewProjectionPriorRunIT {
         Optional<PriorRun> prior = projection.priorRunFor(reviewId);
         assertTrue(prior.isPresent());
         assertEquals("aaa111", prior.get().headCommit());
-        assertEquals("sum-1", prior.get().summaryCommentId());
+        assertEquals("sum-1", prior.get().summaryThreadRef());
         assertEquals(1, prior.get().findings().size());
         assertEquals("thread-9", prior.get().findings().getFirst().threadRef());
         assertEquals(7, prior.get().findings().getFirst().line());
+    }
+
+    /**
+     * A finding re-posted at the same anchor across rounds leaves several review_thread rows for one
+     * loc. The verdict must target the CURRENT thread, not a stale already-resolved earlier one.
+     */
+    @Test
+    void aFindingRePostedAtOneLocationReconcilesAgainstItsNewestThread() {
+        String reviewId = "review::ws/prior-run-it#40";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 40L,
+                "t", "a", "aid", "src", "dst", "c40", "http://x", "github", "reviewing", 0);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
+                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+        threads.markFindingThread(reviewId, new ThreadRef("3610391801"), "src/A.java", 7);
+        threads.markFindingThread(reviewId, new ThreadRef("3648554983"), "src/A.java", 7);
+        projection.recordPosted(reviewId, "c40", "sum-40");
+
+        assertEquals("3648554983", projection.priorRunFor(reviewId).orElseThrow()
+                .findings().getFirst().threadRef());
+    }
+
+    /**
+     * The same rule must hold when a thread ref carries no numeric order at all — one SCM's thread
+     * ref is an opaque discussion id, not a comment id. Recency was previously inferred by comparing
+     * the refs numerically, which threw for opaque ids and silently fell back to "keep the first
+     * seen", where first meant lexicographically smallest: the reconciliation fix was inert on that
+     * provider. Recency now comes from our own insertion order, which needs no id semantics.
+     */
+    @Test
+    void opaqueThreadRefsWithNoNumericOrderStillReconcileAgainstTheNewestThread() {
+        String reviewId = "review::ws/prior-run-it#41";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 41L,
+                "t", "a", "aid", "src", "dst", "c41", "http://x", "gitlab", "reviewing", 0);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
+                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+        // Deliberately ordered so that sorting the refs as text picks the WRONG (older) one.
+        threads.markFindingThread(reviewId, new ThreadRef("discussion-aaa1"), "src/A.java", 7);
+        threads.markFindingThread(reviewId, new ThreadRef("discussion-zzz9"), "src/A.java", 7);
+        projection.recordPosted(reviewId, "c41", "sum-41");
+
+        assertEquals("discussion-zzz9", projection.priorRunFor(reviewId).orElseThrow()
+                        .findings().getFirst().threadRef(),
+                "the newest thread row wins, whatever the ref looks like");
     }
 
     @Test

@@ -30,7 +30,6 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -154,7 +153,7 @@ class ReviewWorkerTest {
             @Override
             public PullRequest fetchPullRequest(RepoRef repo, long prId) {
                 return new PullRequest(repo, prId, "TEST pr", "TEST", "feature/t", "main",
-                        DiffRefs.headOnly(COMMIT), Author.of("TEST-id", "test", "Test"), "https://example.invalid");
+                        COMMIT, Author.of("TEST-id", "test", "Test"), "https://example.invalid");
             }
 
             @Override
@@ -162,7 +161,7 @@ class ReviewWorkerTest {
                 if (diffFailure != null) {
                     throw diffFailure;
                 }
-                return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(diffText), false);
+                return new Diff(commit, UnifiedDiffParser.parse(diffText), false);
             }
 
             @Override
@@ -897,7 +896,7 @@ class ReviewWorkerTest {
         }
 
         @Override
-        public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
+        public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
             inlineAttempts++;
             inlinePostTimestamps.add(System.nanoTime());
             if (inlineAttempts == failOnInline) {
@@ -925,12 +924,12 @@ class ReviewWorkerTest {
         }
 
         @Override
-        public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
-            updatedComments.add(commentId);
+        public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+            updatedComments.add(thread.value());
             if (updateCommentFailure != null) {
                 throw updateCommentFailure;
             }
-            return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
+            return new CommentRef(thread.value(), thread, CommentKind.SUMMARY);
         }
 
         @Override

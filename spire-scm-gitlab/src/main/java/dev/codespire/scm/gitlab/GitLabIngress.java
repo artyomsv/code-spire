@@ -14,7 +14,6 @@ import dev.codespire.contract.port.RawWebhook;
 import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 
@@ -22,10 +21,13 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * GitLab webhook ingress (SCM-MAPPING §7). GitLab does NOT sign the body: it echoes
@@ -41,6 +43,10 @@ import java.util.Set;
  * ingress needs no API token or base URL — the internet-facing gateway holds neither.
  */
 public class GitLabIngress implements ScmIngress {
+
+    // How GitLab writes an @-mention in a note body (see mentions()).
+    private static final Pattern MENTION =
+            Pattern.compile("@([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)");
 
     private static final String MERGE_REQUEST = "merge_request";
     private static final String NOTE = "note";
@@ -166,7 +172,7 @@ public class GitLabIngress implements ScmIngress {
                 attrs.path("description").asText(""),
                 attrs.path("source_branch").asText(""),
                 attrs.path("target_branch").asText(""),
-                DiffRefs.headOnly(attrs.path("last_commit").path("id").asText("")),
+                (attrs.path("last_commit").path("id").asText("")),
                 author(payload.path("user")),
                 attrs.path("url").asText(""),
                 type().providerType()));
@@ -196,7 +202,8 @@ public class GitLabIngress implements ScmIngress {
             String discussionId = attrs.path("discussion_id").asText("");
             String noteId = attrs.path("id").asText("");
             return List.of(new AuthorReplied(repo, iid, ReviewIds.reviewId(repo, iid),
-                    new ThreadRef(discussionId), noteId, text, author(payload.path("user")), topLevel));
+                    new ThreadRef(discussionId), noteId, text, author(payload.path("user")), topLevel,
+                    mentions(text)));
         }
         String[] parts = text.substring(1).split("\\s+", 2);
         String command = parts[0].toLowerCase(Locale.ROOT);
@@ -205,6 +212,25 @@ public class GitLabIngress implements ScmIngress {
         }
         return List.of(new ManualCommandReceived(repo, iid, command,
                 parts.length > 1 ? parts[1] : "", author(payload.path("user"))));
+    }
+
+    /**
+     * GitLab renders a mention as {@code @username} in the note body. Usernames may contain dots,
+     * dashes and underscores but not two dots in a row, and cannot end in punctuation.
+     *
+     * <p>This lives in the ingress because only it sees GitLab's rendering — the core is handed the
+     * identities that were mentioned and never learns any provider's syntax.
+     */
+    private static List<String> mentions(String text) {
+        if (text == null || text.indexOf('@') < 0) {
+            return List.of();
+        }
+        List<String> found = new ArrayList<>();
+        Matcher m = MENTION.matcher(text);
+        while (m.find()) {
+            found.add(m.group(1));
+        }
+        return found;
     }
 
     private RepoRef repo(JsonNode payload) {

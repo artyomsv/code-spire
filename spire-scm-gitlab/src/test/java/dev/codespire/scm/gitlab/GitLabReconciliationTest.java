@@ -102,6 +102,6 @@ class GitLabReconciliationTest {
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":7}")));
         assertEquals("7", new GitLabCommentSink(client)
-                .updateComment(repo, 1L, "7", "new body").commentId());
+                .updateComment(repo, 1L, new ThreadRef("7"), "new body").commentId());
     }
 }

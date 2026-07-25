@@ -7,7 +7,6 @@ import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
@@ -63,8 +62,8 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
     }
 
     @Override
-    public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
-        // Bitbucket needs no SHAs (refs feeds GitLab/GitHub adapters).
+    public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
+        // Bitbucket anchors by path+line alone; it needs no commit SHA at all.
         Map<String, Object> inline = anchor.side() == Side.OLD
                 ? Map.of("path", anchor.path(), "from", anchor.oldLine())
                 : Map.of("path", anchor.path(), "to", anchor.newLine());
@@ -104,7 +103,9 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
 
     /** Rewrite an existing comment's body in place (summary update on re-reviews). */
     @Override
-    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+    public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        // Bitbucket makes a comment its own thread root, so the thread ref is the comment to PUT.
+        String commentId = thread.value();
         String path = "/repositories/" + repo.full() + "/pullrequests/" + prId
                 + "/comments/" + commentId;
         client.putJson(path, Map.of("content", Map.of("raw", bodyMd)));

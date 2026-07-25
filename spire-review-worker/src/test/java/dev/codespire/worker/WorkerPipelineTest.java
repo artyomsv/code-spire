@@ -128,7 +128,8 @@ class WorkerPipelineTest {
         List<String> results = consumeResults(5);
         String posted = results.stream()
                 .filter(v -> v.contains("\"type\":\"CommentsPosted\"")).findFirst().orElseThrow();
-        assertTrue(posted.contains("\"summaryCommentId\":\"991\""));
+        // The summary's THREAD, supplied by the adapter — core never derives it from a comment id.
+        assertTrue(posted.contains("\"summaryThreadRef\":\"991\""), posted);
         BitbucketWireMockResource.server.verify(2, postRequestedFor(urlEqualTo(COMMENTS)));
 
         // redelivery: same command again -> reconstructed CommentsPosted, NO new posts

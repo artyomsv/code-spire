@@ -176,7 +176,7 @@ public class FollowUpWorker {
                                  DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
                                  PromptTemplate followUpPrompt) {
         String commit = transcript.commit() != null
-                ? transcript.commit() : diffs.fetchPullRequest(repo, prId).diffRefs().headSha();
+                ? transcript.commit() : diffs.fetchPullRequest(repo, prId).headCommit();
         Diff diff = diffs.fetchDiff(repo, prId, commit);
         String diffText = DiffRenderer.render(diff.files());
         Prompt prompt = FollowUpPrompt.render(transcript, diffText, followUpPrompt);

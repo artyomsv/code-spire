@@ -164,7 +164,7 @@ public class IntegrationSaga {
 
     private void onPullRequestEvent(PullRequestEventReceived e) {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
-        String commit = e.diffRefs().headSha();
+        String commit = e.headCommit();
 
         // Only PRs from a registered provider are reviewed. Resolve by (type,
         // workspace) when the event names its SCM — a GitHub org and a Bitbucket

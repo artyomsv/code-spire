@@ -28,13 +28,13 @@ class PortDefaultsTest {
             @Override public ScmType type() { return ScmType.BITBUCKET_CLOUD; }
             @Override public dev.codespire.contract.scm.CommentRef postSummary(RepoRef r, long id, String b) { return null; }
             @Override public dev.codespire.contract.scm.CommentRef postInline(RepoRef r, long id,
-                    dev.codespire.contract.scm.DiffRefs refs, dev.codespire.contract.scm.InlineAnchor a, String b) { return null; }
+                    String headCommit, dev.codespire.contract.scm.InlineAnchor a, String b) { return null; }
             @Override public dev.codespire.contract.scm.CommentRef replyInThread(RepoRef r, long id, ThreadRef t, String b) { return null; }
             @Override public dev.codespire.contract.scm.Author getPullRequestAuthor(RepoRef r, long id) { return null; }
         };
         assertEquals(CommentSink.ThreadResolution.UNSUPPORTED,
                 sink.resolveThread(repo, 1L, new ThreadRef("t")));
         assertThrows(UnsupportedOperationException.class,
-                () -> sink.updateComment(repo, 1L, "c1", "body"));
+                () -> sink.updateComment(repo, 1L, new ThreadRef("c1"), "body"));
     }
 }
