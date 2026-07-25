@@ -28,6 +28,42 @@ describe('generalDiscussionCard', () => {
     expect(generalDiscussionCard(detail([ev('AuthorReplied', '@a: x', 'finding')]))).toBeNull();
   });
 
+  it('leaves a thread the findings card already nests alone, whatever threadKind says', () => {
+    // After a re-review whose findings land on different lines, the backend classifies a finding's
+    // conversation as a bare mention (threadKind is derived from THIS run's findings_json locs) while
+    // the findings card still nests it by threadRef — it must not also appear here.
+    const r = {
+      events: [
+        { ...ev('AuthorReplied', '@a: can you show me a fix?', 'mention'), threadRef: 'c1' },
+        { ...ev('FollowUpGenerated', 'Rename the class …', 'mention'), threadRef: 'c1' },
+      ],
+      findingsList: [{ sev: 'critical', loc: 'src/App.java:12', msg: 'no compile', threadRef: 'c1' } as Finding],
+    } as unknown as ReviewDetail;
+
+    expect(generalDiscussionCard(r)).toBeNull();
+  });
+
+  it('still shows a thread no finding row owns', () => {
+    const r = {
+      events: [{ ...ev('AuthorReplied', '@a: unrelated line?', 'mention'), threadRef: 'm9' }],
+      findingsList: [{ sev: 'critical', loc: 'src/App.java:12', msg: 'x', threadRef: 'c1' } as Finding],
+    } as unknown as ReviewDetail;
+
+    expect(renderToStaticMarkup(<>{generalDiscussionCard(r)}</>)).toContain('unrelated line?');
+  });
+
+  it('leaves a thread owned by a reconciliation row alone', () => {
+    // Reconciliation entries are keyed by threadRef and are NOT in the backend's findingRefs, so this
+    // is the case that leaked into both cards.
+    const r = {
+      events: [{ ...ev('AuthorReplied', '@a: is it fixed?', 'mention'), threadRef: 'c7' }],
+      findingsList: [],
+      reconciliation: [{ sev: 'major', loc: 'src/App.java:4', msg: 'was open', status: 'resolved', threadRef: 'c7' }],
+    } as unknown as ReviewDetail;
+
+    expect(generalDiscussionCard(r)).toBeNull();
+  });
+
   it('always shows the opening message and puts the replies behind a re-fetch toggle', () => {
     // The stored event detail is only a ≤160-char preview, so the replies need the same fetch-on-expand
     // panel a finding gets — but the opening question must stay visible so the card has context.

@@ -376,6 +376,28 @@ interface FindingRow {
   resolvedThread?: boolean;
 }
 
+/**
+ * Every row the findings card renders — this run's findings PLUS the reconciliation entries. Shared
+ * with {@link generalDiscussionCard} so the two cards are mutually exclusive BY CONSTRUCTION: the
+ * backend's `threadKind` is derived only from this run's findings_json locs, so after a re-review
+ * whose findings land on different lines, a finding's conversation classifies as a bare mention while
+ * the findings card still nests it by threadRef — and the same thread rendered in both places.
+ */
+function findingRowsOf(r: ReviewDetail): FindingRow[] {
+  const findingsList = r.findingsList ?? [];
+  const ownedThreads = new Set(
+    findingsList.filter((f): f is Finding & { threadRef: string } => !!f.threadRef).map((f) => f.threadRef),
+  );
+  return [...newFindingRows(findingsList), ...reconciliationRows(r.reconciliation ?? [], ownedThreads)];
+}
+
+/** The threads the findings card owns — what general discussion must leave alone. */
+function findingThreadRefs(r: ReviewDetail): Set<string> {
+  return new Set(
+    findingRowsOf(r).map((row) => row.threadRef).filter((ref): ref is string => !!ref),
+  );
+}
+
 function newFindingRows(findingsList: Finding[]): FindingRow[] {
   return findingsList.map((f, i) => ({
     key: `new-${i}`,
@@ -522,12 +544,9 @@ export function findingsCard(r: ReviewDetail) {
     );
   }
 
-  const ownedThreads = new Set(
-    r.findingsList.filter((f): f is Finding & { threadRef: string } => !!f.threadRef).map((f) => f.threadRef),
-  );
-  const reconRows = reconciliationRows(reconciliation, ownedThreads);
-  const openRows = [...newFindingRows(r.findingsList), ...reconRows.filter((row) => !row.closed)];
-  const closedRows = reconRows.filter((row) => row.closed);
+  const rows = findingRowsOf(r);
+  const openRows = rows.filter((row) => !row.closed);
+  const closedRows = rows.filter((row) => row.closed);
 
   const more =
     r.findings > r.findingsList.length ? (
@@ -766,9 +785,12 @@ export function conversationExchangesBody(turns: ReviewEvent[]) {
  *  preview (ADR-011 keeps conversation text on the SCM), so rendering events alone left every reply
  *  truncated. A turn with no threadRef can't be re-fetched, so it falls back to the preview body. */
 export function generalDiscussionCard(r: ReviewDetail) {
+  const nestedUnderAFinding = findingThreadRefs(r);
   const turns = r.events.filter(
     (e: ReviewEvent) =>
-      (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated') && e.threadKind !== 'finding',
+      (e.type === 'AuthorReplied' || e.type === 'FollowUpGenerated') &&
+      e.threadKind !== 'finding' &&
+      !(e.threadRef && nestedUnderAFinding.has(e.threadRef)),
   );
   if (!turns.length) return null;
   const byThread = new Map<string, ReviewEvent[]>();
