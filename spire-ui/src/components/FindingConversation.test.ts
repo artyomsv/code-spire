@@ -45,6 +45,37 @@ describe('conversationReplies', () => {
     expect(replies.map((m) => m.text)).toEqual(['a1', 'q2', 'a2']);
   });
 
+  it('shows what follows the opener even when a thread holds an unanswered reply', () => {
+    // The thread the bot joined by @-mention: question, answer, then a second question the policy
+    // declined (so no stored turn for it). Counting back one message showed that unanswered question and
+    // HID the bot's answer — the whole point of expanding the panel.
+    const replies = conversationReplies(
+      [human('@code-spire-bot can you simplify that?'), bot('Line 15 can be shortened'),
+        human('are there any alternative code that can do this?')],
+      true, 1, '@artyomsv: @code-spire-bot can you simplify that?');
+    expect(replies.map((m) => m.text)).toEqual([
+      'Line 15 can be shortened', 'are there any alternative code that can do this?',
+    ]);
+  });
+
+  it('matches an opener whose preview was truncated', () => {
+    const long = 'a'.repeat(200);
+    const replies = conversationReplies([human(long), bot('answer')], true, 1,
+      '@artyomsv: ' + 'a'.repeat(160) + '…');
+    expect(replies.map((m) => m.text)).toEqual(['answer']);
+  });
+
+  it('matches an opener whose stored preview collapsed its newlines', () => {
+    const replies = conversationReplies([human('first line\n\nsecond line'), bot('answer')], true, 1,
+      '@artyomsv: first line second line');
+    expect(replies.map((m) => m.text)).toEqual(['answer']);
+  });
+
+  it('falls back to the trailing count when the opener cannot be matched', () => {
+    const replies = conversationReplies([human('unrelated'), bot('answer')], true, 1, '@a: nothing alike');
+    expect(replies.map((m) => m.text)).toEqual(['answer']);
+  });
+
   it('falls back to the whole transcript when it is no longer than the stored replies', () => {
     const replies = conversationReplies([human('q1'), bot('a1')], true, 3);
     expect(replies.map((m) => m.text)).toEqual(['q1', 'a1']);

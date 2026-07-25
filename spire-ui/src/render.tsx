@@ -838,6 +838,7 @@ export function generalDiscussionCard(r: ReviewDetail) {
                   previewTurns={replies}
                   previewBody={conversationExchangesBody(replies)}
                   rootShownAbove
+                  openerPreview={opening.det}
                 />
               )}
             </div>

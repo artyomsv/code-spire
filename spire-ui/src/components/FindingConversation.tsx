@@ -15,6 +15,8 @@ interface FindingConversationProps {
   // The thread's opening message is already rendered above the panel (general discussion shows the
   // question for context), so the fetched transcript must always drop its root to avoid repeating it.
   rootShownAbove?: boolean;
+  /** The opening message's stored preview, used to find it in the transcript and show what follows. */
+  openerPreview?: string;
 }
 
 type LoadState =
@@ -70,6 +72,7 @@ export function FindingConversation({
   previewBody,
   resolved,
   rootShownAbove,
+  openerPreview,
 }: FindingConversationProps) {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [open, setOpen] = useState(false);
@@ -124,7 +127,8 @@ export function FindingConversation({
         <ChevronDown size={14} className="finding-convo-chevron" aria-hidden="true" />
       </summary>
       {state.status === 'loaded' ? (
-        <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove} />
+        <ThreadMessages messages={state.messages} previewTurns={previewTurns} rootShownAbove={rootShownAbove}
+          openerPreview={openerPreview} />
       ) : state.status === 'loading' ? (
         <div className="convo-note">Loading full conversation…</div>
       ) : (
@@ -140,25 +144,55 @@ export function FindingConversation({
  * A finding's root is the bot's inline comment already shown as the finding body, so a leading bot
  * message is dropped.
  *
- * For general discussion the opening question is rendered above the panel, but HOW MUCH transcript
- * precedes it varies by provider — a GitHub summary thread returns the bot's summary comment before
- * the question, a Bitbucket one does not — so dropping a fixed leading message duplicated the opener
- * on GitHub. Take the trailing {@code storedReplyCount} messages instead: the replies are always the
- * tail of the thread, whatever context precedes them, and this keeps them index-aligned with the
- * stored turns that supply the timestamps. (Trade-off: an SCM message we hold no stored turn for —
- * e.g. a reply the policy declined to answer — isn't shown.)
+ * For general discussion the opening question is rendered above the panel, so the panel shows what
+ * follows it. How much transcript precedes the opener varies by provider — a GitHub summary thread
+ * returns the bot's summary comment first, a Bitbucket one does not — so it is located by matching its
+ * stored preview rather than by position. Counting back from the end instead (the previous rule) broke
+ * as soon as the thread held a message with no stored turn: a reply the policy declined pushed the
+ * bot's answer out of the tail, and the panel showed the unanswered question in its place.
+ * {@code storedReplyCount} remains the fallback for when the opener cannot be matched.
  */
 export function conversationReplies(messages: ThreadMessage[], rootShownAbove = false,
-                                    storedReplyCount = 0): ThreadMessage[] {
+                                    storedReplyCount = 0, openerPreview?: string): ThreadMessage[] {
   if (messages.length === 0) {
     return messages;
   }
   if (rootShownAbove) {
+    // Locate the opener and show everything after it. Counting back from the end instead looked right
+    // until a thread held a message we have no stored turn for — a reply the policy declined — which
+    // pushed the bot's answer out of the tail and displayed the unanswered question in its place.
+    const afterOpener = repliesAfterOpener(messages, openerPreview);
+    if (afterOpener) {
+      return afterOpener;
+    }
     return storedReplyCount > 0 && messages.length > storedReplyCount
       ? messages.slice(messages.length - storedReplyCount)
       : messages;
   }
   return messages[0].fromBot ? messages.slice(1) : messages;
+}
+
+/** Collapse whitespace so a stored preview lines up with the provider's full text. */
+function flatten(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Everything after the thread's opening message, or null when it cannot be located.
+ *
+ * The stored preview is a whitespace-collapsed, ≤160-char prefix of the real text (ADR-011), optionally
+ * carrying an "@author: " prefix — enough to match the same message in the fetched transcript.
+ */
+export function repliesAfterOpener(messages: ThreadMessage[], openerPreview?: string): ThreadMessage[] | null {
+  if (!openerPreview) {
+    return null;
+  }
+  const needle = flatten(openerPreview.replace(/^@[^:]+:\s*/, '')).replace(/…$/, '');
+  if (!needle) {
+    return null;
+  }
+  const at = messages.findIndex((m) => flatten(m.text).startsWith(needle));
+  return at === -1 ? null : messages.slice(at + 1);
 }
 
 /** The stored event carrying the timestamp for reply {@code i} — same order, and its kind
@@ -170,9 +204,10 @@ function timestampFor(previewTurns: ReviewEvent[], i: number, fromBot: boolean):
   return turnFromBot === fromBot ? turn : undefined;
 }
 
-function ThreadMessages({ messages, previewTurns, rootShownAbove }:
-  { messages: ThreadMessage[]; previewTurns: ReviewEvent[]; rootShownAbove?: boolean }) {
-  const replies = conversationReplies(messages, rootShownAbove, previewTurns.length);
+function ThreadMessages({ messages, previewTurns, rootShownAbove, openerPreview }:
+  { messages: ThreadMessage[]; previewTurns: ReviewEvent[]; rootShownAbove?: boolean;
+    openerPreview?: string }) {
+  const replies = conversationReplies(messages, rootShownAbove, previewTurns.length, openerPreview);
   if (!replies.length) return <div className="convo-note">No replies in this thread.</div>;
   return (
     <div className="convo">

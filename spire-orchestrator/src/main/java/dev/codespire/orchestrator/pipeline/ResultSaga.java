@@ -225,6 +225,14 @@ public class ResultSaga {
                 // (a new comment id per turn) accumulates toward the turn cap like a GitHub thread.
                 ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
                 threads.bumpTurn(e.reviewId(), root, e.commentId());
+                // The bot has now spoken here, so this IS a bot conversation: a further reply must engage
+                // without needing another @-mention, which may be the only reason the thread started. Only
+                // the answer comment used to be marked, so a thread the bot joined by mention declined the
+                // very next reply. The summary thread is excluded deliberately — owning that would make
+                // every later top-level PR comment engage the bot.
+                if (!root.value().equals(projection.summaryRefOf(e.reviewId()).orElse(null))) {
+                    threads.markOurThread(e.reviewId(), root);
+                }
                 // The bot's answer is itself a comment a human can reply to. On SCMs that thread by
                 // immediate parent (Bitbucket), such a reply keys off the answer's id — so mark it owned
                 // AND link it to the root, else a reply to the bot's answer isn't recognized as ours and

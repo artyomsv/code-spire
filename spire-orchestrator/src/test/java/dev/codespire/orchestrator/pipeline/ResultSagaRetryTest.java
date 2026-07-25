@@ -406,6 +406,63 @@ class ResultSagaRetryTest {
      * recognized as ours and multi-turn continues (Bitbucket threads by immediate parent).
      */
     @Test
+    void followUpPosted_marksTheThreadOwnedSoTheNextReplyNeedsNoMention() {
+        // A thread the bot joined by @-mention is not owned yet. Marking only its ANSWER left the thread
+        // itself unowned, so the very next reply was declined (threadIsOurs=false) unless the human
+        // @-mentioned again — once the bot has spoken, the conversation is its own.
+        List<String> ownedThreads = new ArrayList<>();
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
+                return List.of();
+            }
+        };
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return thread;
+            }
+
+            @Override
+            public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
+            }
+
+            @Override
+            public void markOurThread(String reviewId, ThreadRef thread) {
+                ownedThreads.add(thread.value());
+            }
+
+            @Override
+            public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.of("summary-1");
+            }
+
+            @Override
+            public void setAnswering(String reviewId, boolean answering) {
+            }
+        };
+
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("mention-thread"), "answer-1"));
+        assertEquals(List.of("mention-thread"), ownedThreads, "the thread the bot spoke in becomes ours");
+
+        // …but NOT the summary thread: owning that would make every later top-level PR comment engage.
+        ownedThreads.clear();
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("summary-1"), "answer-2"));
+        assertTrue(ownedThreads.isEmpty(), "the summary thread's scope is deliberately unchanged");
+    }
+
+    @Test
     void followUpPosted_setsAnsweringFalseAndMarksTheAnswerOwned() {
         List<Boolean> answeringCalls = new ArrayList<>();
         List<String> markedOwned = new ArrayList<>();
@@ -428,6 +485,11 @@ class ResultSagaRetryTest {
             }
 
             @Override
+            public void markOurThread(String reviewId, ThreadRef thread) {
+                // Asserted in followUpPosted_marksTheThreadOwnedSoTheNextReplyNeedsNoMention.
+            }
+
+            @Override
             public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
                 markedOwned.add(answer.value() + "->" + root.value());
             }
@@ -440,6 +502,11 @@ class ResultSagaRetryTest {
             }
         };
         saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.empty(); // not the summary thread — see the sibling test for that case
+            }
+
             @Override
             public void setAnswering(String reviewId, boolean answering) {
                 answeringCalls.add(answering);
