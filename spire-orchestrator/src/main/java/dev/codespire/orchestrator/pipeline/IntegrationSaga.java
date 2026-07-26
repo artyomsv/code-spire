@@ -115,10 +115,14 @@ public class IntegrationSaga {
                         // ref — the review detail nests them all under the finding instead of spilling
                         // later turns into a bogus "General discussion" with an under-counted label.
                         projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
-                                "@" + author + ": " + Previews.of(e.text()), cmd.threadRef().value());
+                                "@" + author + ": " + Previews.of(e.text()), threadRefOf(cmd));
                         // Flags "answering" AND bumps the live dashboard in one broadcast — replaces
                         // the plain touch() that used to sit here (fix #5, avoid double-broadcast).
-                        projection.setAnswering(e.reviewId(), true);
+                        // Only for a real answer: the cap notice is fixed text with no LLM call, and
+                        // flagging it would leave a "responding…" pill up for a reply that never comes.
+                        if (cmd instanceof ActionCommand.AnswerFollowUp) {
+                            projection.setAnswering(e.reviewId(), true);
+                        }
                         commands.emit(cmd);
                     });
                 }
@@ -262,6 +266,15 @@ public class IntegrationSaga {
             case ManualCommandReceived e -> ReviewIds.reviewId(e.repo(), e.prId());
             case AuthorReplied e -> e.reviewId();
             default -> "";
+        };
+    }
+
+    /** The conversation root both reply commands carry, so the human's reply is filed under it either way. */
+    private static String threadRefOf(ActionCommand command) {
+        return switch (command) {
+            case ActionCommand.AnswerFollowUp c -> c.threadRef().value();
+            case ActionCommand.NotifyTurnCap c -> c.threadRef().value();
+            default -> null;
         };
     }
 }

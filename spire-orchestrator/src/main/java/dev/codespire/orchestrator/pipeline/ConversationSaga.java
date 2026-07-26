@@ -57,8 +57,12 @@ public class ConversationSaga {
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
 
-    /** The AnswerFollowUp to emit for a non-bot reply, or empty when policy says stay quiet. */
-    public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
+    /**
+     * The command to emit for a non-bot reply, or empty when policy says stay quiet: an
+     * {@code AnswerFollowUp} normally, or a one-off {@code NotifyTurnCap} on the turn that first
+     * exhausts the thread's budget — the cap is a hand-off, so somebody has to be told.
+     */
+    public Optional<ActionCommand> planFollowUp(AuthorReplied e) {
         Optional<ScmProvider> providerOpt = reviewProviders.resolveForReview(e.reviewId());
         if (providerOpt.isEmpty()) {
             LOG.infof("Follow-up skipped for %s — no enabled provider for workspace '%s'",
@@ -79,7 +83,15 @@ public class ConversationSaga {
         ThreadTarget target = targetOpt.get();
         boolean botMentioned = mentionsBot(e.mentions(), provider.botUsername(), provider.botAccountId());
 
-        if (!decideToAnswer(e, provider, target, botMentioned)) {
+        ConversationPolicy.ConversationDecision decision = decide(e, provider, target, botMentioned);
+        if (decision.capReached()) {
+            // Hand the thread back visibly. The worker keeps this to one notice per thread, so the
+            // later replies that also land here post nothing.
+            return Optional.of(new ActionCommand.NotifyTurnCap(
+                    e.reviewId(), e.repo(), e.prId(), target.thread(), levels.turnCap(),
+                    workerCredentials.pack(provider)));
+        }
+        if (!decision.answer()) {
             return Optional.empty();
         }
 
@@ -112,9 +124,17 @@ public class ConversationSaga {
         return true;
     }
 
-    /** The policy gate: level / allowlist / thread-ownership-or-mention / turn-cap (spec §4). Records
-     *  the cap-reached timeline note itself, since it's the only branch that needs one. */
-    private boolean decideToAnswer(AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned) {
+    /**
+     * The policy gate: level / allowlist / thread-ownership-or-mention / turn-cap (spec §4). Records
+     * the cap-reached timeline note itself, since it's the only branch that needs one.
+     *
+     * <p>The cap and a true decline log DIFFERENTLY on purpose. Both produce no answer, but one posts a
+     * hand-off notice and the other stays silent — a single "declined" line for both makes it impossible
+     * to tell from the log whether the thread was told anything, which is the exact ambiguity this
+     * factor-logging exists to remove.
+     */
+    private ConversationPolicy.ConversationDecision decide(
+            AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned) {
         ConversationLevel level = levels.effectiveLevel(provider.type(), e.repo().workspace());
         boolean authorAllowed = allowlistAllows(provider.authors(), e.author());
         int priorTurns = threads.turnCount(e.reviewId(), target.thread());
@@ -124,15 +144,17 @@ public class ConversationSaga {
                 level, authorAllowed, false, target.isOurs(), botMentioned, priorTurns, levels.turnCap());
         if (decision.capReached()) {
             timeline.record("integration", "conversation:cap", e.reviewId(),
-                    "turn cap reached — deferring to the team");
-        }
-        if (!decision.answer()) {
+                    "turn cap reached — handing back to the team");
+            LOG.infof("Turn cap reached on %s thread %s — posting the hand-off notice "
+                    + "(priorTurns=%d/%d); an @-mention reopens the thread",
+                    e.reviewId(), target.thread().value(), priorTurns, levels.turnCap());
+        } else if (!decision.answer()) {
             LOG.infof("Follow-up declined for %s — level=%s authorAllowed=%b threadIsOurs=%b mentioned=%b "
-                    + "priorTurns=%d/%d capReached=%b",
+                    + "priorTurns=%d/%d (no reply posted)",
                     e.reviewId(), level, authorAllowed, target.isOurs(), botMentioned,
-                    priorTurns, levels.turnCap(), decision.capReached());
+                    priorTurns, levels.turnCap());
         }
-        return decision.answer();
+        return decision;
     }
 
     /** Which SCM thread the answer threads onto, and whether the bot owns it. */

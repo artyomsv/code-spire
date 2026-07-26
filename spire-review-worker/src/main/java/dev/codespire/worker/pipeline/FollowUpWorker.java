@@ -1,8 +1,10 @@
 package dev.codespire.worker.pipeline;
 
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
+import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
@@ -43,6 +45,9 @@ import java.util.concurrent.TimeoutException;
 public class FollowUpWorker {
 
     private static final Logger LOG = Logger.getLogger(FollowUpWorker.class);
+
+    /** One hand-off notice per thread — the slot is the thread, so the key is a constant. */
+    private static final String CAP_NOTICE_KEY = "capnotice";
 
     @Inject
     WorkerScmClients scm;
@@ -119,6 +124,38 @@ public class FollowUpWorker {
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
                 result.usage()));
         results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId()));
+    }
+
+    /**
+     * Post the turn-cap hand-off notice, once per thread (spec §8).
+     *
+     * <p>Fixed text, no LLM call: reaching the cap must not cost anything, and the wording should not
+     * drift between threads. The idempotency slot is the thread itself rather than the triggering
+     * comment, so every further reply that re-reaches the cap finds the slot taken and posts nothing —
+     * one hand-off, not a repeated "I'm done" on each new comment.
+     *
+     * <p>The notice invites an @-mention because {@code ConversationPolicy} lets a mention override the
+     * cap; if that policy ever changes, this text has to change with it.
+     */
+    public void notifyTurnCap(ActionCommand.NotifyTurnCap command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        String thread = command.threadRef().value();
+        if (idempotency.claim(command.reviewId(), thread, CAP_NOTICE_KEY)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            LOG.debugf("Turn-cap notice already posted for %s thread %s", command.reviewId(), thread);
+            return;
+        }
+        CommentRef ref = clients.comments().replyInThread(command.repo(), command.prId(),
+                command.threadRef(), capNoticeText(command.turnCap()));
+        idempotency.markPosted(command.reviewId(), thread, CAP_NOTICE_KEY, ref.commentId());
+        LOG.infof("Posted turn-cap notice for %s thread %s (cap %d)",
+                command.reviewId(), thread, command.turnCap());
+        results.emit(new TurnCapNotified(command.reviewId(), command.threadRef(), ref.commentId()));
+    }
+
+    static String capNoticeText(int turnCap) {
+        return "I've replied " + turnCap + " times in this thread, so I'll hand it back to the team "
+                + "rather than keep going. @-mention me if you still need something here.";
     }
 
     /** {@code min(cap, base * factor^(attempt-1))} — the base/factor are the command's runtime-configured

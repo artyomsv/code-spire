@@ -5,6 +5,7 @@ import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
+import dev.codespire.contract.command.ActionCommand.NotifyTurnCap;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -56,6 +57,7 @@ public class CommandDispatcher {
                 case GenerateReview c -> reviewWorker.generateReview(c);
                 case PostComments c -> reviewWorker.postComments(c);
                 case AnswerFollowUp c -> followUpWorker.answer(c);
+                case NotifyTurnCap c -> followUpWorker.notifyTurnCap(c);
                 default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
             }
         } finally {

@@ -8,6 +8,7 @@ import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
+import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
@@ -246,6 +247,16 @@ public class ResultSaga {
                 // review run's registerHeader reset to clear the flag.
                 projection.setAnswering(e.reviewId(), false);
             }
+            case TurnCapNotified e -> {
+                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                projection.appendEvent(e.reviewId(), "result", "TurnCapNotified",
+                        "turn cap reached — handed back to the team", root.value());
+                // No bumpTurn: the notice about running out of turns must not consume one. Link it to
+                // the root anyway, so a human replying to the notice (on an SCM that threads by
+                // immediate parent) is still recognized as this conversation rather than a new thread.
+                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                projection.setAnswering(e.reviewId(), false);
+            }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -399,6 +410,7 @@ public class ResultSaga {
             case CommentsPosted e -> e.reviewId();
             case FollowUpGenerated e -> e.reviewId();
             case FollowUpPosted e -> e.reviewId();
+            case TurnCapNotified e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             default -> "";
         };

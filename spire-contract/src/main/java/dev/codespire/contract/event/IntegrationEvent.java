@@ -39,7 +39,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.ReviewFailed.class, name = "ReviewFailed"),
         @JsonSubTypes.Type(value = IntegrationEvent.CommentsPosted.class, name = "CommentsPosted"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpGenerated.class, name = "FollowUpGenerated"),
-        @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted")
+        @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted"),
+        @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified")
 })
 public sealed interface IntegrationEvent {
 
@@ -207,5 +208,15 @@ public sealed interface IntegrationEvent {
     }
 
     record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId) implements IntegrationEvent {
+    }
+
+    /**
+     * The turn-cap hand-off notice was posted in {@code threadRef} (the conversation root) as
+     * {@code commentId}.
+     *
+     * <p>Deliberately NOT a {@link FollowUpPosted}: that event bumps the thread's turn count, so
+     * reusing it would let the notice about running out of turns consume one.
+     */
+    record TurnCapNotified(String reviewId, ThreadRef threadRef, String commentId) implements IntegrationEvent {
     }
 }

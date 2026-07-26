@@ -178,11 +178,13 @@ class ConversationSagaTest {
             }
         };
 
-        Optional<ActionCommand.AnswerFollowUp> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
+        Optional<ActionCommand> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
 
         assertTrue(cmd.isPresent(), "a topLevel reply with a posted summary is answered");
-        assertEquals("sum-1", cmd.get().threadRef().value(), "the command threads onto the SUMMARY comment");
-        assertEquals("555", cmd.get().triggeringCommentId(), "the triggering id stays the author's own comment");
+        ActionCommand.AnswerFollowUp answer =
+                assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.get());
+        assertEquals("sum-1", answer.threadRef().value(), "the command threads onto the SUMMARY comment");
+        assertEquals("555", answer.triggeringCommentId(), "the triggering id stays the author's own comment");
         assertFalse(notes.contains("skipped:AnswerFollowUp"));
     }
 
@@ -248,13 +250,121 @@ class ConversationSagaTest {
                 "review::acme/web#412", new ThreadRef("answer-1"), "c-99", "and the other errors?",
                 Author.of("human-1", "alice", "Alice"), false);
 
-        Optional<ActionCommand.AnswerFollowUp> cmd = saga.planFollowUp(replyOnAnswer);
+        Optional<ActionCommand> cmd = saga.planFollowUp(replyOnAnswer);
 
         assertTrue(cmd.isPresent(), "a reply on the bot's own answer keeps the conversation going");
-        assertEquals("finding-1", cmd.get().threadRef().value(),
+        ActionCommand.AnswerFollowUp answer =
+                assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.get());
+        assertEquals("finding-1", answer.threadRef().value(),
                 "the command targets the conversation root, not the answer comment it replied to");
-        assertEquals("c-99", cmd.get().triggeringCommentId(), "the triggering id stays the human's comment");
+        assertEquals("c-99", answer.triggeringCommentId(), "the triggering id stays the human's comment");
         assertEquals(List.of("finding-1"), turnCountedOn, "the turn cap counts on the root");
+    }
+
+    // --- turn cap: a hand-off has to be visible to the person waiting in the thread ---
+
+    /**
+     * Builds a saga whose owned thread "finding-1" already has {@code priorTurns} turns. The LLM
+     * credential fake throws: a cap notice is fixed text, so needing one would mean the notice path
+     * had drifted into the paid answer path.
+     */
+    private static ConversationSaga cappedThreadSaga(int priorTurns, List<String> notes) {
+        ConversationSaga saga = new ConversationSaga();
+        saga.reviewProviders = new ReviewProviderResolver() {
+            @Override
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
+                return Optional.of(githubProvider());
+            }
+        };
+        saga.levels = fixedLevel(ConversationLevel.INTERACTIVE);
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return new ThreadRef("finding-1");
+            }
+
+            @Override
+            public boolean isOurThread(String reviewId, ThreadRef thread) {
+                return true;
+            }
+
+            @Override
+            public int turnCount(String reviewId, ThreadRef thread) {
+                return priorTurns;
+            }
+        };
+        saga.workerCredentials = new WorkerCredentials() {
+            @Override
+            public String pack(ScmProvider p) {
+                return "packed:" + p.workspace();
+            }
+        };
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public Optional<String> packDefault(String workspace) {
+                throw new AssertionError("the cap notice is fixed text — it must not need an LLM credential");
+            }
+        };
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+                notes.add(type);
+            }
+        };
+        saga.promptTemplates = new WorkerPromptTemplates() {
+            @Override
+            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+                return null;
+            }
+        };
+        return saga;
+    }
+
+    private static AuthorReplied inlineReply(List<String> mentions) {
+        return new AuthorReplied(new RepoRef("acme", "web"), 412L, "review::acme/web#412",
+                new ThreadRef("finding-1"), "c-99", "and this one?",
+                Author.of("human-1", "alice", "Alice"), false, mentions);
+    }
+
+    /**
+     * The cap used to produce a dashboard note and nothing else, so the bot just went quiet — which
+     * from inside the thread is indistinguishable from a lost webhook or a crash. It must hand off out
+     * loud.
+     */
+    @Test
+    void aCappedThreadPlansTheHandOffNoticeInsteadOfAnAnswer() {
+        List<String> notes = new ArrayList<>();
+        // fixedLevel caps at 4; four turns are already spent.
+        Optional<ActionCommand> cmd = cappedThreadSaga(4, notes).planFollowUp(inlineReply(List.of()));
+
+        assertTrue(cmd.isPresent(), "reaching the cap must still emit something — silence is not a hand-off");
+        ActionCommand.NotifyTurnCap notice =
+                assertInstanceOf(ActionCommand.NotifyTurnCap.class, cmd.get());
+        assertEquals("finding-1", notice.threadRef().value(), "the notice posts on the conversation root");
+        assertEquals(4, notice.turnCap(), "the notice states the cap it actually hit");
+        assertEquals("packed:acme", notice.scmCredential(), "the worker needs the SCM credential to post");
+        assertNull(notice.llmCredential(), "no LLM call — the notice is fixed text");
+        assertTrue(notes.contains("conversation:cap"), "the dashboard note stays alongside the reply");
+    }
+
+    /** An @-mention past the cap is a person asking directly, so it gets a real answer, not the notice. */
+    @Test
+    void aMentionPastTheCapPlansARealAnswerNotTheNotice() {
+        ConversationSaga saga = cappedThreadSaga(4, new ArrayList<>());
+        // The mention override takes the paid path, so this saga needs a working LLM credential.
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public Optional<String> packDefault(String workspace) {
+                return Optional.of("llm-cred");
+            }
+        };
+
+        Optional<ActionCommand> cmd = saga.planFollowUp(inlineReply(List.of("code-spire")));
+
+        ActionCommand.AnswerFollowUp answer =
+                assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.orElseThrow(),
+                        "a direct mention past the cap is answered, not handed off again");
+        assertTrue(answer.mentioned(), "the command records that a mention is what let this through");
     }
 
     @Test
@@ -294,7 +404,7 @@ class ConversationSagaTest {
             }
         };
 
-        Optional<ActionCommand.AnswerFollowUp> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
+        Optional<ActionCommand> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
 
         assertTrue(cmd.isEmpty(), "blank botAccountId must fail closed with no command");
         assertTrue(notes.contains("skipped:AnswerFollowUp"));
@@ -324,7 +434,7 @@ class ConversationSagaTest {
             }
         };
 
-        Optional<ActionCommand.AnswerFollowUp> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
+        Optional<ActionCommand> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
 
         assertTrue(cmd.isEmpty(), "no posted summary to converse on -> no command");
         assertTrue(notes.contains("skipped:AnswerFollowUp"));

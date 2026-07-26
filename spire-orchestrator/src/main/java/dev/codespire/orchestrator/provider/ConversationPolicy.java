@@ -17,7 +17,10 @@ public final class ConversationPolicy {
         if (!eligible) {
             return new ConversationDecision(false, false);
         }
-        if (priorTurns >= turnCap) {
+        // An explicit @-mention overrides the cap. The cap exists to stop runaway automated
+        // back-and-forth, not to refuse a person who deliberately asked for the bot — so a human who
+        // mentions it after the hand-off gets an answer, and the notice can honestly invite that.
+        if (priorTurns >= turnCap && !botMentioned) {
             return new ConversationDecision(false, true);
         }
         return new ConversationDecision(true, false);

@@ -1,5 +1,7 @@
 package dev.codespire.worker.pipeline;
 
+import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.port.CommentSink;
@@ -16,6 +18,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
+import dev.codespire.worker.adapters.WorkerScmClients;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -128,5 +131,88 @@ class FollowUpWorkerTest {
         assertTrue(FollowUpWorker.isTransient(new java.io.IOException("connection reset")));
         assertFalse(FollowUpWorker.isTransient(new GitHubApiException(404, "GET", "/x", "not found")));
         assertFalse(FollowUpWorker.isTransient(new IllegalStateException("boom")));
+    }
+
+    // --- turn-cap hand-off notice ---
+
+    private static final RepoRef CAP_REPO = new RepoRef("artyomsv", "spire-test");
+    private static final ThreadRef CAP_THREAD = new ThreadRef("finding-1");
+    private static final ActionCommand.NotifyTurnCap CAP_COMMAND =
+            new ActionCommand.NotifyTurnCap("review::artyomsv/spire-test#5", CAP_REPO, 5L, CAP_THREAD, 5, "cred");
+
+    /** A worker whose idempotency slot answers with {@code claim}, collecting whatever it emits. */
+    private static FollowUpWorker capWorker(CommentIdempotencyStore.Claim claim, CommentSink sink,
+                                           List<IntegrationEvent> emitted, List<String> markedKeys) {
+        FollowUpWorker worker = new FollowUpWorker();
+        worker.scm = new WorkerScmClients() {
+            @Override
+            public Clients forCommand(ActionCommand command) {
+                return new Clients(null, sink);
+            }
+        };
+        worker.idempotency = new CommentIdempotencyStore() {
+            @Override
+            public Claim claim(String reviewId, String commit, String anchorKey) {
+                return claim;
+            }
+
+            @Override
+            public void markPosted(String reviewId, String commit, String anchorKey, String postedRef) {
+                markedKeys.add(commit + "/" + anchorKey);
+            }
+        };
+        worker.results = new ResultsEmitter() {
+            @Override
+            public void emit(IntegrationEvent event) {
+                emitted.add(event);
+            }
+        };
+        return worker;
+    }
+
+    @Test
+    void postsTheHandOffNoticeAndEmitsItsOwnEvent() {
+        CommentSink sink = mock(CommentSink.class);
+        List<IntegrationEvent> emitted = new java.util.ArrayList<>();
+        List<String> marked = new java.util.ArrayList<>();
+        when(sink.replyInThread(eq(CAP_REPO), eq(5L), eq(CAP_THREAD), anyString()))
+                .thenReturn(new CommentRef("notice-1", CAP_THREAD, CommentKind.REPLY));
+
+        capWorker(new CommentIdempotencyStore.Claim.Post(), sink, emitted, marked).notifyTurnCap(CAP_COMMAND);
+
+        verify(sink).replyInThread(eq(CAP_REPO), eq(5L), eq(CAP_THREAD), contains("hand it back to the team"));
+        // TurnCapNotified, NOT FollowUpPosted: that event bumps the turn count, so the notice about
+        // running out of turns would consume one of them.
+        IntegrationEvent.TurnCapNotified notified =
+                assertInstanceOf(IntegrationEvent.TurnCapNotified.class, emitted.getFirst());
+        assertEquals("notice-1", notified.commentId());
+        assertEquals("finding-1", notified.threadRef().value());
+        assertEquals(List.of("finding-1/capnotice"), marked,
+                "the slot is the THREAD, so further replies find it taken");
+    }
+
+    /**
+     * The bot must not repeat its hand-off. Every later reply on a capped thread re-reaches this
+     * command, so without the claim the thread would collect an "I'm done" per comment — worse than
+     * the silence this feature replaced.
+     */
+    @Test
+    void aSecondReplyOnACappedThreadPostsNothingMore() {
+        CommentSink sink = mock(CommentSink.class);
+        List<IntegrationEvent> emitted = new java.util.ArrayList<>();
+
+        capWorker(new CommentIdempotencyStore.Claim.AlreadyPosted("notice-1"), sink, emitted,
+                new java.util.ArrayList<>()).notifyTurnCap(CAP_COMMAND);
+
+        verify(sink, never()).replyInThread(any(), anyLong(), any(), anyString());
+        assertTrue(emitted.isEmpty(), "nothing posted, nothing to report");
+    }
+
+    @Test
+    void theNoticeNamesTheCapAndInvitesTheMentionThatOverridesIt() {
+        String text = FollowUpWorker.capNoticeText(5);
+        assertTrue(text.contains("5"), "says how many turns were spent, so the limit is legible");
+        assertTrue(text.contains("@-mention"),
+                "ConversationPolicy lets a mention override the cap — the notice must offer that way back");
     }
 }

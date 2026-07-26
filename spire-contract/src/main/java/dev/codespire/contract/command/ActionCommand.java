@@ -28,7 +28,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.GatherContext.class, name = "GatherContext"),
         @JsonSubTypes.Type(value = ActionCommand.GenerateReview.class, name = "GenerateReview"),
         @JsonSubTypes.Type(value = ActionCommand.PostComments.class, name = "PostComments"),
-        @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp")
+        @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp"),
+        @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap")
 })
 public sealed interface ActionCommand {
 
@@ -143,5 +144,21 @@ public sealed interface ActionCommand {
             this(reviewId, repo, prId, threadRef, triggeringCommentId, question,
                     scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor, null);
         }
+    }
+
+    /**
+     * The bot has used up its per-thread turns and is handing the thread back to the team — post a
+     * one-off notice saying so, then stay quiet (spec §8).
+     *
+     * <p>Without this the cap was invisible outside the dashboard: the bot simply stopped replying,
+     * which reads exactly like a lost webhook or a crash to the person waiting in the thread. Silence
+     * is not a hand-off.
+     *
+     * <p>Carries no LLM credential — the notice is fixed text, so reaching the cap costs nothing and
+     * always says the same thing. {@code threadRef} is the conversation ROOT, which is also the
+     * idempotency slot: the notice posts once per thread however many further replies arrive.
+     */
+    record NotifyTurnCap(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                         int turnCap, String scmCredential) implements ActionCommand {
     }
 }

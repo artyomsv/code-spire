@@ -370,7 +370,7 @@ class IntegrationSagaPolicyTest {
         };
         saga.conversation = new ConversationSaga() {
             @Override
-            public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
+            public Optional<ActionCommand> planFollowUp(AuthorReplied e) {
                 return Optional.of(followUp);
             }
         };
