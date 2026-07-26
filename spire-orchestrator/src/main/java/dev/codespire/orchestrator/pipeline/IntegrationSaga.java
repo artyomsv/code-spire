@@ -90,10 +90,15 @@ public class IntegrationSaga {
         switch (event) {
             case PullRequestEventReceived e -> onPullRequestEvent(e);
             case PullRequestClosed e -> {
-                lifecycle.handle(ReviewIds.reviewId(e.repo(), e.prId()),
-                        new RecordCommand.CancelReview(e.reason().name()));
-                projection.setPrState(ReviewIds.reviewId(e.repo(), e.prId()),
-                        e.reason() == CloseReason.MERGED ? "MERGED" : "CLOSED");
+                String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
+                boolean merged = e.reason() == CloseReason.MERGED;
+                lifecycle.handle(reviewId, new RecordCommand.CancelReview(e.reason().name()));
+                projection.setPrState(reviewId, merged ? "MERGED" : "CLOSED");
+                // The badge alone left no record of WHEN the PR ended, or that it ended at all: the
+                // event history stopped at ReviewCompleted while the header said MERGED. Only the
+                // in-memory timeline saw it, so a restart erased even that.
+                projection.appendEvent(reviewId, "integration", "PullRequestClosed",
+                        merged ? "merged" : "closed (" + e.reason().name().toLowerCase(Locale.ROOT) + ")");
             }
             case ManualCommandReceived e -> {
                 if (isBotAuthored(reviewIdOf(e), e.author())) {

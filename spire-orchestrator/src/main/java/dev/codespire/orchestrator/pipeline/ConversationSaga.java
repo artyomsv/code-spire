@@ -164,9 +164,12 @@ public class ConversationSaga {
         if (decision.capReached()) {
             timeline.record("integration", "conversation:cap", e.reviewId(),
                     "turn cap reached — handing back to the team");
-            LOG.infof("Turn cap reached on %s thread %s — posting the hand-off notice "
-                    + "(priorTurns=%d/%d); an @-mention reopens the thread",
-                    e.reviewId(), target.thread().value(), priorTurns, levels.turnCap());
+            // "handing back", not "posting": whether a notice actually goes out is the worker's
+            // call — it keeps one per thread — so claiming the post here would be a promise this
+            // saga cannot keep, and on the second reply to a capped thread it would be false.
+            LOG.infof("Turn cap reached on %s thread %s — handing back to the team "
+                    + "(priorTurns=%d/%d); the notice posts once per thread, and an @-mention "
+                    + "reopens it", e.reviewId(), target.thread().value(), priorTurns, levels.turnCap());
         } else if (!decision.answer()) {
             LOG.infof("Follow-up declined for %s — level=%s authorAllowed=%b threadIsOurs=%b mentioned=%b "
                     + "priorTurns=%d/%d (no reply posted)",

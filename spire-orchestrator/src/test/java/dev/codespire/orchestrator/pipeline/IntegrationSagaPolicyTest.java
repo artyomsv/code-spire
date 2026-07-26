@@ -46,6 +46,8 @@ class IntegrationSagaPolicyTest {
     private final List<String> rerunInvocations = new ArrayList<>();
     private final List<RecordCommand> handledCommands = new ArrayList<>();
     private final List<String> prStateCalls = new ArrayList<>();
+    /** Durable review-history rows, as {@code type:detail} — distinct from the in-memory timeline. */
+    private final List<String> appendedEvents = new ArrayList<>();
     private boolean reviewRegistered;
 
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
@@ -96,10 +98,12 @@ class IntegrationSagaPolicyTest {
 
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail) {
+                appendedEvents.add(type + ":" + detail);
             }
 
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
+                appendedEvents.add(type + ":" + detail);
             }
 
             @Override
@@ -435,5 +439,25 @@ class IntegrationSagaPolicyTest {
         assertEquals(List.of("review::acme/web#412:CLOSED"), prStateCalls);
         assertEquals(1, handledCommands.size(), "the existing cancel-on-close flow is unchanged");
         assertInstanceOf(RecordCommand.CancelReview.class, handledCommands.get(0));
+    }
+
+    /**
+     * The badge alone left no record of when — or that — the PR ended: the review's own history
+     * stopped at ReviewCompleted while the header read MERGED. Only the in-memory timeline saw it,
+     * so a restart erased even that.
+     */
+    @Test
+    void pullRequestClosedIsRecordedInTheReviewsOwnHistory() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.MERGED));
+        assertTrue(appendedEvents.contains("PullRequestClosed:merged"), appendedEvents.toString());
+    }
+
+    /** Declined says so, rather than reading as a merge that lost its badge. */
+    @Test
+    void aDeclinedPullRequestRecordsWhyItClosed() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.DECLINED));
+        assertTrue(appendedEvents.contains("PullRequestClosed:closed (declined)"), appendedEvents.toString());
     }
 }

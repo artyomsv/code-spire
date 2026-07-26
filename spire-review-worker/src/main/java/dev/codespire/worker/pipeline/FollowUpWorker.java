@@ -145,7 +145,12 @@ public class FollowUpWorker {
         String thread = command.threadRef().value();
         if (idempotency.claim(command.reviewId(), thread, CAP_NOTICE_KEY)
                 instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-            LOG.debugf("Turn-cap notice already posted for %s thread %s", command.reviewId(), thread);
+            // INFO, not DEBUG: this is the only record that a reply on a capped thread went
+            // unanswered ON PURPOSE. At DEBUG the logs showed the saga handing back and nothing
+            // after it, so a repeat read as if a second notice had gone out. Bounded by human
+            // replies, so it cannot get noisy.
+            LOG.infof("Turn-cap notice already posted for %s thread %s — staying quiet",
+                    command.reviewId(), thread);
             return;
         }
         CommentRef ref = clients.comments().replyInThread(command.repo(), command.prId(),
