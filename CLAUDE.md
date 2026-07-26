@@ -227,6 +227,34 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `WorkerContextClients`, `WorkerContextReferences`, `ContextProviderResource` and
   `ContextKeyValidator` are the context composition roots and are allowlisted. **747 tests green
   across 98 suites**; allowlist 13 entries, every one a composition root or `ScmType`.
+- **Three-provider parity pass + 3 fixes (2026-07-26, runbook Mode G):** S1–S11 run end to end on a
+  real GitHub PR, GitLab MR and Bitbucket PR. 11/11 behaviourally on all three; every reconcile
+  verdict except `ACKNOWLEDGED` exercised (`SUPERSEDED` correctly never fired), 14 thread resolves
+  across three different resolve mechanisms, a finding born mid-reconciliation closed two rounds
+  later, and a 100%-similarity rename that did **not** churn finding identity. What the run exposed
+  is fixed, each with tests:
+  - **The turn cap was silent.** Reaching it recorded a dashboard note and posted nothing, so the bot
+    just stopped replying — indistinguishable from a lost webhook (a dead tunnel produced the exact
+    same symptom mid-run). New `NotifyTurnCap` command → fixed-text notice, no LLM credential, one
+    claim per **thread** so later replies don't repeat it; result event is `TurnCapNotified` not
+    `FollowUpPosted` (the latter bumps the turn count — the notice must not consume a turn). An
+    explicit @-mention now overrides the cap, and cap-vs-decline log differently.
+  - **GitLab's compare diff parsed to ZERO files.** `fetchCompareDiff` emitted only `---`/`+++`;
+    `UnifiedDiffParser` keys on `diff --git`. Read as text (the reconcile prompt) it worked, so the
+    notes were right; parsed (`changedOldSideRanges`) it was empty, so `downgradeUntouched` rewrote
+    **every** `STILL_OPEN` to `UNCHANGED` on GitLab alone — an author who partly fixed a finding was
+    told nothing. Now calls `synthesizeUnifiedDiff`, which existed for exactly this. The old test
+    asserted the text contained `---`/`+++`/`@@` — all true of a string that parses to nothing; it
+    now asserts the diff *parses*.
+  - **Follow-up replies overreached.** `FOLLOWUP` had no "already reported" block (the `REVIEW`
+    prompt always had one) and `AnswerFollowUp` no field to build it from, so a narrow question got a
+    survey of every defect in the file. The command now carries the findings owned by *other* threads
+    (reused from the ADR-019 posted-run snapshot; this thread's own filtered out), the prompt lists
+    them as off-limits, an anchored thread sees only **its own file**, and replies open by naming the
+    asker in plain text (never an @-mention — syntax is per-provider). Both review and reconcile
+    personas now lead with the fix the code's expressed intent points to rather than the smallest
+    edit that compiles; A/B'd against recorded controls on identical input, finding count and
+    severities unchanged. **763 tests green across 97 suites.**
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.
