@@ -547,7 +547,7 @@ A stuck or failed review is the only honest signal for a broken delivery path â€
 
 **Files:**
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/AttentionQueries.java`
-- Modify: `spire-orchestrator/src/main/resources/application.properties`
+- Modify: `spire-orchestrator/src/main/resources/application.yml`
 - Modify: `.env.example`
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/attention/AttentionQueriesTest.java`
 
@@ -645,14 +645,17 @@ Expected: 4 failures (`NoSuchElementException` on the two count assertions, and 
 
 - [ ] **Step 3: Add the config properties**
 
-In `spire-orchestrator/src/main/resources/application.properties`, add:
+Orchestrator config lives in `application.yml` (there is no `application.properties` in this
+module). Add under the existing `spire:` root, as a sibling of `security:`, using the repo's
+`${ENV_VAR:default}` convention â€” the same shape as `spire.review.max-attempts`:
 
-```properties
-# Attention panel thresholds. A review normally finishes in seconds; 15 minutes without
-# movement means the delivery path or a worker is broken. The failure window keeps a row
-# self-clearing, since the panel has no dismiss action.
-spire.attention.stuck-minutes=15
-spire.attention.failed-window-hours=24
+```yaml
+  attention:
+    # Attention panel thresholds. A review normally finishes in seconds; 15 minutes without
+    # movement means the delivery path or a worker is broken. The failure window keeps a row
+    # self-clearing, since the panel has no dismiss action.
+    stuck-minutes: ${SPIRE_ATTENTION_STUCK_MINUTES:15}
+    failed-window-hours: ${SPIRE_ATTENTION_FAILED_WINDOW_HOURS:24}
 ```
 
 In `.env.example`, add:
