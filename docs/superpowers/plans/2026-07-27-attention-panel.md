@@ -2793,12 +2793,27 @@ export function lastCheckedLabel(item: LastChecked): string {
 
 - [ ] **Step 4: Render it on all three settings pages**
 
-In each of `SettingsProviders.tsx`, `SettingsLlmProviders.tsx` and `SettingsContextProviders.tsx`, import the helper and render the line next to that page's existing Check control:
+The same markup is needed on all three pages, so it is a component rather than a repeated block.
+Create `spire-ui/src/components/LastChecked.tsx`:
 
 ```tsx
-<span className={`last-checked ${item.lastCheckOk === false ? 'failed' : ''}`}>
-  {lastCheckedLabel(item)}
-</span>
+import { lastCheckedLabel, type LastChecked as LastCheckedFields } from './lastChecked';
+
+/** The credential's standing, shown beside the Check control on every provider settings page. */
+export default function LastChecked({ item }: { item: LastCheckedFields }) {
+  return (
+    <span className={`last-checked ${item.lastCheckOk === false ? 'failed' : ''}`}>
+      {lastCheckedLabel(item)}
+    </span>
+  );
+}
+```
+
+In each of `SettingsProviders.tsx`, `SettingsLlmProviders.tsx` and `SettingsContextProviders.tsx`,
+import it and render it next to that page's Check control:
+
+```tsx
+<LastChecked item={item} />
 ```
 
 `SettingsLlmProviders.tsx` has no Check control yet — add a button calling the new endpoint, mirroring how `SettingsProviders.tsx` calls its own check:
