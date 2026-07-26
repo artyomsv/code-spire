@@ -67,6 +67,18 @@ public class DlqRepository {
         }
     }
 
+    /** Pending entries only — a count, so the panel never loads payloads it will not show. */
+    public int countPending() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT COUNT(*) FROM dlq_entry WHERE status = 'pending'");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to count pending dead-letter entries", e);
+        }
+    }
+
     public boolean markReplayed(UUID id) {
         return updateStatus(id, "replayed");
     }
