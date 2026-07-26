@@ -62,7 +62,7 @@
 
 ### S3 — Automation + State Change: fetch the diff
 - **Saga:** on `ReviewRequested` → `FetchDiff`.
-- **Plugin (`DiffSource`):** calls SCM API, parses into canonical `FilePatch[]` (ported diff lib).
+- **Plugin (`DiffSource`):** calls SCM API, parses into canonical `FilePatch[]` (`spire-diff`).
 - **Event:** `DiffFetched {prId, commit, changedFiles, languages, truncated}` — **metadata only, no
   diff content** (ADR-011; content is re-fetched by commit at generate time).
 
@@ -81,7 +81,7 @@
 
 ### S5 — Automation + State Change: generate the review
 - **Saga:** on `ContextAssembled` → `GenerateReview`.
-- **Plugin (`LlmProvider`, config-selected, no default):** renders Qute prompt (ported templates)
+- **Plugin (`LlmProvider`, config-selected, no default):** renders Qute prompt (`PromptCatalog` templates)
   from diff + context, calls the model → `ReviewGenerated {prId, findings, summary}`.
 - **Fallback:** a saga on `ReviewFailed{retryable}` → `GenerateReview{provider=next}` walks the
   configured fallback chain.

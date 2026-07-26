@@ -15,8 +15,8 @@ import java.util.regex.Pattern;
  * Parses git-style unified diff text (what Bitbucket Cloud, GitHub, and GitLab
  * return) into the canonical {@link FilePatch} model, tracking BOTH old and
  * new line numbers per line — the property inline-comment anchoring depends on
- * (SCM-MAPPING.md). Hunk-header semantics ported from pr-agent's
- * git_patch_processing (Apache-2.0).
+ * (SCM-MAPPING.md). Hunk-header handling follows the same dual-numbering
+ * approach PR-Agent demonstrates; see NOTICE.
  */
 public final class UnifiedDiffParser {
 

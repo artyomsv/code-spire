@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Renders parsed patches into the numbered-hunk format the review prompt uses
- * — the "__new hunk__ / __old hunk__" contract ported from pr-agent. Line
+ * — a "__new hunk__ / __old hunk__" convention, as PR-Agent uses. Line
  * numbers in the rendered text are what the model cites back, and they map 1:1
  * onto {@link dev.codespire.contract.scm.InlineAnchor} coordinates.
  */

@@ -1,8 +1,8 @@
 package dev.codespire.diff;
 
 /**
- * Token estimation + clipping, ported from pr-agent's clip_tokens semantics
- * (chars-per-token heuristic with a safety factor). A model-accurate counter
+ * Token estimation + clipping: a chars-per-token heuristic with a safety factor,
+ * the approach PR-Agent's clip_tokens also takes. A model-accurate counter
  * (jtokkit) can replace the estimate behind this same API later without
  * touching callers.
  */
@@ -10,7 +10,7 @@ public final class TokenBudget {
 
     /** Conservative chars-per-token for code-heavy text. */
     private static final double CHARS_PER_TOKEN = 3.2;
-    /** Port of pr-agent's 0.9 safety factor on clipping. */
+    /** Headroom for the estimate being wrong; 0.9 is what PR-Agent settled on too. */
     private static final double SAFETY_FACTOR = 0.9;
     private static final String TRUNCATION_MARKER = "\n...(truncated to fit the model context)";
 

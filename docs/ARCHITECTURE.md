@@ -171,7 +171,7 @@ Matches TECH-STACK §1/§3.
 code-spire/
   # --- shared libraries ---
   spire-contract/          # events, commands, Decider/View/Saga, ALL SPI ports. Pure, no infra.
-  spire-diff/              # PORTED from PR-Agent: patch/token/compression + prompt templates. Pure lib.
+  spire-diff/              # patch parsing / token budgeting / prompt rendering. Pure lib.
   spire-scm-bitbucket/     # ScmIngress + DiffSource + CommentSink (Cloud & Data Center)
   spire-llm/               # LlmProvider adapters via LangChain4j (Vertex/Anthropic/Azure/Ollama)
   spire-context-jira/  spire-context-confluence/  spire-context-rag/ (P3)   # ContextProvider plugins
@@ -194,16 +194,26 @@ code-spire/
   connector to prove the pipeline; Phase 1+ split them into the `spire-*` services over Redpanda.
   Same ports throughout → the split is wiring, not a rewrite.
 
-## 7. What we port from PR-Agent vs build clean
+## 7. Where PR-Agent informed the design vs where we built clean
 
-**Port faithfully into `spire-diff` (the hard-won IP, language-agnostic):**
-- unified-diff hunk parsing + line-number reinjection (`git_patch_processing.py`),
-- token-budget-aware multi-file diff compression (`pr_processing.py`),
-- token counting / `clip_tokens` (use `jtokkit` in Java),
-- YAML-repair for model output,
-- the ~1,500 lines of tuned prompt templates → **Qute** templates (was Jinja2). Prompts are data.
+PR-Agent was read as prior art during the design pass (`RESEARCH.md` §3) and **no upstream code was
+used**. What it contributed was knowing which problems are real and which techniques hold up:
 
-**Build clean (the parts PR-Agent does poorly or not at all):**
+- unified-diff hunk parsing needs *both* old and new line numbers tracked through the hunk header,
+- multi-file diffs must be compressed against a token budget, not truncated arbitrarily,
+- token estimation wants a safety factor rather than an exact count,
+- model output is reliably *almost* valid, so the parser must be defensive rather than strict.
+
+Each of those is implemented independently in `spire-diff` / `spire-llm` against Code Spire's own
+model, and credited in `NOTICE`. The prompts are Code Spire's own (`PromptCatalog`) — an earlier
+draft of this section planned to convert upstream's Jinja templates and that was not done.
+
+The shipped code was compared line-for-line against PR-Agent v0.38.0 on 2026-07-26:
+[RESEARCH.md §4](RESEARCH.md) records exactly what the two share (the `__new hunk__` markers and one
+numeric constant) and where they diverge (typed diff model vs string rewriting, heuristic vs
+tokenizer, JSON vs YAML, and two prompt kinds with no upstream counterpart).
+
+**Built clean (the parts PR-Agent does poorly or not at all):**
 - the event-driven core (deciders/views/sagas) — PR-Agent is single-shot, synchronous,
 - the plugin SPI + CDI discovery — PR-Agent has a hardcoded dict,
 - segregated SCM ports with **thread-reply + PR-author first-class** — unimplemented on

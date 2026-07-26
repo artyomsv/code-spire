@@ -4,6 +4,69 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-021 — Split licensing: Apache-2.0 libraries, FSL-1.1-ALv2 services
+
+**Context.** ADR-006 chose Apache-2.0 before the first commit, for a project with no commercial
+intent. Two things have changed. The deployables now contain the actual engineering value — the
+event-driven pipeline, ADR-019 reconciliation, the conversation loop, the reconcile/verdict model —
+none of which existed when the licence was picked. And a hosted offering is now a stated *possible*
+future (PRD §6), which Apache-2.0 gives away in advance to anyone who gets there first.
+
+Two facts made this the cheapest possible moment to decide: every commit is by a single copyright
+holder (274/274), so no consent round is needed; and the repo had 0 forks, so nothing of consequence
+continues under the old grant. Both properties are perishable — the first ends at the first merged
+outside PR, the second at adoption.
+
+**Decision.** License per module rather than per repository:
+
+- **Apache-2.0** — `spire-contract`, `spire-diff`, `spire-encryption`, `spire-scm-*`,
+  `spire-context-*`, `spire-llm`, `spire-arch`. The plugin SPI and every reference adapter.
+- **FSL-1.1-ALv2** — `spire-gateway`, `spire-orchestrator`, `spire-review-worker`, `spire-ui`.
+  The runnable services.
+
+The map and the adopter-facing explanation live in `LICENSING.md`.
+
+**Why FSL rather than BSL 1.1.** Both restrict competing commercial use. BSL's default template
+forbids *production* use outright and requires a hand-written Additional Use Grant to re-permit it —
+the clause every BSL adopter has had to author, and the one most likely to be got wrong. It also
+needs a Change Date stamped per release, four years out, which drifts the moment releases are cut by
+hand. FSL is that grant pre-written: production and internal commercial use are named Permitted
+Purposes, the Apache-2.0 conversion is granted irrevocably up front at two years, and there is no
+per-release bookkeeping. Same protection, half the restriction period, no parameters to misconfigure.
+
+**Why split rather than relicense wholesale.** Design pillar #2 — *add a capability without touching
+the core* — is only credible if the thing you extend is genuinely open. Restricting the SPI would
+make the plugin promise hollow while protecting nothing a competitor couldn't rewrite in a week: a
+Bitbucket HTTP client is not the product. `spire-diff` additionally credits PR-Agent as prior art
+(see `NOTICE`), which belongs on a permissive licence on principle. The line is "libraries you
+compile against are open; the product you run is not."
+
+**On the tension with ADR-007.** ADR-007 rejected KurrentDB partly because ESLv2 is "explicitly NOT
+OSI open source" and hard-depending on it is "a strategic liability and off-putting to contributors."
+That objection was about an unavoidable third-party *dependency* whose vendor could tighten terms
+later and who gates features behind a paid key. It does not transfer wholesale to licensing our own
+code: adopters take no third-party lock-in they cannot see, the surface they extend stays Apache-2.0,
+every feature ships in the source with nothing behind a key, and each version converts to Apache-2.0
+automatically after two years — ESLv2 offers no such conversion. What *does* carry over is the
+contributor-friction cost. That is accepted, and partly bought back by keeping the SPI and all
+reference adapters permissive. ADR-007's own decision — Postgres over any source-available engine —
+is unchanged.
+
+**Consequences.**
+- Code Spire is **source-available, not open source**. Docs, README and PRD say so; claiming
+  otherwise would be false.
+- Versions published before this change stay Apache-2.0 irrevocably. `v0.1.0-apache` tags the last
+  Apache-2.0-only commit of the full tree.
+- **No Apache-2.0 module may depend on a service module** — permissive may flow into restrictive,
+  never the reverse. The current graph already satisfies this; if a library ever needs something
+  from a service, the code moves down into a library.
+- Contributions need a sign-off and an explicit relicensing grant (`CONTRIBUTING.md`), or the split
+  cannot be maintained later.
+- Trademark is still unregistered. Neither licence stops a fork using the name "Code Spire"; only a
+  mark does. Open item.
+
+---
+
 ## ADR-020 — No provider-dependent decisions in core, enforced by the build
 
 **Context.** Plugin-first only holds while the shared code makes no provider-dependent
@@ -121,7 +184,7 @@ and the worker stateless across runs — exactly the shape ADR-015 established f
   a schema-purpose violation (ADR-011 schema-per-service is about *ownership*, not just tables).
 - **Single combined LLM call.** Asking one call to both reconcile prior findings and generate a fresh
   review multiplexes two different tasks into one prompt: it would require rewriting the
-  already-proven review prompt (ported from PR-Agent, ADR-002) to also emit verdicts, and one
+  already-proven review prompt (ADR-002) to also emit verdicts, and one
   malformed section of the response would corrupt both outputs instead of failing independently.
 - **Deterministic anchor-only dedup (no LLM).** Comparing old and new anchors can suppress a duplicate
   at the *same* position, but cannot tell a fixed issue from one that merely moved or was reworded —
@@ -550,6 +613,10 @@ might one day host), hard-depending on a source-available, competitor-restricted
 strategic liability and off-putting to contributors. Self-hosting our own reviews would be fine; a
 core dependency is not.
 
+> **Premise updated by ADR-021** (the decision is not): Code Spire is no longer "a public Apache-2.0
+> project" — its services are FSL-1.1-ALv2. ADR-021 explains why that does not license a
+> source-available *hard dependency* here. Postgres over any source-available engine stands.
+
 **Consequence:** The `EventStore` port hides the choice. v1 = Postgres append-only (permissive,
 zero new moving parts, trivially embeddable). If we outgrow it, evaluate license-clean options
 (Postgres + thin event-store layer, Marten-style patterns) before any source-available engine. Anyone
@@ -563,6 +630,11 @@ https://discuss.kurrent.io/t/important-information-eventstoredb-is-transitioning
 ---
 
 ## ADR-006 — Personal open-source project
+
+> **Partly superseded by ADR-021.** The licence choice is no longer Apache-2.0 repo-wide: the
+> libraries and plugin SPI are Apache-2.0, the runnable services are FSL-1.1-ALv2, and the project
+> is source-available rather than open source. Everything else below still holds — personal, public,
+> built in private time, domain-neutral, no employer entanglement.
 
 **Decision:** Code Spire is a personal, public open-source project (intended Apache-2.0), built
 in private time — not internal tooling.
@@ -617,8 +689,18 @@ fast startup, and GKE/container friendliness. WebSockets carries the read side /
 
 ## ADR-002 — Build (hybrid greenfield), do not fork PR-Agent
 
-**Decision:** Greenfield in Quarkus, but **port PR-Agent's hard-won algorithms + prompts** rather
-than reimplement them from scratch.
+**Decision:** Greenfield in Quarkus, but **learn from PR-Agent's hard-won algorithms + prompts**
+rather than rediscover the same problems from scratch.
+
+> **What actually shipped** (recorded 2026-07-26, during the ADR-021 licensing pass). The original
+> wording of this decision was "port PR-Agent's algorithms + prompts", and ARCHITECTURE.md §7 planned
+> to convert ~1,500 lines of its Jinja templates. Neither happened. PR-Agent was read as prior art
+> (RESEARCH.md §3) and **no upstream code was used** — verified by comparing the shipped code against
+> v0.38.0's source, recorded as RESEARCH.md §4: `spire-diff` and `spire-llm` are independent
+> Java implementations against Code Spire's own model, and the prompts in `PromptCatalog` are written
+> here — a different structure (untrusted-data fencing, our JSON findings contract, reconcile
+> verdicts) and a tenth the size. Credit is recorded in `NOTICE`. The wording is corrected because
+> the plan's language described the codebase inaccurately, not because the plan was wrong to make.
 
 **Why:** A 5-part code review of `qodo-ai/pr-agent` (22k LOC Python) found: SCM abstraction 3/5
 (a 50-method God-object ABC; **thread-reply and PR-author are unimplemented on both Bitbucket

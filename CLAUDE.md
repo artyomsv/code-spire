@@ -2,7 +2,9 @@
 
 Self-hosted, event-driven, plugin-first AI code reviewer. One bot account reviews every PR in a
 workspace via webhooks (no per-seat licensing); SCM platform, LLM provider, context sources, and
-storage are pluggable. Bitbucket Cloud first. Open source (Apache-2.0).
+storage are pluggable. Bitbucket Cloud first. **Source-available, split per module** (ADR-021):
+Apache-2.0 for the plugin SPI, libraries and reference adapters; FSL-1.1-ALv2 for the runnable
+services — see `LICENSING.md`. Never call the project "open source" in docs or UI.
 
 ## Read first
 
@@ -28,7 +30,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   (single-process pipeline over SmallRye in-memory channels, Postgres event store with optimistic
   concurrency, live WebSocket timeline dashboard).
 - **Phase 1 feature delivered (single-process):** `spire-diff` (unified-diff parser with dual line
-  numbers, token clip, prompt renderer, anchor resolver — ported semantics from qodo-ai/pr-agent),
+  numbers, token clip, prompt renderer, anchor resolver; PR-Agent studied as prior art, no upstream code used),
   `spire-scm-bitbucket` (real Bitbucket Cloud `ScmIngress` with HMAC verify + bot-drop + /command
   parse, `DiffSource`, `CommentSink` per SCM-MAPPING), `spire-llm` (LangChain4j OpenAI-compatible
   `LlmProvider`, injection-fenced review prompt, lenient findings parser), orchestrator wiring
@@ -255,6 +257,27 @@ The design is fully specified in `docs/` — **treat those files as the source o
     personas now lead with the fix the code's expressed intent points to rather than the smallest
     edit that compiles; A/B'd against recorded controls on identical input, finding count and
     severities unchanged. **763 tests green across 97 suites.**
+- **Split licensing (ADR-021, 2026-07-26):** the repo is **source-available, not open source**, and
+  licensed per module — Apache-2.0 for the plugin SPI, libraries and reference adapters
+  (`spire-contract`, `spire-diff`, `spire-encryption`, `spire-scm-*`, `spire-context-*`, `spire-llm`,
+  `spire-arch`), FSL-1.1-ALv2 for the four deployables (`spire-gateway`, `spire-orchestrator`,
+  `spire-review-worker`, `spire-ui`). Each module carries its own `LICENSE`; the map and reasoning
+  are in `LICENSING.md`. **Invariant: no Apache-2.0 module may depend on a service module** —
+  permissive flows into restrictive, never the reverse. FSL permits self-hosting, internal commercial
+  use, forking, teaching and consulting; it forbids reselling as a competing product or hosted
+  service, and each version converts to Apache-2.0 two years after release. Versions published before
+  this stay Apache-2.0 (`v0.1.0-apache` tags the boundary). Contributions require DCO sign-off plus a
+  relicensing grant (`CONTRIBUTING.md`), without which the split cannot be maintained. The same pass
+  corrected the PR-Agent provenance language across the docs: it was **read as prior art, no upstream
+  code was used** (the old "ported the IP" / "port ~1,500 lines of prompt templates" wording described
+  a plan that was never executed) — credit now lives in `NOTICE`. The shipped code was then compared
+  against PR-Agent v0.38.0's source and the result recorded in **`docs/RESEARCH.md` §4**: the two
+  share exactly the `__new hunk__`/`__old hunk__` prompt markers and the `0.9` clip safety factor, and
+  differ everywhere else (typed `FilePatch`/`Hunk`/`DiffLine` model vs upstream's string-to-string
+  patch rewriting; chars-per-token heuristic vs a real tokenizer; JSON/Jackson vs YAML/`try_fix_yaml`;
+  own prompts with injection fencing upstream lacks, plus `RECONCILE`/`FOLLOWUP` kinds a single-shot
+  reviewer has no counterpart for; and no architectural correspondence at all). Cite §4 rather than
+  re-deriving it. Open item: the name is not trademarked, and no licence stops a fork from using it.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.
