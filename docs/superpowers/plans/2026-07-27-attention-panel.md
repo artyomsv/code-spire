@@ -1027,19 +1027,33 @@ A `create` cannot record before its row exists, so record after the insert retur
         return Response.status(Response.Status.CREATED).entity(created).build();
 ```
 
-In `ProviderResource.update`, record against the id already in hand after a successful resolve:
+In `ProviderResource.update`, record **only when a secret was actually supplied**:
 
 ```java
         ProviderView updated = registry.update(uuid(id), resolve(in))
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
-        registry.recordCheck(uuid(id), true, null);
+        // Only when a secret was supplied: that is the only case the resolve helper re-validates
+        // the token (it returns the input untouched on a blank secret). Recording success
+        // unconditionally would assert a verification that never ran, silently clearing a real
+        // prior rejection on an update that never touched the credential.
+        if (in.secret() != null && !in.secret().isBlank()) {
+            registry.recordCheck(uuid(id), true, null);
+        }
         return updated;
 ```
 
-Only the success path is recorded here: a refused token makes the save itself fail with a 400, so
-there is no provider row to attach a failure to on create, and on update the stored credential is
+The guard is not optional. The resolve helper's own contract is that on update with no new token
+"there is nothing new to validate, so the input is passed through untouched" — so an unconditional
+record would be fabricating a check result, and would wipe a genuine `CREDENTIAL_REJECTED` row the
+moment an operator renamed a provider whose token is still dead.
+
+Only the success path is recorded at all: a refused token makes the save itself fail with a 400, so
+on create there is no provider row to attach a failure to, and on update the stored credential is
 unchanged. Match the surrounding method's actual variable names and return shape — the resolve
 helper may be named differently.
+
+Pin both halves of the guard in `ProviderCheckRecordTest`: an update with a **blank** secret leaves
+a prior `lastCheckOk() == false` intact, and an update **supplying** a secret clears it.
 
 - [ ] **Step 8: Add the `CREDENTIAL_REJECTED` condition**
 
