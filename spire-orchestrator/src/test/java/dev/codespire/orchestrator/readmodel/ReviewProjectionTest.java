@@ -407,4 +407,39 @@ class ReviewProjectionTest {
         return d.events().stream().filter(e -> threadRef.equals(e.threadRef()))
                 .map(ReviewDetail.EventView::threadKind).findFirst().orElseThrow();
     }
+
+    /** Finds the event first, then reads loc: mapping to a null before findFirst() throws NPE. */
+    private static String locOf(ReviewDetail d, String threadRef) {
+        return d.events().stream().filter(e -> threadRef.equals(e.threadRef()))
+                .findFirst().orElseThrow().loc();
+    }
+
+    /**
+     * A turn on a thread that sits in the diff reports where. The UI places a conversation by matching
+     * its thread against the ones a FINDING owns, so a thread the bot never started had nowhere to go
+     * and rendered as though it had no location — even once the read model knew exactly where it was.
+     */
+    @Test
+    void aTurnOnALocatedThreadReportsItsLocation() {
+        long pr = 606L;
+        String id = ReviewIds.reviewId(new RepoRef("acme", "web"), pr);
+        projection.registerHeader(id, new RepoRef("acme", "web"), pr, "t", "jlee", "9", "src", "dst",
+                "c606", "http://x", "github", "reviewing", 0);
+
+        threads.markFindingThread(id, new ThreadRef("bot-1"), "src/App.java", 9);
+        // A human's own thread, on the SAME line — located, but not a finding's.
+        threads.markThreadLocation(id, new ThreadRef("human-1"), "src/App.java", 9);
+        threads.markSummaryThread(id, new ThreadRef("sum-1"));
+
+        projection.appendEvent(id, "integration", "AuthorReplied", "@jlee: why?", "bot-1");
+        projection.appendEvent(id, "integration", "AuthorReplied", "@jlee: really?", "human-1");
+        projection.appendEvent(id, "integration", "AuthorReplied", "@jlee: overall?", "sum-1");
+
+        ReviewDetail d = projection.loadDetail("acme", "web", pr).orElseThrow();
+
+        assertEquals("src/App.java:9", locOf(d, "human-1"),
+                "a human's inline thread reports where it is, so it need not look general");
+        assertEquals("src/App.java:9", locOf(d, "bot-1"), "a finding's own thread reports it too");
+        assertNull(locOf(d, "sum-1"), "a summary thread sits nowhere in the diff");
+    }
 }

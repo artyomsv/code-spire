@@ -530,6 +530,12 @@
     margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border);
   }
   .general-thread > .finding-convo { margin-top: 8px; }
+  /* Where a thread sits, when it sits somewhere. A conversation the bot did not start owns no
+     finding, so without this it reads as a general PR remark rather than a comment on a line. */
+  .general-thread-loc {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
+    margin-bottom: 6px; word-break: break-all;
+  }
 
   .finding-convo { margin-top: 12px; }
   .finding-convo > summary {

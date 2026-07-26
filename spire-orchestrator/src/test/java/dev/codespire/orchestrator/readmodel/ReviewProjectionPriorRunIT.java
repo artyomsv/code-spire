@@ -138,6 +138,30 @@ class ReviewProjectionPriorRunIT {
     }
 
     /**
+     * A HUMAN may start a thread on the very line a finding is anchored at. Both rows then carry the
+     * same loc, and the index is last-wins by insertion order, so the human's newer thread would win
+     * — handing the verdict a thread to reply into and RESOLVE that the bot never opened. Only a
+     * thread recorded for a finding may be the target (V27 {@code is_finding}).
+     */
+    @Test
+    void aHumanThreadOnAFindingsLineNeverBecomesTheVerdictsTarget() {
+        String reviewId = "review::ws/prior-run-it#43";
+        projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 43L,
+                "t", "a", "aid", "src", "dst", "c43", "http://x", "github", "reviewing", 0);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
+                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+        threads.markFindingThread(reviewId, new ThreadRef("bot-finding-thread"), "src/A.java", 7);
+        // Written LATER, so it wins the loc index on insertion order alone.
+        threads.markThreadLocation(reviewId, new ThreadRef("human-thread"), "src/A.java", 7);
+        projection.recordPosted(reviewId, "c43", "sum-43");
+
+        assertEquals("bot-finding-thread", projection.priorRunFor(reviewId).orElseThrow()
+                        .findings().getFirst().threadRef(),
+                "a verdict must target the bot's own finding thread, never a human's on the same line");
+    }
+
+    /**
      * The same rule must hold when a thread ref carries no numeric order at all — one SCM's thread
      * ref is an opaque discussion id, not a comment id. Recency was previously inferred by comparing
      * the refs numerically, which threw for opaque ids and silently fell back to "keep the first

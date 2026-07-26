@@ -79,7 +79,15 @@ public record ReviewDetail(
      * is the SCM thread a conversation turn belongs to (null otherwise); {@code threadKind} classifies it
      * as "finding" | "summary" | "mention" for the UI (null for non-conversation turns).
      */
+    /**
+     * {@code loc} is {@code path:line} when the event's thread sits somewhere in the diff, else null.
+     *
+     * <p>Present so a conversation the bot did not start can still be shown as anchored. The UI places
+     * a conversation by matching {@code threadRef} against the threads a FINDING owns, so a
+     * human-started thread on a line had nowhere to go and rendered as though it had no location at
+     * all — even once the read model knew exactly where it was.
+     */
     public record EventView(String ts, String at, String lane, String type, String det,
-                            String threadRef, String threadKind) {
+                            String threadRef, String threadKind, String loc) {
     }
 }

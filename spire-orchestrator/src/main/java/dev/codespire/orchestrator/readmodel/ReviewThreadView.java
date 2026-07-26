@@ -113,6 +113,9 @@ public class ReviewThreadView {
      * had no location at all and the UI filed a comment demonstrably attached to a line under
      * "General discussion". {@code COALESCE} keeps an existing location rather than overwriting it,
      * since a finding's own anchor is the more authoritative of the two.
+     *
+     * <p>Deliberately does NOT set {@code is_finding}: this thread sits on a line, but it is not the
+     * thread a reconciliation verdict may reply to or resolve (V27).
      */
     public void markThreadLocation(String reviewId, ThreadRef thread, String path, int line) {
         try (Connection c = dataSource.getConnection();
@@ -132,14 +135,21 @@ public class ReviewThreadView {
         }
     }
 
-    /** Record a finding's owned thread together with its {@code (path, line)}. */
+    /**
+     * Record a finding's owned thread together with its {@code (path, line)}.
+     *
+     * <p>{@code is_finding} is what separates this from {@link #markThreadLocation}: both write a
+     * location, but only a thread the bot opened FOR a finding may be the one a verdict targets. A
+     * human thread on the same line must never win that lookup (V27).
+     */
     public void markFindingThread(String reviewId, ThreadRef thread, String path, int line) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
-                     INSERT INTO review_thread (review_id, thread_ref, is_ours, path, line)
-                     VALUES (?, ?, TRUE, ?, ?)
+                     INSERT INTO review_thread (review_id, thread_ref, is_ours, path, line, is_finding)
+                     VALUES (?, ?, TRUE, ?, ?, TRUE)
                      ON CONFLICT (review_id, thread_ref)
-                     DO UPDATE SET is_ours = TRUE, path = EXCLUDED.path, line = EXCLUDED.line
+                     DO UPDATE SET is_ours = TRUE, path = EXCLUDED.path, line = EXCLUDED.line,
+                                   is_finding = TRUE
                      """)) {
             ps.setString(1, reviewId);
             ps.setString(2, thread.value());

@@ -115,6 +115,9 @@ export interface ReviewEvent {
   det: string;
   threadRef?: string; // the SCM thread a conversation turn belongs to
   threadKind?: 'finding' | 'summary' | 'mention'; // classification for nesting; absent for non-turns
+  // 'path:line' when the thread sits in the diff. A conversation the bot didn't start has no finding
+  // to nest under, so this is the only thing that shows it is anchored rather than general.
+  loc?: string;
 }
 
 export interface ReviewDetail extends ReviewSummary {

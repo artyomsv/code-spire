@@ -970,7 +970,8 @@ public class ReviewProjection {
             List<ReviewDetail.ReconciliationView> reconciliation =
                     parseReconciliation(row.reconciliationJson, row.id, threadIndex.resolvedRefs());
 
-            return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt, classifier),
+            return Optional.of(toDetail(row,
+                    loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
                     llmCalls(reviewId), attached.findings(), reconciliation));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
@@ -980,20 +981,30 @@ public class ReviewProjection {
     /** loc "path:line" -> threadRef (first wins on a same-line collision), which threadRefs belong
      *  to a summary comment, and which threadRefs are resolved on the SCM side — all derived once
      *  per {@link #loadDetail} / {@link #priorRunFor} call. */
-    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs, Set<String> resolvedRefs) {}
+    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs,
+                               Set<String> resolvedRefs, Map<String, String> locByThread) {}
 
     private ThreadIndex buildThreadIndex(List<ThreadRow> threadRows) {
         Map<String, String> threadByLoc = new HashMap<>();
         Set<String> summaryRefs = new HashSet<>();
         Set<String> resolvedRefs = new HashSet<>();
+        // Every located thread, findings included — this direction answers "where is THIS thread",
+        // which has one answer per thread, so unlike threadByLoc there is no contest to resolve.
+        Map<String, String> locByThread = new HashMap<>();
         for (ThreadRow t : threadRows) {
+            if (t.path() != null && t.line() != null) {
+                locByThread.put(t.threadRef(), t.path() + ":" + t.line());
+            }
             if (t.isSummary()) {
                 summaryRefs.add(t.threadRef());
             }
             if (t.resolved()) {
                 resolvedRefs.add(t.threadRef());
             }
-            if (t.path() != null && t.line() != null) {
+            // is_finding, not merely "has a location" (V27): a human can start a thread ON a flagged
+            // line, and since this index is last-wins by seq that newer thread would win — then
+            // toPriorFindings would hand a verdict the HUMAN's thread to reply into and resolve.
+            if (t.isFinding() && t.path() != null && t.line() != null) {
                 // A finding re-posted at the same loc across re-review rounds (e.g. a rename made the
                 // exclusion miss it) leaves several review_thread rows for one anchor. The LAST row
                 // wins, and rows arrive in insertion order (seq), so a verdict targets the CURRENT
@@ -1003,7 +1014,7 @@ public class ReviewProjection {
                 threadByLoc.put(t.path() + ":" + t.line(), t.threadRef());
             }
         }
-        return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs);
+        return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs, locByThread);
     }
 
     /** Findings with their owned threadRefs attached, plus the set of threadRefs a CURRENT finding
@@ -1314,20 +1325,22 @@ public class ReviewProjection {
         }
     }
 
-    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary, boolean resolved) {}
+    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary,
+                             boolean resolved, boolean isFinding) {}
 
     private List<ThreadRow> loadThreadRows(Connection c, String reviewId) throws SQLException {
         List<ThreadRow> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
                 // Insertion order, so the caller's "last row per loc wins" means newest. Ordering by
                 // thread_ref instead would sort by a provider-shaped string.
-                "SELECT thread_ref, path, line, is_summary, resolved FROM review_thread WHERE review_id = ? "
-                        + "ORDER BY seq")) {
+                "SELECT thread_ref, path, line, is_summary, resolved, is_finding FROM review_thread "
+                        + "WHERE review_id = ? ORDER BY seq")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new ThreadRow(rs.getString("thread_ref"), rs.getString("path"),
-                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary"), rs.getBoolean("resolved")));
+                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary"),
+                            rs.getBoolean("resolved"), rs.getBoolean("is_finding")));
                 }
             }
         }
@@ -1335,7 +1348,7 @@ public class ReviewProjection {
     }
 
     private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0,
-            Function<String, String> threadKind) throws SQLException {
+            Function<String, String> threadKind, Map<String, String> locByThread) throws SQLException {
         List<ReviewDetail.EventView> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT lane, type, detail, at, thread_ref FROM review_event WHERE review_id = ? ORDER BY seq")) {
@@ -1345,7 +1358,8 @@ public class ReviewProjection {
                     Instant at = rs.getTimestamp("at").toInstant();
                     String threadRef = rs.getString("thread_ref");
                     out.add(new ReviewDetail.EventView(at.toString(), relative(t0, at), rs.getString("lane"),
-                            rs.getString("type"), rs.getString("detail"), threadRef, threadKind.apply(threadRef)));
+                            rs.getString("type"), rs.getString("detail"), threadRef, threadKind.apply(threadRef),
+                            threadRef == null ? null : locByThread.get(threadRef)));
                 }
             }
         }
