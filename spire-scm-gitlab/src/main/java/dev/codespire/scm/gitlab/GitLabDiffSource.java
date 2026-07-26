@@ -85,16 +85,18 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
      * the full {@code diff --git} header — enough for the shared parser's hunk reader.
      */
     @Override
+    /**
+     * Compare's {@code diffs[]} carries the same header-less fragments as the MR's {@code changes[]},
+     * so it needs the same {@code diff --git} header re-attached — {@link #synthesizeUnifiedDiff} is
+     * that logic. Emitting only {@code ---}/{@code +++} produced a string that LOOKS like a diff and
+     * parses to ZERO files, because the shared parser keys on the {@code diff --git} line. Everything
+     * reading this diff as text (the reconcile prompt) worked; everything parsing it silently saw an
+     * empty change set — which downgraded every STILL_OPEN verdict to UNCHANGED on GitLab alone, so an
+     * author who partly fixed a finding was never told what remained.
+     */
     public String fetchCompareDiff(RepoRef repo, String base, String head) {
         String path = "/projects/" + encodedProject(repo) + "/repository/compare?from=" + base + "&to=" + head;
-        JsonNode response = client.getJson(path);
-        StringBuilder unified = new StringBuilder();
-        for (JsonNode d : response.path("diffs")) {
-            unified.append("--- a/").append(d.path("old_path").asText("")).append('\n')
-                    .append("+++ b/").append(d.path("new_path").asText("")).append('\n')
-                    .append(d.path("diff").asText(""));
-        }
-        return unified.toString();
+        return synthesizeUnifiedDiff(client.getJson(path).path("diffs"));
     }
 
     /**
