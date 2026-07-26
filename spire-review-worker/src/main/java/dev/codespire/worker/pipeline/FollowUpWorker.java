@@ -14,8 +14,10 @@ import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
+import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.contract.scm.ThreadMessage;
@@ -32,6 +34,7 @@ import org.jboss.logging.Logger;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
 
@@ -119,7 +122,7 @@ public class FollowUpWorker {
         WorkerLlmProvider.LlmClient client = llm.forCommand(command);
         FollowUpResult result = answer(command.repo(), command.prId(), command.threadRef(),
                 transcript, clients.diff(), client.provider(), client.params(), clients.comments(),
-                command.followUpPrompt());
+                command.followUpPrompt(), command.otherFindings());
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
                 result.usage()));
@@ -156,6 +159,26 @@ public class FollowUpWorker {
     static String capNoticeText(int turnCap) {
         return "I've replied " + turnCap + " times in this thread, so I'll hand it back to the team "
                 + "rather than keep going. @-mention me if you still need something here.";
+    }
+
+    /**
+     * The thread's own file, or the whole diff when the thread has no anchor.
+     *
+     * <p>An inline thread is a question about one file, and the persona says to answer only about the
+     * anchored code — but the prompt used to carry every file in the PR, inviting exactly the survey
+     * answers the persona forbids (and paying for the tokens). A summary thread genuinely is about the
+     * whole PR, so it keeps the full diff. An anchor that matches nothing in the current diff also
+     * falls back to everything rather than sending an empty diff: the file may have been renamed since
+     * the finding was posted, and no diff at all would be worse than too much.
+     */
+    static List<FilePatch> anchoredFiles(Diff diff, String anchorPath) {
+        if (anchorPath == null || anchorPath.isBlank()) {
+            return diff.files();
+        }
+        List<FilePatch> matching = diff.files().stream()
+                .filter(f -> anchorPath.equals(f.newPath()) || anchorPath.equals(f.oldPath()))
+                .toList();
+        return matching.isEmpty() ? diff.files() : matching;
     }
 
     /** {@code min(cap, base * factor^(attempt-1))} — the base/factor are the command's runtime-configured
@@ -205,18 +228,18 @@ public class FollowUpWorker {
 
     /**
      * The pure answer→reply core (no Kafka/DB) so it unit-tests with mocks. The thread is already fetched;
-     * this fetches the anchored diff, renders the injection-fenced prompt, calls the LLM, and posts the reply.
-     * A summary-thread transcript (a topLevel {@code AuthorReplied}'s issue-comment fallback thread) carries
-     * no anchor commit, so the PR's current head is resolved first.
+     * this fetches the diff, narrows it to the thread's own file, renders the injection-fenced prompt,
+     * calls the LLM, and posts the reply. A summary-thread transcript (a topLevel {@code AuthorReplied}'s
+     * issue-comment fallback thread) carries no anchor commit, so the PR's current head is resolved first.
      */
     static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
                                  DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
-                                 PromptTemplate followUpPrompt) {
+                                 PromptTemplate followUpPrompt, List<PriorFinding> otherFindings) {
         String commit = transcript.commit() != null
                 ? transcript.commit() : diffs.fetchPullRequest(repo, prId).headCommit();
         Diff diff = diffs.fetchDiff(repo, prId, commit);
-        String diffText = DiffRenderer.render(diff.files());
-        Prompt prompt = FollowUpPrompt.render(transcript, diffText, followUpPrompt);
+        String diffText = DiffRenderer.render(anchoredFiles(diff, transcript.path()));
+        Prompt prompt = FollowUpPrompt.render(transcript, diffText, otherFindings, followUpPrompt);
         Completion completion = llmProvider.complete(prompt, params).toCompletableFuture().join();
         FollowUpAnswer parsed = FollowUpAnswer.of(completion.text());
         // Post the answer as Markdown as-is. The SCM renders + sanitizes HTML in comments (no active markup

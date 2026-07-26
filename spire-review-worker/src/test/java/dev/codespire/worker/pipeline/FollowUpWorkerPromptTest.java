@@ -53,7 +53,7 @@ class FollowUpWorkerPromptTest {
         when(sink.replyInThread(eq(repo), eq(1L), eq(thread), anyString()))
                 .thenReturn(new CommentRef("c-1", thread, CommentKind.REPLY));
 
-        FollowUpWorker.answer(repo, 1L, thread, transcript, diffs, llm, params, sink, custom);
+        FollowUpWorker.answer(repo, 1L, thread, transcript, diffs, llm, params, sink, custom, List.of());
 
         ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
         verify(llm).complete(captor.capture(), eq(params));

@@ -3,6 +3,9 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.review.ConversationLevel;
+import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.PriorRun;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -90,6 +93,25 @@ class ConversationSagaTest {
                 "bearer", null, "secret", "acct", true, List.of(), "code-spire", "EXPLAIN");
     }
 
+    /**
+     * A projection whose posted-run snapshot holds {@code findings} and whose summary is "sum-1".
+     * The saga reads the snapshot to build the reply prompt's "belongs to another thread" list, so
+     * every answer-path test needs one — a real {@link ReviewProjection} would hit the database.
+     */
+    private static ReviewProjection projectionWith(List<PriorFinding> findings) {
+        return new ReviewProjection() {
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.of("sum-1");
+            }
+
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.of(new PriorRun("head-1", "sum-1", findings));
+            }
+        };
+    }
+
     private static ConversationLevels fixedLevel(ConversationLevel level) {
         return new ConversationLevels() {
             @Override
@@ -165,12 +187,7 @@ class ConversationSagaTest {
                 notes.add(type);
             }
         };
-        saga.projection = new ReviewProjection() {
-            @Override
-            public Optional<String> summaryRefOf(String reviewId) {
-                return Optional.of("sum-1");
-            }
-        };
+        saga.projection = projectionWith(List.of());
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
             public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
@@ -239,6 +256,7 @@ class ConversationSagaTest {
             public void record(String lane, String type, String reviewId, String detail) {
             }
         };
+        saga.projection = projectionWith(List.of());
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
             public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
@@ -259,6 +277,58 @@ class ConversationSagaTest {
                 "the command targets the conversation root, not the answer comment it replied to");
         assertEquals("c-99", answer.triggeringCommentId(), "the triggering id stays the human's comment");
         assertEquals(List.of("finding-1"), turnCountedOn, "the turn cap counts on the root");
+    }
+
+    // --- the reply prompt's "belongs to another thread" list ---
+
+    /**
+     * The reply must carry the PR's OTHER findings so the prompt can rule them out, and must not
+     * carry the one this very thread is about — listing a finding as "discussed elsewhere" inside
+     * its own thread would tell the model to avoid the subject it was asked about.
+     */
+    @Test
+    void theCommandCarriesTheOtherThreadsFindingsButNotThisThreadsOwn() {
+        ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public Optional<String> packDefault(String workspace) {
+                return Optional.of("llm-cred");
+            }
+        };
+        saga.projection = projectionWith(List.of(
+                new PriorFinding("src/A.java", 10, Severity.BLOCKER, "this thread's own finding", "finding-1"),
+                new PriorFinding("src/A.java", 20, Severity.MAJOR, "a different thread's finding", "finding-2"),
+                // A finding whose inline post failed has no thread, so there is nothing to defer to.
+                new PriorFinding("src/A.java", 30, Severity.MINOR, "never posted inline", null)));
+
+        ActionCommand.AnswerFollowUp answer = assertInstanceOf(ActionCommand.AnswerFollowUp.class,
+                saga.planFollowUp(inlineReply(List.of())).orElseThrow());
+
+        assertEquals(1, answer.otherFindings().size(), "only findings owned by OTHER threads");
+        assertEquals("finding-2", answer.otherFindings().getFirst().threadRef());
+    }
+
+    /** A PR with nothing posted yet has no other threads — and must not fail building the command. */
+    @Test
+    void anUnpostedReviewYieldsAnEmptyOtherThreadsList() {
+        ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public Optional<String> packDefault(String workspace) {
+                return Optional.of("llm-cred");
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.empty();
+            }
+        };
+
+        ActionCommand.AnswerFollowUp answer = assertInstanceOf(ActionCommand.AnswerFollowUp.class,
+                saga.planFollowUp(inlineReply(List.of())).orElseThrow());
+
+        assertTrue(answer.otherFindings().isEmpty());
     }
 
     // --- turn cap: a hand-off has to be visible to the person waiting in the thread ---
@@ -317,6 +387,7 @@ class ConversationSagaTest {
                 return null;
             }
         };
+        saga.projection = projectionWith(List.of());
         return saga;
     }
 

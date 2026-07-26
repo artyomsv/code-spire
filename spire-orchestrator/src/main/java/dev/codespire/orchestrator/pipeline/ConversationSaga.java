@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.review.ConversationLevel;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
@@ -108,7 +109,25 @@ public class ConversationSaga {
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(provider), llmCred.get(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
-                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP)));
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP),
+                findingsOwnedByOtherThreads(e.reviewId(), target.thread())));
+    }
+
+    /**
+     * The review's findings that belong to threads OTHER than this one, so the reply prompt can rule
+     * them out. Without it the model sees every defect in the file's diff with no way to know which
+     * are already under discussion elsewhere, and answers a narrow question with a survey.
+     *
+     * <p>Reuses the ADR-019 posted-run snapshot — the same source the reconcile flow reads — so there
+     * is one definition of "the findings that own threads". Degrades to empty on any read failure:
+     * a missing exclusion list makes the reply broader, never wrong.
+     */
+    private List<PriorFinding> findingsOwnedByOtherThreads(String reviewId, ThreadRef thread) {
+        return projection.priorRunFor(reviewId)
+                .map(prior -> prior.findings().stream()
+                        .filter(f -> f.threadRef() != null && !f.threadRef().equals(thread.value()))
+                        .toList())
+                .orElseGet(List::of);
     }
 
     /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */

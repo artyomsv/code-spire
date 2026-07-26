@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
@@ -130,11 +131,34 @@ public sealed interface ActionCommand {
      * encrypted SCM + LLM credentials (ADR-015/ADR-018) — without them the worker would use the stub
      * adapters. The credential fields override the {@link ActionCommand} defaults.
      */
+    /**
+     * {@code otherFindings} are the review's other open findings, each already owning its own thread.
+     * The reply prompt lists them as off-limits: the diff shows every defect in the file, so without
+     * this the model cannot tell which are already under discussion elsewhere and answers a narrow
+     * question with a survey of the whole file. The REVIEW command has always carried the equivalent
+     * exclusion list via {@link PriorRun}; this one did not.
+     */
     record AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String triggeringCommentId, String question,
                           String scmCredential, String llmCredential, boolean mentioned,
                           int maxAttempts, long backoffBaseMs, double backoffFactor,
-                          PromptTemplate followUpPrompt) implements ActionCommand {
+                          PromptTemplate followUpPrompt,
+                          List<PriorFinding> otherFindings) implements ActionCommand {
+
+        public AnswerFollowUp {
+            otherFindings = otherFindings == null ? List.of() : List.copyOf(otherFindings);
+        }
+
+        // 13-arg: prompt override, no other-findings list (kept for call sites that have none).
+        public AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                              String triggeringCommentId, String question,
+                              String scmCredential, String llmCredential, boolean mentioned,
+                              int maxAttempts, long backoffBaseMs, double backoffFactor,
+                              PromptTemplate followUpPrompt) {
+            this(reviewId, repo, prId, threadRef, triggeringCommentId, question, scmCredential,
+                    llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
+                    followUpPrompt, List.of());
+        }
 
         // Without a prompt override — the worker uses the built-in default follow-up prompt.
         public AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
@@ -142,7 +166,8 @@ public sealed interface ActionCommand {
                               String scmCredential, String llmCredential, boolean mentioned,
                               int maxAttempts, long backoffBaseMs, double backoffFactor) {
             this(reviewId, repo, prId, threadRef, triggeringCommentId, question,
-                    scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor, null);
+                    scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
+                    null, List.of());
         }
     }
 
