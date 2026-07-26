@@ -2,6 +2,12 @@
 
 > Source-available, self-hosted, **event-driven**, **plugin-first** AI code reviewer for any Git platform — Bitbucket-first.
 
+> [!NOTE]
+> **"Code Spire" is a working name, not the final product name.** It is what the project is called
+> while it is built; the shipped product may be named something else. Nothing here depends on it —
+> the licence grants come from the copyright holder, not from the project name — so a rename changes
+> branding, not terms. Don't treat the name as a commitment or build assets around it yet.
+
 Code Spire is a single bot service that automatically reviews **every** pull request in a
 workspace — regardless of author, with **no per-seat licensing** — and runs entirely inside
 your own infrastructure. The LLM provider, the source-control platform, the context sources,

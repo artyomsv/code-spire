@@ -1,5 +1,16 @@
 # Code Spire — project context
 
+> **"Code Spire" is a working name, not the final product name.** Treat it as provisional: don't
+> register trademarks, buy domains, or design brand assets around it, and don't add new user-visible
+> occurrences of it. The user-facing name lives in **six production literals across four files**:
+> `PromptCatalog.REVIEW_PERSONA` and `.FOLLOWUP_PERSONA` ("You are Code Spire…"), `ReviewWorker`'s
+> summary header (`"### Code Spire review"`, also asserted in `FindingConversation.test.ts`), the bot
+> display name in `FindingConversation.tsx` and `render.tsx`, and copy in `PromptsSettings.tsx`.
+> Renaming means all six — it spans backend *and* UI. Centralising them into one constant is the
+> obvious cheap win if a rename looks likely. The internal surface (`dev.codespire` package group,
+> `spire-*` modules, `SPIRE_*` env vars, docker volumes) is private and need not follow a product
+> rename.
+
 Self-hosted, event-driven, plugin-first AI code reviewer. One bot account reviews every PR in a
 workspace via webhooks (no per-seat licensing); SCM platform, LLM provider, context sources, and
 storage are pluggable. Bitbucket Cloud first. **Source-available, split per module** (ADR-021):

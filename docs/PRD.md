@@ -113,6 +113,11 @@ after the Bitbucket-Cloud path proves the model), a hosted SaaS offering.
 
 ## 7. Assumptions & constraints
 
+- **"Code Spire" is a working name, not the final product name.** The shipped product may be named
+  differently; naming is deliberately deferred until there is something to name. Nothing depends on
+  it — licence grants run from the copyright holder, not the project name ([ADR-021](DECISIONS.md)) —
+  so a rename is a branding change. The user-visible name currently sits in six literals across the
+  worker, the prompts and the UI; don't spread it further.
 - **First SCM is Bitbucket Cloud** (`api.bitbucket.org/2.0`, App Password, signed webhooks).
 - **Adopters supply their own LLM provider + key**; Code Spire ships no keys and no default provider.
 - **Source-available, clean-room** - no code is reused from any private source ([DECISIONS](DECISIONS.md) ADR-006, ADR-009). Licensing is split per module: Apache-2.0 for the plugin SPI and reference adapters, FSL-1.1-ALv2 for the runnable services ([ADR-021](DECISIONS.md), [LICENSING.md](../LICENSING.md)). Self-hosting and internal commercial use are permitted; reselling as a competing service is not.

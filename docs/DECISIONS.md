@@ -62,8 +62,19 @@ is unchanged.
   from a service, the code moves down into a library.
 - Contributions need a sign-off and an explicit relicensing grant (`CONTRIBUTING.md`), or the split
   cannot be maintained later.
-- Trademark is still unregistered. Neither licence stops a fork using the name "Code Spire"; only a
-  mark does. Open item.
+- **The name is provisional and the trademark question is therefore deferred, not open.** "Code
+  Spire" is a working name; the shipped product may be called something else. Neither licence stops
+  a fork from using a name — only a mark does — but registering a mark for a name that will change
+  spends money on the wrong asset. Revisit when the name is settled, not before. Nothing in the
+  licensing depends on it: the grants run from the copyright holder (a named person), not from the
+  project name, so a rename changes branding and not terms. FSL's Trademarks clause reserves the
+  name regardless of registration.
+- The user-visible name sits in six production literals across four files: `PromptCatalog`'s
+  `REVIEW_PERSONA` and `FOLLOWUP_PERSONA`, `ReviewWorker`'s summary header (also asserted in
+  `FindingConversation.test.ts`), the bot display name in `FindingConversation.tsx` and `render.tsx`,
+  and copy in `PromptsSettings.tsx` — backend *and* UI. Don't spread it further; centralising it into
+  one constant is worth doing before a rename rather than during. The internal surface
+  (`dev.codespire`, `spire-*`, `SPIRE_*`, docker volumes) is private and need not track a rename.
 
 ---
 

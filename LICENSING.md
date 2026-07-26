@@ -3,6 +3,12 @@
 Code Spire is **source-available, not open source**, and deliberately split: the
 libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 
+> **On the name:** "Code Spire" is a working name and the product may ship under
+> a different one. This has no bearing on the terms below — the licence grants
+> run from the copyright holder, Artjoms Stukans, not from the project name, so a
+> rename changes branding and nothing else. The `LICENSE` files identify modules
+> by their current directory names for convenience only.
+
 ## The map
 
 | Module | License | Why |
