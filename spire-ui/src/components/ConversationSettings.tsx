@@ -1,11 +1,6 @@
-import { useEffect, useState } from 'react';
-import {
-  getConversationSettings,
-  setConversationSettings,
-  type ConversationLevel,
-  type ConversationSettings as ConversationSettingsShape,
-} from '../api';
+import type { ConversationLevel, ConversationSettings as ConversationSettingsShape } from '../api';
 import Select from './Select';
+import SettingField from './SettingField';
 
 const LEVELS: ConversationLevel[] = ['REPORT_ONLY', 'EXPLAIN', 'INTERACTIVE'];
 
@@ -21,134 +16,93 @@ export function normalizeLevel(value: unknown): ConversationLevel {
   return v === 'EXPLAIN' || v === 'INTERACTIVE' ? (v as ConversationLevel) : 'REPORT_ONLY';
 }
 
+interface Props {
+  value: ConversationSettingsShape;
+  disabled?: boolean;
+  onChange: (value: ConversationSettingsShape) => void;
+}
+
 /**
- * Conversation tuning: global default level, turn cap, retry attempts and backoff.
- * Reads on mount (GET /api/settings/conversation) and writes on Save (PUT, full
- * replace) — not per-keystroke, since the backend clamps out-of-range values and
- * we want to show the saved (clamped) result rather than fight the user's typing.
+ * How the bot replies to comments: the default interaction level plus the per-thread turn cap and the
+ * retry/backoff applied to answering. These are NOT the review pipeline's retries — an answer that runs
+ * out of attempts is dead-lettered for replay.
+ *
+ * Controlled: {@link SettingsGeneral} owns the state and the single Save.
  */
-export default function ConversationSettings() {
-  const [settings, setSettings] = useState<ConversationSettingsShape | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    getConversationSettings()
-      .then((s) => alive && setSettings(s))
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  function update<K extends keyof ConversationSettingsShape>(key: K, value: ConversationSettingsShape[K]) {
-    setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-    setSaved(false);
-  }
-
-  async function save() {
-    if (!settings || busy) return;
-    setBusy(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const r = await setConversationSettings(settings);
-      setSettings(r);
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!settings) {
-    return (
-      <div className="conv-default">
-        {error ? <p className="prov-error">{error}</p> : <p className="prov-sub">Loading…</p>}
-      </div>
-    );
+export default function ConversationSettings({ value, disabled, onChange }: Props) {
+  function update<K extends keyof ConversationSettingsShape>(key: K, v: ConversationSettingsShape[K]) {
+    onChange({ ...value, [key]: v });
   }
 
   return (
-    <div className="conv-default">
-      <label className="field">
-        <span>Interaction level</span>
+    <div className="settings-fields">
+      <SettingField
+        scope="conversation"
+        label="Interaction level"
+        hint="The default applied to every provider that doesn’t set its own conversation level."
+      >
         <Select
           ariaLabel="Interaction level"
-          value={settings.level}
-          disabled={busy}
+          value={value.level}
+          disabled={disabled}
           options={LEVELS.map((l) => ({ value: l, label: LABELS[l] }))}
           onChange={(v) => update('level', normalizeLevel(v))}
         />
-        <small className="field-hint">
-          The default applied to every provider that doesn&apos;t set its own conversation level.
-        </small>
-      </label>
+      </SettingField>
 
-      <div className="field-row-2">
-        <label className="field">
-          <span>Turn cap</span>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={settings.turnCap}
-            disabled={busy}
-            onChange={(e) => update('turnCap', Number(e.target.value))}
-          />
-          <small className="field-hint">Max bot replies per thread.</small>
-        </label>
-        <label className="field">
-          <span>Retry attempts</span>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={settings.maxAttempts}
-            disabled={busy}
-            onChange={(e) => update('maxAttempts', Number(e.target.value))}
-          />
-          <small className="field-hint">Attempts on a transient API failure before dead-lettering.</small>
-        </label>
-      </div>
+      <SettingField scope="conversation" label="Turn cap" hint="Maximum bot replies in one thread before it defers to the team.">
+        <input
+          type="number"
+          min={1}
+          max={20}
+          value={value.turnCap}
+          disabled={disabled}
+          onChange={(e) => update('turnCap', Number(e.target.value))}
+        />
+      </SettingField>
 
-      <div className="field-row-2">
-        <label className="field">
-          <span>Backoff base (ms)</span>
-          <input
-            type="number"
-            min={100}
-            max={60000}
-            value={settings.backoffBaseMs}
-            disabled={busy}
-            onChange={(e) => update('backoffBaseMs', Number(e.target.value))}
-          />
-        </label>
-        <label className="field">
-          <span>Backoff factor</span>
-          <input
-            type="number"
-            min={1}
-            max={5}
-            step={0.5}
-            value={settings.backoffFactor}
-            disabled={busy}
-            onChange={(e) => update('backoffFactor', Number(e.target.value))}
-          />
-        </label>
-      </div>
+      <SettingField
+        scope="conversation"
+        label="Retry attempts"
+        hint={
+          'Attempts at answering a reply when the SCM or LLM fails transiently. When they run out the ' +
+          'answer is dead-lettered so it can be replayed once the provider recovers. Review retries are ' +
+          'set under Code review.'
+        }
+      >
+        <input
+          type="number"
+          min={1}
+          max={10}
+          value={value.maxAttempts}
+          disabled={disabled}
+          onChange={(e) => update('maxAttempts', Number(e.target.value))}
+        />
+      </SettingField>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
-        <button type="button" className="btn" disabled={busy} onClick={() => void save()}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-        {saved && !busy && <div className="modal-msg modal-ok">Saved</div>}
-      </div>
+      <SettingField scope="conversation" label="Backoff base (ms)" hint="Wait before the second attempt at answering; later attempts multiply it by the factor.">
+        <input
+          type="number"
+          min={100}
+          max={60000}
+          step={100}
+          value={value.backoffBaseMs}
+          disabled={disabled}
+          onChange={(e) => update('backoffBaseMs', Number(e.target.value))}
+        />
+      </SettingField>
 
-      {error && <p className="prov-error">{error}</p>}
+      <SettingField scope="conversation" label="Backoff factor" hint="Multiplier applied to the wait on each further attempt (2 doubles it), capped at 60s.">
+        <input
+          type="number"
+          min={1}
+          max={5}
+          step={0.5}
+          value={value.backoffFactor}
+          disabled={disabled}
+          onChange={(e) => update('backoffFactor', Number(e.target.value))}
+        />
+      </SettingField>
     </div>
   );
 }

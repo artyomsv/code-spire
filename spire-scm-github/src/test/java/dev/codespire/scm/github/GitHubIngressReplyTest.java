@@ -6,6 +6,7 @@ import dev.codespire.contract.port.RawWebhook;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -46,6 +47,42 @@ class GitHubIngressReplyTest {
         AuthorReplied e = assertInstanceOf(AuthorReplied.class,
                 ingress.translate(webhook(body, "pull_request_review_comment")).getFirst());
         assertEquals("100", e.threadRef().value());
+    }
+
+    /**
+     * The ingress extracts who was @-mentioned, because only it knows that GitHub renders a mention
+     * as {@code @login} in the raw body. The orchestrator then just checks whether the bot is in the
+     * list — it never sees this syntax.
+     */
+    @Test
+    void mentionsAreExtractedFromTheBodyInGitHubsOwnSyntax() {
+        byte[] body = """
+                { "action": "created",
+                  "repository": { "full_name": "artyomsv/spire-test" },
+                  "pull_request": { "number": 5 },
+                  "comment": { "id": 100, "body": "hey @code-spire and @octo-cat, thoughts? me@example.com",
+                               "user": { "id": 42, "login": "octocat" } } }
+                """.getBytes(StandardCharsets.UTF_8);
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class,
+                ingress.translate(webhook(body, "pull_request_review_comment")).getFirst());
+        // Every @token is collected; which one is the bot is the saga's decision. An email's domain
+        // shows up as a token (logins carry no dots, so it stops at "example") — harmless, because it
+        // can only matter if it equals the bot's actual login.
+        assertEquals(List.of("code-spire", "octo-cat", "example"), e.mentions());
+    }
+
+    @Test
+    void aBodyWithNoMentionsCarriesAnEmptyList() {
+        byte[] body = """
+                { "action": "created",
+                  "repository": { "full_name": "artyomsv/spire-test" },
+                  "pull_request": { "number": 5 },
+                  "comment": { "id": 100, "body": "no mentions at all",
+                               "user": { "id": 42, "login": "octocat" } } }
+                """.getBytes(StandardCharsets.UTF_8);
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class,
+                ingress.translate(webhook(body, "pull_request_review_comment")).getFirst());
+        assertEquals(List.of(), e.mentions());
     }
 
     private static RawWebhook webhook(byte[] body, String event) {

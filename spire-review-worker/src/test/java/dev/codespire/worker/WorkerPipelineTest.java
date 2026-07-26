@@ -65,7 +65,7 @@ class WorkerPipelineTest {
      */
     private String cred() throws Exception {
         ScmCredential c = new ScmCredential("bitbucket-cloud", "http://localhost:" + BitbucketWireMockResource.server.port(),
-                "basic", "e2e-bot", "e2e-app-password");
+                "basic", "e2e-bot", "e2e-app-password", "e2e-bot-account-id", "e2e-bot");
         return encryption.encryptString(mapper.writeValueAsString(c), ScmCredential.aad("sandbox"));
     }
 
@@ -97,7 +97,7 @@ class WorkerPipelineTest {
     void gatherContextAssemblesAnEmptyContextWhenNoProviderConfigured() throws Exception {
         // No context credential on the command (none registered) -> the aggregator fans out to
         // zero providers: Requested then Assembled, no Contributed, and no blob persisted.
-        sendCommand(new ActionCommand.GatherContext(REVIEW_ID, REPO, 42, COMMIT, Set.of(), List.of(), null));
+        sendCommand(new ActionCommand.GatherContext(REVIEW_ID, REPO, 42, COMMIT, Set.of(), null));
         List<String> results = consumeResults(3); // 1 prior + 2 new
         assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextRequested\"")));
         assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextAssembled\"")));
@@ -128,7 +128,8 @@ class WorkerPipelineTest {
         List<String> results = consumeResults(5);
         String posted = results.stream()
                 .filter(v -> v.contains("\"type\":\"CommentsPosted\"")).findFirst().orElseThrow();
-        assertTrue(posted.contains("\"summaryCommentId\":\"991\""));
+        // The summary's THREAD, supplied by the adapter — core never derives it from a comment id.
+        assertTrue(posted.contains("\"summaryThreadRef\":\"991\""), posted);
         BitbucketWireMockResource.server.verify(2, postRequestedFor(urlEqualTo(COMMENTS)));
 
         // redelivery: same command again -> reconstructed CommentsPosted, NO new posts

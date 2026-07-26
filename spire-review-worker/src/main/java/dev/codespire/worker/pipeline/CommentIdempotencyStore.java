@@ -16,10 +16,10 @@ import java.util.Map;
  * worker (schema-per-service).
  *
  * Semantics (recovery-aware):
- * - a row with {@code comment_id} set is PROOF of a successful post: the slot
- *   is never posted again and the stored id is reused to reconstruct
+ * - a row with {@code posted_ref} set is PROOF of a successful post: the slot
+ *   is never posted again and the stored ref is reused to reconstruct
  *   CommentsPosted on redelivery;
- * - a row with {@code comment_id} NULL means a previous attempt claimed the
+ * - a row with {@code posted_ref} NULL means a previous attempt claimed the
  *   slot but crashed before (or during) the post — it is RECLAIMABLE, so the
  *   retry re-posts instead of silently losing the comment.
  */
@@ -33,7 +33,12 @@ public class CommentIdempotencyStore {
         }
 
         /** A previous attempt already posted; reuse its comment id. */
-        record AlreadyPosted(String commentId) implements Claim {
+        /**
+         * What the slot recorded when it completed: the thread for an inline finding, the summary
+         * comment for the summary slot, {@code bot}/{@code human} for a resolve marker. One reference per
+         * slot — the adapter owns what its ids mean, so shared code never holds two of them.
+         */
+        record AlreadyPosted(String postedRef) implements Claim {
         }
     }
 
@@ -45,7 +50,7 @@ public class CommentIdempotencyStore {
                 INSERT INTO comment_idempotency (review_id, commit, anchor_key)
                 VALUES (?, ?, ?)
                 ON CONFLICT (review_id, commit, anchor_key)
-                DO UPDATE SET created_at = now() WHERE comment_idempotency.comment_id IS NULL
+                DO UPDATE SET created_at = now() WHERE comment_idempotency.posted_ref IS NULL
                 """;
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement(upsert)) {
@@ -57,7 +62,7 @@ public class CommentIdempotencyStore {
                 }
             }
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT comment_id FROM comment_idempotency WHERE review_id = ? AND commit = ? AND anchor_key = ?")) {
+                    "SELECT posted_ref FROM comment_idempotency WHERE review_id = ? AND commit = ? AND anchor_key = ?")) {
                 ps.setString(1, reviewId);
                 ps.setString(2, commit);
                 ps.setString(3, anchorKey);
@@ -73,13 +78,14 @@ public class CommentIdempotencyStore {
         }
     }
 
-    public void markPosted(String reviewId, String commit, String anchorKey, String commentId) {
+    /** Records what the slot produced — for an inline finding, the thread a reply will arrive under. */
+    public void markPosted(String reviewId, String commit, String anchorKey, String postedRef) {
         String sql = """
-                UPDATE comment_idempotency SET comment_id = ?, posted_at = now()
+                UPDATE comment_idempotency SET posted_ref = ?, posted_at = now()
                 WHERE review_id = ? AND commit = ? AND anchor_key = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, commentId);
+            ps.setString(1, postedRef);
             ps.setString(2, reviewId);
             ps.setString(3, commit);
             ps.setString(4, anchorKey);
@@ -89,11 +95,12 @@ public class CommentIdempotencyStore {
         }
     }
 
-    /** anchorKey -> commentId for every successfully posted slot of this run (redelivery reconstruction). */
+    /** anchorKey -> what that slot recorded, for every completed slot of this run (redelivery
+     *  reconstruction). */
     public Map<String, String> postedFor(String reviewId, String commit) {
         String sql = """
-                SELECT anchor_key, comment_id FROM comment_idempotency
-                WHERE review_id = ? AND commit = ? AND comment_id IS NOT NULL
+                SELECT anchor_key, posted_ref FROM comment_idempotency
+                WHERE review_id = ? AND commit = ? AND posted_ref IS NOT NULL
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);

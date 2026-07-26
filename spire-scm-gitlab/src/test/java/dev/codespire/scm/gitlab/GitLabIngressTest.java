@@ -11,12 +11,15 @@ import dev.codespire.contract.port.RawWebhook;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -66,7 +69,7 @@ class GitLabIngressTest {
         assertEquals("Add feature", e.title());
         assertEquals("feature/x", e.sourceBranch());
         assertEquals("main", e.targetBranch());
-        assertEquals("abc123def4567890", e.diffRefs().headSha());
+        assertEquals("abc123def4567890", e.headCommit());
         assertEquals("1234", e.author().providerUserId()); // numeric id, for the self-loop guard
         assertEquals("octocat", e.author().username());
         assertEquals("https://gitlab.com/acme/team/spire-test/-/merge_requests/7", e.htmlUrl());
@@ -178,6 +181,25 @@ class GitLabIngressTest {
         assertEquals("42", e.author().providerUserId());   // from the note fixture's user.id
     }
 
+    /**
+     * The ingress extracts who was @-mentioned, because only it knows GitLab renders a mention as
+     * {@code @username} in the note body. The orchestrator only asks whether the bot is in the list.
+     */
+    @Test
+    void mentionsAreExtractedFromTheNoteInGitLabsOwnSyntax() {
+        var events = ingress.translate(webhook(
+                noteWith("@code-spire.bot and @dev_one please look", "DiffNote", "DISC43", 902)));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertEquals(List.of("code-spire.bot", "dev_one"), e.mentions());
+    }
+
+    @Test
+    void aNoteWithNoMentionsCarriesAnEmptyList() {
+        var events = ingress.translate(webhook(noteWith("plain reply", "DiffNote", "DISC44", 903)));
+        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertEquals(List.of(), e.mentions());
+    }
+
     @Test
     void topLevelNoteEmitsTopLevelAuthorReplied() {
         var events = ingress.translate(webhook(noteWith("what about edge cases?", null, "DISC7", 901)));
@@ -185,6 +207,57 @@ class GitLabIngressTest {
         var e = (IntegrationEvent.AuthorReplied) events.getFirst();
         assertTrue(e.topLevel());
         assertEquals("what about edge cases?", e.text());
+    }
+
+    // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
+
+    /** A note with a `position` block sits on a line; a note without one does not. */
+    private static byte[] noteAt(String positionJson) {
+        return ("""
+                {
+                  "object_kind": "note",
+                  "project": { "path_with_namespace": "sandbox/demo-repo" },
+                  "user": { "id": 42, "username": "jdoe", "name": "Jane Doe" },
+                  "merge_request": { "iid": 7 },
+                  "object_attributes": {
+                    "noteable_type": "MergeRequest",
+                    "note": "why is this a bug?", "type": "DiffNote",
+                    "discussion_id": "DISC90", "id": 910%s
+                  }
+                }""").formatted(positionJson).getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void aDiffNoteCarriesItsFileAndLine() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(
+                ", \"position\": { \"new_path\": \"src/App.java\", \"new_line\": 42 }"))).getFirst();
+        assertNotNull(e.location());
+        assertEquals("src/App.java", e.location().path());
+        assertEquals(42, e.location().line());
+    }
+
+    /** A note on a REMOVED line has only `old_line`; losing the location there would be silent. */
+    @Test
+    void aNoteOnARemovedLineFallsBackToTheOldSide() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(
+                ", \"position\": { \"old_path\": \"src/App.java\", \"old_line\": 17 }"))).getFirst();
+        assertEquals("src/App.java", e.location().path());
+        assertEquals(17, e.location().line());
+    }
+
+    /** A DiscussionNote (thread not tied to the diff) carries no position — null, not fabricated. */
+    @Test
+    void aNoteWithNoPositionHasNoLocation() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(""))).getFirst();
+        assertNull(e.location());
+    }
+
+    /** A file-level position has a path but no line — must not throw, and must not half-report. */
+    @Test
+    void aPositionWithNoLineIsHandledWithoutThrowing() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(
+                ", \"position\": { \"new_path\": \"src/App.java\" }"))).getFirst();
+        assertNull(e.location());
     }
 
     @Test

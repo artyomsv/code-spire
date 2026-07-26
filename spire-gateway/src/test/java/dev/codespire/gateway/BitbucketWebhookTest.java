@@ -85,6 +85,9 @@ class BitbucketWebhookTest {
 
     @Test
     void signedWebhookLandsKeyedAndTypedOnIntegrationTopic() throws Exception {
+        // Captured before the POST so the assertion reads OUR record, not one an earlier test class
+        // left on this shared topic (see TopicWatermark).
+        var from = TopicWatermark.of(companion, "cs.integration");
         byte[] body = PR_CREATED.getBytes(StandardCharsets.UTF_8);
         RestAssured.given()
                 .header("X-Event-Key", "pullrequest:created")
@@ -93,7 +96,7 @@ class BitbucketWebhookTest {
                 .post("/webhooks/bitbucket-cloud/" + KEY)
                 .then().statusCode(202);
 
-        ConsumerTask<String, String> task = companion.consumeStrings().fromTopics("cs.integration", 1);
+        ConsumerTask<String, String> task = companion.consumeStrings().fromOffsets(from, 1);
         task.awaitCompletion(Duration.ofSeconds(15));
         ConsumerRecord<String, String> record = task.getFirstRecord();
 

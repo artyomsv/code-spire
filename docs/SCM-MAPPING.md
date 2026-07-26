@@ -47,7 +47,7 @@ optional, redaction-eligible, and must never be logged or persisted (SECURITY.md
 
 Neutral: parse everything into `FilePatch{oldPath, newPath, change, hunks}` where each `Hunk` holds
 `DiffLine{type, oldLine, newLine, content}` — **carrying both line numbers is what makes inline anchoring
-work on every provider.** Unified-text providers are parsed with the ported PR-Agent hunk logic; DC's
+work on every provider.** Unified-text providers are parsed with our own unified-diff hunk logic; DC's
 structured diff maps directly.
 
 ## 4. Inline comment → `InlineAnchor{path, srcPath, oldLine?, newLine?, side}` (+ `DiffRefs`)

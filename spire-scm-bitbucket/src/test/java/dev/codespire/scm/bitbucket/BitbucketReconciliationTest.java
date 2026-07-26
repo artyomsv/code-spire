@@ -59,7 +59,7 @@ class BitbucketReconciliationTest {
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":42}")));
         assertEquals("42", new BitbucketCloudCommentSink(client)
-                .updateComment(repo, 1L, "42", "new body").commentId());
+                .updateComment(repo, 1L, new ThreadRef("42"), "new body").commentId());
     }
 
     @Test

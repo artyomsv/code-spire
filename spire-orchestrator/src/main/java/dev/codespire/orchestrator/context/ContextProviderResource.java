@@ -156,7 +156,7 @@ public class ContextProviderResource {
         ContextProvider provider = new JiraContextProvider(
                 new JiraConfig(cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret(), projectKeys), mapper);
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                keys, List.of(), Set.of());
+                keys, Set.of());
         return runPreview(cfg, provider, req, List.copyOf(keys),
                 "Jira did not return the ticket(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
@@ -177,7 +177,7 @@ public class ContextProviderResource {
         List<String> links = pageIds.stream()
                 .map(pid -> siteBase + "/pages/viewpage.action?pageId=" + pid).toList();
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                Set.of(), links, Set.of());
+                Set.copyOf(links), Set.of());
         return runPreview(cfg, provider, req, List.copyOf(pageIds),
                 "Confluence did not return the page(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",

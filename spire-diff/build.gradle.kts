@@ -1,6 +1,6 @@
-// Diff/token processing library — the IP ported from qodo-ai/pr-agent
-// (Apache-2.0): unified-diff parsing with dual line numbering, token
-// budgeting, prompt-oriented rendering. Pure library, no framework deps.
+// Diff/token processing library: unified-diff parsing with dual line numbering,
+// token budgeting, prompt-oriented rendering. Written here; PR-Agent was studied
+// as prior art during design (see NOTICE). Pure library, no framework deps.
 plugins {
     `java-library`
 }

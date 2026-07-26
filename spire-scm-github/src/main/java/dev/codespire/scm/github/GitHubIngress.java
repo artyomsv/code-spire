@@ -14,8 +14,8 @@ import dev.codespire.contract.port.RawWebhook;
 import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 
 import javax.crypto.Mac;
@@ -26,11 +26,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -53,6 +55,10 @@ public class GitHubIngress implements ScmIngress {
     // owner/repo slug charset — second layer behind the HMAC: must start and end
     // alphanumeric, so a path-traversal shape like ".." can never form a segment.
     private static final Pattern SLUG = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
+
+    // How GitHub writes an @-mention in a raw comment body. Lives here because only this ingress
+    // knows the payload's rendering — the core is told WHO was mentioned, never how to read it.
+    private static final Pattern MENTION = Pattern.compile("@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)");
 
     private final String webhookSecret;
     private final ObjectMapper mapper;
@@ -157,7 +163,7 @@ public class GitHubIngress implements ScmIngress {
                 pr.path("body").asText(""),
                 pr.path("head").path("ref").asText(""),
                 pr.path("base").path("ref").asText(""),
-                DiffRefs.headOnly(pr.path("head").path("sha").asText("")),
+                (pr.path("head").path("sha").asText("")),
                 author(pr.path("user")),
                 pr.path("html_url").asText(""),
                 type().providerType()));
@@ -183,7 +189,8 @@ public class GitHubIngress implements ScmIngress {
         if (!text.startsWith("/")) {
             String commentId = comment.path("id").asText();
             return List.of(new AuthorReplied(repo, issueNumber, ReviewIds.reviewId(repo, issueNumber),
-                    new ThreadRef(commentId), commentId, text, author(comment.path("user")), true));
+                    new ThreadRef(commentId), commentId, text, author(comment.path("user")), true,
+                    mentions(text)));
         }
         String[] parts = text.substring(1).split("\\s+", 2);
         String command = parts[0].toLowerCase(Locale.ROOT);
@@ -212,10 +219,56 @@ public class GitHubIngress implements ScmIngress {
         String threadRoot = replyTo.isMissingNode() || replyTo.isNull()
                 ? comment.path("id").asText()
                 : replyTo.asText();
+        String body = comment.path("body").asText("").trim();
         return List.of(new AuthorReplied(
                 repo, prId, ReviewIds.reviewId(repo, prId),
                 new ThreadRef(threadRoot), comment.path("id").asText(),
-                comment.path("body").asText("").trim(), author(comment.path("user"))));
+                body, author(comment.path("user")), false, mentions(body), location(comment)));
+    }
+
+    /**
+     * A review comment's diff position. {@code line} is the current NEW-side line; GitHub sends
+     * {@code original_line} instead once the comment has gone outdated (the diff moved under it), so
+     * fall back to that rather than reporting no location at all. {@code path} is always present on
+     * this webhook.
+     */
+    private static ThreadLocation location(JsonNode comment) {
+        return ThreadLocation.of(comment.path("path").asText(null),
+                firstInt(comment, "line", "original_line"));
+    }
+
+    /**
+     * The first of {@code fields} present as an integer, else null.
+     *
+     * <p>Written as a loop rather than nested ternaries on purpose: {@code cond ? node.asInt() : (cond
+     * ? node.asInt() : null)} mixes {@code int} and {@code Integer}, so binary numeric promotion
+     * unboxes the null branch and it throws. A file-level GitHub comment (path set, {@code line} null)
+     * is exactly that case.
+     */
+    private static Integer firstInt(JsonNode node, String... fields) {
+        for (String field : fields) {
+            if (node.path(field).isIntegralNumber()) {
+                return node.path(field).asInt();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * GitHub renders a mention as {@code @login} in the raw body. Logins are alphanumeric with
+     * inner hyphens, so the pattern will not swallow trailing punctuation, and {@code @spire-bot}
+     * yields "spire-bot" rather than matching a longer name that merely starts with it.
+     */
+    private static List<String> mentions(String text) {
+        if (text == null || text.indexOf('@') < 0) {
+            return List.of();
+        }
+        List<String> found = new ArrayList<>();
+        Matcher m = MENTION.matcher(text);
+        while (m.find()) {
+            found.add(m.group(1));
+        }
+        return found;
     }
 
     private RepoRef repo(JsonNode payload) {

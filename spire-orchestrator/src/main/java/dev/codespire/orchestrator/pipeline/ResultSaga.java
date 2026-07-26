@@ -8,6 +8,7 @@ import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
+import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
@@ -75,9 +76,14 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
 
-    /** Max pipeline runs before a retryable failure fails terminally (C8). Tuning knob; safe default. */
-    @ConfigProperty(name = "spire.review.max-attempts", defaultValue = "3")
-    int maxAttempts;
+    /** Max pipeline runs before a retryable failure fails terminally (C8) — read from the policy on each
+     *  failure, so changing it in Settings takes effect without a restart. */
+    @Inject
+    dev.codespire.orchestrator.policy.ReviewPolicy reviewPolicy;
+
+    int maxAttempts() {
+        return reviewPolicy.maxAttempts();
+    }
 
     @Incoming("results-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
@@ -109,8 +115,7 @@ public class ResultSaga {
                 String contextCred = workerContextCredentials.packAll(workspace).orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.ticketKeys() == null ? Set.of() : e.ticketKeys(),
-                        e.links() == null ? List.of() : e.links(), contextCred));
+                        e.references() == null ? Set.of() : e.references(), contextCred));
             });
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
@@ -147,7 +152,7 @@ public class ResultSaga {
                     projection.recordLlmCall(e.reviewId(), "reconcile", priceUsage(e.reconcileUsage()));
                 }
                 java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
-                String priorSummaryRef = prior.map(PriorRun::summaryCommentId).orElse(null);
+                String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
                 if (!e.verdicts().isEmpty()) {
                     projection.recordReconciliation(e.reviewId(), e.verdicts(),
                             prior.map(PriorRun::findings).orElse(List.of()));
@@ -175,16 +180,20 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "CommentsPosted", e.inline().size() + " inline comments");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_POSTING);
                 lifecycle.handle(e.reviewId(), new RecordCommand.RecordCommentsPosted(
-                        e.commit(), e.summaryCommentId(), e.inline().size()));
+                        e.commit(), e.summaryThreadRef(), e.inline().size()));
                 // Scope A: every inline finding's comment id is a thread we own — a reply there engages the bot.
                 // Record its (path, line) too so the review detail can nest that finding's conversation.
                 // (The partial-retry reconstruction branch in the worker emits (anchorKey, 0); such a row simply
                 //  won't match a finding loc and its thread falls to General discussion — never lost.)
                 for (CommentsPosted.PostedInline inline : e.inline()) {
-                    threads.markFindingThread(e.reviewId(), new ThreadRef(inline.commentId()), inline.path(), inline.line());
+                    // Key ownership by the THREAD, not the comment: GitLab's discussion id differs from
+                    // Ownership is keyed by the THREAD a reply arrives under; what that id is belongs to the
+                    // adapter (a comment on GitHub/Bitbucket, a discussion on GitLab).
+                    threads.markFindingThread(e.reviewId(), new ThreadRef(inline.threadRef()),
+                            inline.path(), inline.line());
                 }
                 // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
-                threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryCommentId()));
+                threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryThreadRef()));
                 // ADR-019: a reconciled thread's outcome lands on the timeline and, when the finding
                 // is confirmed fixed, flags the thread resolved for the detail view.
                 for (var outcome : e.threadOutcomes()) {
@@ -200,7 +209,7 @@ public class ResultSaga {
                 // (possible only through the worker's head-re-check race) cannot stamp a
                 // snapshot inconsistent with findings_json, which may already hold the
                 // newer run's findings.
-                projection.recordPosted(e.reviewId(), e.commit(), e.summaryCommentId());
+                projection.recordPosted(e.reviewId(), e.commit(), e.summaryThreadRef());
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
@@ -216,6 +225,14 @@ public class ResultSaga {
                 // (a new comment id per turn) accumulates toward the turn cap like a GitHub thread.
                 ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
                 threads.bumpTurn(e.reviewId(), root, e.commentId());
+                // The bot has now spoken here, so this IS a bot conversation: a further reply must engage
+                // without needing another @-mention, which may be the only reason the thread started. Only
+                // the answer comment used to be marked, so a thread the bot joined by mention declined the
+                // very next reply. The summary thread is excluded deliberately — owning that would make
+                // every later top-level PR comment engage the bot.
+                if (!root.value().equals(projection.summaryRefOf(e.reviewId()).orElse(null))) {
+                    threads.markOurThread(e.reviewId(), root);
+                }
                 // The bot's answer is itself a comment a human can reply to. On SCMs that thread by
                 // immediate parent (Bitbucket), such a reply keys off the answer's id — so mark it owned
                 // AND link it to the root, else a reply to the bot's answer isn't recognized as ours and
@@ -228,6 +245,16 @@ public class ResultSaga {
                 // terminal failure never reaches this saga as an event (FollowUpWorker re-throws
                 // straight to cs.dlq, no ReviewFailed), so that path relies instead on the next
                 // review run's registerHeader reset to clear the flag.
+                projection.setAnswering(e.reviewId(), false);
+            }
+            case TurnCapNotified e -> {
+                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                projection.appendEvent(e.reviewId(), "result", "TurnCapNotified",
+                        "turn cap reached — handed back to the team", root.value());
+                // No bumpTurn: the notice about running out of turns must not consume one. Link it to
+                // the root anyway, so a human replying to the notice (on an SCM that threads by
+                // immediate parent) is still recognized as this conversation rather than a new thread.
+                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
                 projection.setAnswering(e.reviewId(), false);
             }
             case ReviewFailed e -> onReviewFailed(e);
@@ -246,27 +273,37 @@ public class ResultSaga {
         projection.appendEvent(e.reviewId(), "result", "ReviewFailed", "failed at " + e.phase());
         ReviewIds.Parsed parsed = ReviewIds.parse(e.reviewId());
         int attempt = projection.currentAttempt(e.reviewId());
+        // Read once per failure so the decision, the log and the operator-facing note cannot disagree
+        // if Settings changes the budget mid-flight.
+        int budget = maxAttempts();
 
-        if (e.retryable() && attempt < maxAttempts) {
-            java.util.Optional<String> cred = workerCredentials.packForReview(e.reviewId());
-            if (cred.isPresent()) {
+        if (e.retryable() && attempt < budget) {
+            // The credential is checked NOW rather than at dispatch: a provider that has been removed
+            // makes the retry pointless, and failing here keeps the terminal reason accurate.
+            if (workerCredentials.packForReview(e.reviewId()).isPresent()) {
                 int next = attempt + 1;
-                LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d (error: %s)",
-                        e.reviewId(), e.phase(), next, maxAttempts, e.error());
-                projection.retryPipeline(e.reviewId(), next,
-                        "Transient failure at " + e.phase() + " — retrying (attempt " + next + "/" + maxAttempts + ").");
+                // Backing off has to outlive this method: the consumer is ordered per partition, so
+                // sleeping here would stall every other review on it. The due time is persisted and a
+                // sweeper dispatches it (ReviewRetryScheduler) — which also survives a restart.
+                java.time.Duration delay = reviewPolicy.retryDelay(next);
+                LOG.warnf("Review %s hit a retryable failure at %s — auto-retry %d/%d in %ds (error: %s)",
+                        e.reviewId(), e.phase(), next, budget, delay.toSeconds(), e.error());
+                projection.scheduleRetry(e.reviewId(), next,
+                        "Transient failure at " + e.phase() + " — retrying in " + humanDelay(delay)
+                                + " (attempt " + next + "/" + budget + ").",
+                        java.time.Instant.now().plus(delay));
                 timeline.record("result", "retry:" + e.phase(), e.reviewId(),
-                        "retryable failure — auto-retry " + next + "/" + maxAttempts);
-                commands.emit(new ActionCommand.FetchDiff(
-                        e.reviewId(), parsed.repo(), parsed.prId(), e.commit(), cred.get()));
+                        "retryable failure — auto-retry " + next + "/" + budget + " in " + humanDelay(delay));
                 return;
             }
         }
 
-        // Terminal: budget exhausted, provider gone, or a permanent failure.
-        String note = terminalNote(e, attempt);
+        // Terminal: budget exhausted, provider gone, or a permanent failure. Drop any retry that was
+        // already scheduled, so a run that ends here is not resurrected by the sweeper.
+        projection.clearScheduledRetry(e.reviewId());
+        String note = terminalNote(e, attempt, budget);
         LOG.errorf("Review %s failed terminally at %s (attempt %d/%d, retryable=%s, error: %s) — %s",
-                e.reviewId(), e.phase(), attempt, maxAttempts, e.retryable(), e.error(), note);
+                e.reviewId(), e.phase(), attempt, budget, e.retryable(), e.error(), note);
         projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
         projection.setNote(e.reviewId(), note);
         // Persist the actual provider/worker error so the UI can show why it failed (not just the log).
@@ -275,7 +312,17 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
     }
 
-    private String terminalNote(ReviewFailed e, int attempt) {
+    /** "8s" / "2m 30s" — the note is read by an operator wondering why nothing is happening yet. */
+    static String humanDelay(java.time.Duration delay) {
+        long seconds = Math.max(0, delay.toSeconds());
+        if (seconds < 60) {
+            return seconds + "s";
+        }
+        long remainder = seconds % 60;
+        return remainder == 0 ? (seconds / 60) + "m" : (seconds / 60) + "m " + remainder + "s";
+    }
+
+    private String terminalNote(ReviewFailed e, int attempt, int maxAttempts) {
         if (e.retryable() && attempt >= maxAttempts) {
             return "Failed at " + e.phase() + " after " + attempt + " attempts (retry budget exhausted).";
         }
@@ -363,6 +410,7 @@ public class ResultSaga {
             case CommentsPosted e -> e.reviewId();
             case FollowUpGenerated e -> e.reviewId();
             case FollowUpPosted e -> e.reviewId();
+            case TurnCapNotified e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             default -> "";
         };

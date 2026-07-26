@@ -1,5 +1,6 @@
 package dev.codespire.gateway.registry;
 
+import dev.codespire.gateway.WebhookProviders;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -28,7 +29,9 @@ public class WebhookRepoResource {
     static final String SCOPE_REPO = "repo";
     static final String SCOPE_ORG = "org";
 
-    private static final Set<String> PROVIDER_TYPES = Set.of("github", "gitlab", "bitbucket-cloud");
+    // Not a second list of provider names: accepting a type with no webhook endpoint would
+    // register a repo whose deliveries can never arrive.
+    private static final Set<String> PROVIDER_TYPES = WebhookProviders.SUPPORTED_TYPES;
 
     // A single path segment; leading/trailing-alphanumeric blocks '.'/'..' traversal.
     private static final String SEG = "[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?";

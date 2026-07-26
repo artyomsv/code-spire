@@ -47,12 +47,27 @@ class ResultSagaRetryTest {
     private final List<RecordCommand> recorded = new ArrayList<>();
     private final List<String> retryNotes = new ArrayList<>();
     private final List<Integer> retryAttempts = new ArrayList<>();
+    private final List<java.time.Instant> scheduledFor = new ArrayList<>();
+    private final List<String> clearedSchedules = new ArrayList<>();
     private final List<String> terminalStatuses = new ArrayList<>();
     private final List<String> terminalErrors = new ArrayList<>();
 
     private ResultSaga sagaWith(int storedAttempt, int maxAttempts, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
-        saga.maxAttempts = maxAttempts;
+        // The budget is read from the policy on each failure, so Settings changes it without a restart.
+        saga.reviewPolicy = new dev.codespire.orchestrator.policy.ReviewPolicy() {
+            @Override
+            public int maxAttempts() {
+                return maxAttempts;
+            }
+
+            @Override
+            public java.time.Duration retryDelay(int attempt) {
+                // The real one reads app_setting; the schedule-vs-dispatch decision under test doesn't
+                // depend on the exact wait, only that one is applied.
+                return java.time.Duration.ofSeconds(5L * attempt);
+            }
+        };
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
@@ -86,9 +101,15 @@ class ResultSagaRetryTest {
             }
 
             @Override
-            public void retryPipeline(String reviewId, int attempt, String note) {
+            public void scheduleRetry(String reviewId, int attempt, String note, java.time.Instant dueAt) {
                 retryAttempts.add(attempt);
                 retryNotes.add(note);
+                scheduledFor.add(dueAt);
+            }
+
+            @Override
+            public void clearScheduledRetry(String reviewId) {
+                clearedSchedules.add(reviewId);
             }
 
             @Override
@@ -144,20 +165,85 @@ class ResultSagaRetryTest {
     }
 
     @Test
-    void retryableWithBudget_restartsPipelineFromFetchDiff() {
+    void retryableWithBudget_schedulesTheNextAttemptInsteadOfDispatchingIt() {
+        // The delay cannot be awaited here: this consumer is @Blocking and ordered per partition, so
+        // sleeping would stall every other review on it. The due time is persisted and the sweeper
+        // (ReviewRetryScheduler) dispatches it — which is also why a restart mid-backoff resumes.
+        java.time.Instant before = java.time.Instant.now();
         var saga = sagaWith(1, 3, Optional.of("packed-cred"));
         saga.on(failure(true));
 
-        assertEquals(1, emitted.size(), "one command re-emitted");
-        var fetch = assertInstanceOf(ActionCommand.FetchDiff.class, emitted.get(0));
-        assertEquals(REVIEW_ID, fetch.reviewId());
-        assertEquals(412L, fetch.prId(), "prId recovered from the reviewId");
-        assertEquals(COMMIT, fetch.commit());
-        assertEquals("packed-cred", fetch.scmCredential(), "retry carries a freshly-brokered credential");
+        assertTrue(emitted.isEmpty(), "nothing dispatched now — the retry is scheduled");
         assertEquals(List.of(2), retryAttempts, "attempt counter bumped to 2");
         assertTrue(retryNotes.get(0).contains("2/3"), "note shows the attempt budget");
+        assertTrue(retryNotes.get(0).contains("retrying in"), "note tells the operator it is waiting: "
+                + retryNotes.get(0));
+        assertEquals(1, scheduledFor.size(), "one retry scheduled");
+        assertTrue(scheduledFor.get(0).isAfter(before), "scheduled in the future, not immediately");
         assertTrue(recorded.isEmpty(), "no terminal RecordFailure while retrying");
         assertTrue(terminalStatuses.isEmpty(), "status not flipped to failed on a retry");
+    }
+
+    @Test
+    void commentsPosted_keysOwnershipByTheThreadNotTheComment() {
+        // GitLab posts a discussion whose id differs from the note's, and a reply arrives under the
+        // discussion. Keying ownership by the comment made the bot decline its own thread
+        // ("threadIsOurs=false") and stay silent — invisible on GitHub/Bitbucket, where they coincide.
+        List<String> ownedThreads = new ArrayList<>();
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
+                return List.of();
+            }
+        };
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public void markFindingThread(String reviewId, ThreadRef thread, String path, int line) {
+                ownedThreads.add(thread.value());
+            }
+
+            @Override
+            public void markSummaryThread(String reviewId, ThreadRef thread) {
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail) {
+            }
+
+            @Override
+            public void updateStage(String reviewId, int stage) {
+            }
+
+            @Override
+            public void recordPosted(String reviewId, String commit, String summaryCommentId) {
+            }
+        };
+
+        saga.on(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted(
+                REVIEW_ID, 412L, COMMIT, "summary-1",
+                List.of(new dev.codespire.contract.event.IntegrationEvent.CommentsPosted.PostedInline(
+                        "discussion-1", "src/App.java", 9)),
+                List.of()));
+
+        assertEquals(List.of("discussion-1"), ownedThreads,
+                "the thread a reply arrives under is what must be owned");
+    }
+
+    @Test
+    void terminalFailure_cancelsAnyScheduledRetry() {
+        // The claim in the sweeper clears retry_at, but a run can also reach a terminal state before the
+        // retry comes due — leaving it set would resurrect a finished review.
+        var saga = sagaWith(3, 3, Optional.of("packed-cred"));
+        saga.on(failure(true));
+
+        assertEquals(List.of(REVIEW_ID), clearedSchedules, "a terminal run leaves no pending retry");
     }
 
     @Test
@@ -320,6 +406,63 @@ class ResultSagaRetryTest {
      * recognized as ours and multi-turn continues (Bitbucket threads by immediate parent).
      */
     @Test
+    void followUpPosted_marksTheThreadOwnedSoTheNextReplyNeedsNoMention() {
+        // A thread the bot joined by @-mention is not owned yet. Marking only its ANSWER left the thread
+        // itself unowned, so the very next reply was declined (threadIsOurs=false) unless the human
+        // @-mentioned again — once the bot has spoken, the conversation is its own.
+        List<String> ownedThreads = new ArrayList<>();
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public List<DomainEvent> handle(String reviewId, RecordCommand command) {
+                return List.of();
+            }
+        };
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return thread;
+            }
+
+            @Override
+            public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
+            }
+
+            @Override
+            public void markOurThread(String reviewId, ThreadRef thread) {
+                ownedThreads.add(thread.value());
+            }
+
+            @Override
+            public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.of("summary-1");
+            }
+
+            @Override
+            public void setAnswering(String reviewId, boolean answering) {
+            }
+        };
+
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("mention-thread"), "answer-1"));
+        assertEquals(List.of("mention-thread"), ownedThreads, "the thread the bot spoke in becomes ours");
+
+        // …but NOT the summary thread: owning that would make every later top-level PR comment engage.
+        ownedThreads.clear();
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("summary-1"), "answer-2"));
+        assertTrue(ownedThreads.isEmpty(), "the summary thread's scope is deliberately unchanged");
+    }
+
+    @Test
     void followUpPosted_setsAnsweringFalseAndMarksTheAnswerOwned() {
         List<Boolean> answeringCalls = new ArrayList<>();
         List<String> markedOwned = new ArrayList<>();
@@ -342,6 +485,11 @@ class ResultSagaRetryTest {
             }
 
             @Override
+            public void markOurThread(String reviewId, ThreadRef thread) {
+                // Asserted in followUpPosted_marksTheThreadOwnedSoTheNextReplyNeedsNoMention.
+            }
+
+            @Override
             public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
                 markedOwned.add(answer.value() + "->" + root.value());
             }
@@ -354,6 +502,11 @@ class ResultSagaRetryTest {
             }
         };
         saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.empty(); // not the summary thread — see the sibling test for that case
+            }
+
             @Override
             public void setAnswering(String reviewId, boolean answering) {
                 answeringCalls.add(answering);

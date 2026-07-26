@@ -101,7 +101,7 @@ thread. This is a threat class distinct from the OWASP-web items above.
 "One bot, every PR, no per-seat" is the headline feature and the cost risk: any workspace member who
 opens/updates a PR triggers a paid LLM call.
 
-- **v1:** per-review token budgeting only (ported from PR-Agent). **No fleet-level cap.** This is a
+- **v1:** per-review token budgeting only (`spire-diff`). **No fleet-level cap.** This is a
   documented, accepted v1 gap.
 - **Deferred (FR-later):** per-repo/workspace rate limit, daily LLM spend cap, giant-PR guard,
   draft/WIP-PR skip, bot-authored-PR skip. An operator running v1 must know there is no built-in

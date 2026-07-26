@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
@@ -28,7 +29,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.GatherContext.class, name = "GatherContext"),
         @JsonSubTypes.Type(value = ActionCommand.GenerateReview.class, name = "GenerateReview"),
         @JsonSubTypes.Type(value = ActionCommand.PostComments.class, name = "PostComments"),
-        @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp")
+        @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp"),
+        @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap")
 })
 public sealed interface ActionCommand {
 
@@ -73,7 +75,7 @@ public sealed interface ActionCommand {
     }
 
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
-                         Set<String> ticketKeys, List<String> links,
+                         Set<String> references,
                          String contextCredential) implements ActionCommand {
     }
 
@@ -129,11 +131,34 @@ public sealed interface ActionCommand {
      * encrypted SCM + LLM credentials (ADR-015/ADR-018) — without them the worker would use the stub
      * adapters. The credential fields override the {@link ActionCommand} defaults.
      */
+    /**
+     * {@code otherFindings} are the review's other open findings, each already owning its own thread.
+     * The reply prompt lists them as off-limits: the diff shows every defect in the file, so without
+     * this the model cannot tell which are already under discussion elsewhere and answers a narrow
+     * question with a survey of the whole file. The REVIEW command has always carried the equivalent
+     * exclusion list via {@link PriorRun}; this one did not.
+     */
     record AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String triggeringCommentId, String question,
                           String scmCredential, String llmCredential, boolean mentioned,
                           int maxAttempts, long backoffBaseMs, double backoffFactor,
-                          PromptTemplate followUpPrompt) implements ActionCommand {
+                          PromptTemplate followUpPrompt,
+                          List<PriorFinding> otherFindings) implements ActionCommand {
+
+        public AnswerFollowUp {
+            otherFindings = otherFindings == null ? List.of() : List.copyOf(otherFindings);
+        }
+
+        // 13-arg: prompt override, no other-findings list (kept for call sites that have none).
+        public AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                              String triggeringCommentId, String question,
+                              String scmCredential, String llmCredential, boolean mentioned,
+                              int maxAttempts, long backoffBaseMs, double backoffFactor,
+                              PromptTemplate followUpPrompt) {
+            this(reviewId, repo, prId, threadRef, triggeringCommentId, question, scmCredential,
+                    llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
+                    followUpPrompt, List.of());
+        }
 
         // Without a prompt override — the worker uses the built-in default follow-up prompt.
         public AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
@@ -141,7 +166,24 @@ public sealed interface ActionCommand {
                               String scmCredential, String llmCredential, boolean mentioned,
                               int maxAttempts, long backoffBaseMs, double backoffFactor) {
             this(reviewId, repo, prId, threadRef, triggeringCommentId, question,
-                    scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor, null);
+                    scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
+                    null, List.of());
         }
+    }
+
+    /**
+     * The bot has used up its per-thread turns and is handing the thread back to the team — post a
+     * one-off notice saying so, then stay quiet (spec §8).
+     *
+     * <p>Without this the cap was invisible outside the dashboard: the bot simply stopped replying,
+     * which reads exactly like a lost webhook or a crash to the person waiting in the thread. Silence
+     * is not a hand-off.
+     *
+     * <p>Carries no LLM credential — the notice is fixed text, so reaching the cap costs nothing and
+     * always says the same thing. {@code threadRef} is the conversation ROOT, which is also the
+     * idempotency slot: the notice posts once per thread however many further replies arrive.
+     */
+    record NotifyTurnCap(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                         int turnCap, String scmCredential) implements ActionCommand {
     }
 }

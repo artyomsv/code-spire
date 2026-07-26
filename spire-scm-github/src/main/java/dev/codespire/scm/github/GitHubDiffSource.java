@@ -6,7 +6,6 @@ import dev.codespire.contract.port.IdentitySource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -59,7 +58,7 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
                 pr.path("body").asText(""),
                 pr.path("head").path("ref").asText(""),
                 pr.path("base").path("ref").asText(""),
-                DiffRefs.headOnly(pr.path("head").path("sha").asText("")),
+                (pr.path("head").path("sha").asText("")),
                 Author.of(user.path("id").asText(""), login, login),
                 pr.path("html_url").asText(""));
     }
@@ -68,7 +67,7 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
     public Diff fetchDiff(RepoRef repo, long prId, String commit) {
         String diffText = client.getDiff(prPath(repo, prId));
         List<FilePatch> files = UnifiedDiffParser.parse(diffText);
-        return new Diff(DiffRefs.headOnly(commit), files, false);
+        return new Diff(commit, files, false);
     }
 
     /** The reconciliation lens (prior head -> new head), same diff media type as the PR diff. */

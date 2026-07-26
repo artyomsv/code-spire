@@ -115,6 +115,9 @@ export interface ReviewEvent {
   det: string;
   threadRef?: string; // the SCM thread a conversation turn belongs to
   threadKind?: 'finding' | 'summary' | 'mention'; // classification for nesting; absent for non-turns
+  // 'path:line' when the thread sits in the diff. A conversation the bot didn't start has no finding
+  // to nest under, so this is the only thing that shows it is anchored rather than general.
+  loc?: string;
 }
 
 export interface ReviewDetail extends ReviewSummary {
@@ -467,6 +470,32 @@ export async function setConversationSettings(settings: ConversationSettings): P
     body: JSON.stringify(settings),
   });
   if (!res.ok) return throwResponse(res, 'Failed to update conversation settings');
+  return res.json();
+}
+
+// ---- review settings (the review pipeline's own retry budget) ----
+
+/** Deliberately separate from ConversationSettings: a review that exhausts its attempts ends as a
+ *  failed review carrying the provider's error, while a follow-up answer dead-letters for replay. */
+export interface ReviewSettings {
+  maxAttempts: number;
+  backoffBaseMs: number;
+  backoffFactor: number;
+}
+
+export async function getReviewSettings(): Promise<ReviewSettings> {
+  const res = await fetch('/api/settings/review');
+  if (!res.ok) return throwResponse(res, 'Failed to load review settings');
+  return res.json();
+}
+
+export async function setReviewSettings(settings: ReviewSettings): Promise<ReviewSettings> {
+  const res = await fetch('/api/settings/review', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update review settings');
   return res.json();
 }
 

@@ -10,7 +10,6 @@ import dev.codespire.contract.port.ScmType;
 import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.diff.UnifiedDiffParser;
@@ -42,6 +41,7 @@ class DiffWorkerTest {
     void setUp() {
         emitted = new ArrayList<>();
         worker = new DiffWorker();
+        worker.references = new dev.codespire.worker.adapters.WorkerContextReferences();
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
@@ -62,7 +62,7 @@ class DiffWorkerTest {
                     throw failure;
                 }
                 return new PullRequest(repo, prId, "Demo PR", prDescription, "feature/demo", "main",
-                        DiffRefs.headOnly("abc123"), Author.of("1", "bot", "bot"), "http://pr");
+                        "abc123", Author.of("1", "bot", "bot"), "http://pr");
             }
 
             @Override
@@ -70,7 +70,7 @@ class DiffWorkerTest {
                 if (failure != null) {
                     throw failure;
                 }
-                return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse("""
+                return new Diff(commit, UnifiedDiffParser.parse("""
                         diff --git a/x.java b/x.java
                         --- a/x.java
                         +++ b/x.java
@@ -102,8 +102,8 @@ class DiffWorkerTest {
         prDescription = "context: https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design";
         worker.fetchDiff(COMMAND);
         DiffFetched fetched = assertInstanceOf(DiffFetched.class, emitted.getFirst());
-        assertTrue(fetched.links().contains("https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design"),
-                "Confluence provider narrows these; the worker just supplies candidate URLs");
+        assertTrue(fetched.references().contains("https://acme.atlassian.net/wiki/spaces/ENG/pages/12345/Design"),
+                "providers narrow these; the worker just supplies candidate references");
     }
 
     @Test

@@ -7,7 +7,6 @@ import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
@@ -48,9 +47,20 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}""";
 
     private final GitHubClient client;
+    private final String brokeredBotLogin;
 
     public GitHubCommentSink(GitHubClient client) {
+        this(client, null);
+    }
+
+    /**
+     * @param botLogin the registry's bot username — GitHub exposes a comment's author as a login, so
+     *                 this is what attributes the bot's own turns without a live {@code GET /user} per
+     *                 fetch. Null falls back to that lookup.
+     */
+    public GitHubCommentSink(GitHubClient client, String botLogin) {
         this.client = client;
+        this.brokeredBotLogin = botLogin;
     }
 
     @Override
@@ -66,11 +76,11 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     }
 
     @Override
-    public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
+    public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
         boolean old = anchor.side() == Side.OLD;
         Map<String, Object> body = new HashMap<>(Map.of(
                 "body", bodyMd,
-                "commit_id", refs.headSha(),
+                "commit_id", headCommit,
                 "path", anchor.path(),
                 "side", old ? "LEFT" : "RIGHT"));
         if (!old && anchor.endNewLine() != null && anchor.endNewLine() > anchor.newLine()) {
@@ -114,7 +124,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
 
     /** In-place summary rewrite on a re-review — the summary is an issue comment (PATCH, not POST). */
     @Override
-    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+    public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        // A GitHub issue comment IS its own thread root, so the thread ref is the comment to patch.
+        String commentId = thread.value();
         client.patchJson(issueCommentByIdPath(repo, commentId), Map.of("body", bodyMd));
         return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
     }
@@ -215,6 +227,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
      * conversation is still answered, the prompt just doesn't distinguish the bot's prior messages.
      */
     private String botLogin() {
+        if (brokeredBotLogin != null && !brokeredBotLogin.isBlank()) {
+            return brokeredBotLogin; // brokered from the registry — no per-fetch lookup needed
+        }
         try {
             return client.getJson("/user").path("login").asText("");
         } catch (RuntimeException transientFailure) {

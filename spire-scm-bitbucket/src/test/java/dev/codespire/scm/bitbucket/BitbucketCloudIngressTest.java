@@ -22,6 +22,8 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BitbucketCloudIngressTest {
@@ -70,7 +72,7 @@ class BitbucketCloudIngressTest {
         assertEquals("Add feature", e.title());
         assertEquals("feature/x", e.sourceBranch());
         assertEquals("main", e.targetBranch());
-        assertEquals("abc123def456", e.diffRefs().headSha()); // as delivered (12-char)
+        assertEquals("abc123def456", e.headCommit()); // as delivered (12-char)
         assertEquals("author-account-1", e.author().providerUserId());
         assertEquals("jdoe", e.author().username());
     }
@@ -96,6 +98,31 @@ class BitbucketCloudIngressTest {
                 webhook(payload.getBytes(StandardCharsets.UTF_8),
                         Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+    }
+
+    /**
+     * Bitbucket writes a mention into RAW comment text as {@code @{account_id}} — the login never
+     * appears — so the braced id is what the orchestrator has to be able to compare against the
+     * bot's identity. Extracting it here is what keeps that syntax out of the shared saga, which
+     * previously carried it alongside the other providers' {@code @login} form.
+     */
+    @Test
+    void mentionsAreExtractedFromRawTextInBitbucketsBracedSyntax() {
+        String payload = comment("human-1", "@{TEST-account-0001} can you look? cc @nickname", "77");
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(payload.getBytes(StandardCharsets.UTF_8),
+                        Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
+        assertEquals(List.of("TEST-account-0001", "nickname"), e.mentions(),
+                "the braced account id is collected, and a plain @name alongside it");
+    }
+
+    @Test
+    void aCommentWithNoMentionsCarriesAnEmptyList() {
+        String payload = comment("human-1", "plain reply, no mentions", "77");
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(payload.getBytes(StandardCharsets.UTF_8),
+                        Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
+        assertEquals(List.of(), e.mentions());
     }
 
     @Test
@@ -235,6 +262,53 @@ class BitbucketCloudIngressTest {
                   "comment": { "id": 900, "content": { "raw": "%s" },
                     "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" }%s%s }
                 }""").formatted(body, parent, inline).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
+
+    @Test
+    void anInlineCommentCarriesItsFileAndLine() {
+        AuthorReplied e = replyFrom(commentInline(
+                ", \"inline\": { \"path\": \"src/App.java\", \"to\": 42 }"));
+        assertNotNull(e.location());
+        assertEquals("src/App.java", e.location().path());
+        assertEquals(42, e.location().line());
+    }
+
+    /** A comment on a REMOVED line carries only {@code from}; losing the location there is silent. */
+    @Test
+    void anInlineCommentOnARemovedLineFallsBackToFrom() {
+        AuthorReplied e = replyFrom(commentInline(
+                ", \"inline\": { \"path\": \"src/App.java\", \"from\": 17 }"));
+        assertEquals(17, e.location().line());
+    }
+
+    /** A plain PR comment has no {@code inline} block at all. */
+    @Test
+    void aPlainCommentHasNoLocation() {
+        assertNull(replyFrom(commentInline("")).location());
+    }
+
+    /** A file-level inline block has a path but no line — must not throw, must not half-report. */
+    @Test
+    void anInlineBlockWithNoLineIsHandledWithoutThrowing() {
+        assertNull(replyFrom(commentInline(", \"inline\": { \"path\": \"src/App.java\" }")).location());
+    }
+
+    /** A comment whose {@code inline} block is spliced in verbatim, so tests can shape it freely. */
+    private static byte[] commentInline(String inlineJson) {
+        return ("""
+                {
+                  "repository": { "full_name": "sandbox/demo-repo" },
+                  "pullrequest": { "id": 7 },
+                  "comment": { "id": 900, "content": { "raw": "why is this a bug?" },
+                    "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" }%s }
+                }""").formatted(inlineJson).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private AuthorReplied replyFrom(byte[] body) {
+        return assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(body, Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
     }
 
     private static RawWebhook webhook(byte[] body, Map<String, String> headers) {

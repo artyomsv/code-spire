@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.provider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.IdentitySource;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.scm.bitbucket.BitbucketCloudClient;
 import dev.codespire.scm.bitbucket.BitbucketCloudCommentSink;
@@ -19,6 +20,8 @@ import dev.codespire.scm.gitlab.GitLabDiffSource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.util.Set;
+
 /**
  * Builds a read-only SCM client for a resolved provider, from its decrypted
  * credentials — the orchestrator's per-provider replacement for the old
@@ -27,6 +30,15 @@ import jakarta.inject.Inject;
  */
 @ApplicationScoped
 public class ProviderClients {
+
+    /**
+     * The provider types this build can actually construct clients for — the registry's
+     * validation list. It lives beside the switches below so that "which types exist"
+     * cannot drift from "which types we can build", and so callers that only need to
+     * validate an input never name a provider themselves. Narrower than {@link ScmType},
+     * which also declares types no adapter implements yet.
+     */
+    public static final Set<String> SUPPORTED_TYPES = Set.of("bitbucket-cloud", "github", "gitlab");
 
     @Inject
     ObjectMapper mapper;
@@ -47,10 +59,15 @@ public class ProviderClients {
      * throws so the caller degrades gracefully (falls back to the stored preview).
      */
     public ThreadSource threadSource(ScmProvider provider) {
+        // The registry's bot identity is passed straight in, so the review detail's thread re-fetch
+        // attributes the bot's turns without a live GET /user (matched per API: login/username/account id).
         return switch (provider.type()) {
-            case "github" -> new GitHubCommentSink(new GitHubClient(githubConfig(provider), mapper));
-            case "bitbucket-cloud" -> new BitbucketCloudCommentSink(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
-            case "gitlab" -> new GitLabCommentSink(new GitLabClient(gitlabConfig(provider), mapper));
+            case "github" -> new GitHubCommentSink(
+                    new GitHubClient(githubConfig(provider), mapper), provider.botUsername());
+            case "bitbucket-cloud" -> new BitbucketCloudCommentSink(
+                    new BitbucketCloudClient(bitbucketConfig(provider), mapper), provider.botAccountId());
+            case "gitlab" -> new GitLabCommentSink(
+                    new GitLabClient(gitlabConfig(provider), mapper), provider.botUsername());
             default -> throw new UnsupportedOperationException(
                     "Thread re-fetch is not supported for provider type: " + provider.type());
         };
@@ -70,23 +87,6 @@ public class ProviderClients {
                     new GitLabClient(new GitLabConfig(baseUrl, secret), mapper));
             default -> throw new IllegalStateException("Unsupported provider type: " + type);
         };
-    }
-
-    /**
-     * Validates a token that can't self-identify via {@code whoami()} by checking
-     * it can reach the workspace. Only Bitbucket needs this — its access tokens
-     * can't call {@code /user} (GitHub/GitLab bearer tokens can). Throws the
-     * adapter's API exception when the token can't reach the workspace.
-     */
-    public void assertWorkspaceAccess(String type, String baseUrl, String authKind, String authUsername,
-                                      String secret, String workspace) {
-        if ("bitbucket-cloud".equals(type)) {
-            new BitbucketCloudDiffSource(
-                    new BitbucketCloudClient(bitbucketConfig(baseUrl, authKind, authUsername, secret), mapper))
-                    .assertWorkspaceAccess(workspace);
-            return;
-        }
-        throw new IllegalStateException("No workspace fallback validation for provider type: " + type);
     }
 
     private static BitbucketCloudConfig bitbucketConfig(ScmProvider p) {

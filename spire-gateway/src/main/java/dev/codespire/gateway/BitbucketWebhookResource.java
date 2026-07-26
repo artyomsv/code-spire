@@ -25,7 +25,8 @@ import java.util.Set;
 @Path("/webhooks/bitbucket-cloud/{key}")
 public class BitbucketWebhookResource {
 
-    private static final String PROVIDER = "bitbucket-cloud";
+    /** Package-private so {@link WebhookProviders} can enumerate the endpoints without repeating names. */
+    static final String PROVIDER = "bitbucket-cloud";
 
     /** Registered manual commands (CONTRACT §10); mirrors the other edges. */
     private static final Set<String> COMMANDS = Set.of("review");

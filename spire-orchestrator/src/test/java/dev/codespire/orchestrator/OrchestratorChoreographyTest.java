@@ -6,7 +6,6 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -16,6 +15,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -24,7 +25,9 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
@@ -44,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @QuarkusTest
 class OrchestratorChoreographyTest {
 
+    private static final String COMMANDS_TOPIC = "cs.commands";
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final String REVIEW_ID = "review::sandbox/demo-repo#77";
     private static final String COMMIT_A = "aaa111aaa111";
@@ -62,6 +66,19 @@ class OrchestratorChoreographyTest {
     dev.codespire.orchestrator.llm.LlmProviderRegistry llmProviders;
 
     private KafkaProducer<String, String> producer;
+
+    /**
+     * Where this test's own commands start on cs.commands. The broker is shared by every
+     * {@code @QuarkusTest} class in the module, so counting from the beginning of the topic picked up
+     * whichever class wrote first — {@link ConversationE2ETest}'s {@code AnswerFollowUp} would arrive
+     * as "command #1" and the exact-sequence assertions failed depending on class order.
+     */
+    private Map<TopicPartition, Long> commandsFrom;
+
+    @org.junit.jupiter.api.BeforeEach
+    void captureCommandBaseline() {
+        commandsFrom = endOffsets(COMMANDS_TOPIC);
+    }
 
     @org.junit.jupiter.api.BeforeEach
     void registerProvider() {
@@ -96,7 +113,7 @@ class OrchestratorChoreographyTest {
         expectCommands(1, "FetchDiff");
 
         // worker results drive the next commands
-        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_A, 1, List.of("java"), 100, false, Set.of(), List.of()));
+        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_A, 1, List.of("java"), 100, false, Set.of()));
         expectCommands(2, "GatherContext");
 
         produce("cs.results", new IntegrationEvent.ContextAssembled(REVIEW_ID, 77, COMMIT_A, null, Set.of("RULES"), Set.of()));
@@ -111,7 +128,7 @@ class OrchestratorChoreographyTest {
                 new ReviewResult(List.of(), "stale summary", new ModelUsage("m", 0, 0, 0))));
 
         // B's flow continues normally
-        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_B, 1, List.of("java"), 100, false, Set.of(), List.of()));
+        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_B, 1, List.of("java"), 100, false, Set.of()));
         List<String> commands = expectCommands(5, "GatherContext");
         assertTrue(commands.stream().noneMatch(c ->
                         c.contains("\"type\":\"PostComments\"") && c.contains(COMMIT_A)),
@@ -139,7 +156,7 @@ class OrchestratorChoreographyTest {
         awaitTimelineContains("\"ReviewCancelled\"");
 
         // a late worker result for the cancelled run triggers NOTHING
-        produce78(new IntegrationEvent.DiffFetched(reviewId78, 78, "ccc333ccc333", 1, List.of("java"), 10, false, Set.of(), List.of()));
+        produce78(new IntegrationEvent.DiffFetched(reviewId78, 78, "ccc333ccc333", 1, List.of("java"), 10, false, Set.of()));
         awaitTimelineContains("dropped:DiffFetched");
         List<String> afterCancel = expectCommands(8, "FetchDiff"); // still exactly 8 commands
         assertTrue(afterCancel.stream()
@@ -150,7 +167,7 @@ class OrchestratorChoreographyTest {
     private IntegrationEvent prEvent78(PrAction action) {
         return new IntegrationEvent.PullRequestEventReceived(
                 REPO, 78, action, "TEST: cancel flow", "TEST description",
-                "feature/TEST-cancel", "main", DiffRefs.headOnly("ccc333ccc333"),
+                "feature/TEST-cancel", "main", "ccc333ccc333",
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
                 "https://example.invalid/pr/78", null);
     }
@@ -164,7 +181,7 @@ class OrchestratorChoreographyTest {
     private IntegrationEvent prEvent(String commit, PrAction action) {
         return new IntegrationEvent.PullRequestEventReceived(
                 REPO, 77, action, "TEST: choreography", "TEST description",
-                "feature/TEST-x", "main", DiffRefs.headOnly(commit),
+                "feature/TEST-x", "main", commit,
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
                 "https://example.invalid/pr/77", null);
     }
@@ -182,19 +199,38 @@ class OrchestratorChoreographyTest {
         producer.send(new ProducerRecord<>(topic, REVIEW_ID, json)).get();
     }
 
-    /** Reads cs.commands from the beginning until {@code total} records; asserts the last one's type. */
-    private List<String> expectCommands(int total, String expectedLastType) {
+    private Properties consumerProps() {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        return props;
+    }
 
+    /** End offsets per partition now; all-zero when the topic does not exist yet (nothing to skip). */
+    private Map<TopicPartition, Long> endOffsets(String topic) {
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProps())) {
+            List<PartitionInfo> partitions = consumer.partitionsFor(topic);
+            if (partitions == null || partitions.isEmpty()) {
+                return Map.of(new TopicPartition(topic, 0), 0L);
+            }
+            return new HashMap<>(consumer.endOffsets(partitions.stream()
+                    .map(p -> new TopicPartition(p.topic(), p.partition())).toList()));
+        }
+    }
+
+    /** Reads the commands THIS test produced (from {@link #commandsFrom}) until {@code total} records;
+     *  asserts the last one's type. */
+    private List<String> expectCommands(int total, String expectedLastType) {
         List<String> values = new ArrayList<>();
         long deadline = System.currentTimeMillis() + 30_000;
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            consumer.subscribe(List.of("cs.commands"));
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProps())) {
+            // assign + seek, not subscribe: start at this test's baseline so another class's records
+            // can never be counted as ours.
+            consumer.assign(commandsFrom.keySet());
+            commandsFrom.forEach(consumer::seek);
             while (values.size() < total && System.currentTimeMillis() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
                     values.add(record.value());

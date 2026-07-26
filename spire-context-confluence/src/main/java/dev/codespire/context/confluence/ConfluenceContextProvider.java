@@ -53,7 +53,7 @@ public class ConfluenceContextProvider implements ContextProvider {
 
     @Override
     public boolean supports(ContextRequest request) {
-        return request.links() != null && !matchingPageIds(request).isEmpty();
+        return request.references() != null && !matchingPageIds(request).isEmpty();
     }
 
     @Override
@@ -61,9 +61,13 @@ public class ConfluenceContextProvider implements ContextProvider {
         return CompletableFuture.supplyAsync(() -> fetch(request));
     }
 
-    /** The request's candidate links narrowed to page ids on the configured Confluence host, capped. */
+    /**
+     * The request's candidates narrowed to what this provider resolves: page ids on the configured
+     * host, capped. The request carries every source's candidates, so entries that are not links on
+     * our host simply do not match.
+     */
     private List<String> matchingPageIds(ContextRequest request) {
-        return ConfluenceLinks.pageIds(request.links(), siteBaseUrl).stream().limit(MAX_PAGES).toList();
+        return ConfluenceLinks.pageIds(request.references(), siteBaseUrl).stream().limit(MAX_PAGES).toList();
     }
 
     private ContextContribution fetch(ContextRequest request) {

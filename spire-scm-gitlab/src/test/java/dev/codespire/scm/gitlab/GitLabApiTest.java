@@ -5,7 +5,6 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -34,7 +33,8 @@ class GitLabApiTest {
 
     private static WireMockServer server;
     private static GitLabDiffSource diffSource;
-    private static GitLabCommentSink commentSink;
+    private static GitLabClient client;
+    private GitLabCommentSink commentSink;
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     // GitLab addresses the project by URL-encoded full path.
     private static final String MR = "/projects/sandbox%2Fdemo-repo/merge_requests/42";
@@ -43,11 +43,10 @@ class GitLabApiTest {
     static void start() {
         server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();
-        GitLabClient client = new GitLabClient(
+        client = new GitLabClient(
                 new GitLabConfig("http://localhost:" + server.port(), "test-token"),
                 new ObjectMapper());
         diffSource = new GitLabDiffSource(client);
-        commentSink = new GitLabCommentSink(client);
     }
 
     @AfterAll
@@ -58,6 +57,20 @@ class GitLabApiTest {
     @BeforeEach
     void reset() {
         server.resetAll();
+        // A fresh sink per test: it caches the MR's diff_refs for the life of a review, so a shared
+        // instance would carry one test's SHAs into the next.
+        commentSink = new GitLabCommentSink(client);
+    }
+
+    /**
+     * The base/start/head triple GitLab's position requires. The sink reads it from the merge
+     * request itself, so the SPI never has to carry a provider-shaped SHA triple.
+     */
+    private void stubDiffRefs(String baseSha, String startSha, String headSha) {
+        server.stubFor(get(urlEqualTo(MR)).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{ \"iid\": 42, \"diff_refs\": { \"base_sha\": \"" + baseSha
+                        + "\", \"start_sha\": \"" + startSha + "\", \"head_sha\": \"" + headSha + "\" } }")));
     }
 
     @Test
@@ -82,15 +95,13 @@ class GitLabApiTest {
         assertEquals("Add feature", pr.title());
         assertEquals("feature/x", pr.sourceBranch());
         assertEquals("main", pr.targetBranch());
-        assertEquals("abc123def456", pr.diffRefs().headSha());
-        assertEquals("base000", pr.diffRefs().baseSha());
-        assertEquals("start000", pr.diffRefs().startSha());
+        assertEquals("abc123def456", pr.headCommit());
         assertEquals("5150", pr.author().providerUserId());
         assertEquals("jdoe", pr.author().username());
     }
 
     @Test
-    void fetchesAndParsesDiffWithAllThreeRefs() {
+    void fetchesAndParsesDiffCarryingItsHeadCommit() {
         server.stubFor(get(urlEqualTo(MR + "/changes"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
                         { "diff_refs": { "base_sha": "base000", "start_sha": "start000", "head_sha": "abc123def456" },
@@ -105,10 +116,8 @@ class GitLabApiTest {
         Diff diff = diffSource.fetchDiff(REPO, 42, "abc123def456");
         assertEquals(1, diff.files().size());
         assertEquals("src/App.java", diff.files().getFirst().newPath());
-        // GitLab needs all three SHAs to anchor an inline comment.
-        assertEquals("base000", diff.refs().baseSha());
-        assertEquals("start000", diff.refs().startSha());
-        assertEquals("abc123def456", diff.refs().headSha());
+        // The base/start SHAs GitLab also needs are the sink's to fetch; the diff carries the head.
+        assertEquals("abc123def456", diff.headCommit());
     }
 
     @Test
@@ -132,7 +141,7 @@ class GitLabApiTest {
     @Test
     void postsInlineCommentOnNewSideWithNewLineOnly() {
         stubDiscussionCreated();
-        commentSink.postInline(REPO, 42, new DiffRefs("base1", "start1", "head1"),
+        commentSink.postInline(REPO, 42, "head1",
                 new InlineAnchor("src/App.java", "src/App.java", null, 7, Side.NEW), "note");
         server.verify(postRequestedFor(urlEqualTo(MR + "/discussions"))
                 .withRequestBody(equalToJson("""
@@ -145,7 +154,7 @@ class GitLabApiTest {
     @Test
     void postsInlineCommentOnOldSideWithOldLineOnly() {
         stubDiscussionCreated();
-        commentSink.postInline(REPO, 42, new DiffRefs("base1", "start1", "head1"),
+        commentSink.postInline(REPO, 42, "head1",
                 new InlineAnchor("src/App.java", "src/App.java", 5, null, Side.OLD), "removed?");
         server.verify(postRequestedFor(urlEqualTo(MR + "/discussions"))
                 .withRequestBody(equalToJson("""
@@ -158,7 +167,7 @@ class GitLabApiTest {
     @Test
     void postsInlineCommentOnContextWithBothLines() {
         stubDiscussionCreated();
-        commentSink.postInline(REPO, 42, new DiffRefs("base1", "start1", "head1"),
+        commentSink.postInline(REPO, 42, "head1",
                 new InlineAnchor("src/App.java", "src/App.java", 4, 6, Side.NEW), "context");
         server.verify(postRequestedFor(urlEqualTo(MR + "/discussions"))
                 .withRequestBody(equalToJson("""
@@ -175,8 +184,8 @@ class GitLabApiTest {
                 .withBody("{ \"id\": \"DISC1\", \"notes\": [ { \"id\": 100 } ] }")));
 
         InlineAnchor range = new InlineAnchor("src/App.java", "src/App.java", null, 10, Side.NEW, 14);
-        DiffRefs refs = new DiffRefs("base000", "start000", "abc123");
-        commentSink.postInline(REPO, 42, refs, range, "range finding");
+        stubDiffRefs("base000", "start000", "abc123");
+        commentSink.postInline(REPO, 42, "abc123", range, "range finding");
 
         server.verify(postRequestedFor(urlEqualTo(MR + "/discussions")).withRequestBody(equalToJson("""
                 { "body": "range finding",
@@ -189,7 +198,7 @@ class GitLabApiTest {
     @Test
     void inlineReturnsNoteIdAndDiscussionThread() {
         stubDiscussionCreated();
-        CommentRef ref = commentSink.postInline(REPO, 42, new DiffRefs("b", "s", "h"),
+        CommentRef ref = commentSink.postInline(REPO, 42, "h",
                 new InlineAnchor("src/App.java", "src/App.java", null, 7, Side.NEW), "note");
         assertEquals("501", ref.commentId());               // first note id
         assertEquals("abcd1234", ref.thread().value());     // discussion_id, not a comment id
@@ -342,6 +351,7 @@ class GitLabApiTest {
     }
 
     private void stubDiscussionCreated() {
+        stubDiffRefs("base1", "start1", "head1");
         server.stubFor(post(urlEqualTo(MR + "/discussions"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
                         { "id": "abcd1234", "notes": [ { "id": 501 } ] }

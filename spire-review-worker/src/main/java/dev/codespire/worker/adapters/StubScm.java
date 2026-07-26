@@ -10,7 +10,6 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -74,14 +73,14 @@ public final class StubScm {
             // head=null: the stub cannot know the simulator's random commit, and a
             // null head deliberately skips the workers' head-moved check (Commits).
             return new PullRequest(repo, prId, "TEST: stub PR", "STUB description",
-                    "feature/TEST-stub", "main", DiffRefs.headOnly(null),
+                    "feature/TEST-stub", "main", null,
                     Author.of("TEST-account-id", "test-author", "TEST Author"),
                     "https://example.invalid/stub/" + prId);
         }
 
         @Override
         public Diff fetchDiff(RepoRef repo, long prId, String commit) {
-            return new Diff(DiffRefs.headOnly(commit), UnifiedDiffParser.parse(STUB_DIFF), false);
+            return new Diff(commit, UnifiedDiffParser.parse(STUB_DIFF), false);
         }
     }
 
@@ -103,7 +102,7 @@ public final class StubScm {
         }
 
         @Override
-        public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
+        public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
             String id = "STUB-" + ids.incrementAndGet();
             LOG.infof("STUB inline comment on %s#%d %s: %.120s", repo.full(), prId, anchor.anchorKey(), bodyMd);
             return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
@@ -128,10 +127,10 @@ public final class StubScm {
         }
 
         @Override
-        public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
-            LOG.infof("[stub] updateComment %s pr=%d comment=%s (%d chars)",
-                    repo.full(), prId, commentId, bodyMd.length());
-            return new CommentRef(commentId, new ThreadRef(commentId), CommentKind.SUMMARY);
+        public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+            LOG.infof("[stub] updateComment %s pr=%d thread=%s (%d chars)",
+                    repo.full(), prId, thread.value(), bodyMd.length());
+            return new CommentRef(thread.value(), thread, CommentKind.SUMMARY);
         }
     }
 }

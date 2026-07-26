@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class GitLabThreadFetchTest {
 
     private static WireMockServer server;
+    private static GitLabClient client;
     private static GitLabCommentSink sink;
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final String MR = "/projects/sandbox%2Fdemo-repo/merge_requests/42";
@@ -34,7 +35,7 @@ class GitLabThreadFetchTest {
     static void start() {
         server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         server.start();
-        GitLabClient client = new GitLabClient(
+        client = new GitLabClient(
                 new GitLabConfig("http://localhost:" + server.port(), "test-token"), new ObjectMapper());
         sink = new GitLabCommentSink(client);
     }
@@ -73,6 +74,29 @@ class GitLabThreadFetchTest {
         assertTrue(t.messages().get(0).fromBot());      // code-spire == token owner
         assertFalse(t.messages().get(1).fromBot());
         assertEquals("why?", t.messages().get(1).text());
+    }
+
+    @Test
+    void aBrokeredBotUsernameAttributesWithoutCallingUser() {
+        // The orchestrator already knows the bot from the provider registry. Using it removes a per-fetch
+        // call AND the failure mode where a /user hiccup attributes nothing, making the bot's own finding
+        // look like a second human so it stays quiet in its own thread.
+        server.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(503)));
+        server.stubFor(get(urlEqualTo(MR + "/discussions/DISC1")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("""
+                        { "id": "DISC1", "notes": [
+                          { "id": 100, "system": false, "body": "possible NPE",
+                            "author": { "username": "code-spire" },
+                            "position": { "new_path": "src/App.java", "new_line": 42, "head_sha": "abc123" } },
+                          { "id": 200, "system": false, "body": "why?", "author": { "username": "jdoe" } } ] }""")));
+
+        ThreadTranscript t = new GitLabCommentSink(client, "code-spire")
+                .fetchThread(REPO, 42, new ThreadRef("DISC1"));
+
+        assertTrue(t.messages().get(0).fromBot(), "attributed from the brokered username despite /user 503");
+        assertFalse(t.messages().get(1).fromBot());
+        assertTrue(server.findAll(com.github.tomakehurst.wiremock.client.WireMock
+                .getRequestedFor(urlEqualTo("/user"))).isEmpty(), "no per-fetch identity lookup");
     }
 
     @Test

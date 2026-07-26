@@ -201,7 +201,7 @@ down is the original design-time roadmap (kept for reference).
     preview/connectivity-check pattern. Rounds out "reviews understand the ticket" across all
     supported platforms.
 15. **Prompt management (operator-controlled prompts)** · L · ⚑ (needs a design pass / brainstorm
-    before implementation). As an open-source project, operators must be able to inspect, customize,
+    before implementation). As a self-hosted, source-available project, operators must be able to inspect, customize,
     and maintain the prompts the reviewer uses (review, reconcile, follow-up) for their own needs.
     Sketch: a **Settings → Prompts** sidebar section; DB-backed, versioned prompt templates seeded
     from the built-in defaults with a "reset to default" path; the existing prompt builders
@@ -279,7 +279,7 @@ generic across two sources. Other levers with no infra blocker: **D10** (OIDC, b
 
 ## Explicitly deferred (NOT in v1)
 - **Fleet-level cost/abuse caps** — per-repo/workspace rate limit, daily LLM spend cap, giant-PR
-  guard, bot-authored-PR skip. v1 has only per-review token budgeting (ported). (Draft/WIP-PR skip
+  guard, bot-authored-PR skip. v1 has only per-review token budgeting. (Draft/WIP-PR skip
   is no longer deferred — shipped for GitHub 2026-07-21, item 13; GitLab/Bitbucket fold on next.)
   Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of. NOTE: a giant PR
   is not silently mis-reviewed — the diff is clipped to the token budget and the partial review is now

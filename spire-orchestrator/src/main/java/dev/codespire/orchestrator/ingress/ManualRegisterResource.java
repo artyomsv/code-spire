@@ -7,10 +7,10 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
-import dev.codespire.scm.bitbucket.BitbucketApiException;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -86,21 +86,28 @@ public class ManualRegisterResource {
         PullRequest pr;
         try {
             pr = diffSource.fetchPullRequest(repo, target.pr);
-        } catch (BitbucketApiException e) {
-            if (e.isNotFound()) {
+        } catch (RuntimeException e) {
+            // ScmApiException is the provider-neutral shape every adapter implements. This
+            // used to catch one adapter's exception class, so a GitHub or GitLab PR that
+            // 404'd escaped as a 500 instead of the "not found" the operator needs. Genuine
+            // (non-SCM) bugs still surface unchanged.
+            if (!(e instanceof ScmApiException api)) {
+                throw e;
+            }
+            if (api.isNotFound()) {
                 throw new NotFoundException("Pull request not found: "
                         + target.workspace + "/" + target.slug + "#" + target.pr);
             }
             // Generic message to the client — upstream status/detail stays server-side.
             LOG.warnf(e, "SCM fetch failed for %s/%s#%d via provider %s: status %d",
-                    target.workspace, target.slug, target.pr, provider.id(), e.status());
+                    target.workspace, target.slug, target.pr, provider.id(), api.status());
             throw new WebApplicationException("Could not fetch the pull request from the provider. "
                     + "Check the repo, PR number, and bot credentials.", Response.Status.BAD_GATEWAY);
         }
 
         IntegrationEvent event = new PullRequestEventReceived(
                 pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),
-                pr.sourceBranch(), pr.targetBranch(), pr.diffRefs(), pr.author(), pr.htmlUrl(),
+                pr.sourceBranch(), pr.targetBranch(), pr.headCommit(), pr.author(), pr.htmlUrl(),
                 provider.type());
         integration.send(event);
 

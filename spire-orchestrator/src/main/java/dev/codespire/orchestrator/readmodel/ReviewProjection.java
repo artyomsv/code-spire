@@ -22,6 +22,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -81,6 +82,36 @@ public class ReviewProjection {
     public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                String authorId, String sourceBranch, String destBranch, String sha,
                                String htmlUrl, String providerType, String status, int stage) {
+        upsertHeader(reviewId, repo, prId, title, author, authorId, sourceBranch, destBranch, sha,
+                htmlUrl, providerType, status, stage, true);
+    }
+
+    /**
+     * Refresh a review's PR metadata WITHOUT claiming a run: status, stage, attempt, error detail and the
+     * answering flag are left exactly as they were.
+     *
+     * <p>Used when an event arrives for a commit the aggregate has already reviewed (a re-delivered
+     * webhook, a provider's "test" delivery). {@link #registerHeader} would overwrite the finished
+     * outcome with {@code reviewing}, and since no run starts, nothing ever moves it on again — the
+     * review sat in "reviewing" forever with no command on the bus.
+     */
+    public void refreshHeader(String reviewId, RepoRef repo, long prId, String title, String author,
+                              String authorId, String sourceBranch, String destBranch, String sha,
+                              String htmlUrl, String providerType) {
+        upsertHeader(reviewId, repo, prId, title, author, authorId, sourceBranch, destBranch, sha,
+                htmlUrl, providerType, "reviewing", STAGE_DIFF, false);
+    }
+
+    /** @param claimRun whether this write may set status/stage — false preserves the row's outcome
+     *                  (the status/stage arguments then apply only to a first INSERT). */
+    private void upsertHeader(String reviewId, RepoRef repo, long prId, String title, String author,
+                              String authorId, String sourceBranch, String destBranch, String sha,
+                              String htmlUrl, String providerType, String status, int stage,
+                              boolean claimRun) {
+        String outcomeColumns = claimRun
+                ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
+                        + "error_detail = NULL, answering = FALSE,"
+                : "";
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,
                         source_branch, dest_branch, commit_sha, html_url, provider_type, status, stage,
@@ -91,9 +122,8 @@ public class ReviewProjection {
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
-                        status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1,
-                        error_detail = NULL, answering = FALSE, updated_at = now()
-                """;
+                        %s updated_at = now()
+                """.formatted(outcomeColumns);
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
@@ -225,6 +255,71 @@ public class ReviewProjection {
             ps.setString(4, reviewId);
         });
         broadcast(reviewId);
+    }
+
+    /**
+     * Schedule the next attempt instead of dispatching it now: bumps the attempt counter, keeps the row
+     * in {@code reviewing} (the run IS still in flight, just waiting) and records when it comes due.
+     */
+    public void scheduleRetry(String reviewId, int attempt, String note, Instant dueAt) {
+        update("""
+                UPDATE review_status
+                   SET attempt = ?, status = 'reviewing', stage = ?, note = ?, retry_at = ?, updated_at = now()
+                 WHERE review_id = ?
+                """, ps -> {
+            ps.setInt(1, attempt);
+            ps.setInt(2, STAGE_DIFF);
+            ps.setString(3, note);
+            ps.setTimestamp(4, Timestamp.from(dueAt));
+            ps.setString(5, reviewId);
+        });
+        broadcast(reviewId);
+    }
+
+    /**
+     * Claim every review whose retry has come due, clearing {@code retry_at} in the SAME statement that
+     * reads it. Only one caller can win a given row, so replicas (or an overlapping sweep) cannot both
+     * dispatch the same attempt — the claim IS the dispatch permit.
+     */
+    public List<String> claimDueRetries(Instant now) {
+        List<String> claimed = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE review_status SET retry_at = NULL, updated_at = now()
+                      WHERE retry_at IS NOT NULL AND retry_at <= ?
+                      RETURNING review_id
+                     """)) {
+            ps.setTimestamp(1, Timestamp.from(now));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    claimed.add(rs.getString(1));
+                }
+            }
+        } catch (SQLException e) {
+            // A sweep that cannot read the DB must not kill the scheduler: the next tick tries again,
+            // and the rows stay claimable because nothing was cleared.
+            LOG.warnf(e, "Could not claim due review retries");
+            return List.of();
+        }
+        claimed.forEach(this::broadcast);
+        return claimed;
+    }
+
+    /** Cancel a scheduled retry — the run reached a terminal state before it came due. */
+    public void clearScheduledRetry(String reviewId) {
+        update("UPDATE review_status SET retry_at = NULL WHERE review_id = ? AND retry_at IS NOT NULL",
+                ps -> ps.setString(1, reviewId));
+    }
+
+    /**
+     * Put a claimed retry back on the clock. The claim already cleared the due time, so a dispatch that
+     * fails afterwards would otherwise leave the review waiting on a retry nobody will send.
+     */
+    public void rescheduleRetry(String reviewId, Instant dueAt) {
+        update("UPDATE review_status SET retry_at = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setTimestamp(1, Timestamp.from(dueAt));
+            ps.setString(2, reviewId);
+        });
     }
 
     /** Record the generated review's findings + usage against the row. */
@@ -875,7 +970,8 @@ public class ReviewProjection {
             List<ReviewDetail.ReconciliationView> reconciliation =
                     parseReconciliation(row.reconciliationJson, row.id, threadIndex.resolvedRefs());
 
-            return Optional.of(toDetail(row, loadEvents(c, reviewId, row.createdAt, classifier),
+            return Optional.of(toDetail(row,
+                    loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
                     llmCalls(reviewId), attached.findings(), reconciliation));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
@@ -885,39 +981,40 @@ public class ReviewProjection {
     /** loc "path:line" -> threadRef (first wins on a same-line collision), which threadRefs belong
      *  to a summary comment, and which threadRefs are resolved on the SCM side — all derived once
      *  per {@link #loadDetail} / {@link #priorRunFor} call. */
-    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs, Set<String> resolvedRefs) {}
+    private record ThreadIndex(Map<String, String> threadByLoc, Set<String> summaryRefs,
+                               Set<String> resolvedRefs, Map<String, String> locByThread) {}
 
     private ThreadIndex buildThreadIndex(List<ThreadRow> threadRows) {
         Map<String, String> threadByLoc = new HashMap<>();
         Set<String> summaryRefs = new HashSet<>();
         Set<String> resolvedRefs = new HashSet<>();
+        // Every located thread, findings included — this direction answers "where is THIS thread",
+        // which has one answer per thread, so unlike threadByLoc there is no contest to resolve.
+        Map<String, String> locByThread = new HashMap<>();
         for (ThreadRow t : threadRows) {
+            if (t.path() != null && t.line() != null) {
+                locByThread.put(t.threadRef(), t.path() + ":" + t.line());
+            }
             if (t.isSummary()) {
                 summaryRefs.add(t.threadRef());
             }
             if (t.resolved()) {
                 resolvedRefs.add(t.threadRef());
             }
-            if (t.path() != null && t.line() != null) {
+            // is_finding, not merely "has a location" (V27): a human can start a thread ON a flagged
+            // line, and since this index is last-wins by seq that newer thread would win — then
+            // toPriorFindings would hand a verdict the HUMAN's thread to reply into and resolve.
+            if (t.isFinding() && t.path() != null && t.line() != null) {
                 // A finding re-posted at the same loc across re-review rounds (e.g. a rename made the
-                // exclusion miss it) leaves several review_thread rows for one anchor. Keep the NEWEST
-                // comment id — ids are monotonic — so a verdict targets the CURRENT finding's thread,
-                // not a stale, already-resolved older one (the "outdated instead of resolved" bug).
-                threadByLoc.merge(t.path() + ":" + t.line(), t.threadRef(), ReviewProjection::newerThreadRef);
+                // exclusion miss it) leaves several review_thread rows for one anchor. The LAST row
+                // wins, and rows arrive in insertion order (seq), so a verdict targets the CURRENT
+                // finding's thread rather than a stale, already-resolved older one (the "outdated
+                // instead of resolved" bug). Recency comes from our own write order — never from
+                // comparing thread refs, whose form is the provider's business.
+                threadByLoc.put(t.path() + ":" + t.line(), t.threadRef());
             }
         }
-        return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs);
-    }
-
-    /** The newer of two SCM comment ids for one loc — ids are monotonic, so the numerically larger is
-     *  the most recently posted comment (the current finding). Non-numeric ids keep the first seen. */
-    static String newerThreadRef(String existing, String incoming) {
-        try {
-            return new java.math.BigInteger(incoming).compareTo(new java.math.BigInteger(existing)) > 0
-                    ? incoming : existing;
-        } catch (NumberFormatException nonNumeric) {
-            return existing;
-        }
+        return new ThreadIndex(threadByLoc, summaryRefs, resolvedRefs, locByThread);
     }
 
     /** Findings with their owned threadRefs attached, plus the set of threadRefs a CURRENT finding
@@ -1091,6 +1188,47 @@ public class ReviewProjection {
     }
 
     /**
+     * Does the review still have an open finding at {@code loc} ({@code path:line})?
+     *
+     * <p>Lets the conversation policy treat a thread a human started ON a line the bot flagged as one
+     * of the bot's own: commenting where the reviewer raised something is almost always a response to
+     * it, and before this it got silence because the thread ref was unknown.
+     *
+     * <p>Fails CLOSED — a read error returns false, so the bot stays quiet exactly as it did before
+     * this existed. Never let a database problem make it speak where it otherwise would not.
+     */
+    public boolean hasOpenFindingAt(String reviewId, String loc) {
+        if (loc == null || loc.isBlank()) {
+            return false;
+        }
+        try (Connection c = dataSource.getConnection()) {
+            ReviewRow row = loadRow(c, reviewId);
+            return row != null && openFindingLocs(row).contains(loc);
+        } catch (SQLException e) {
+            LOG.warnf(e, "hasOpenFindingAt read failed for %s", reviewId);
+            return false;
+        }
+    }
+
+    /** {@code path:line} of every finding still open — this run's, plus carried-forward ones. */
+    private Set<String> openFindingLocs(ReviewRow row) {
+        Set<String> locs = new HashSet<>();
+        for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
+            if (f.loc() != null && !f.loc().isBlank()) {
+                locs.add(f.loc());
+            }
+        }
+        for (ReviewDetail.ReconciliationView r
+                : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
+            if (("still open".equals(r.status()) || "unchanged".equals(r.status()))
+                    && r.loc() != null && !r.loc().isBlank()) {
+                locs.add(r.loc());
+            }
+        }
+        return locs;
+    }
+
+    /**
      * Cumulative cost for a single row loaded outside {@link #listSummaries}'s subquery (the
      * {@link #broadcast} path) — same fallback rule as the SQL: sum every {@code review_llm_call}
      * row, falling back to the row's own {@code cost_millicents} when there are none yet.
@@ -1187,18 +1325,22 @@ public class ReviewProjection {
         }
     }
 
-    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary, boolean resolved) {}
+    private record ThreadRow(String threadRef, String path, Integer line, boolean isSummary,
+                             boolean resolved, boolean isFinding) {}
 
     private List<ThreadRow> loadThreadRows(Connection c, String reviewId) throws SQLException {
         List<ThreadRow> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT thread_ref, path, line, is_summary, resolved FROM review_thread WHERE review_id = ? "
-                        + "ORDER BY thread_ref")) {
+                // Insertion order, so the caller's "last row per loc wins" means newest. Ordering by
+                // thread_ref instead would sort by a provider-shaped string.
+                "SELECT thread_ref, path, line, is_summary, resolved, is_finding FROM review_thread "
+                        + "WHERE review_id = ? ORDER BY seq")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(new ThreadRow(rs.getString("thread_ref"), rs.getString("path"),
-                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary"), rs.getBoolean("resolved")));
+                            (Integer) rs.getObject("line"), rs.getBoolean("is_summary"),
+                            rs.getBoolean("resolved"), rs.getBoolean("is_finding")));
                 }
             }
         }
@@ -1206,7 +1348,7 @@ public class ReviewProjection {
     }
 
     private List<ReviewDetail.EventView> loadEvents(Connection c, String reviewId, Instant t0,
-            Function<String, String> threadKind) throws SQLException {
+            Function<String, String> threadKind, Map<String, String> locByThread) throws SQLException {
         List<ReviewDetail.EventView> out = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT lane, type, detail, at, thread_ref FROM review_event WHERE review_id = ? ORDER BY seq")) {
@@ -1216,7 +1358,8 @@ public class ReviewProjection {
                     Instant at = rs.getTimestamp("at").toInstant();
                     String threadRef = rs.getString("thread_ref");
                     out.add(new ReviewDetail.EventView(at.toString(), relative(t0, at), rs.getString("lane"),
-                            rs.getString("type"), rs.getString("detail"), threadRef, threadKind.apply(threadRef)));
+                            rs.getString("type"), rs.getString("detail"), threadRef, threadKind.apply(threadRef),
+                            threadRef == null ? null : locByThread.get(threadRef)));
                 }
             }
         }

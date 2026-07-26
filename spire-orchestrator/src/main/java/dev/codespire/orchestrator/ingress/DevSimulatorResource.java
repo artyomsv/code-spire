@@ -5,7 +5,6 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.POST;
@@ -53,7 +52,7 @@ public class DevSimulatorResource {
                 "TEST: simulated PR #" + prId,
                 "TEST: synthetic pull request emitted by the dev simulator.",
                 "feature/TEST-demo", "main",
-                DiffRefs.headOnly(commit),
+                (commit),
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
                 "https://example.invalid/sandbox/demo-repo/pull-requests/" + prId,
                 null); // synthetic event — no registered provider; resolves by workspace

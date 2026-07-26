@@ -136,7 +136,7 @@ public class ReviewWorker {
             WorkerScmClients.Clients clients = scm.forCommand(command);
             DiffSource diffSource = clients.diff();
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
-            if (!Commits.matches(pr.diffRefs().headSha(), command.commit())) {
+            if (!Commits.matches(pr.headCommit(), command.commit())) {
                 LOG.infof("Abandoning GenerateReview for %s: PR head moved past %s",
                         command.reviewId(), command.commit());
                 return;
@@ -158,7 +158,7 @@ public class ReviewWorker {
             // crashed claim (NULL) stays reclaimable — same semantics as comments.
             switch (idempotency.claim(command.reviewId(), command.commit(), LLM_KEY)) {
                 case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                    reEmitPersistedResult(command, already.commentId(), reconciliation.outcome());
+                    reEmitPersistedResult(command, already.postedRef(), reconciliation.outcome());
                     return;
                 }
                 case CommentIdempotencyStore.Claim.Post ignored -> { }
@@ -229,7 +229,7 @@ public class ReviewWorker {
                                      Diff diff, PriorRun prior, WorkerLlmProvider.LlmClient client) {
         switch (idempotency.claim(command.reviewId(), command.commit(), RECONCILE_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                ReconcileOutcome outcome = readReconcileOutcome(already.commentId());
+                ReconcileOutcome outcome = readReconcileOutcome(already.postedRef());
                 return new Reconciliation(exclusionsFromPersisted(outcome.verdicts(), prior.findings()), outcome);
             }
             case CommentIdempotencyStore.Claim.Post ignored -> { }
@@ -543,7 +543,7 @@ public class ReviewWorker {
             DiffSource diffSource = clients.diff();
             CommentSink commentSink = clients.comments();
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
-            if (!Commits.matches(pr.diffRefs().headSha(), command.commit())) {
+            if (!Commits.matches(pr.headCommit(), command.commit())) {
                 LOG.infof("Abandoning PostComments for %s: PR head moved past %s",
                         command.reviewId(), command.commit());
                 return;
@@ -568,22 +568,22 @@ public class ReviewWorker {
                 postOneInline(commentSink, command, diff, finding, posted, unanchored, failed, backoffBudget);
             }
 
-            String summaryCommentId = postSummary(commentSink, command, review, unanchored, failed);
-            if (summaryCommentId == null) {
+            String summaryThreadRef = postSummary(commentSink, command, review, unanchored, failed);
+            if (summaryThreadRef == null) {
                 return; // summary failure already emitted ReviewFailed
             }
             // Recover inline comment ids from a previous partially-completed attempt. Skip the
             // non-inline claims (SUMMARY, LLM[:reconcile], reply:, resolve:) — none of those are
             // posted inline comments, so they must never leak into the inline list.
-            previouslyPosted.forEach((key, id) -> {
+            previouslyPosted.forEach((key, ref) -> {
                 if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key) && !RECONCILE_KEY.equals(key)
                         && !key.startsWith("reply:") && !key.startsWith("resolve:")
-                        && posted.stream().noneMatch(p -> p.commentId().equals(id))) {
-                    posted.add(new CommentsPosted.PostedInline(id, key, 0));
+                        && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
+                    posted.add(new CommentsPosted.PostedInline(ref, key, 0));
                 }
             });
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
-                    summaryCommentId, posted, outcomes));
+                    summaryThreadRef, posted, outcomes));
         } catch (RuntimeException e) {
             Throwable cause = unwrap(e);
             LOG.warnf(cause, "PostComments failed for %s", command.reviewId());
@@ -628,8 +628,8 @@ public class ReviewWorker {
             String resolveKey = "resolve:" + verdict.threadRef();
             switch (idempotency.claim(command.reviewId(), command.commit(), resolveKey)) {
                 case CommentIdempotencyStore.Claim.AlreadyPosted a -> {
-                    resolvedByBot = "bot".equals(a.commentId());
-                    humanResolved = "human".equals(a.commentId());
+                    resolvedByBot = "bot".equals(a.postedRef());
+                    humanResolved = "human".equals(a.postedRef());
                 }
                 case CommentIdempotencyStore.Claim.Post ignored -> {
                     CommentSink.ThreadResolution resolution = resolveQuietly(sink, command, thread);
@@ -661,7 +661,7 @@ public class ReviewWorker {
         String replyKey = "reply:" + thread.value();
         switch (idempotency.claim(command.reviewId(), command.commit(), replyKey)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
-                return already.commentId();
+                return already.postedRef();
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
@@ -702,15 +702,22 @@ public class ReviewWorker {
         switch (idempotency.claim(command.reviewId(), command.commit(), key)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
                 LOG.debugf("Skipping already-posted inline %s for %s", key, command.reviewId());
-                posted.add(new CommentsPosted.PostedInline(already.commentId(),
+                posted.add(new CommentsPosted.PostedInline(already.postedRef(),
                         finding.path(), finding.range().startLine()));
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
                     CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor.get(),
                             renderInline(finding), backoffBudget);
-                    idempotency.markPosted(command.reviewId(), command.commit(), key, ref.commentId());
-                    posted.add(new CommentsPosted.PostedInline(ref.commentId(),
+                    // Both ids: the comment identifies what was posted, the thread identifies where a
+                    // reply will land. GitLab's discussion id differs from its note id, and ownership is
+                    // keyed by the thread — recording only the comment left the bot unable to recognize
+                    // its own thread.
+                    // The THREAD is what gets recorded — the id a human's reply arrives under, and the only
+                    // thing the core does with a posted finding. What that id IS stays the adapter's
+                    // business: a comment id on GitHub and Bitbucket, a discussion id on GitLab.
+                    idempotency.markPosted(command.reviewId(), command.commit(), key, ref.thread().value());
+                    posted.add(new CommentsPosted.PostedInline(ref.thread().value(),
                             finding.path(), finding.range().startLine()));
                     pace();
                 } catch (RuntimeException e) {
@@ -762,7 +769,7 @@ public class ReviewWorker {
                                              InlineAnchor anchor, String body, BackoffBudget budget) {
         for (int attempt = 1; ; attempt++) {
             try {
-                return sink.postInline(command.repo(), command.prId(), diff.refs(), anchor, body);
+                return sink.postInline(command.repo(), command.prId(), diff.headCommit(), anchor, body);
             } catch (RuntimeException e) {
                 Throwable cause = unwrap(e);
                 if (attempt >= MAX_INLINE_ATTEMPTS || !(cause instanceof ScmApiException api)
@@ -812,21 +819,26 @@ public class ReviewWorker {
         }
     }
 
-    /** @return the summary comment id, or null when posting it failed (ReviewFailed emitted). */
+    /** @return the summary THREAD ref, or null when posting it failed (ReviewFailed emitted). */
     private String postSummary(CommentSink commentSink, PostComments command, ReviewResult review,
                                List<Finding> unanchored, List<Finding> failed) {
         return switch (idempotency.claim(command.reviewId(), command.commit(), SUMMARY_KEY)) {
             case CommentIdempotencyStore.Claim.AlreadyPosted already -> {
                 LOG.debugf("Skipping already-posted summary for %s", command.reviewId());
-                yield already.commentId();
+                yield already.postedRef();
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
                     String body = renderSummary(review, unanchored, failed, command.commit())
                             + renderReconciliationSection(command.verdicts());
                     CommentRef summary = updateOrPost(commentSink, command, body);
-                    idempotency.markPosted(command.reviewId(), command.commit(), SUMMARY_KEY, summary.commentId());
-                    yield summary.commentId();
+                    // The THREAD, matching what inline slots record: it is what core needs as the
+                    // conversation key AND what updateComment rewrites next round. Recording the
+                    // comment id instead left core casting a comment id to a ThreadRef — the same
+                    // "a comment is its own thread root" assumption that broke inline replies.
+                    idempotency.markPosted(command.reviewId(), command.commit(), SUMMARY_KEY,
+                            summary.thread().value());
+                    yield summary.thread().value();
                 } catch (RuntimeException e) {
                     Throwable cause = unwrap(e);
                     LOG.warnf(cause, "Summary post failed for %s", command.reviewId());
@@ -845,7 +857,8 @@ public class ReviewWorker {
     private CommentRef updateOrPost(CommentSink sink, PostComments command, String body) {
         if (command.priorSummaryRef() != null) {
             try {
-                return sink.updateComment(command.repo(), command.prId(), command.priorSummaryRef(), body);
+                return sink.updateComment(command.repo(), command.prId(),
+                        new ThreadRef(command.priorSummaryRef()), body);
             } catch (RuntimeException e) {
                 if (!(unwrap(e) instanceof ScmApiException api) || !api.isNotFound()) {
                     throw e;   // permission/transient failures classify upstream; don't double-post

@@ -4,6 +4,155 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-021 — Split licensing: Apache-2.0 libraries, FSL-1.1-ALv2 services
+
+**Context.** ADR-006 chose Apache-2.0 before the first commit, for a project with no commercial
+intent. Two things have changed. The deployables now contain the actual engineering value — the
+event-driven pipeline, ADR-019 reconciliation, the conversation loop, the reconcile/verdict model —
+none of which existed when the licence was picked. And a hosted offering is now a stated *possible*
+future (PRD §6), which Apache-2.0 gives away in advance to anyone who gets there first.
+
+Two facts made this the cheapest possible moment to decide: every commit is by a single copyright
+holder (274/274), so no consent round is needed; and the repo had 0 forks, so nothing of consequence
+continues under the old grant. Both properties are perishable — the first ends at the first merged
+outside PR, the second at adoption.
+
+**Decision.** License per module rather than per repository:
+
+- **Apache-2.0** — `spire-contract`, `spire-diff`, `spire-encryption`, `spire-scm-*`,
+  `spire-context-*`, `spire-llm`, `spire-arch`. The plugin SPI and every reference adapter.
+- **FSL-1.1-ALv2** — `spire-gateway`, `spire-orchestrator`, `spire-review-worker`, `spire-ui`.
+  The runnable services.
+
+The map and the adopter-facing explanation live in `LICENSING.md`.
+
+**Why FSL rather than BSL 1.1.** Both restrict competing commercial use. BSL's default template
+forbids *production* use outright and requires a hand-written Additional Use Grant to re-permit it —
+the clause every BSL adopter has had to author, and the one most likely to be got wrong. It also
+needs a Change Date stamped per release, four years out, which drifts the moment releases are cut by
+hand. FSL is that grant pre-written: production and internal commercial use are named Permitted
+Purposes, the Apache-2.0 conversion is granted irrevocably up front at two years, and there is no
+per-release bookkeeping. Same protection, half the restriction period, no parameters to misconfigure.
+
+**Why split rather than relicense wholesale.** Design pillar #2 — *add a capability without touching
+the core* — is only credible if the thing you extend is genuinely open. Restricting the SPI would
+make the plugin promise hollow while protecting nothing a competitor couldn't rewrite in a week: a
+Bitbucket HTTP client is not the product. `spire-diff` additionally credits PR-Agent as prior art
+(see `NOTICE`), which belongs on a permissive licence on principle. The line is "libraries you
+compile against are open; the product you run is not."
+
+**On the tension with ADR-007.** ADR-007 rejected KurrentDB partly because ESLv2 is "explicitly NOT
+OSI open source" and hard-depending on it is "a strategic liability and off-putting to contributors."
+That objection was about an unavoidable third-party *dependency* whose vendor could tighten terms
+later and who gates features behind a paid key. It does not transfer wholesale to licensing our own
+code: adopters take no third-party lock-in they cannot see, the surface they extend stays Apache-2.0,
+every feature ships in the source with nothing behind a key, and each version converts to Apache-2.0
+automatically after two years — ESLv2 offers no such conversion. What *does* carry over is the
+contributor-friction cost. That is accepted, and partly bought back by keeping the SPI and all
+reference adapters permissive. ADR-007's own decision — Postgres over any source-available engine —
+is unchanged.
+
+**Consequences.**
+- Code Spire is **source-available, not open source**. Docs, README and PRD say so; claiming
+  otherwise would be false.
+- Versions published before this change stay Apache-2.0 irrevocably. `v0.1.0-apache` tags the last
+  Apache-2.0-only commit of the full tree.
+- **No Apache-2.0 module may depend on a service module** — permissive may flow into restrictive,
+  never the reverse. The current graph already satisfies this; if a library ever needs something
+  from a service, the code moves down into a library.
+- Contributions need a sign-off and an explicit relicensing grant (`CONTRIBUTING.md`), or the split
+  cannot be maintained later.
+- **The name is provisional and the trademark question is therefore deferred, not open.** "Code
+  Spire" is a working name; the shipped product may be called something else. Neither licence stops
+  a fork from using a name — only a mark does — but registering a mark for a name that will change
+  spends money on the wrong asset. Revisit when the name is settled, not before. Nothing in the
+  licensing depends on it: the grants run from the copyright holder (a named person), not from the
+  project name, so a rename changes branding and not terms. FSL's Trademarks clause reserves the
+  name regardless of registration.
+- The user-visible name sits in six production literals across four files: `PromptCatalog`'s
+  `REVIEW_PERSONA` and `FOLLOWUP_PERSONA`, `ReviewWorker`'s summary header (also asserted in
+  `FindingConversation.test.ts`), the bot display name in `FindingConversation.tsx` and `render.tsx`,
+  and copy in `PromptsSettings.tsx` — backend *and* UI. Don't spread it further; centralising it into
+  one constant is worth doing before a rename rather than during. The internal surface
+  (`dev.codespire`, `spire-*`, `SPIRE_*`, docker volumes) is private and need not track a rename.
+
+---
+
+## ADR-020 — No provider-dependent decisions in core, enforced by the build
+
+**Context.** Plugin-first only holds while the shared code makes no provider-dependent
+decision, and by the end of the GitLab parity work it no longer did. `CommentsPosted.PostedInline`
+carried *both* a comment id and a thread ref with a `threadRefOrCommentId()` accessor, because
+GitHub and Bitbucket make a comment its own thread root while GitLab's discussion id differs from
+its note's — so "some providers have two ids" had been modelled in the contract, and the core had to
+choose which one to use. Keying off the wrong one is exactly what made a GitLab reply
+unrecognisable. Two more leaks had accumulated quietly: `ProviderIdentityResolver` branched on
+`"bitbucket-cloud".equals(type)` to reach a whoami fallback, and `ManualRegisterResource` caught
+`BitbucketApiException` — so a GitHub or GitLab PR that 404'd escaped as a 500 rather than "no such
+PR". Each accommodation is individually reasonable; together they make every edit to a shared file a
+risk to the other two providers, and the resulting bug appears on one platform, in production.
+
+**Decision.** Core modules (`spire-contract`, `spire-orchestrator`, `spire-review-worker`,
+`spire-gateway`) must not name an integration provider — on either plugin axis, the SCM a review runs
+on and the context sources it pulls from, since both pose the identical risk. The test is *decisions*,
+not vocabulary:
+
+- **Rejected** — branching on a provider, or shared code carrying provider-shaped alternatives it
+  must choose between. `threadRefOrCommentId()` was this; so was the `"bitbucket-cloud"` branch.
+- **Allowed** — one rule stated in domain terms that every adapter satisfies. "Ownership is keyed by
+  the thread a reply arrives under" is satisfied by a comment id on GitHub and a discussion id on
+  GitLab, and the core never learns the difference. Where providers genuinely differ in capability,
+  the difference becomes a neutral SPI method the adapter overrides —
+  `IdentitySource.whoamiOrValidate(workspace)`, where Bitbucket's account-less-token fallback lives
+  in the Bitbucket adapter and no caller recognises Bitbucket to get it.
+- **Allowed** — the composition roots (`ProviderClients`, `WorkerScmClients`, `PrUrlParsers`), whose
+  job *is* selecting an adapter, and `ScmType`, which declares the names. Provider-neutral data may
+  carry several attributes (`ScmCredential.botAccountId` + `botUsername`) as long as the *selection*
+  happens in a composition root, not in a saga or worker.
+- Comments are exempt. A comment cannot make a decision, and recording *why* a neutral design exists
+  is knowledge worth keeping.
+
+The rule is enforced, not documented: `spire-arch` fails the build when a core module names a
+provider outside an explicit allowlist, each entry carrying its reason. It scans **source text**
+rather than bytecode, because the leaks that caused real bugs were string literals
+(`"bitbucket-cloud".equals(type)`) that a bytecode rule cannot see. Three guards protect against the
+one failure mode nobody would notice — a silent pass: the comment stripper has its own tests, the
+scan asserts it reached every core module's sources, and a stale allowlist entry fails so exemptions
+cannot quietly become permanent. The scanned tree is a declared Gradle task input, or the check would
+report a cached pass after the very change it exists to catch.
+
+**Consequences.** Adding a provider touches its adapter, the composition roots, and nothing else.
+A capability difference costs one defaulted SPI method instead of a branch in shared code. The cost
+is that a genuine cross-provider difference can no longer be expressed inline where it is noticed —
+it has to be pushed to the port or the composition root first, which is the intended friction.
+
+**The check's known limit.** It matches provider *names*, and the costliest leaks carry none. A
+follow-up audit along four lenses (id/wire formats, capability assumptions, webhook lifecycle,
+contract shape) found six, of which one was a live defect the check passed cleanly: the loc→thread
+index chose the current thread for a re-posted finding by comparing thread refs numerically, which
+holds for a comment id and not for an opaque discussion id — so ADR-019's reconciliation was inert on
+one provider, and the only provider name in the file sat in a comment the scanner strips. Recency is
+now the service's own insertion order. The others: the GitLab `position` SHA triple removed from the
+contract in favour of a single head commit (the adapter reads the rest itself); `@`-mention syntax
+moved from a saga into each ingress, which hands the core a list of mentioned identities; HTTP 406
+replaced by `ScmApiException.isDiffTooLarge()`; `CommentSink.updateComment` retargeted from a comment
+id to a `ThreadRef`, so one opaque ref serves both questions and the core stops minting thread refs
+from comment ids; and the gateway brought into scope. The lesson is that the build check bounds the
+blast radius of careless edits but cannot replace review of *semantics* — a provider assumption
+stated without naming the provider is invisible to it, and is exactly where the expensive bugs were.
+
+**The context axis.** The same shape existed for context sources: the pipeline called two specific
+parsers, and `ticketKeys` + `links` were two source-shaped fields riding through three contract types.
+It needed a different mechanism, not just a different port method: extraction runs when the diff is
+fetched, *before* any context credential has been brokered, so there is no configured
+`ContextProvider` to ask. Hence `ContextReferenceSource` — stateless, credential-free, one
+implementation beside each provider — and a single neutral `references` set that each provider narrows
+to what it recognises. Adding a context source is now a provider plus an extractor, with no pipeline
+edit. `ContextProviderResource` and `ContextKeyValidator` stay exempt on the same grounds as
+`ProviderClients`: choosing a provider per type to check or preview it is what a composition root is.
+
+---
+
 ## ADR-019 — Re-reviews post deltas, not the full finding set
 
 **Context.** Before this decision, a follow-up commit to an already-reviewed PR triggered the exact
@@ -46,7 +195,7 @@ and the worker stateless across runs — exactly the shape ADR-015 established f
   a schema-purpose violation (ADR-011 schema-per-service is about *ownership*, not just tables).
 - **Single combined LLM call.** Asking one call to both reconcile prior findings and generate a fresh
   review multiplexes two different tasks into one prompt: it would require rewriting the
-  already-proven review prompt (ported from PR-Agent, ADR-002) to also emit verdicts, and one
+  already-proven review prompt (ADR-002) to also emit verdicts, and one
   malformed section of the response would corrupt both outputs instead of failing independently.
 - **Deterministic anchor-only dedup (no LLM).** Comparing old and new anchors can suppress a duplicate
   at the *same* position, but cannot tell a fixed issue from one that merely moved or was reworded —
@@ -475,6 +624,10 @@ might one day host), hard-depending on a source-available, competitor-restricted
 strategic liability and off-putting to contributors. Self-hosting our own reviews would be fine; a
 core dependency is not.
 
+> **Premise updated by ADR-021** (the decision is not): Code Spire is no longer "a public Apache-2.0
+> project" — its services are FSL-1.1-ALv2. ADR-021 explains why that does not license a
+> source-available *hard dependency* here. Postgres over any source-available engine stands.
+
 **Consequence:** The `EventStore` port hides the choice. v1 = Postgres append-only (permissive,
 zero new moving parts, trivially embeddable). If we outgrow it, evaluate license-clean options
 (Postgres + thin event-store layer, Marten-style patterns) before any source-available engine. Anyone
@@ -488,6 +641,11 @@ https://discuss.kurrent.io/t/important-information-eventstoredb-is-transitioning
 ---
 
 ## ADR-006 — Personal open-source project
+
+> **Partly superseded by ADR-021.** The licence choice is no longer Apache-2.0 repo-wide: the
+> libraries and plugin SPI are Apache-2.0, the runnable services are FSL-1.1-ALv2, and the project
+> is source-available rather than open source. Everything else below still holds — personal, public,
+> built in private time, domain-neutral, no employer entanglement.
 
 **Decision:** Code Spire is a personal, public open-source project (intended Apache-2.0), built
 in private time — not internal tooling.
@@ -542,8 +700,18 @@ fast startup, and GKE/container friendliness. WebSockets carries the read side /
 
 ## ADR-002 — Build (hybrid greenfield), do not fork PR-Agent
 
-**Decision:** Greenfield in Quarkus, but **port PR-Agent's hard-won algorithms + prompts** rather
-than reimplement them from scratch.
+**Decision:** Greenfield in Quarkus, but **learn from PR-Agent's hard-won algorithms + prompts**
+rather than rediscover the same problems from scratch.
+
+> **What actually shipped** (recorded 2026-07-26, during the ADR-021 licensing pass). The original
+> wording of this decision was "port PR-Agent's algorithms + prompts", and ARCHITECTURE.md §7 planned
+> to convert ~1,500 lines of its Jinja templates. Neither happened. PR-Agent was read as prior art
+> (RESEARCH.md §3) and **no upstream code was used** — verified by comparing the shipped code against
+> v0.38.0's source, recorded as RESEARCH.md §4: `spire-diff` and `spire-llm` are independent
+> Java implementations against Code Spire's own model, and the prompts in `PromptCatalog` are written
+> here — a different structure (untrusted-data fencing, our JSON findings contract, reconcile
+> verdicts) and a tenth the size. Credit is recorded in `NOTICE`. The wording is corrected because
+> the plan's language described the codebase inaccurately, not because the plan was wrong to make.
 
 **Why:** A 5-part code review of `qodo-ai/pr-agent` (22k LOC Python) found: SCM abstraction 3/5
 (a 50-method God-object ABC; **thread-reply and PR-author are unimplemented on both Bitbucket

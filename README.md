@@ -1,6 +1,12 @@
 # Code Spire
 
-> Open-source, self-hosted, **event-driven**, **plugin-first** AI code reviewer for any Git platform — Bitbucket-first.
+> Source-available, self-hosted, **event-driven**, **plugin-first** AI code reviewer for any Git platform — Bitbucket-first.
+
+> [!NOTE]
+> **"Code Spire" is a working name, not the final product name.** It is what the project is called
+> while it is built; the shipped product may be named something else. Nothing here depends on it —
+> the licence grants come from the copyright holder, not from the project name — so a rename changes
+> branding, not terms. Don't treat the name as a commitment or build assets around it yet.
 
 Code Spire is a single bot service that automatically reviews **every** pull request in a
 workspace — regardless of author, with **no per-seat licensing** — and runs entirely inside
@@ -94,4 +100,14 @@ repo's webhook at `https://<gateway>/webhooks/{provider}/{key}`; the bot then re
 
 ## License
 
-[Apache-2.0](LICENSE).
+Code Spire is **source-available**, split by module — full map and reasoning in
+[LICENSING.md](LICENSING.md):
+
+| | License | |
+|---|---|---|
+| **Libraries + plugin SPI** — `spire-contract`, `spire-diff`, `spire-encryption`, `spire-scm-*`, `spire-context-*`, `spire-llm`, `spire-arch` | [Apache-2.0](licenses/Apache-2.0.txt) | Write plugins against these under any license you like, including a proprietary one. |
+| **Services** — `spire-gateway`, `spire-orchestrator`, `spire-review-worker`, `spire-ui` | [FSL-1.1-ALv2](LICENSE) | Self-hosting, internal commercial use, forking, teaching and consulting are all permitted. Reselling it as a competing product or hosted service is not. Each version becomes Apache-2.0 two years after release. |
+
+Versions published before this change remain Apache-2.0; that grant is
+irrevocable. Third-party attributions are in [NOTICE](NOTICE). Contributions:
+[CONTRIBUTING.md](CONTRIBUTING.md).

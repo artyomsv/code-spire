@@ -42,6 +42,16 @@ public class GitHubApiException extends RuntimeException implements ScmApiExcept
         return status == 429 || rateLimited;
     }
 
+    /**
+     * GitHub answers 406 when it will not generate a diff because the PR is too large. Only the
+     * diff endpoints negotiate a non-JSON media type here, so a 406 from this client is always
+     * that — the JSON calls cannot produce one.
+     */
+    @Override
+    public boolean isDiffTooLarge() {
+        return status == 406;
+    }
+
     @Override
     public Integer retryAfterSeconds() {
         return retryAfterSeconds;

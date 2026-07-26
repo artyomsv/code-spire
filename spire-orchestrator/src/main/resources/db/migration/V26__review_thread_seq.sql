@@ -1,0 +1,13 @@
+-- Which of several threads at one (path, line) is the CURRENT one is a recency question, and
+-- recency is a fact this service owns at write time. It was previously inferred by comparing SCM
+-- thread refs numerically ("ids are monotonic, so the larger is newer"), which holds only for
+-- providers whose thread ref is a comment id. For a provider whose thread ref is an opaque string
+-- (a discussion id), every comparison threw NumberFormatException and fell back to "keep the first
+-- seen" — and rows were read ORDER BY thread_ref, so the winner was the lexicographically smallest
+-- ref: arbitrary with respect to recency. A verdict could therefore target a stale, already-resolved
+-- thread on exactly one provider, which is the bug the reconciliation work set out to fix (ADR-020).
+--
+-- seq is insertion order, so "newest ROW per loc wins" needs no knowledge of what a thread ref is.
+-- Backfill order for pre-existing rows is unspecified by Postgres; the rows it affects are threads
+-- already posted, whose ordering only matters when the same anchor was re-posted across rounds.
+ALTER TABLE review_thread ADD COLUMN seq BIGSERIAL;

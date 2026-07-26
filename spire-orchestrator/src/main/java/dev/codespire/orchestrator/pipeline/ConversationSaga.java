@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.review.ConversationLevel;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
@@ -57,8 +58,12 @@ public class ConversationSaga {
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
 
-    /** The AnswerFollowUp to emit for a non-bot reply, or empty when policy says stay quiet. */
-    public Optional<ActionCommand.AnswerFollowUp> planFollowUp(AuthorReplied e) {
+    /**
+     * The command to emit for a non-bot reply, or empty when policy says stay quiet: an
+     * {@code AnswerFollowUp} normally, or a one-off {@code NotifyTurnCap} on the turn that first
+     * exhausts the thread's budget — the cap is a hand-off, so somebody has to be told.
+     */
+    public Optional<ActionCommand> planFollowUp(AuthorReplied e) {
         Optional<ScmProvider> providerOpt = reviewProviders.resolveForReview(e.reviewId());
         if (providerOpt.isEmpty()) {
             LOG.infof("Follow-up skipped for %s — no enabled provider for workspace '%s'",
@@ -77,9 +82,25 @@ public class ConversationSaga {
             return Optional.empty();
         }
         ThreadTarget target = targetOpt.get();
-        boolean botMentioned = mentionsBot(e.text(), provider.botUsername(), provider.botAccountId());
+        boolean botMentioned = mentionsBot(e.mentions(), provider.botUsername(), provider.botAccountId());
 
-        if (!decideToAnswer(e, provider, target, botMentioned)) {
+        // A thread the bot doesn't own, sitting on a line it flagged, still engages (item 15). Only
+        // asked when needed: an owned thread or a mention is already eligible, so this read is skipped
+        // for the common cases.
+        boolean onFlaggedLine = !target.isOurs() && !botMentioned
+                && e.location() != null
+                && projection.hasOpenFindingAt(e.reviewId(), e.location().loc());
+
+        ConversationPolicy.ConversationDecision decision =
+                decide(e, provider, target, botMentioned, onFlaggedLine);
+        if (decision.capReached()) {
+            // Hand the thread back visibly. The worker keeps this to one notice per thread, so the
+            // later replies that also land here post nothing.
+            return Optional.of(new ActionCommand.NotifyTurnCap(
+                    e.reviewId(), e.repo(), e.prId(), target.thread(), levels.turnCap(),
+                    workerCredentials.pack(provider)));
+        }
+        if (!decision.answer()) {
             return Optional.empty();
         }
 
@@ -96,7 +117,25 @@ public class ConversationSaga {
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(provider), llmCred.get(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
-                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP)));
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP),
+                findingsOwnedByOtherThreads(e.reviewId(), target.thread())));
+    }
+
+    /**
+     * The review's findings that belong to threads OTHER than this one, so the reply prompt can rule
+     * them out. Without it the model sees every defect in the file's diff with no way to know which
+     * are already under discussion elsewhere, and answers a narrow question with a survey.
+     *
+     * <p>Reuses the ADR-019 posted-run snapshot — the same source the reconcile flow reads — so there
+     * is one definition of "the findings that own threads". Degrades to empty on any read failure:
+     * a missing exclusion list makes the reply broader, never wrong.
+     */
+    private List<PriorFinding> findingsOwnedByOtherThreads(String reviewId, ThreadRef thread) {
+        return projection.priorRunFor(reviewId)
+                .map(prior -> prior.findings().stream()
+                        .filter(f -> f.threadRef() != null && !f.threadRef().equals(thread.value()))
+                        .toList())
+                .orElseGet(List::of);
     }
 
     /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */
@@ -112,27 +151,42 @@ public class ConversationSaga {
         return true;
     }
 
-    /** The policy gate: level / allowlist / thread-ownership-or-mention / turn-cap (spec §4). Records
-     *  the cap-reached timeline note itself, since it's the only branch that needs one. */
-    private boolean decideToAnswer(AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned) {
+    /**
+     * The policy gate: level / allowlist / thread-ownership-or-mention / turn-cap (spec §4). Records
+     * the cap-reached timeline note itself, since it's the only branch that needs one.
+     *
+     * <p>The cap and a true decline log DIFFERENTLY on purpose. Both produce no answer, but one posts a
+     * hand-off notice and the other stays silent — a single "declined" line for both makes it impossible
+     * to tell from the log whether the thread was told anything, which is the exact ambiguity this
+     * factor-logging exists to remove.
+     */
+    private ConversationPolicy.ConversationDecision decide(
+            AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned,
+            boolean onFlaggedLine) {
         ConversationLevel level = levels.effectiveLevel(provider.type(), e.repo().workspace());
         boolean authorAllowed = allowlistAllows(provider.authors(), e.author());
         int priorTurns = threads.turnCount(e.reviewId(), target.thread());
 
         // botIsAuthor is already false here — IntegrationSaga drops bot-authored replies before calling.
         ConversationPolicy.ConversationDecision decision = ConversationPolicy.decide(
-                level, authorAllowed, false, target.isOurs(), botMentioned, priorTurns, levels.turnCap());
+                level, authorAllowed, false, target.isOurs(), botMentioned, onFlaggedLine,
+                priorTurns, levels.turnCap());
         if (decision.capReached()) {
             timeline.record("integration", "conversation:cap", e.reviewId(),
-                    "turn cap reached — deferring to the team");
-        }
-        if (!decision.answer()) {
+                    "turn cap reached — handing back to the team");
+            // "handing back", not "posting": whether a notice actually goes out is the worker's
+            // call — it keeps one per thread — so claiming the post here would be a promise this
+            // saga cannot keep, and on the second reply to a capped thread it would be false.
+            LOG.infof("Turn cap reached on %s thread %s — handing back to the team "
+                    + "(priorTurns=%d/%d); the notice posts once per thread, and an @-mention "
+                    + "reopens it", e.reviewId(), target.thread().value(), priorTurns, levels.turnCap());
+        } else if (!decision.answer()) {
             LOG.infof("Follow-up declined for %s — level=%s authorAllowed=%b threadIsOurs=%b mentioned=%b "
-                    + "priorTurns=%d/%d capReached=%b",
-                    e.reviewId(), level, authorAllowed, target.isOurs(), botMentioned,
-                    priorTurns, levels.turnCap(), decision.capReached());
+                    + "onFlaggedLine=%b priorTurns=%d/%d (no reply posted)",
+                    e.reviewId(), level, authorAllowed, target.isOurs(), botMentioned, onFlaggedLine,
+                    priorTurns, levels.turnCap());
         }
-        return decision.answer();
+        return decision;
     }
 
     /** Which SCM thread the answer threads onto, and whether the bot owns it. */
@@ -166,22 +220,22 @@ public class ConversationSaga {
     }
 
     /**
-     * Scope B: a human explicitly @-mentions the bot. GitHub/GitLab render the mention as
-     * {@code @<login>} in the raw text — case-insensitive and word-bounded, so {@code @code-spire}
-     * matches but {@code @code-spireworks} does not. Bitbucket renders it as {@code @{account_id}}
-     * (no login in the raw text), so the account id is matched too. A blank login/id never matches.
+     * Scope B: a human explicitly @-mentions the bot — a membership test over the identities the
+     * ingress already extracted, so nothing here knows how any SCM renders a mention.
+     *
+     * <p>A username matches case-insensitively (logins are); an account id must match exactly, since
+     * it is an opaque key rather than a name. A blank login or id never matches, so an unresolved bot
+     * identity cannot make every comment look like a mention.
      */
-    static boolean mentionsBot(String text, String botUsername, String botAccountId) {
-        if (text == null) {
+    static boolean mentionsBot(List<String> mentions, String botUsername, String botAccountId) {
+        if (mentions == null || mentions.isEmpty()) {
             return false;
         }
-        if (botUsername != null && !botUsername.isBlank()
-                && Pattern.compile("@" + Pattern.quote(botUsername) + "(?![A-Za-z0-9_-])",
-                        Pattern.CASE_INSENSITIVE).matcher(text).find()) {
-            return true;
-        }
-        // Bitbucket Cloud writes a mention in the comment's raw text as @{account_id}.
-        return botAccountId != null && !botAccountId.isBlank() && text.contains("@{" + botAccountId + "}");
+        boolean hasUsername = botUsername != null && !botUsername.isBlank();
+        boolean hasAccountId = botAccountId != null && !botAccountId.isBlank();
+        return mentions.stream().anyMatch(mentioned ->
+                (hasUsername && mentioned.equalsIgnoreCase(botUsername))
+                        || (hasAccountId && mentioned.equals(botAccountId)));
     }
 
     /** An empty allowlist answers everyone; else match by account id or username (mirrors the PR gate). */

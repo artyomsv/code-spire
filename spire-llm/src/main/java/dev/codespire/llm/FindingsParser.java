@@ -15,9 +15,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Lenient parser for the model's JSON review output — the pragmatic port of
- * pr-agent's battle-earned "LLMs emit almost-valid output" hardening
- * (try_fix_yaml, adapted to our JSON contract): strips fences, extracts the
+ * Lenient parser for the model's JSON review output, on the same premise
+ * PR-Agent's try_fix_yaml is built on — LLMs emit almost-valid output — but
+ * written against our JSON contract: strips fences, extracts the
  * outermost JSON object, tolerates trailing commas, and degrades gracefully
  * (raw text becomes the summary, zero findings) instead of failing a review.
  */

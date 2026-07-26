@@ -5,7 +5,6 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -73,7 +72,7 @@ class GitHubApiTest {
         assertEquals("Add feature", pr.title());
         assertEquals("feature/x", pr.sourceBranch());
         assertEquals("main", pr.targetBranch());
-        assertEquals("abc123def456", pr.diffRefs().headSha());
+        assertEquals("abc123def456", pr.headCommit());
         assertEquals("5150", pr.author().providerUserId());
         assertEquals("jdoe", pr.author().username());
     }
@@ -94,7 +93,7 @@ class GitHubApiTest {
         Diff diff = diffSource.fetchDiff(REPO, 42, "abc123def456");
         assertEquals(1, diff.files().size());
         assertEquals("src/App.java", diff.files().getFirst().newPath());
-        assertEquals("abc123def456", diff.refs().headSha());
+        assertEquals("abc123def456", diff.headCommit());
     }
 
     @Test
@@ -119,7 +118,7 @@ class GitHubApiTest {
     @Test
     void postsInlineCommentOnNewSideAsRight() {
         stubReviewCommentCreated();
-        commentSink.postInline(REPO, 42, DiffRefs.headOnly("abc"),
+        commentSink.postInline(REPO, 42, "abc",
                 new InlineAnchor("src/App.java", "src/App.java", null, 7, Side.NEW), "note");
         server.verify(postRequestedFor(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments"))
                 .withRequestBody(equalToJson("""
@@ -130,7 +129,7 @@ class GitHubApiTest {
     @Test
     void postsInlineCommentOnOldSideAsLeft() {
         stubReviewCommentCreated();
-        commentSink.postInline(REPO, 42, DiffRefs.headOnly("abc"),
+        commentSink.postInline(REPO, 42, "abc",
                 new InlineAnchor("src/App.java", "src/App.java", 5, null, Side.OLD), "removed?");
         server.verify(postRequestedFor(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments"))
                 .withRequestBody(equalToJson("""
@@ -141,7 +140,7 @@ class GitHubApiTest {
     @Test
     void multiLineAnchorPostsAGitHubRangeComment() {
         stubReviewCommentCreated();
-        commentSink.postInline(REPO, 42, DiffRefs.headOnly("abc"),
+        commentSink.postInline(REPO, 42, "abc",
                 new InlineAnchor("src/App.java", "src/App.java", null, 5, Side.NEW, 8), "note");
         server.verify(postRequestedFor(urlEqualTo("/repos/sandbox/demo-repo/pulls/42/comments"))
                 .withRequestBody(equalToJson("""

@@ -48,8 +48,8 @@ consumers/producers. Read models are built by projectors consuming Kafka.
 | Concern | Choice | Extension / lib | Notes |
 |---|---|---|---|
 | LLM providers | **LangChain4j** | `quarkus-langchain4j-{openai,anthropic,vertex-ai-gemini,ollama}` | Default impl of the `LlmProvider` port (swappable to direct SDKs). **No default provider** — operator brings provider + API key via config; fail-fast if unset. |
-| Prompt templates | **Qute** | `quarkus-qute` | Ported from PR-Agent's Jinja/TOML. |
-| Diff/token IP (ported) | pure Java lib | `jtokkit` (token counting) | `spire-diff` module, ported from PR-Agent. |
+| Prompt templates | **Qute** | `quarkus-qute` | Own templates; PR-Agent's Jinja/TOML studied as prior art. |
+| Diff/token processing | pure Java lib | `jtokkit` (token counting) | `spire-diff` module; PR-Agent studied as prior art. |
 | Vector store (P3) | **pgvector** default; Qdrant optional | `quarkus-langchain4j-{pgvector,qdrant}` | Reuse Postgres → one datastore; Qdrant as pluggable adapter. |
 
 ## 4. Security (clean-room, OSS-standard — ADR-009)

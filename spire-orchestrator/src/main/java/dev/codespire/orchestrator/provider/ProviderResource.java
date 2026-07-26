@@ -33,7 +33,10 @@ public class ProviderResource {
     private static final Logger LOG = Logger.getLogger(ProviderResource.class);
 
     private static final Set<String> AUTH_KINDS = Set.of("bearer", "basic");
-    private static final Set<String> TYPES = Set.of("bitbucket-cloud", "github", "gitlab");
+
+    // Deliberately not a second list of provider names: a registry that accepts a type
+    // ProviderClients cannot build would fail only later, on the first review.
+    private static final Set<String> TYPES = ProviderClients.SUPPORTED_TYPES;
 
     @Inject
     ProviderRegistry registry;
@@ -97,8 +100,14 @@ public class ProviderResource {
             LOG.warnf(e, "Token validation against provider type %s failed", in.type());
             throw new BadRequestException("Could not validate the API token against the provider");
         }
-        boolean hasBotId = in.botAccountId() != null && !in.botAccountId().isBlank();
-        String botId = hasBotId ? in.botAccountId() : owner.providerUserId();
+        // A validated token is the authority on who the bot is, so the identity it resolved WINS over
+        // whatever the form carried. Preferring the submitted id meant rotating to a different bot
+        // account kept the previous account's id while the username changed — and the ADR-013 self-loop
+        // guard compares a comment's author against that id, so the bot stopped recognizing its own
+        // comments and answered itself. The submitted id is the fallback for providers that cannot tell
+        // us (Bitbucket access tokens cannot call /user), where the operator supplies it by hand.
+        String resolvedId = owner.providerUserId();
+        String botId = resolvedId != null && !resolvedId.isBlank() ? resolvedId : in.botAccountId();
         String botUsername = owner.username(); // resolved login for @-mention matching ("" for synthetic bots)
         return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
                 in.authUsername(), in.secret(), botId, in.enabled(), in.authors(),

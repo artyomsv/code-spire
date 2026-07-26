@@ -50,7 +50,7 @@ class JiraContextProviderTest {
     }
 
     private static ContextRequest request(Set<String> keys) {
-        return new ContextRequest("review::sandbox/demo-repo#7", REPO, 7, "abc123", keys, List.of(), Set.of());
+        return new ContextRequest("review::sandbox/demo-repo#7", REPO, 7, "abc123", keys, Set.of());
     }
 
     @Test

@@ -826,8 +826,12 @@ export function generalDiscussionCard(r: ReviewDetail) {
       <div className="body">
         {[...byThread.entries()].map(([threadRef, group]) => {
           const [opening, ...replies] = group;
+          // A thread the bot didn't start has no finding to nest under, so its location is the only
+          // thing distinguishing "someone commented on line 9" from a general PR discussion.
+          const loc = group.find((t) => t.loc)?.loc;
           return (
             <div key={threadRef} className="general-thread">
+              {loc && <div className="general-thread-loc">{loc}</div>}
               {conversationExchangesBody([opening])}
               {replies.length > 0 && (
                 <FindingConversation
@@ -838,6 +842,7 @@ export function generalDiscussionCard(r: ReviewDetail) {
                   previewTurns={replies}
                   previewBody={conversationExchangesBody(replies)}
                   rootShownAbove
+                  openerPreview={opening.det}
                 />
               )}
             </div>

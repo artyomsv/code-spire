@@ -7,7 +7,6 @@ import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.Side;
@@ -33,9 +32,20 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
     private static final System.Logger LOG = System.getLogger(BitbucketCloudCommentSink.class.getName());
 
     private final BitbucketCloudClient client;
+    private final String brokeredBotAccountId;
 
     public BitbucketCloudCommentSink(BitbucketCloudClient client) {
+        this(client, null);
+    }
+
+    /**
+     * @param botAccountId the registry's bot account id, so a thread transcript can be attributed
+     *                     without a live {@code GET /user} — the call Bitbucket's scoped tokens reject
+     *                     unless they carry {@code read:account}. Null falls back to that lookup.
+     */
+    public BitbucketCloudCommentSink(BitbucketCloudClient client, String botAccountId) {
         this.client = client;
+        this.brokeredBotAccountId = botAccountId;
     }
 
     @Override
@@ -52,8 +62,8 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
     }
 
     @Override
-    public CommentRef postInline(RepoRef repo, long prId, DiffRefs refs, InlineAnchor anchor, String bodyMd) {
-        // Bitbucket needs no SHAs (refs feeds GitLab/GitHub adapters).
+    public CommentRef postInline(RepoRef repo, long prId, String headCommit, InlineAnchor anchor, String bodyMd) {
+        // Bitbucket anchors by path+line alone; it needs no commit SHA at all.
         Map<String, Object> inline = anchor.side() == Side.OLD
                 ? Map.of("path", anchor.path(), "from", anchor.oldLine())
                 : Map.of("path", anchor.path(), "to", anchor.newLine());
@@ -93,7 +103,9 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
 
     /** Rewrite an existing comment's body in place (summary update on re-reviews). */
     @Override
-    public CommentRef updateComment(RepoRef repo, long prId, String commentId, String bodyMd) {
+    public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        // Bitbucket makes a comment its own thread root, so the thread ref is the comment to PUT.
+        String commentId = thread.value();
         String path = "/repositories/" + repo.full() + "/pullrequests/" + prId
                 + "/comments/" + commentId;
         client.putJson(path, Map.of("content", Map.of("raw", bodyMd)));
@@ -224,8 +236,12 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
                 !accountId.isEmpty() && accountId.equals(botAccountId));
     }
 
-    /** Best-effort token-owner account id to label the bot's own turns; a transient failure degrades to "". */
+    /** The bot's account id used to label its own turns: the brokered one when the orchestrator supplied
+     *  it, else a best-effort token-owner lookup whose failure degrades to "" (nothing attributed). */
     private String botAccountId() {
+        if (brokeredBotAccountId != null && !brokeredBotAccountId.isBlank()) {
+            return brokeredBotAccountId;
+        }
         try {
             return client.getJson("/user").path("account_id").asText("");
         } catch (RuntimeException transientFailure) {

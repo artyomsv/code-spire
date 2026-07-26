@@ -54,7 +54,8 @@ class ConfluenceContextProviderTest {
     }
 
     private static ContextRequest request(List<String> links) {
-        return new ContextRequest("review::sandbox/demo-repo#7", REPO, 7, "abc123", Set.of(), links, Set.of());
+        return new ContextRequest("review::sandbox/demo-repo#7", REPO, 7, "abc123",
+                Set.copyOf(links), Set.of());
     }
 
     private static String prettyLink(String pageId) {

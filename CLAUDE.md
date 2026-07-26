@@ -1,8 +1,21 @@
 # Code Spire — project context
 
+> **"Code Spire" is a working name, not the final product name.** Treat it as provisional: don't
+> register trademarks, buy domains, or design brand assets around it, and don't add new user-visible
+> occurrences of it. The user-facing name lives in **six production literals across four files**:
+> `PromptCatalog.REVIEW_PERSONA` and `.FOLLOWUP_PERSONA` ("You are Code Spire…"), `ReviewWorker`'s
+> summary header (`"### Code Spire review"`, also asserted in `FindingConversation.test.ts`), the bot
+> display name in `FindingConversation.tsx` and `render.tsx`, and copy in `PromptsSettings.tsx`.
+> Renaming means all six — it spans backend *and* UI. Centralising them into one constant is the
+> obvious cheap win if a rename looks likely. The internal surface (`dev.codespire` package group,
+> `spire-*` modules, `SPIRE_*` env vars, docker volumes) is private and need not follow a product
+> rename.
+
 Self-hosted, event-driven, plugin-first AI code reviewer. One bot account reviews every PR in a
 workspace via webhooks (no per-seat licensing); SCM platform, LLM provider, context sources, and
-storage are pluggable. Bitbucket Cloud first. Open source (Apache-2.0).
+storage are pluggable. Bitbucket Cloud first. **Source-available, split per module** (ADR-021):
+Apache-2.0 for the plugin SPI, libraries and reference adapters; FSL-1.1-ALv2 for the runnable
+services — see `LICENSING.md`. Never call the project "open source" in docs or UI.
 
 ## Read first
 
@@ -17,7 +30,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DATA-MODEL.md` | Value types, event store, object store, read models, encryption boundaries |
 | `docs/SCM-MAPPING.md` | Provider-neutral SCM model verified against Bitbucket/GitHub/GitLab/DC APIs |
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
-| `docs/DECISIONS.md` | ADR-001..019 — every locked decision with its why |
+| `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 
@@ -28,7 +41,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   (single-process pipeline over SmallRye in-memory channels, Postgres event store with optimistic
   concurrency, live WebSocket timeline dashboard).
 - **Phase 1 feature delivered (single-process):** `spire-diff` (unified-diff parser with dual line
-  numbers, token clip, prompt renderer, anchor resolver — ported semantics from qodo-ai/pr-agent),
+  numbers, token clip, prompt renderer, anchor resolver; PR-Agent studied as prior art, no upstream code used),
   `spire-scm-bitbucket` (real Bitbucket Cloud `ScmIngress` with HMAC verify + bot-drop + /command
   parse, `DiffSource`, `CommentSink` per SCM-MAPPING), `spire-llm` (LangChain4j OpenAI-compatible
   `LlmProvider`, injection-fenced review prompt, lenient findings parser), orchestrator wiring
@@ -175,6 +188,107 @@ The design is fully specified in `docs/` — **treat those files as the source o
   - **Diagnosability:** `ConversationSaga` now logs every decision with its factors
     (`level/authorAllowed/threadIsOurs/mentioned/priorTurns`) — the skips used to reach only the
     dashboard, which is why several of these bugs were invisible.
+- **Provider-neutrality enforced by the build (ADR-020, 2026-07-26):** new `spire-arch` module fails
+  the build when a core module (`spire-contract`, `spire-orchestrator`, `spire-review-worker`) names
+  an SCM provider outside an explicit, reasoned allowlist (the composition roots `ProviderClients` /
+  `WorkerScmClients` / `PrUrlParsers`, plus `ScmType` and the dev `StubScm`). It scans **source
+  text**, not bytecode, because the leaks that caused real bugs were string literals; comments are
+  exempt. Guards against a silent pass: the comment stripper is unit-tested, the scan asserts it
+  reached every core module, a stale allowlist entry fails, and the scanned tree is a declared Gradle
+  input (otherwise the check reports a cached pass after the very change it should catch). The three
+  leaks it found are fixed: `ManualRegisterResource` classified only Bitbucket errors, so a
+  GitHub/GitLab 404 escaped as a **500** instead of 404 (real defect, now on the neutral
+  `ScmApiException`); `ProviderIdentityResolver`'s `"bitbucket-cloud"` branch became the defaulted SPI
+  method `IdentitySource.whoamiOrValidate(workspace)`, with the account-less-token fallback moved into
+  `BitbucketCloudDiffSource` (`ProviderClients.assertWorkspaceAccess` deleted); `ProviderResource`'s
+  duplicate type list is now `ProviderClients.SUPPORTED_TYPES`.
+- **Semantic leaks swept (2026-07-26):** a 4-lens audit hunted the leaks that carry NO provider name,
+  which the build check cannot see. Six fixed:
+  - **A live GitLab defect.** `ReviewProjection.newerThreadRef` picked the current thread for a
+    re-posted finding by comparing thread refs as `BigInteger` ("ids are monotonic"). GitLab's thread
+    ref is an opaque discussion id, so every compare threw and fell back to "first seen" — and rows
+    were read `ORDER BY thread_ref`, i.e. the lexicographically smallest. The ADR-019 reconciliation
+    fix was **inert on GitLab**, able to target an already-resolved thread. Recency is now insertion
+    order (`V26 review_thread.seq`, newest row per loc wins); no id arithmetic anywhere.
+  - **`DiffRefs` deleted.** The `(baseSha, startSha, headSha)` triple was GitLab's `position`, non-null
+    at exactly one construction site repo-wide. `Diff`/`PullRequest`/`PullRequestEventReceived` and
+    `CommentSink.postInline` now carry a single `headCommit`; `GitLabCommentSink` reads `diff_refs`
+    from the MR itself, cached per MR (one extra GET per review, not per finding).
+  - **Mention syntax left the core.** Each ingress extracts `@`-mentions in its own syntax into
+    `AuthorReplied.mentions` (Bitbucket's braced `@{account_id}` included); `ConversationSaga`
+    is now a membership test with no regex.
+  - **406 → `ScmApiException.isDiffTooLarge()`** (defaulted false, GitHub overrides) — core no longer
+    interprets one provider's status code, and GitLab already reported the same condition as data.
+  - **Summary thread ref.** `CommentSink.updateComment` takes a `ThreadRef`, so one opaque ref both
+    locates the conversation and names the comment to rewrite; the worker records
+    `summary.thread().value()` and core stops casting a comment id to a `ThreadRef`
+    (`CommentsPosted.summaryThreadRef`). The persisted `ReviewCompleted.summaryCommentId` keeps its
+    name — renaming it would break event-store replay.
+  - **`spire-gateway` added to the scanned modules**, its shared registry edge no longer holding a
+    provider-name list (`WebhookProviders.SUPPORTED_TYPES`, composed from each endpoint's own constant).
+  740 tests green across 97 suites. Allowlist: 9 entries, all composition roots or `ScmType`.
+- **Context axis brought under the same rule (2026-07-26):** the check now also fails on `jira` /
+  `confluence` in core, and the pipeline no longer parses either. New credential-free SPI
+  `ContextReferenceSource` (`referencesIn` + `normalize`) — separate from `ContextProvider` because
+  extraction runs at diff-fetch, *before* context credentials are brokered, so there is no configured
+  provider to ask. `JiraReferenceSource` / `ConfluenceReferenceSource` implement it; the
+  `WorkerContextReferences` composition root lists them and does the cross-round dedup in each
+  extractor's own normalized form. `ticketKeys` + `links` collapse to one neutral `references` set on
+  `DiffFetched` / `GatherContext` / `ContextRequest`, which each provider narrows to what it
+  recognises (`JiraContextProvider` to key-shaped entries + project keys, `ConfluenceContextProvider`
+  to page ids on its host). `DiffWorker` and `ContextWorker` are now free of any source's syntax;
+  `WorkerContextClients`, `WorkerContextReferences`, `ContextProviderResource` and
+  `ContextKeyValidator` are the context composition roots and are allowlisted. **747 tests green
+  across 98 suites**; allowlist 13 entries, every one a composition root or `ScmType`.
+- **Three-provider parity pass + 3 fixes (2026-07-26, runbook Mode G):** S1–S11 run end to end on a
+  real GitHub PR, GitLab MR and Bitbucket PR. 11/11 behaviourally on all three; every reconcile
+  verdict except `ACKNOWLEDGED` exercised (`SUPERSEDED` correctly never fired), 14 thread resolves
+  across three different resolve mechanisms, a finding born mid-reconciliation closed two rounds
+  later, and a 100%-similarity rename that did **not** churn finding identity. What the run exposed
+  is fixed, each with tests:
+  - **The turn cap was silent.** Reaching it recorded a dashboard note and posted nothing, so the bot
+    just stopped replying — indistinguishable from a lost webhook (a dead tunnel produced the exact
+    same symptom mid-run). New `NotifyTurnCap` command → fixed-text notice, no LLM credential, one
+    claim per **thread** so later replies don't repeat it; result event is `TurnCapNotified` not
+    `FollowUpPosted` (the latter bumps the turn count — the notice must not consume a turn). An
+    explicit @-mention now overrides the cap, and cap-vs-decline log differently.
+  - **GitLab's compare diff parsed to ZERO files.** `fetchCompareDiff` emitted only `---`/`+++`;
+    `UnifiedDiffParser` keys on `diff --git`. Read as text (the reconcile prompt) it worked, so the
+    notes were right; parsed (`changedOldSideRanges`) it was empty, so `downgradeUntouched` rewrote
+    **every** `STILL_OPEN` to `UNCHANGED` on GitLab alone — an author who partly fixed a finding was
+    told nothing. Now calls `synthesizeUnifiedDiff`, which existed for exactly this. The old test
+    asserted the text contained `---`/`+++`/`@@` — all true of a string that parses to nothing; it
+    now asserts the diff *parses*.
+  - **Follow-up replies overreached.** `FOLLOWUP` had no "already reported" block (the `REVIEW`
+    prompt always had one) and `AnswerFollowUp` no field to build it from, so a narrow question got a
+    survey of every defect in the file. The command now carries the findings owned by *other* threads
+    (reused from the ADR-019 posted-run snapshot; this thread's own filtered out), the prompt lists
+    them as off-limits, an anchored thread sees only **its own file**, and replies open by naming the
+    asker in plain text (never an @-mention — syntax is per-provider). Both review and reconcile
+    personas now lead with the fix the code's expressed intent points to rather than the smallest
+    edit that compiles; A/B'd against recorded controls on identical input, finding count and
+    severities unchanged. **763 tests green across 97 suites.**
+- **Split licensing (ADR-021, 2026-07-26):** the repo is **source-available, not open source**, and
+  licensed per module — Apache-2.0 for the plugin SPI, libraries and reference adapters
+  (`spire-contract`, `spire-diff`, `spire-encryption`, `spire-scm-*`, `spire-context-*`, `spire-llm`,
+  `spire-arch`), FSL-1.1-ALv2 for the four deployables (`spire-gateway`, `spire-orchestrator`,
+  `spire-review-worker`, `spire-ui`). Each module carries its own `LICENSE`; the map and reasoning
+  are in `LICENSING.md`. **Invariant: no Apache-2.0 module may depend on a service module** —
+  permissive flows into restrictive, never the reverse. FSL permits self-hosting, internal commercial
+  use, forking, teaching and consulting; it forbids reselling as a competing product or hosted
+  service, and each version converts to Apache-2.0 two years after release. Versions published before
+  this stay Apache-2.0 (`v0.1.0-apache` tags the boundary). Contributions require DCO sign-off plus a
+  relicensing grant (`CONTRIBUTING.md`), without which the split cannot be maintained. The same pass
+  corrected the PR-Agent provenance language across the docs: it was **read as prior art, no upstream
+  code was used** (the old "ported the IP" / "port ~1,500 lines of prompt templates" wording described
+  a plan that was never executed) — credit now lives in `NOTICE`. The shipped code was then compared
+  against PR-Agent v0.38.0's source and the result recorded in **`docs/RESEARCH.md` §4**: the two
+  share exactly the `__new hunk__`/`__old hunk__` prompt markers and the `0.9` clip safety factor, and
+  differ everywhere else (typed `FilePatch`/`Hunk`/`DiffLine` model vs upstream's string-to-string
+  patch rewriting; chars-per-token heuristic vs a real tokenizer; JSON/Jackson vs YAML/`try_fix_yaml`;
+  own prompts with injection fencing upstream lacks, plus `RECONCILE`/`FOLLOWUP` kinds a single-shot
+  reviewer has no counterpart for; and no architectural correspondence at all). Cite §4 rather than
+  re-deriving it. Open item: the name is not trademarked, and no licence stops a fork from using it.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.

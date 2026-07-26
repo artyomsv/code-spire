@@ -471,40 +471,78 @@ partial fix as `STILL_OPEN` naming exactly what remained). A reversed diff would
 notes. No change needed. If a future run ever shows inverted reasoning, the remedy is to swap the
 argument order — `head + ".." + base` → `base + ".." + head`.
 
-## Mode G — provider parity (run the SAME script on two SCMs)
+## Mode G — provider parity (run the SAME script on every SCM)
 
-Regression script for "does provider X behave like GitHub?". Open **one PR per provider with identical
-file content** and run S1–S11 **in this order on both** — the order matters: the conversation scenarios
-must run before the fix commits, which change the code and resolve threads.
+Regression script for "do the providers behave alike?". Open **one PR per provider with identical file
+content** and run S1–S11 **in this order on each** — the order matters: the conversation scenarios must
+run before the fix commits, which change the code and resolve threads.
 
-Expect the *finding counts to differ* between the two PRs (LLM non-determinism); that is not a parity
-failure. What must match is the behaviour.
+Expect the *finding counts to differ* between the PRs (LLM non-determinism); that is not a parity
+failure. What must match is the behaviour. Grouping differs too: one provider may fold two defects into
+a single finding that another reports separately — compare the set of defects found, not the count.
 
-**Prep.** Both providers registered and **enabled** (a shared workspace name across SCMs is fine and
+**Use FRESH PRs.** Resuming an older review re-tests whatever state it accumulated; several scenarios
+(S5's turn counter, S9/S10's reconciliation) only mean anything from a clean start.
+
+**Prep.** Every provider registered and **enabled** (a shared workspace name across SCMs is fine and
 worth testing — resolution disambiguates by the review's stored SCM type). Tunnel up, webhooks
-registered. **Do not rename or move the file** during the run: a rename churns finding identity, which
-is a separate known limitation (`techdebt/`), not what this script measures.
+registered. **Do not rename or move the file** before S10's last round: a rename churns finding
+identity, a separate known limitation (`techdebt/`), and mixing it in earlier muddies every verdict
+after it.
 
-Diagnosis one-liners for any failure:
+**Before you start, make sure the running services actually contain the code you think they do.**
+`docker compose restart` does NOT pick up host edits — the dev containers have no source bind-mount, so
+source comes from the image and is only synced by a live `docker compose watch`. After any code change:
 
 ```bash
-docker logs <orchestrator> --since 5m 2>&1 | grep -iE "Answering|declined|Follow-up|skipped"
-docker logs <worker>       --since 5m 2>&1 | grep -iE "Staying|resolve|reply|WARN|ERROR"
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build orchestrator worker
+# then verify, don't assume:
+docker exec spire-orchestrator-dev grep -c "<a string from your change>" /workspace/<path>
 ```
+
+A restart-instead-of-rebuild produced a false "the fix is live" during the 2026-07-26 pass and cost a
+full diagnosis cycle.
+
+Diagnosis one-liners for any failure — strip the ANSI colour codes or the patterns won't match:
+
+```bash
+docker logs <orchestrator> --since 5m 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+  | grep -iE "Answering|declined|Turn cap|Follow-up|skipped"
+docker logs <worker> --since 5m 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+  | grep -iE "Staying|resolve|reply|turn-cap|WARN|ERROR"
+docker logs <gateway> --since 5m 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -iE "Rejected|webhook"
+```
+
+**When the bot goes silent, check the plumbing before the policy.** A dead tunnel, an expired
+quick-tunnel URL and a rejected webhook secret all look *identical* to a legitimate policy decline from
+the dashboard: nothing arrives, so nothing is logged on our side and the only record is in the
+provider's own webhook-delivery UI. Both happened during the 2026-07-26 pass. In order:
+
+1. `docker compose ps` — is everything up?
+2. `docker logs <tunnel> | grep -i trycloudflare | tail -1` — the quick tunnel mints a **new hostname on
+   every start**, so any restart invalidates all registered webhooks.
+3. `docker logs <gateway> | grep -i Rejected` — a rejected signature means the URL reached us and the
+   secret didn't match.
+4. Only then read the `ConversationSaga` decision line, which names every factor it weighed.
+
+**Editing a GitLab webhook's URL silently clears its secret token.** GitLab never redisplays the token,
+so saving the form after a URL change blanks it and every later delivery is rejected. Re-issue via
+Settings → Webhooks → **Rotate secret** and paste it back into GitLab's *Secret token* field. Expect to
+do this every time the tunnel URL changes.
 
 | # | Action | Expected on every provider |
 |---|---|---|
 | S1 | Open the PR | Inline comment per finding + exactly one summary comment; `findings` == inline count; PR badge **Open**; no `ReviewFailed` |
-| S2 | Expand a finding's conversation in the UI | Full untruncated text (`GET /api/reviews/{ws}/{slug}/{pr}/threads/{ref}` → 200), not the ≤160-char preview |
-| S3 | Reply under one finding (no @-mention) | Bot answers in the same thread; code arrives in a ```` ``` ```` fence and renders as code; the row shows `responding…` without breaking the table layout |
-| S4 | Reply to **the bot's answer** (twice) | Bot keeps answering, and the answer reflects the whole thread. Provider-specific ref in the log — GitHub normalizes to the thread root, Bitbucket keys off the answer's id; both must resolve to one conversation |
-| S5 | Turn cap | Turns accumulate on the conversation **root**: `turn_count` on that row rises per turn (a per-answer row must not reset it), and the cap eventually defers to the team |
-| S6 | New thread on an **unflagged** line, @-mention the bot | Bot answers even though it isn't a finding thread (`mentioned=true` in the log). GitHub renders `@<login>`; Bitbucket inserts `@{account_id}` from its picker — both must match. It does **not** create a finding (by design) |
+| S3 | Reply under one finding (no @-mention) | Bot answers in the same thread; code arrives in a ```` ``` ```` fence and renders as code; the row shows `responding…` without breaking the table layout. The reply must answer THIS thread's question — it must not survey the PR's other findings, which own their own threads |
+| S2 | *(after S3)* Expand that finding's conversation in the UI | Full untruncated text (`GET /api/reviews/{ws}/{slug}/{pr}/threads/{ref}` → 200), not the ≤160-char preview. **Runs after S3 on purpose:** there is nothing to expand until a conversation exists, and the findings card shows a finding's own text in full with no expander |
+| S4 | Reply to **the bot's answer** (twice) | Bot keeps answering, and the answer reflects the whole thread. Provider-specific ref in the log — GitHub and GitLab normalize to the thread root, Bitbucket keys off the answer's id; all must resolve to one conversation. On Bitbucket use the Reply button **on the bot's answer**, which is the case that used to split the conversation |
+| S5 | Turn cap — keep replying until `priorTurns == cap`, then reply once more | Turns accumulate on the conversation **root**: `turn_count` on that row rises per turn (a per-answer row must not reset it). At the cap the bot posts a **hand-off notice** and `turn_count` stops rising; the next plain reply posts **nothing more** (one notice per thread); an @-mention afterwards gets a **real answer**, since a mention overrides the cap. Silence with no notice is a failure — check the tunnel before the policy |
+| S6 | New thread on an **unflagged** line, @-mention the bot | Bot answers even though it isn't a finding thread (`mentioned=true` in the log). GitHub and GitLab render `@<username>`; Bitbucket inserts `@{account_id}` from its picker — all must match. It does **not** create a finding (by design). Known gap: the thread has no anchor in `AuthorReplied`, so the UI files it under *General discussion* rather than at its line |
 | S7 | Plain top-level PR comment | Answered in the **summary** thread |
 | S8 | Post `/review` | New run on the same commit; summary comment **updated in place**, never duplicated |
 | S9 | Fix **one finding fully**, push (same path) | Verdict `RESOLVED`; thread gets a closing reply and is **resolved on the SCM** (`resolved: true` in `threadOutcomes`); untouched findings `UNCHANGED`; a partially-fixed finding is `STILL_OPEN` with a note naming what remains |
-| S10 | Fix the rest over several commits — deliberately leave some unfixed and introduce new issues | Each round: real fixes → `RESOLVED` + `resolved: true`; unfixed → `STILL_OPEN`; new issues → new findings with their own threads, reconciled in later rounds. Ends at `findings: 0`, `blockerCount: 0`, `status: completed` |
-| S11 | Merge one PR, decline/close the other | PR badge flips **MERGED** / **CLOSED**, independent of the review status (stays `completed`); no further review runs |
+| S10 | Fix the rest over several commits — deliberately leave some unfixed and introduce new issues | Each round: real fixes → `RESOLVED` + `resolved: true`; unfixed → `STILL_OPEN`; new issues → new findings with their own threads, reconciled in later rounds. Ends at `openFindings: 0`, `openBlockers: 0`, `status: completed`. Save the rename/move for the final round: findings must follow the file to its new path and resolve there, never come back as new, and never report `SUPERSEDED` (the code moved, it did not disappear) |
+| S11 | Merge one PR, decline/close another; leave one open as a control | PR badge flips **MERGED** / **CLOSED**, independent of the review status (stays `completed`); the review history records a `PullRequestClosed` row; **no further review runs** (no new `ReviewRequested`/`CommentsPosted`). The untouched PR staying `OPEN` proves the change came from the action, not from something ambient |
 
 **Where providers legitimately differ** (not failures): Bitbucket inline findings are single-anchor
 (GitHub/GitLab render a multi-line range); mention syntax (`@{account_id}` vs `@login`); the resolve
@@ -512,17 +550,32 @@ mechanism (GitHub GraphQL review threads, Bitbucket the comment-resolve API, Git
 — but all three must end **resolved**. An SCM's own "Outdated" badge is orthogonal to resolution: it
 means the code under the comment changed, and a thread can be both Outdated and Resolved.
 
-**Verify from the event stream** rather than the UI alone — `threadOutcomes` is the honest record:
+**Verify from the read model** rather than the UI alone — the durable record answers most questions
+without touching Kafka, and `rpk topic consume` with `-o end` **tails and never returns**, so bound it:
 
-```bash
-docker exec <redpanda> rpk topic consume cs.results --offset start --num 500 --format '%v\n' \
-  | grep -E "CommentsPosted" | tail -5
+```sql
+-- verdicts, per-thread outcomes, and whether a resolve really landed on the SCM
+SELECT type, thread_ref, detail FROM orchestrator.review_event
+ WHERE review_id = 'review::<ws>/<slug>#<pr>' AND type IN ('ThreadResolved','ThreadReplied')
+ ORDER BY seq;
+SELECT thread_ref, line, is_ours, is_summary, resolved, turn_count, root_ref
+  FROM orchestrator.review_thread WHERE review_id = '...' ORDER BY seq;
 ```
 
-Every closing verdict should carry `"resolved":true`. A `RESOLVED` with `"resolved":false` means the
-thread could not be found — reply-only degradation, worth investigating (usually a stale thread ref).
+`ThreadResolved` is written only when the adapter reported `resolved: true`, so its presence is proof the
+SCM-side resolve succeeded — a `RESOLVED` verdict that degraded to reply-only appears as `ThreadReplied`
+instead. To read the raw command on the bus (e.g. to confirm a field was populated rather than inferring
+it from behaviour), bound the consume:
 
-**Last full pass:** 2026-07-25 — GitHub + Bitbucket Cloud, 11/11 on both.
+```bash
+docker exec <redpanda> rpk topic consume cs.commands --offset -3 --num 3 --format '%v\n'
+```
+
+**Last full pass:** 2026-07-26 — GitHub + GitLab + Bitbucket Cloud, 11/11 behaviourally on all three.
+Exercised every reconcile verdict except `ACKNOWLEDGED`; `SUPERSEDED` correctly never fired. The pass
+found three defects, all fixed with tests: a silent turn cap, GitLab's compare diff parsing to zero
+files (which made every `STILL_OPEN` downgrade to `UNCHANGED` on that provider alone), and follow-up
+replies surveying findings that belonged to other threads.
 
 ## Context enrichment (Jira) — add-on to any mode
 

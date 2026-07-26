@@ -18,6 +18,7 @@ import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 
 import java.util.List;
@@ -55,6 +56,9 @@ public class IntegrationSaga {
     ReviewProjection projection;
 
     @Inject
+    ReviewThreadView threads;
+
+    @Inject
     ProviderRegistry providers;
 
     @Inject
@@ -90,10 +94,15 @@ public class IntegrationSaga {
         switch (event) {
             case PullRequestEventReceived e -> onPullRequestEvent(e);
             case PullRequestClosed e -> {
-                lifecycle.handle(ReviewIds.reviewId(e.repo(), e.prId()),
-                        new RecordCommand.CancelReview(e.reason().name()));
-                projection.setPrState(ReviewIds.reviewId(e.repo(), e.prId()),
-                        e.reason() == CloseReason.MERGED ? "MERGED" : "CLOSED");
+                String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
+                boolean merged = e.reason() == CloseReason.MERGED;
+                lifecycle.handle(reviewId, new RecordCommand.CancelReview(e.reason().name()));
+                projection.setPrState(reviewId, merged ? "MERGED" : "CLOSED");
+                // The badge alone left no record of WHEN the PR ended, or that it ended at all: the
+                // event history stopped at ReviewCompleted while the header said MERGED. Only the
+                // in-memory timeline saw it, so a restart erased even that.
+                projection.appendEvent(reviewId, "integration", "PullRequestClosed",
+                        merged ? "merged" : "closed (" + e.reason().name().toLowerCase(Locale.ROOT) + ")");
             }
             case ManualCommandReceived e -> {
                 if (isBotAuthored(reviewIdOf(e), e.author())) {
@@ -108,6 +117,13 @@ public class IntegrationSaga {
                 if (isBotAuthored(e.reviewId(), e.author())) {
                     dropSelfLoop(e.reviewId(), "reply");
                 } else {
+                    // Where the thread sits, recorded even when policy declines to answer: it is a fact
+                    // about the thread, not about the reply, and it is what lets the UI file an inline
+                    // conversation at its line instead of under "General discussion".
+                    if (e.location() != null) {
+                        threads.markThreadLocation(e.reviewId(), e.threadRef(),
+                                e.location().path(), e.location().line());
+                    }
                     conversation.planFollowUp(e).ifPresent(cmd -> {
                         String author = e.author() == null ? "unknown" : e.author().username();
                         // The COMMAND's threadRef, not the event's: the saga normalized it to the
@@ -115,10 +131,14 @@ public class IntegrationSaga {
                         // ref — the review detail nests them all under the finding instead of spilling
                         // later turns into a bogus "General discussion" with an under-counted label.
                         projection.appendEvent(e.reviewId(), "integration", "AuthorReplied",
-                                "@" + author + ": " + Previews.of(e.text()), cmd.threadRef().value());
+                                "@" + author + ": " + Previews.of(e.text()), threadRefOf(cmd));
                         // Flags "answering" AND bumps the live dashboard in one broadcast — replaces
                         // the plain touch() that used to sit here (fix #5, avoid double-broadcast).
-                        projection.setAnswering(e.reviewId(), true);
+                        // Only for a real answer: the cap notice is fixed text with no LLM call, and
+                        // flagging it would leave a "responding…" pill up for a reply that never comes.
+                        if (cmd instanceof ActionCommand.AnswerFollowUp) {
+                            projection.setAnswering(e.reviewId(), true);
+                        }
                         commands.emit(cmd);
                     });
                 }
@@ -164,7 +184,7 @@ public class IntegrationSaga {
 
     private void onPullRequestEvent(PullRequestEventReceived e) {
         String reviewId = ReviewIds.reviewId(e.repo(), e.prId());
-        String commit = e.diffRefs().headSha();
+        String commit = e.headCommit();
 
         // Only PRs from a registered provider are reviewed. Resolve by (type,
         // workspace) when the event names its SCM — a GitHub org and a Bitbucket
@@ -189,21 +209,35 @@ public class IntegrationSaga {
         }
 
         boolean observe = policy.observeOnly();
-        // Register in the read model (header + first event) so the review is
-        // visible on the dashboard whether or not any work runs.
-        projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
-                e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
-                observe ? "observed" : "reviewing",
-                observe ? ReviewProjection.STAGE_RECEIVED : ReviewProjection.STAGE_DIFF);
+        // Ask the aggregate FIRST, so the read model only ever claims a run that is actually starting.
+        // Observe-only must not advance the aggregate at all: emitting ReviewRequested here would lock
+        // the review into REVIEWING, so a later active registration of the same commit would find it
+        // "already requested" and never dispatch FetchDiff. The review must stay un-started so
+        // activating it later runs a fresh pipeline.
+        boolean started = !observe && lifecycle.handle(reviewId,
+                        new RecordCommand.RequestReview(commit, e.action().name(), false))
+                .stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+
+        // Make the review visible on the dashboard whether or not any work runs — but a re-delivered
+        // event for a commit the aggregate has already reviewed only refreshes the PR metadata. Claiming
+        // "reviewing" there would overwrite the finished outcome, and because no run starts, nothing
+        // would ever move it on again (a permanent "reviewing" with no command on the bus).
+        if (observe) {
+            projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
+                    "observed", ReviewProjection.STAGE_RECEIVED);
+        } else if (started) {
+            projection.registerHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type(),
+                    "reviewing", ReviewProjection.STAGE_DIFF);
+        } else {
+            projection.refreshHeader(reviewId, e.repo(), e.prId(), e.title(), username(e), authorId(e),
+                    e.sourceBranch(), e.targetBranch(), commit, e.htmlUrl(), provider.get().type());
+        }
         projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
                 e.action().name().toLowerCase(Locale.ROOT) + " · head " + commit);
         projection.setPrState(reviewId, "OPEN");
 
-        // Observe-only gate: register on the dashboard but do NOT advance the
-        // aggregate. Emitting ReviewRequested here would lock the review into
-        // REVIEWING, so a later active registration of the same commit would find
-        // it "already requested" and never dispatch FetchDiff (stuck in DIFF). The
-        // review must stay un-started so activating it later runs a fresh pipeline.
         if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,
                     "observe-only: registered, no review run");
@@ -212,12 +246,8 @@ public class IntegrationSaga {
             LOG.infof("Observe-only: registered %s, no review started", reviewId);
             return;
         }
-
-        var emitted = lifecycle.handle(reviewId,
-                new RecordCommand.RequestReview(commit, e.action().name(), false));
-
-        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
         if (!started) {
+            LOG.infof("Re-delivered event for %s at commit %s — already reviewed, no new run", reviewId, commit);
             return;
         }
 
@@ -252,6 +282,15 @@ public class IntegrationSaga {
             case ManualCommandReceived e -> ReviewIds.reviewId(e.repo(), e.prId());
             case AuthorReplied e -> e.reviewId();
             default -> "";
+        };
+    }
+
+    /** The conversation root both reply commands carry, so the human's reply is filed under it either way. */
+    private static String threadRefOf(ActionCommand command) {
+        return switch (command) {
+            case ActionCommand.AnswerFollowUp c -> c.threadRef().value();
+            case ActionCommand.NotifyTurnCap c -> c.threadRef().value();
+            default -> null;
         };
     }
 }

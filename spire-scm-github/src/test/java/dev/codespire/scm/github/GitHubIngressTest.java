@@ -22,6 +22,8 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitHubIngressTest {
@@ -65,7 +67,7 @@ class GitHubIngressTest {
         assertEquals("Add feature", e.title());
         assertEquals("feature/x", e.sourceBranch());
         assertEquals("main", e.targetBranch());
-        assertEquals("abc123def4567890", e.diffRefs().headSha());
+        assertEquals("abc123def4567890", e.headCommit());
         assertEquals("1234", e.author().providerUserId()); // numeric id, for the self-loop guard
         assertEquals("octocat", e.author().username());
         assertEquals("https://github.com/artyomsv/spire-test/pull/7", e.htmlUrl());
@@ -134,6 +136,54 @@ class GitHubIngressTest {
         assertEquals("555", e.commentId());
         assertEquals("looks wrong to me", e.text());
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+    }
+
+    // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
+
+    @Test
+    void aReviewCommentCarriesItsFileAndLine() {
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(reviewComment("\"line\": 42,"),
+                        Map.of("X-GitHub-Event", "pull_request_review_comment"))).getFirst());
+        assertNotNull(e.location(), "an inline reply must report where it is");
+        assertEquals("src/main/java/App.java", e.location().path());
+        assertEquals(42, e.location().line());
+        assertEquals("src/main/java/App.java:42", e.location().loc());
+    }
+
+    /**
+     * GitHub drops `line` and sends only `original_line` once the diff has moved under the comment
+     * (it goes "outdated"). Reporting no location there would silently lose the anchor on exactly the
+     * threads most likely to still be under discussion.
+     */
+    @Test
+    void anOutdatedReviewCommentFallsBackToItsOriginalLine() {
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(reviewComment("\"line\": null, \"original_line\": 17,"),
+                        Map.of("X-GitHub-Event", "pull_request_review_comment"))).getFirst());
+        assertEquals(17, e.location().line());
+    }
+
+    /**
+     * A FILE-level GitHub review comment carries a path but no line at all. Regression: the first
+     * implementation read the line with nested ternaries, which mixes {@code int} and {@code Integer}
+     * so the null branch is unboxed — this payload threw before the loop replaced it.
+     */
+    @Test
+    void aFileLevelCommentWithNoLineIsHandledWithoutThrowing() {
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(reviewComment("\"subject_type\": \"file\","),
+                        Map.of("X-GitHub-Event", "pull_request_review_comment"))).getFirst());
+        assertNull(e.location(), "a path with no line cannot be matched to a finding");
+    }
+
+    /** A plain PR comment has no diff position at all — null, not a fabricated one. */
+    @Test
+    void aTopLevelCommentHasNoLocation() {
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(issueComment("looks wrong to me", true),
+                        Map.of("X-GitHub-Event", "issue_comment"))).getFirst());
+        assertNull(e.location());
     }
 
     @Test
@@ -235,6 +285,24 @@ class GitHubIngressTest {
                   }
                 }
                 """.formatted(prNode, text, BOT_ACCOUNT_ID).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** A review comment on a diff line. {@code lineJson} is spliced in so tests can omit `line`. */
+    private static byte[] reviewComment(String lineJson) {
+        return """
+                {
+                  "action": "created",
+                  "repository": { "full_name": "artyomsv/spire-test" },
+                  "pull_request": { "number": 7 },
+                  "comment": {
+                    "id": 900,
+                    "body": "why is this a bug?",
+                    "path": "src/main/java/App.java",
+                    %s
+                    "user": { "id": 4242, "login": "octocat" }
+                  }
+                }
+                """.formatted(lineJson).getBytes(StandardCharsets.UTF_8);
     }
 
     private static RawWebhook webhook(byte[] body, Map<String, String> headers) {

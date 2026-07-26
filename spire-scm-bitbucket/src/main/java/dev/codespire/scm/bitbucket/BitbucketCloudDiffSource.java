@@ -6,7 +6,6 @@ import dev.codespire.contract.port.IdentitySource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -21,6 +20,8 @@ import java.util.List;
  * pre-check (ADR-013) guarantees we only act when current == expected.
  */
 public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
+
+    private static final System.Logger LOG = System.getLogger(BitbucketCloudDiffSource.class.getName());
 
     private final BitbucketCloudClient client;
 
@@ -55,6 +56,37 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
         client.getJson("/repositories/" + workspace + "?pagelen=1");
     }
 
+    /**
+     * Bitbucket's variant of the neutral registration question: try {@code /user} first
+     * (keeps auto-identity for App Passwords, API tokens and user PATs), and on failure
+     * fall back to the workspace check above, because the token may be one of the
+     * account-less kinds described there.
+     *
+     * <p>Only the adapter can know that, which is why the fallback lives here rather than
+     * in the caller: nothing in the orchestrator has to recognise Bitbucket to get this
+     * behaviour, and no other adapter inherits it.
+     */
+    @Override
+    public Author whoamiOrValidate(String workspace) {
+        try {
+            return whoami();
+        } catch (RuntimeException whoamiFailed) {
+            try {
+                assertWorkspaceAccess(workspace);
+            } catch (RuntimeException workspaceFailed) {
+                // The fallback's status/detail is the actionable one (bad scope, wrong
+                // workspace slug), so log it — but rethrow the /user failure, so a
+                // genuinely bad token surfaces as the auth error the caller asked about
+                // instead of the fallback's secondary complaint.
+                LOG.log(System.Logger.Level.WARNING,
+                        "Workspace fallback validation failed for workspace '" + workspace + "'",
+                        workspaceFailed);
+                throw whoamiFailed;
+            }
+            return Author.of("", "", ""); // usable token, but no user account to name
+        }
+    }
+
     @Override
     public void assertRepoAccessible(RepoRef repo) {
         client.getJson("/repositories/" + repo.full());
@@ -71,7 +103,7 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
                 pr.path("description").asText(""),
                 pr.path("source").path("branch").path("name").asText(""),
                 pr.path("destination").path("branch").path("name").asText(""),
-                DiffRefs.headOnly(pr.path("source").path("commit").path("hash").asText("")),
+                (pr.path("source").path("commit").path("hash").asText("")),
                 Author.of(author.path("account_id").asText(""),
                         author.path("nickname").asText(""),
                         author.path("display_name").asText("")),
@@ -82,7 +114,7 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
     public Diff fetchDiff(RepoRef repo, long prId, String commit) {
         String diffText = client.getText(prPath(repo, prId) + "/diff");
         List<FilePatch> files = UnifiedDiffParser.parse(diffText);
-        return new Diff(DiffRefs.headOnly(commit), files, false);
+        return new Diff(commit, files, false);
     }
 
     /**

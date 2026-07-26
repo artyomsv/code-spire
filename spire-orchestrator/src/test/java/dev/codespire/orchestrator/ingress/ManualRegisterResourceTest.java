@@ -116,6 +116,30 @@ class ManualRegisterResourceTest {
     }
 
     @Test
+    void aMissingGitHubPrIsNotFound_notAnInternalError() {
+        // Regression: this handler caught one adapter's exception class, so only a Bitbucket
+        // 404 mapped to 404 — a GitHub or GitLab PR that was gone escaped as a 500, telling
+        // the operator "server error" instead of "no such PR". It now classifies on the
+        // provider-neutral ScmApiException, so every adapter gets the same answer.
+        providers.create(new ProviderInput("GH", "github", wm.baseUrl(), "gh-ws",
+                "bearer", null, "gh-tok", "botid", true, List.of(), null, null));
+        wm.stubFor(get(urlEqualTo("/repos/gh-ws/repo/pulls/7")).willReturn(aResponse().withStatus(404)));
+
+        given().contentType("application/json").body(Map.of("workspace", "gh-ws", "slug", "repo", "pr", 7))
+                .when().post("/api/reviews/register").then().statusCode(404);
+    }
+
+    @Test
+    void aGitHubUpstreamFailureIsABadGateway_notAnInternalError() {
+        providers.create(new ProviderInput("GH2", "github", wm.baseUrl(), "gh-ws2",
+                "bearer", null, "gh-tok", "botid", true, List.of(), null, null));
+        wm.stubFor(get(urlEqualTo("/repos/gh-ws2/repo/pulls/8")).willReturn(aResponse().withStatus(503)));
+
+        given().contentType("application/json").body(Map.of("workspace", "gh-ws2", "slug", "repo", "pr", 8))
+                .when().post("/api/reviews/register").then().statusCode(502);
+    }
+
+    @Test
     void resolveParsesGitLabUrlAndReportsTheRegisteredProvider() {
         providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp2",
                 "bearer", null, "gl-tok", "botid", true, List.of(), null, null));

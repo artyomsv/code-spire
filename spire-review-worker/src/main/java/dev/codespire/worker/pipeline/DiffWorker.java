@@ -30,6 +30,10 @@ public class DiffWorker {
     @Inject
     WorkerScmClients scm;
 
+    /** Extraction is credential-free, so it runs here rather than waiting for GatherContext. */
+    @Inject
+    dev.codespire.worker.adapters.WorkerContextReferences references;
+
     @Inject
     ResultsEmitter results;
 
@@ -47,11 +51,9 @@ public class DiffWorker {
                     diff.files().stream().map(FilePatch::language).distinct().toList(),
                     approximateSize(diff.files()),
                     diff.truncated(),
-                    dev.codespire.context.jira.JiraTicketKeys.candidates(
-                            pr.title(), pr.sourceBranch(), pr.description()),
-                    // URLs the Confluence provider narrows to its own host (Jira keys above; same sources).
-                    List.copyOf(dev.codespire.context.confluence.ConfluenceLinks.candidates(
-                            pr.title(), pr.sourceBranch(), pr.description()))));
+                    // Every registered extractor's candidates, unioned. Which syntax belongs to which
+                    // source is the extractor's business; providers narrow this set later.
+                    references.referencesIn(pr.title(), pr.sourceBranch(), pr.description())));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {
@@ -66,7 +68,10 @@ public class DiffWorker {
 
     private void fail(FetchDiff command, RuntimeException e) {
         LOG.warnf(e, "FetchDiff failed for %s", command.reviewId());
-        if (e instanceof ScmApiException api && api.status() == 406) {
+        // Terminal, not transient: retrying cannot shrink the PR. Which response carries this
+        // is the adapter's to know — core used to match HTTP 406, which is one provider's
+        // convention (another reports oversize as Diff.truncated and never raises at all).
+        if (e instanceof ScmApiException api && api.isDiffTooLarge()) {
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
                     "PR diff exceeds the provider's diff-generation limit — the PR is too large "
                             + "to review as one unit; split it or exclude generated files",

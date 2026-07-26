@@ -86,6 +86,9 @@ class GitLabWebhookTest {
 
     @Test
     void tokenedWebhookLandsKeyedAndTypedOnIntegrationTopic() {
+        // Captured before the POST so the assertion reads OUR record, not one an earlier test class
+        // left on this shared topic (see TopicWatermark).
+        var from = TopicWatermark.of(companion, "cs.integration");
         byte[] body = MR_OPENED.getBytes(StandardCharsets.UTF_8);
         RestAssured.given()
                 .header("X-Gitlab-Event", "Merge Request Hook")
@@ -94,7 +97,7 @@ class GitLabWebhookTest {
                 .post("/webhooks/gitlab/" + KEY)
                 .then().statusCode(202);
 
-        ConsumerTask<String, String> task = companion.consumeStrings().fromTopics("cs.integration", 1);
+        ConsumerTask<String, String> task = companion.consumeStrings().fromOffsets(from, 1);
         task.awaitCompletion(Duration.ofSeconds(15));
         ConsumerRecord<String, String> record = task.getFirstRecord();
 

@@ -1,0 +1,55 @@
+Code Spire
+Copyright 2026 Artjoms Stukans
+
+Licensing in this repository is per-module: the runnable services are licensed
+under the Functional Source License 1.1 (ALv2 Future License) and the libraries
+and plugin SPI under the Apache License 2.0. See LICENSING.md for the map and
+LICENSE for the terms.
+
+================================================================================
+Third-party attributions
+================================================================================
+
+PR-Agent
+  https://github.com/The-PR-Agent/pr-agent (formerly qodo-ai/pr-agent)
+
+  Code Spire contains no PR-Agent source code. PR-Agent was read as prior art
+  during design, at tag v0.38.0 (published 2026-06-26, Apache License 2.0 at that
+  tag). The shipped code was compared against that tag's source on 2026-07-26;
+  the full side-by-side is docs/RESEARCH.md section 4.
+
+  What the two codebases share, in full:
+
+    1. The prompt hunk markers "__new hunk__" / "__old hunk__" and a
+       "## File: '<path>'" header, in spire-diff DiffRenderer. Short functional
+       identifiers forming a format convention agreed with the model.
+
+    2. The numeric constant 0.9 as a safety factor before clipping, in
+       spire-diff TokenBudget. Applied to a character-ratio estimate here; to a
+       real tokenizer count upstream.
+
+  Everything else differs, including every part a reader might assume was taken:
+  the diff layer is a typed FilePatch/Hunk/DiffLine model rather than upstream's
+  string-to-string patch rewriting; token counting uses a chars-per-token
+  heuristic rather than a tokenizer; the model output contract is JSON parsed
+  with Jackson rather than YAML repaired by try_fix_yaml; and the prompts in
+  spire-contract PromptCatalog are written here, with a different output schema,
+  a different severity scheme, prompt-injection fencing that upstream has none
+  of, and two prompt kinds (RECONCILE, FOLLOWUP) that address problems a
+  single-shot reviewer does not have.
+
+  What PR-Agent contributed was knowing which problems are real: that hunk
+  parsing must track both sides' line numbers, that multi-file diffs need
+  budgeting rather than arbitrary truncation, and that model output is reliably
+  almost-valid and must be parsed defensively. Those are observations, not
+  expression. Credit is recorded here because they are worth crediting, not
+  because a licence requires it.
+
+  Apache License 2.0 text: licenses/Apache-2.0.txt
+
+================================================================================
+
+Runtime dependencies (Quarkus, Jackson, LangChain4j, Google Tink, the PostgreSQL
+JDBC driver, Flyway Community, React and their transitive dependencies) are
+distributed by their own authors under their own permissive licenses and are not
+redistributed in this repository. Their license texts ship with those artifacts.

@@ -14,8 +14,8 @@ import dev.codespire.contract.port.RawWebhook;
 import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 
 import javax.crypto.Mac;
@@ -26,11 +26,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Bitbucket Cloud webhook ingress (CONTRACT §10, SCM-MAPPING §7):
@@ -43,6 +46,11 @@ import java.util.Set;
 public class BitbucketCloudIngress implements ScmIngress {
 
     private static final String HMAC_SHA256 = "HmacSHA256";
+
+    // How Bitbucket Cloud writes an @-mention in raw comment text (see mentions()).
+    private static final Pattern BRACED_MENTION = Pattern.compile("@\\{([^}\\s]{1,128})}");
+    private static final Pattern PLAIN_MENTION =
+            Pattern.compile("@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?)");
 
     private final ObjectMapper mapper;
     private final BitbucketCloudConfig config;
@@ -124,7 +132,7 @@ public class BitbucketCloudIngress implements ScmIngress {
                 pr.path("description").asText(""),
                 pr.path("source").path("branch").path("name").asText(""),
                 pr.path("destination").path("branch").path("name").asText(""),
-                DiffRefs.headOnly(pr.path("source").path("commit").path("hash").asText("")),
+                (pr.path("source").path("commit").path("hash").asText("")),
                 author(pr.path("author")),
                 pr.path("links").path("html").path("href").asText(""),
                 type().providerType()));
@@ -167,7 +175,9 @@ public class BitbucketCloudIngress implements ScmIngress {
                 comment.path("id").asText(),
                 text,
                 author,
-                topLevel));
+                topLevel,
+                mentions(text),
+                location(comment)));
     }
 
     /**
@@ -177,6 +187,57 @@ public class BitbucketCloudIngress implements ScmIngress {
      */
     private static final java.util.regex.Pattern SLUG =
             java.util.regex.Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
+
+    /**
+     * Bitbucket Cloud writes a mention into the comment's RAW text as {@code @{account_id}} — the
+     * login never appears — so the braced account id is the form that matters. A plain
+     * {@code @nickname} is also collected, for renderings that carry one.
+     *
+     * <p>This lives in the ingress because only it sees Bitbucket's rendering. The core is handed
+     * the identities that were mentioned and compares them to the bot's, without knowing that this
+     * provider is the one that brackets its ids.
+     */
+    /**
+     * Bitbucket's {@code inline} block. {@code to} is the NEW-side line and {@code from} the OLD side;
+     * a comment on a removed line carries only {@code from}, so fall back rather than losing the
+     * location. A plain PR comment has no {@code inline} block and yields null.
+     */
+    private static ThreadLocation location(JsonNode comment) {
+        JsonNode inline = comment.path("inline");
+        if (!inline.isObject()) {
+            return null;
+        }
+        return ThreadLocation.of(inline.path("path").asText(null), firstInt(inline, "to", "from"));
+    }
+
+    /**
+     * The first of {@code fields} present as an integer, else null. A loop rather than nested
+     * ternaries: mixing {@code int} and {@code Integer} branches unboxes the null one and throws.
+     */
+    private static Integer firstInt(JsonNode node, String... fields) {
+        for (String field : fields) {
+            if (node.path(field).isIntegralNumber()) {
+                return node.path(field).asInt();
+            }
+        }
+        return null;
+    }
+
+    private static List<String> mentions(String text) {
+        if (text == null || text.indexOf('@') < 0) {
+            return List.of();
+        }
+        List<String> found = new ArrayList<>();
+        Matcher braced = BRACED_MENTION.matcher(text);
+        while (braced.find()) {
+            found.add(braced.group(1));
+        }
+        Matcher plain = PLAIN_MENTION.matcher(text);
+        while (plain.find()) {
+            found.add(plain.group(1));
+        }
+        return found;
+    }
 
     private RepoRef repo(JsonNode payload) {
         String fullName = payload.path("repository").path("full_name").asText("");

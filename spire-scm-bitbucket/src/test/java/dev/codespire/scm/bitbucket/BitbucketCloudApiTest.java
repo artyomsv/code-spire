@@ -5,7 +5,6 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.DiffRefs;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
@@ -69,7 +68,7 @@ class BitbucketCloudApiTest {
 
         PullRequest pr = diffSource.fetchPullRequest(REPO, 42);
         assertEquals("Add feature", pr.title());
-        assertEquals("abc123def456", pr.diffRefs().headSha());
+        assertEquals("abc123def456", pr.headCommit());
         assertEquals("author-1", pr.author().providerUserId());
     }
 
@@ -89,7 +88,7 @@ class BitbucketCloudApiTest {
         Diff diff = diffSource.fetchDiff(REPO, 42, "abc123def456");
         assertEquals(1, diff.files().size());
         assertEquals("src/App.java", diff.files().getFirst().newPath());
-        assertEquals("abc123def456", diff.refs().headSha());
+        assertEquals("abc123def456", diff.headCommit());
     }
 
     @Test
@@ -115,7 +114,7 @@ class BitbucketCloudApiTest {
     @Test
     void postsInlineCommentOnNewSideWithTo() {
         stubCommentCreated();
-        commentSink.postInline(REPO, 42, DiffRefs.headOnly("abc"),
+        commentSink.postInline(REPO, 42, "abc",
                 new InlineAnchor("src/App.java", "src/App.java", null, 7, Side.NEW), "note");
         server.verify(postRequestedFor(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/comments"))
                 .withRequestBody(equalToJson("""
@@ -126,7 +125,7 @@ class BitbucketCloudApiTest {
     @Test
     void postsInlineCommentOnOldSideWithFrom() {
         stubCommentCreated();
-        commentSink.postInline(REPO, 42, DiffRefs.headOnly("abc"),
+        commentSink.postInline(REPO, 42, "abc",
                 new InlineAnchor("src/App.java", "src/App.java", 5, null, Side.OLD), "removed?");
         server.verify(postRequestedFor(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/comments"))
                 .withRequestBody(equalToJson("""
