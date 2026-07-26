@@ -5,6 +5,7 @@ import dev.codespire.contract.attention.AttentionView.Severity;
 import dev.codespire.orchestrator.dlq.DlqRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -34,12 +35,19 @@ public class AttentionQueries {
     @Inject
     DlqRepository dlq;
 
+    @ConfigProperty(name = "spire.attention.stuck-minutes")
+    int stuckMinutes;
+
+    @ConfigProperty(name = "spire.attention.failed-window-hours")
+    int failedWindowHours;
+
     /** Blockers first, then warnings; stable by code within a severity. */
     public List<AttentionView> collect() {
         List<AttentionView> rows = new ArrayList<>();
         try (Connection c = dataSource.getConnection()) {
             llmProviderRows(c, rows);
             scmProviderRows(c, rows);
+            reviewRows(c, rows);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
@@ -85,6 +93,46 @@ public class AttentionQueries {
                 rows.add(new AttentionView("BOT_IDENTITY_UNRESOLVED", Severity.WARNING, rs.getString("name"),
                         "The bot's own identity could not be resolved, so it cannot recognise its own "
                                 + "comments and will not hold a conversation.", "/settings/providers"));
+            }
+        }
+    }
+
+    /**
+     * Non-terminal reviews that have stopped moving, and recent terminal failures.
+     *
+     * <p>Restricted to {@code pr_state = 'OPEN'}: cancel-on-close should already have ended a
+     * review whose PR was merged or closed, and a row about yesterday's merged PR is not
+     * actionable. Both rows are aggregates carrying a count — one stalled broker should not
+     * produce thirty identical rows.
+     */
+    private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
+        int stuck = countWithInt(c, """
+                SELECT COUNT(*) FROM review_status
+                 WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                   AND pr_state = 'OPEN'
+                   AND updated_at < now() - make_interval(mins => ?)
+                """, stuckMinutes);
+        if (stuck > 0) {
+            rows.add(new AttentionView("REVIEW_STUCK", Severity.WARNING, null,
+                    stuck + " review(s) have not progressed for over " + stuckMinutes
+                            + " minutes — a webhook delivery path or a worker may be down.", "/"));
+        }
+        int failed = countWithInt(c, """
+                SELECT COUNT(*) FROM review_status
+                 WHERE status = 'FAILED'
+                   AND updated_at > now() - make_interval(hours => ?)
+                """, failedWindowHours);
+        if (failed > 0) {
+            rows.add(new AttentionView("REVIEW_FAILED", Severity.WARNING, null,
+                    failed + " review(s) failed in the last " + failedWindowHours + " hours.", "/"));
+        }
+    }
+
+    private static int countWithInt(Connection c, String sql, int arg) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setInt(1, arg);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
             }
         }
     }

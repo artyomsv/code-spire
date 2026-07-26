@@ -144,6 +144,68 @@ class AttentionQueriesTest {
         }
     }
 
+    /** A review that has not moved is the closest honest signal that deliveries stopped arriving. */
+    @Test
+    void aReviewStuckPastTheThresholdIsReportedWithItsCount() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "REVIEWING", "OPEN", "2 hours");
+        insertReview("TEST-r2", "IDLE", "OPEN", "2 hours");
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "REVIEW_STUCK".equals(v.code()))
+                .findFirst().orElseThrow();
+        assertTrue(row.message().contains("2"), row.message());
+        assertEquals("/", row.action());
+    }
+
+    /** A review that is merely young is not stuck. */
+    @Test
+    void aRecentInProgressReviewIsNotReportedAsStuck() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "REVIEWING", "OPEN", "1 minute");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+    }
+
+    /** Cancel-on-close should have ended it; alerting about a merged PR is how a panel becomes noise. */
+    @Test
+    void aStuckReviewOnAClosedPrIsNotReported() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "REVIEWING", "MERGED", "2 hours");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+    }
+
+    /** A terminal review is not stuck, however old. */
+    @Test
+    void anOldCompletedReviewIsNotReportedAsStuck() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "COMPLETED", "OPEN", "30 days");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+    }
+
+    /** Recent failures are actionable. */
+    @Test
+    void aRecentlyFailedReviewIsReported() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "FAILED", "OPEN", "1 hour");
+        assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
+    }
+
+    /**
+     * With no dismiss button anywhere in this design, an unwindowed failure row would nag
+     * forever. The window is what makes it self-clearing.
+     */
+    @Test
+    void aFailureOlderThanTheWindowIsNotReported() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "FAILED", "OPEN", "30 days");
+        assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
+    }
+
     // ---- fixtures: obviously-synthetic values only --------------------------
 
     private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
@@ -164,5 +226,13 @@ class AttentionQueriesTest {
         sql("INSERT INTO dlq_entry (id, kafka_key, message_type, original_topic, reason, payload, status) "
                 + "VALUES ('" + UUID.randomUUID() + "', 'TEST-KEY', 'TEST-TYPE', 'cs.commands', "
                 + "'TEST-REASON', '{}', '" + status + "')");
+    }
+
+    /** {@code age} is a Postgres interval literal, e.g. "2 hours". */
+    private void insertReview(String reviewId, String status, String prState, String age) {
+        sql("INSERT INTO review_status (review_id, workspace, slug, pr_id, status, pr_state, "
+                + "created_at, updated_at) VALUES ('" + reviewId + "', 'TEST-WS', 'TEST-REPO', 1, '"
+                + status + "', '" + prState + "', now() - interval '" + age + "', "
+                + "now() - interval '" + age + "')");
     }
 }
