@@ -21,5 +21,8 @@ public record ProviderView(
         List<String> authors,
         Instant createdAt,
         String botUsername,
-        String conversationLevel) {
+        String conversationLevel,
+        Instant lastCheckAt,
+        Boolean lastCheckOk,
+        String lastCheckError) {
 }

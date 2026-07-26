@@ -147,6 +147,27 @@ public class ProviderRegistry {
         }
     }
 
+    /**
+     * Record the outcome of verifying this provider's credential. A passing check nulls the
+     * stored error, so a stale message never outlives the failure it described.
+     *
+     * @param detail a safe, non-echoing reason on failure; null on success
+     */
+    @Transactional
+    public void recordCheck(UUID id, boolean ok, String detail) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE scm_provider SET last_check_at = now(), last_check_ok = ?, "
+                             + "last_check_error = ? WHERE id = ?")) {
+            ps.setBoolean(1, ok);
+            ps.setString(2, ok ? null : detail);
+            ps.setObject(3, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record the credential check for " + id, e);
+        }
+    }
+
     // ---- resolution (internal — carries the decrypted secret) --------------
 
     /** The enabled provider for a (type, workspace), with its secret decrypted. */
@@ -245,7 +266,11 @@ public class ProviderRegistry {
                 secret != null && !secret.isBlank(),
                 rs.getString("bot_account_id"), rs.getBoolean("enabled"), authors,
                 rs.getTimestamp("created_at").toInstant(),
-                rs.getString("bot_username"), rs.getString("conversation_level"));
+                rs.getString("bot_username"), rs.getString("conversation_level"),
+                rs.getTimestamp("last_check_at") == null
+                        ? null : rs.getTimestamp("last_check_at").toInstant(),
+                rs.getObject("last_check_ok", Boolean.class),
+                rs.getString("last_check_error"));
     }
 
     private List<String> authorsOf(Connection c, UUID id) throws SQLException {

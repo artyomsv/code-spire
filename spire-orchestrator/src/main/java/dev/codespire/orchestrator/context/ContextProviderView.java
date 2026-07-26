@@ -17,5 +17,8 @@ public record ContextProviderView(
         boolean hasSecret,
         boolean enabled,
         boolean isDefault,
-        Instant createdAt) {
+        Instant createdAt,
+        Instant lastCheckAt,
+        Boolean lastCheckOk,
+        String lastCheckError) {
 }

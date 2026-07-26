@@ -48,6 +48,7 @@ public class AttentionQueries {
             llmProviderRows(c, rows);
             scmProviderRows(c, rows);
             reviewRows(c, rows);
+            credentialRows(c, rows);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
@@ -125,6 +126,36 @@ public class AttentionQueries {
         if (failed > 0) {
             rows.add(new AttentionView("REVIEW_FAILED", Severity.WARNING, null,
                     failed + " review(s) failed in the last " + failedWindowHours + " hours.", "/"));
+        }
+    }
+
+    /**
+     * A credential the provider refused, across all three registries. Only an explicit FALSE
+     * qualifies: NULL means never checked, which is not a problem and would otherwise nag for
+     * every provider whose Check button was never pressed. Disabled providers are excluded —
+     * they cannot break a review.
+     */
+    private void credentialRows(Connection c, List<AttentionView> rows) throws SQLException {
+        credentialRows(c, rows, "scm_provider", "/settings/providers", "source-control provider");
+        credentialRows(c, rows, "llm_provider", "/settings/llm", "LLM provider");
+        credentialRows(c, rows, "context_provider", "/settings/context", "context provider");
+    }
+
+    private void credentialRows(Connection c, List<AttentionView> rows, String table,
+                                String action, String kind) throws SQLException {
+        // The table name is a compile-time constant from the private call sites above, never
+        // caller input, so it cannot carry injection.
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT name, last_check_error FROM " + table
+                        + " WHERE enabled = TRUE AND last_check_ok = FALSE ORDER BY name");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String detail = rs.getString("last_check_error");
+                rows.add(new AttentionView("CREDENTIAL_REJECTED", Severity.WARNING, rs.getString("name"),
+                        "The " + kind + "'s credential was rejected"
+                                + (detail == null || detail.isBlank() ? "." : ": " + detail),
+                        action));
+            }
         }
     }
 

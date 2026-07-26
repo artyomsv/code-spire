@@ -110,11 +110,13 @@ public class ContextProviderResource {
         ContextKeyValidator.CheckOutcome out =
                 validator.check(cfg.type(), cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret());
         if (out.ok()) {
+            registry.recordCheck(cfg.id(), true, null);
             return new CheckResult(true, out.account(), null);
         }
         // A specific detail (e.g. a sign-in page on a 200) beats the status-only category.
         String detail = out.detail() != null ? out.detail() : reason(out.status());
         LOG.warnf("Context provider %s (%s) connectivity check failed: %s", id, cfg.type(), detail);
+        registry.recordCheck(cfg.id(), false, detail);
         return new CheckResult(false, null, detail);
     }
 

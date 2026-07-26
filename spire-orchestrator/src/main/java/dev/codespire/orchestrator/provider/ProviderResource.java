@@ -70,15 +70,27 @@ public class ProviderResource {
     @POST
     public Response create(ProviderInput in) {
         validate(in, true);
-        return Response.status(Response.Status.CREATED).entity(registry.create(resolveIdentity(in))).build();
+        ProviderView created = registry.create(resolveIdentity(in));
+        // resolveIdentity(...) just proved the token works by resolving the bot's identity with it.
+        // A secret is required to create (validate() above), so this call always re-validated it.
+        registry.recordCheck(UUID.fromString(created.id()), true, null);
+        return Response.status(Response.Status.CREATED).entity(created).build();
     }
 
     @PUT
     @Path("/{id}")
     public ProviderView update(@PathParam("id") String id, ProviderInput in) {
         validate(in, false);
-        return registry.update(uuid(id), resolveIdentity(in))
+        ProviderView updated = registry.update(uuid(id), resolveIdentity(in))
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
+        // Only record when a secret was actually supplied: that's the only case resolveIdentity(...)
+        // re-validates the token (it returns the input untouched on a blank secret). Recording success
+        // unconditionally would silently clear a real prior rejection on an update that never touched
+        // the credential at all.
+        if (in.secret() != null && !in.secret().isBlank()) {
+            registry.recordCheck(uuid(id), true, null);
+        }
+        return updated;
     }
 
     /**
@@ -128,10 +140,13 @@ public class ProviderResource {
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
         try {
             Author owner = identity.resolveForCheck(provider);
+            registry.recordCheck(provider.id(), true, null);
             return new CheckResult(true, owner.username(), null);
         } catch (RuntimeException e) {
             LOG.warnf(e, "Provider connectivity check failed for %s (type %s)", id, provider.type());
-            return new CheckResult(false, null, reason(e));
+            String detail = reason(e);
+            registry.recordCheck(provider.id(), false, detail);
+            return new CheckResult(false, null, detail);
         }
     }
 

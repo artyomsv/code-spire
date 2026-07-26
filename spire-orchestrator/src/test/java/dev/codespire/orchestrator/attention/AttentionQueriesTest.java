@@ -206,6 +206,65 @@ class AttentionQueriesTest {
         assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
     }
 
+    /** A credential the provider refused is the case that started this feature. */
+    @Test
+    void aRejectedScmCredentialIsReportedByProviderName() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        sql("UPDATE scm_provider SET last_check_at = now(), last_check_ok = FALSE, "
+                + "last_check_error = 'Authentication rejected (HTTP 401)' WHERE name = 'TEST-scm'");
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
+                .findFirst().orElseThrow();
+        assertEquals("TEST-scm", row.subject());
+        assertEquals("/settings/providers", row.action());
+        assertTrue(row.message().contains("401"), row.message());
+    }
+
+    /** A rejected LLM key routes the operator to the LLM page, not the SCM page. */
+    @Test
+    void aRejectedLlmCredentialLinksToTheLlmSettingsPage() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        sql("UPDATE llm_provider SET last_check_at = now(), last_check_ok = FALSE, "
+                + "last_check_error = 'The LLM provider rejected the API key' WHERE name = 'TEST-llm'");
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
+                .findFirst().orElseThrow();
+        assertEquals("/settings/llm", row.action());
+    }
+
+    /**
+     * NULL means never checked, which is not a problem. Only an explicit FALSE raises a row —
+     * otherwise every provider whose Check button was never pressed would nag forever.
+     */
+    @Test
+    void anUncheckedCredentialIsNotReported() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        assertFalse(codes().contains("CREDENTIAL_REJECTED"), codes().toString());
+    }
+
+    /** A passing check clears the row; there is no separate clear action. */
+    @Test
+    void aPassingCheckClearsTheRejection() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        sql("UPDATE scm_provider SET last_check_ok = FALSE WHERE name = 'TEST-scm'");
+        assertTrue(codes().contains("CREDENTIAL_REJECTED"));
+        sql("UPDATE scm_provider SET last_check_ok = TRUE WHERE name = 'TEST-scm'");
+        assertFalse(codes().contains("CREDENTIAL_REJECTED"), codes().toString());
+    }
+
+    /** A disabled provider cannot break a review, so its dead credential is not actionable. */
+    @Test
+    void aDisabledProvidersRejectedCredentialIsNotReported() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        sql("UPDATE scm_provider SET enabled = FALSE, last_check_ok = FALSE WHERE name = 'TEST-scm'");
+        assertFalse(codes().contains("CREDENTIAL_REJECTED"), codes().toString());
+    }
+
     // ---- fixtures: obviously-synthetic values only --------------------------
 
     private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
