@@ -15,6 +15,7 @@ import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 
 import java.io.IOException;
@@ -188,6 +189,33 @@ public class GitLabIngress implements ScmIngress {
      * {@code noteable_type}. The MR number is {@code merge_request.iid}, not the note's
      * own id.
      */
+    /**
+     * A DiffNote's {@code position}. GitLab reports {@code new_line} for an added/context line and
+     * only {@code old_line} for a removed one, so fall back rather than losing the location; a
+     * DiscussionNote or plain note has no position and yields null.
+     */
+    private static ThreadLocation location(JsonNode attrs) {
+        JsonNode position = attrs.path("position");
+        if (position.isMissingNode() || position.isNull()) {
+            return null;
+        }
+        String path = position.path("new_path").asText(position.path("old_path").asText(null));
+        return ThreadLocation.of(path, firstInt(position, "new_line", "old_line"));
+    }
+
+    /**
+     * The first of {@code fields} present as an integer, else null. A loop rather than nested
+     * ternaries: mixing {@code int} and {@code Integer} branches unboxes the null one and throws.
+     */
+    private static Integer firstInt(JsonNode node, String... fields) {
+        for (String field : fields) {
+            if (node.path(field).isIntegralNumber()) {
+                return node.path(field).asInt();
+            }
+        }
+        return null;
+    }
+
     private List<IntegrationEvent> note(JsonNode payload) {
         JsonNode attrs = payload.path("object_attributes");
         if (!MR_NOTEABLE.equals(attrs.path("noteable_type").asText(""))) {
@@ -203,7 +231,7 @@ public class GitLabIngress implements ScmIngress {
             String noteId = attrs.path("id").asText("");
             return List.of(new AuthorReplied(repo, iid, ReviewIds.reviewId(repo, iid),
                     new ThreadRef(discussionId), noteId, text, author(payload.path("user")), topLevel,
-                    mentions(text)));
+                    mentions(text), location(attrs)));
         }
         String[] parts = text.substring(1).split("\\s+", 2);
         String command = parts[0].toLowerCase(Locale.ROOT);

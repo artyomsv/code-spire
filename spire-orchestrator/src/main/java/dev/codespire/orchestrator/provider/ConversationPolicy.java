@@ -11,9 +11,18 @@ public final class ConversationPolicy {
     private ConversationPolicy() {
     }
 
+    /**
+     * @param onFlaggedLine the thread sits on a line the bot has an OPEN finding at, even though the
+     * thread is not one the bot started. Commenting where the reviewer raised something is almost
+     * always a response to it, so it engages — previously such a comment got silence. The
+     * multi-party guard still applies downstream ({@code FollowUpWorker.shouldAnswer}), so the bot
+     * drops out the moment a second human joins; this only opens the FIRST comment.
+     */
     public static ConversationDecision decide(ConversationLevel level, boolean authorAllowed,
-            boolean botIsAuthor, boolean threadIsOurs, boolean botMentioned, int priorTurns, int turnCap) {
-        boolean eligible = level.answers() && authorAllowed && !botIsAuthor && (threadIsOurs || botMentioned);
+            boolean botIsAuthor, boolean threadIsOurs, boolean botMentioned, boolean onFlaggedLine,
+            int priorTurns, int turnCap) {
+        boolean eligible = level.answers() && authorAllowed && !botIsAuthor
+                && (threadIsOurs || botMentioned || onFlaggedLine);
         if (!eligible) {
             return new ConversationDecision(false, false);
         }

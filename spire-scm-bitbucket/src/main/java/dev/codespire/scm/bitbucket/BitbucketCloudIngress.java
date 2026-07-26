@@ -15,6 +15,7 @@ import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 
 import javax.crypto.Mac;
@@ -175,7 +176,8 @@ public class BitbucketCloudIngress implements ScmIngress {
                 text,
                 author,
                 topLevel,
-                mentions(text)));
+                mentions(text),
+                location(comment)));
     }
 
     /**
@@ -195,6 +197,32 @@ public class BitbucketCloudIngress implements ScmIngress {
      * the identities that were mentioned and compares them to the bot's, without knowing that this
      * provider is the one that brackets its ids.
      */
+    /**
+     * Bitbucket's {@code inline} block. {@code to} is the NEW-side line and {@code from} the OLD side;
+     * a comment on a removed line carries only {@code from}, so fall back rather than losing the
+     * location. A plain PR comment has no {@code inline} block and yields null.
+     */
+    private static ThreadLocation location(JsonNode comment) {
+        JsonNode inline = comment.path("inline");
+        if (!inline.isObject()) {
+            return null;
+        }
+        return ThreadLocation.of(inline.path("path").asText(null), firstInt(inline, "to", "from"));
+    }
+
+    /**
+     * The first of {@code fields} present as an integer, else null. A loop rather than nested
+     * ternaries: mixing {@code int} and {@code Integer} branches unboxes the null one and throws.
+     */
+    private static Integer firstInt(JsonNode node, String... fields) {
+        for (String field : fields) {
+            if (node.path(field).isIntegralNumber()) {
+                return node.path(field).asInt();
+            }
+        }
+        return null;
+    }
+
     private static List<String> mentions(String text) {
         if (text == null || text.indexOf('@') < 0) {
             return List.of();

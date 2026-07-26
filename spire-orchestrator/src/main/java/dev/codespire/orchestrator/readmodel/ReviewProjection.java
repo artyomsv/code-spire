@@ -1177,6 +1177,47 @@ public class ReviewProjection {
     }
 
     /**
+     * Does the review still have an open finding at {@code loc} ({@code path:line})?
+     *
+     * <p>Lets the conversation policy treat a thread a human started ON a line the bot flagged as one
+     * of the bot's own: commenting where the reviewer raised something is almost always a response to
+     * it, and before this it got silence because the thread ref was unknown.
+     *
+     * <p>Fails CLOSED — a read error returns false, so the bot stays quiet exactly as it did before
+     * this existed. Never let a database problem make it speak where it otherwise would not.
+     */
+    public boolean hasOpenFindingAt(String reviewId, String loc) {
+        if (loc == null || loc.isBlank()) {
+            return false;
+        }
+        try (Connection c = dataSource.getConnection()) {
+            ReviewRow row = loadRow(c, reviewId);
+            return row != null && openFindingLocs(row).contains(loc);
+        } catch (SQLException e) {
+            LOG.warnf(e, "hasOpenFindingAt read failed for %s", reviewId);
+            return false;
+        }
+    }
+
+    /** {@code path:line} of every finding still open — this run's, plus carried-forward ones. */
+    private Set<String> openFindingLocs(ReviewRow row) {
+        Set<String> locs = new HashSet<>();
+        for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
+            if (f.loc() != null && !f.loc().isBlank()) {
+                locs.add(f.loc());
+            }
+        }
+        for (ReviewDetail.ReconciliationView r
+                : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
+            if (("still open".equals(r.status()) || "unchanged".equals(r.status()))
+                    && r.loc() != null && !r.loc().isBlank()) {
+                locs.add(r.loc());
+            }
+        }
+        return locs;
+    }
+
+    /**
      * Cumulative cost for a single row loaded outside {@link #listSummaries}'s subquery (the
      * {@link #broadcast} path) — same fallback rule as the SQL: sum every {@code review_llm_call}
      * row, falling back to the row's own {@code cost_millicents} when there are none yet.

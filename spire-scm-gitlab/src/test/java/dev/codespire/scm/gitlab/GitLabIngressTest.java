@@ -18,6 +18,8 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -205,6 +207,57 @@ class GitLabIngressTest {
         var e = (IntegrationEvent.AuthorReplied) events.getFirst();
         assertTrue(e.topLevel());
         assertEquals("what about edge cases?", e.text());
+    }
+
+    // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
+
+    /** A note with a `position` block sits on a line; a note without one does not. */
+    private static byte[] noteAt(String positionJson) {
+        return ("""
+                {
+                  "object_kind": "note",
+                  "project": { "path_with_namespace": "sandbox/demo-repo" },
+                  "user": { "id": 42, "username": "jdoe", "name": "Jane Doe" },
+                  "merge_request": { "iid": 7 },
+                  "object_attributes": {
+                    "noteable_type": "MergeRequest",
+                    "note": "why is this a bug?", "type": "DiffNote",
+                    "discussion_id": "DISC90", "id": 910%s
+                  }
+                }""").formatted(positionJson).getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void aDiffNoteCarriesItsFileAndLine() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(
+                ", \"position\": { \"new_path\": \"src/App.java\", \"new_line\": 42 }"))).getFirst();
+        assertNotNull(e.location());
+        assertEquals("src/App.java", e.location().path());
+        assertEquals(42, e.location().line());
+    }
+
+    /** A note on a REMOVED line has only `old_line`; losing the location there would be silent. */
+    @Test
+    void aNoteOnARemovedLineFallsBackToTheOldSide() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(
+                ", \"position\": { \"old_path\": \"src/App.java\", \"old_line\": 17 }"))).getFirst();
+        assertEquals("src/App.java", e.location().path());
+        assertEquals(17, e.location().line());
+    }
+
+    /** A DiscussionNote (thread not tied to the diff) carries no position — null, not fabricated. */
+    @Test
+    void aNoteWithNoPositionHasNoLocation() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(""))).getFirst();
+        assertNull(e.location());
+    }
+
+    /** A file-level position has a path but no line — must not throw, and must not half-report. */
+    @Test
+    void aPositionWithNoLineIsHandledWithoutThrowing() {
+        var e = (IntegrationEvent.AuthorReplied) ingress.translate(webhook(noteAt(
+                ", \"position\": { \"new_path\": \"src/App.java\" }"))).getFirst();
+        assertNull(e.location());
     }
 
     @Test

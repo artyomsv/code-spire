@@ -8,6 +8,7 @@ import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
@@ -329,6 +330,88 @@ class ConversationSagaTest {
                 saga.planFollowUp(inlineReply(List.of())).orElseThrow());
 
         assertTrue(answer.otherFindings().isEmpty());
+    }
+
+    // --- a thread the bot does not own, on a line it flagged (item 15) ---
+
+    /** As {@link #cappedThreadSaga} but the thread is NOT ours, and {@code flaggedLoc} has a finding. */
+    private static ConversationSaga foreignThreadSaga(String flaggedLoc) {
+        ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return thread;
+            }
+
+            @Override
+            public boolean isOurThread(String reviewId, ThreadRef thread) {
+                return false;
+            }
+
+            @Override
+            public int turnCount(String reviewId, ThreadRef thread) {
+                return 0;
+            }
+        };
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public Optional<String> packDefault(String workspace) {
+                return Optional.of("llm-cred");
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.empty();
+            }
+
+            @Override
+            public boolean hasOpenFindingAt(String reviewId, String loc) {
+                return flaggedLoc != null && flaggedLoc.equals(loc);
+            }
+        };
+        return saga;
+    }
+
+    private static AuthorReplied replyAt(String path, int line) {
+        return new AuthorReplied(new RepoRef("acme", "web"), 412L, "review::acme/web#412",
+                new ThreadRef("human-thread-1"), "c-1", "is this really a problem?",
+                Author.of("human-1", "alice", "Alice"), false, List.of(),
+                new ThreadLocation(path, line));
+    }
+
+    /**
+     * A human starting a fresh thread ON a line the bot flagged used to get silence — the thread was
+     * not the bot's and carried no mention, so neither eligibility branch opened. Commenting where the
+     * reviewer raised something is almost always a response to it.
+     */
+    @Test
+    void aThreadOnAFlaggedLineIsAnsweredWithoutOwnershipOrAMention() {
+        Optional<ActionCommand> cmd =
+                foreignThreadSaga("src/A.java:9").planFollowUp(replyAt("src/A.java", 9));
+
+        ActionCommand.AnswerFollowUp answer =
+                assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.orElseThrow());
+        assertEquals("human-thread-1", answer.threadRef().value(),
+                "the answer goes where the human asked, not into the bot's own thread");
+        assertFalse(answer.mentioned(), "engaged by the flagged line, not by a mention");
+    }
+
+    /** A thread on an UNflagged line is still left alone — this widens the gate by one line, not wholesale. */
+    @Test
+    void aThreadOnAnUnflaggedLineIsStillIgnored() {
+        assertTrue(foreignThreadSaga("src/A.java:9")
+                .planFollowUp(replyAt("src/A.java", 40)).isEmpty());
+    }
+
+    /** No location (a summary or plain comment) cannot match a finding, so nothing changes for it. */
+    @Test
+    void aForeignThreadWithNoLocationIsStillIgnored() {
+        ConversationSaga saga = foreignThreadSaga("src/A.java:9");
+        AuthorReplied noLocation = new AuthorReplied(new RepoRef("acme", "web"), 412L,
+                "review::acme/web#412", new ThreadRef("human-thread-1"), "c-1", "hmm",
+                Author.of("human-1", "alice", "Alice"), false, List.of(), null);
+        assertTrue(saga.planFollowUp(noLocation).isEmpty());
     }
 
     // --- turn cap: a hand-off has to be visible to the person waiting in the thread ---

@@ -15,6 +15,7 @@ import dev.codespire.contract.port.ScmIngress;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 
 import javax.crypto.Mac;
@@ -222,7 +223,35 @@ public class GitHubIngress implements ScmIngress {
         return List.of(new AuthorReplied(
                 repo, prId, ReviewIds.reviewId(repo, prId),
                 new ThreadRef(threadRoot), comment.path("id").asText(),
-                body, author(comment.path("user")), false, mentions(body)));
+                body, author(comment.path("user")), false, mentions(body), location(comment)));
+    }
+
+    /**
+     * A review comment's diff position. {@code line} is the current NEW-side line; GitHub sends
+     * {@code original_line} instead once the comment has gone outdated (the diff moved under it), so
+     * fall back to that rather than reporting no location at all. {@code path} is always present on
+     * this webhook.
+     */
+    private static ThreadLocation location(JsonNode comment) {
+        return ThreadLocation.of(comment.path("path").asText(null),
+                firstInt(comment, "line", "original_line"));
+    }
+
+    /**
+     * The first of {@code fields} present as an integer, else null.
+     *
+     * <p>Written as a loop rather than nested ternaries on purpose: {@code cond ? node.asInt() : (cond
+     * ? node.asInt() : null)} mixes {@code int} and {@code Integer}, so binary numeric promotion
+     * unboxes the null branch and it throws. A file-level GitHub comment (path set, {@code line} null)
+     * is exactly that case.
+     */
+    private static Integer firstInt(JsonNode node, String... fields) {
+        for (String field : fields) {
+            if (node.path(field).isIntegralNumber()) {
+                return node.path(field).asInt();
+            }
+        }
+        return null;
     }
 
     /**

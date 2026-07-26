@@ -18,6 +18,7 @@ import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 
 import java.util.List;
@@ -53,6 +54,9 @@ public class IntegrationSaga {
 
     @Inject
     ReviewProjection projection;
+
+    @Inject
+    ReviewThreadView threads;
 
     @Inject
     ProviderRegistry providers;
@@ -113,6 +117,13 @@ public class IntegrationSaga {
                 if (isBotAuthored(e.reviewId(), e.author())) {
                     dropSelfLoop(e.reviewId(), "reply");
                 } else {
+                    // Where the thread sits, recorded even when policy declines to answer: it is a fact
+                    // about the thread, not about the reply, and it is what lets the UI file an inline
+                    // conversation at its line instead of under "General discussion".
+                    if (e.location() != null) {
+                        threads.markThreadLocation(e.reviewId(), e.threadRef(),
+                                e.location().path(), e.location().line());
+                    }
                     conversation.planFollowUp(e).ifPresent(cmd -> {
                         String author = e.author() == null ? "unknown" : e.author().username();
                         // The COMMAND's threadRef, not the event's: the saga normalized it to the

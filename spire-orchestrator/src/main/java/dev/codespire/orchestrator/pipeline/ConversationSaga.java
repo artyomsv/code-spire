@@ -84,7 +84,15 @@ public class ConversationSaga {
         ThreadTarget target = targetOpt.get();
         boolean botMentioned = mentionsBot(e.mentions(), provider.botUsername(), provider.botAccountId());
 
-        ConversationPolicy.ConversationDecision decision = decide(e, provider, target, botMentioned);
+        // A thread the bot doesn't own, sitting on a line it flagged, still engages (item 15). Only
+        // asked when needed: an owned thread or a mention is already eligible, so this read is skipped
+        // for the common cases.
+        boolean onFlaggedLine = !target.isOurs() && !botMentioned
+                && e.location() != null
+                && projection.hasOpenFindingAt(e.reviewId(), e.location().loc());
+
+        ConversationPolicy.ConversationDecision decision =
+                decide(e, provider, target, botMentioned, onFlaggedLine);
         if (decision.capReached()) {
             // Hand the thread back visibly. The worker keeps this to one notice per thread, so the
             // later replies that also land here post nothing.
@@ -153,14 +161,16 @@ public class ConversationSaga {
      * factor-logging exists to remove.
      */
     private ConversationPolicy.ConversationDecision decide(
-            AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned) {
+            AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned,
+            boolean onFlaggedLine) {
         ConversationLevel level = levels.effectiveLevel(provider.type(), e.repo().workspace());
         boolean authorAllowed = allowlistAllows(provider.authors(), e.author());
         int priorTurns = threads.turnCount(e.reviewId(), target.thread());
 
         // botIsAuthor is already false here — IntegrationSaga drops bot-authored replies before calling.
         ConversationPolicy.ConversationDecision decision = ConversationPolicy.decide(
-                level, authorAllowed, false, target.isOurs(), botMentioned, priorTurns, levels.turnCap());
+                level, authorAllowed, false, target.isOurs(), botMentioned, onFlaggedLine,
+                priorTurns, levels.turnCap());
         if (decision.capReached()) {
             timeline.record("integration", "conversation:cap", e.reviewId(),
                     "turn cap reached — handing back to the team");
@@ -172,8 +182,8 @@ public class ConversationSaga {
                     + "reopens it", e.reviewId(), target.thread().value(), priorTurns, levels.turnCap());
         } else if (!decision.answer()) {
             LOG.infof("Follow-up declined for %s — level=%s authorAllowed=%b threadIsOurs=%b mentioned=%b "
-                    + "priorTurns=%d/%d (no reply posted)",
-                    e.reviewId(), level, authorAllowed, target.isOurs(), botMentioned,
+                    + "onFlaggedLine=%b priorTurns=%d/%d (no reply posted)",
+                    e.reviewId(), level, authorAllowed, target.isOurs(), botMentioned, onFlaggedLine,
                     priorTurns, levels.turnCap());
         }
         return decision;

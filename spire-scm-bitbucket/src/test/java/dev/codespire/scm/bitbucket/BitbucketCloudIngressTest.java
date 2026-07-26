@@ -22,6 +22,8 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BitbucketCloudIngressTest {
@@ -260,6 +262,53 @@ class BitbucketCloudIngressTest {
                   "comment": { "id": 900, "content": { "raw": "%s" },
                     "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" }%s%s }
                 }""").formatted(body, parent, inline).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
+
+    @Test
+    void anInlineCommentCarriesItsFileAndLine() {
+        AuthorReplied e = replyFrom(commentInline(
+                ", \"inline\": { \"path\": \"src/App.java\", \"to\": 42 }"));
+        assertNotNull(e.location());
+        assertEquals("src/App.java", e.location().path());
+        assertEquals(42, e.location().line());
+    }
+
+    /** A comment on a REMOVED line carries only {@code from}; losing the location there is silent. */
+    @Test
+    void anInlineCommentOnARemovedLineFallsBackToFrom() {
+        AuthorReplied e = replyFrom(commentInline(
+                ", \"inline\": { \"path\": \"src/App.java\", \"from\": 17 }"));
+        assertEquals(17, e.location().line());
+    }
+
+    /** A plain PR comment has no {@code inline} block at all. */
+    @Test
+    void aPlainCommentHasNoLocation() {
+        assertNull(replyFrom(commentInline("")).location());
+    }
+
+    /** A file-level inline block has a path but no line — must not throw, must not half-report. */
+    @Test
+    void anInlineBlockWithNoLineIsHandledWithoutThrowing() {
+        assertNull(replyFrom(commentInline(", \"inline\": { \"path\": \"src/App.java\" }")).location());
+    }
+
+    /** A comment whose {@code inline} block is spliced in verbatim, so tests can shape it freely. */
+    private static byte[] commentInline(String inlineJson) {
+        return ("""
+                {
+                  "repository": { "full_name": "sandbox/demo-repo" },
+                  "pullrequest": { "id": 7 },
+                  "comment": { "id": 900, "content": { "raw": "why is this a bug?" },
+                    "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" }%s }
+                }""").formatted(inlineJson).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private AuthorReplied replyFrom(byte[] body) {
+        return assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(body, Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
     }
 
     private static RawWebhook webhook(byte[] body, Map<String, String> headers) {

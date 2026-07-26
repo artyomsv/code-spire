@@ -105,6 +105,33 @@ public class ReviewThreadView {
         }
     }
 
+    /**
+     * Record where a thread sits in the diff, without claiming ownership.
+     *
+     * <p>For threads a HUMAN started on a line (an @-mention on unflagged code, a fresh thread beside
+     * a finding). Only {@code markFindingThread} used to write {@code (path, line)}, so such a thread
+     * had no location at all and the UI filed a comment demonstrably attached to a line under
+     * "General discussion". {@code COALESCE} keeps an existing location rather than overwriting it,
+     * since a finding's own anchor is the more authoritative of the two.
+     */
+    public void markThreadLocation(String reviewId, ThreadRef thread, String path, int line) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO review_thread (review_id, thread_ref, path, line) VALUES (?, ?, ?, ?)
+                     ON CONFLICT (review_id, thread_ref)
+                     DO UPDATE SET path = COALESCE(review_thread.path, EXCLUDED.path),
+                                   line = COALESCE(review_thread.line, EXCLUDED.line)
+                     """)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            ps.setString(3, path);
+            ps.setInt(4, line);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record thread location", e);
+        }
+    }
+
     /** Record a finding's owned thread together with its {@code (path, line)}. */
     public void markFindingThread(String reviewId, ThreadRef thread, String path, int line) {
         try (Connection c = dataSource.getConnection();

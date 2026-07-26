@@ -9,6 +9,7 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 
 import java.util.List;
@@ -85,22 +86,40 @@ public sealed interface IntegrationEvent {
      * (a login, or an account id in braces), and only the adapter that knows the payload can read
      * it. Callers ask "is the bot in here?" and never learn how any provider writes it.
      */
+    /**
+     * {@code location} is where in the diff the thread sits, when the provider says — each ingress
+     * reads it from its own payload (GitHub's {@code path}/{@code line}, GitLab's {@code position},
+     * Bitbucket's {@code inline}). Null for a summary or top-level comment, and for any provider that
+     * does not report one.
+     *
+     * <p>Without it the core cannot tell an inline thread from a general one: such threads had no
+     * {@code (path, line)} in the read model, so the UI filed a comment demonstrably attached to a
+     * line under "General discussion", and a reply on a line the bot had flagged could not be
+     * recognised as being about that finding.
+     */
     record AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
                          String commentId, String text, Author author,
-                         boolean topLevel, List<String> mentions) implements IntegrationEvent {
+                         boolean topLevel, List<String> mentions,
+                         ThreadLocation location) implements IntegrationEvent {
 
         public AuthorReplied {
             mentions = mentions == null ? List.of() : List.copyOf(mentions);
         }
 
         public AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
+                             String commentId, String text, Author author,
+                             boolean topLevel, List<String> mentions) {
+            this(repo, prId, reviewId, threadRef, commentId, text, author, topLevel, mentions, null);
+        }
+
+        public AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
                              String commentId, String text, Author author, boolean topLevel) {
-            this(repo, prId, reviewId, threadRef, commentId, text, author, topLevel, List.of());
+            this(repo, prId, reviewId, threadRef, commentId, text, author, topLevel, List.of(), null);
         }
 
         public AuthorReplied(RepoRef repo, long prId, String reviewId, ThreadRef threadRef,
                              String commentId, String text, Author author) {
-            this(repo, prId, reviewId, threadRef, commentId, text, author, false, List.of());
+            this(repo, prId, reviewId, threadRef, commentId, text, author, false, List.of(), null);
         }
     }
 
