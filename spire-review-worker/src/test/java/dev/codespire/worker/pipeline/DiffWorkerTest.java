@@ -18,6 +18,8 @@ import dev.codespire.scm.github.GitHubApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -121,7 +123,13 @@ class DiffWorkerTest {
 
     /** Arranges a diff-fetch failure at the given status and returns what DiffWorker emitted. */
     private List<IntegrationEvent> runDiffFetchFailing(int status) {
-        failure = new BitbucketApiException(status, "GET", "/diff");
+        return runDiffFetchFailing(new BitbucketApiException(status, "GET", "/diff"));
+    }
+
+    /** Sibling of the status-shaped helper above, for failures with no HTTP status at all
+     *  (a bare I/O failure never implements ScmApiException). */
+    private List<IntegrationEvent> runDiffFetchFailing(RuntimeException failureToThrow) {
+        failure = failureToThrow;
         worker.fetchDiff(COMMAND);
         return emitted;
     }
@@ -196,6 +204,21 @@ class DiffWorkerTest {
         List<IntegrationEvent> emitted = runDiffFetchFailing(500);
 
         ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertFalse(failed.credentialRejected());
+    }
+
+    /**
+     * A bare I/O failure carries no ScmApiException at all, so it falls to the ternary's
+     * else-branch in DiffWorker.fail — this pins that branch, which no other test exercised
+     * (every other retryable assertion here goes through an HTTP status instead).
+     */
+    @Test
+    void anIoFailureWhileFetchingTheDiffIsRetryable() {
+        List<IntegrationEvent> emitted =
+                runDiffFetchFailing(new UncheckedIOException(new IOException("connection reset")));
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.retryable(), "a transient I/O failure clears on retry (ADR-016)");
         assertFalse(failed.credentialRejected());
     }
 }
