@@ -59,6 +59,29 @@ describe('AttentionBell', () => {
     await waitFor(() => expect(screen.queryByTestId('attention-count')).toBeNull());
   });
 
+  /** The accessible name must carry the count, not just the fact -- a screen-reader user
+   *  should not be told the opposite of what a sighted user sees on the badge. */
+  it('gives the toggle button an accessible name that reflects the count', async () => {
+    stubFeeds([], []);
+    const { unmount } = renderBell();
+    await waitFor(() =>
+      expect(screen.getByTestId('attention-toggle')).toHaveAttribute(
+        'aria-label',
+        'Nothing needs attention',
+      ),
+    );
+    unmount();
+
+    stubFeeds([blocking], [warning]);
+    renderBell();
+    await waitFor(() =>
+      expect(screen.getByTestId('attention-toggle')).toHaveAttribute(
+        'aria-label',
+        '2 conditions need attention',
+      ),
+    );
+  });
+
   it('takes its colour from the most severe condition present', async () => {
     stubFeeds([blocking], [warning]);
     renderBell();

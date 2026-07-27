@@ -16,6 +16,14 @@ export default function AttentionBell() {
 
   const blocking = items.some((item) => item.severity === 'BLOCKING');
   const tone = blocking ? 'blocking' : 'warning';
+  // The accessible name must carry the same information the badge carries visually — the count,
+  // not just the fact — so a screen-reader user isn't told the opposite of what's on screen.
+  const attentionLabel =
+    items.length === 0
+      ? 'Nothing needs attention'
+      : items.length === 1
+        ? '1 condition needs attention'
+        : `${items.length} conditions need attention`;
 
   return (
     <div className="attention">
@@ -23,7 +31,7 @@ export default function AttentionBell() {
         <button
           className="iconbtn"
           data-testid="attention-toggle"
-          aria-label="Needs attention"
+          aria-label={attentionLabel}
           aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
