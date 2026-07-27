@@ -2598,7 +2598,7 @@ In `spire-ui/src/index.css`, add:
 }
 
 .attention-count.blocking {
-  background: var(--danger, #d64545);
+  background: var(--crit);
 }
 
 .attention-count.warning {
@@ -2645,7 +2645,7 @@ In `spire-ui/src/index.css`, add:
 }
 
 .attention-row.blocking .attention-icon {
-  color: var(--danger, #d64545);
+  color: var(--crit);
 }
 
 .attention-row.warning .attention-icon {
@@ -2873,7 +2873,7 @@ Add to `index.css`:
 }
 
 .last-checked.failed {
-  color: var(--danger, #d64545);
+  color: var(--crit);
 }
 ```
 
