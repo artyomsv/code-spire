@@ -251,6 +251,9 @@ export interface ProviderView {
   authors: string[];
   conversationLevel: string | null; // '' / null = inherit the global default
   createdAt: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
 export interface ProviderInput {
@@ -515,6 +518,9 @@ export interface LlmProviderView {
   enabled: boolean;
   isDefault: boolean;
   createdAt: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
 export interface LlmProviderInput {
@@ -566,6 +572,13 @@ export async function deleteLlmProvider(id: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
 }
 
+// Live connectivity check: probes the stored API key against the provider.
+export async function checkLlmProvider(id: string): Promise<{ ok: boolean; detail: string | null }> {
+  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  if (!res.ok) throw new Error(`LLM provider check failed: ${res.status}`);
+  return res.json();
+}
+
 // --- context providers (Jira, Confluence) --------------------------------------
 
 export type ContextType = 'jira' | 'confluence';
@@ -583,6 +596,9 @@ export interface ContextProviderView {
   enabled: boolean;
   isDefault: boolean;
   createdAt: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
 export interface ContextProviderInput {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  checkLlmProvider,
   createLlmModel,
   createLlmProvider,
   deleteLlmModel,
@@ -19,6 +20,7 @@ import {
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
+import LastChecked from './LastCheckedBadge';
 import Select from './Select';
 import Tooltip from './Tooltip';
 
@@ -63,6 +65,13 @@ export function byExpenseDesc(models: LlmModelView[]): LlmModelView[] {
   });
 }
 
+// Per-provider connectivity status, keyed by provider id.
+type ConnState = 'idle' | 'checking' | 'ok' | 'fail';
+interface Conn {
+  state: ConnState;
+  detail?: string | null;
+}
+
 export default function SettingsLlmProviders() {
   const [providers, setProviders] = useState<LlmProviderView[]>([]);
   const [models, setModels] = useState<LlmModelView[]>([]);
@@ -73,6 +82,23 @@ export default function SettingsLlmProviders() {
   const [confirmDelete, setConfirmDelete] = useState<{ kind: 'provider' | 'model'; id: string; name: string } | null>(
     null,
   );
+  const [conns, setConns] = useState<Record<string, Conn>>({});
+
+  async function checkOne(id: string) {
+    setConns((prev) => ({ ...prev, [id]: { state: 'checking' } }));
+    try {
+      const r = await checkLlmProvider(id);
+      setConns((prev) => ({
+        ...prev,
+        [id]: r.ok ? { state: 'ok' } : { state: 'fail', detail: r.detail },
+      }));
+    } catch (err) {
+      setConns((prev) => ({
+        ...prev,
+        [id]: { state: 'fail', detail: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -81,6 +107,9 @@ export default function SettingsLlmProviders() {
       const [ps, ms] = await Promise.all([fetchLlmProviders(), fetchLlmModels()]);
       setProviders(ps);
       setModels(ms);
+      // Check connectivity once on load, but only for enabled providers — a disabled one
+      // is intentionally inactive and may hold a deliberately stale/revoked key.
+      ps.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -139,6 +168,7 @@ export default function SettingsLlmProviders() {
                 <th>Type</th>
                 <th>Model</th>
                 <th>Default</th>
+                <th>Connection</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -160,6 +190,10 @@ export default function SettingsLlmProviders() {
                         Set default
                       </button>
                     )}
+                  </td>
+                  <td>
+                    <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => void checkOne(p.id)} />
+                    <LastChecked item={p} />
                   </td>
                   <td>
                     <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
@@ -288,6 +322,43 @@ export default function SettingsLlmProviders() {
         </div>
       )}
     </section>
+  );
+}
+
+function ConnCell({ conn, enabled, onRecheck }: { conn: Conn | undefined; enabled: boolean; onRecheck: () => void }) {
+  // No stored result yet: an enabled provider is being auto-checked; a disabled
+  // one was skipped on purpose and sits idle until the operator clicks to check.
+  const state = conn?.state ?? (enabled ? 'checking' : 'idle');
+  const label =
+    state === 'idle'
+      ? 'Not checked'
+      : state === 'checking'
+        ? 'Checking…'
+        : state === 'ok'
+          ? 'Connected'
+          : 'Failed';
+  const title =
+    state === 'idle'
+      ? 'Disabled — not checked automatically. Click to check anyway.'
+      : state === 'checking'
+        ? 'Contacting the provider…'
+        : state === 'ok'
+          ? 'Connected — click to re-check'
+          : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
+  return (
+    <div className="conn-cell">
+      <button
+        type="button"
+        className={`conn conn-${state}`}
+        onClick={onRecheck}
+        disabled={state === 'checking'}
+        title={title}
+      >
+        <span className="conn-dot" />
+        <span className="conn-label">{label}</span>
+      </button>
+      {state === 'fail' && conn?.detail && <div className="conn-detail">{conn.detail}</div>}
+    </div>
   );
 }
 

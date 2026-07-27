@@ -10,6 +10,7 @@ import {
   type ProviderView,
 } from '../api';
 import IconButton from './IconButton';
+import LastChecked from './LastCheckedBadge';
 import Select from './Select';
 import Tooltip from './Tooltip';
 
@@ -163,6 +164,7 @@ export default function SettingsProviders() {
                   </td>
                   <td>
                     <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => void checkOne(p.id)} />
+                    <LastChecked item={p} />
                   </td>
                   <td className="cell-r mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
                     {p.authors.length}

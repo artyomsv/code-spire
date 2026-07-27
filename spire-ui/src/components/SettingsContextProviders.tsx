@@ -14,6 +14,7 @@ import {
 } from '../api';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
+import LastChecked from './LastCheckedBadge';
 import Tooltip from './Tooltip';
 import Select from './Select';
 
@@ -172,6 +173,7 @@ export default function SettingsContextProviders() {
                   <td className="mono">{p.baseUrl}</td>
                   <td>
                     <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />
+                    <LastChecked item={p} />
                   </td>
                   <td>
                     <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
