@@ -277,9 +277,6 @@ public class ResultSaga {
      */
     private void onReviewFailed(ReviewFailed e) {
         projection.appendEvent(e.reviewId(), "result", "ReviewFailed", "failed at " + e.phase());
-        if (e.credentialRejected()) {
-            markCredentialRejected(e.reviewId());
-        }
         ReviewIds.Parsed parsed = ReviewIds.parse(e.reviewId());
         int attempt = projection.currentAttempt(e.reviewId());
         // Read once per failure so the decision, the log and the operator-facing note cannot disagree
@@ -303,6 +300,11 @@ public class ResultSaga {
                         java.time.Instant.now().plus(delay));
                 timeline.record("result", "retry:" + e.phase(), e.reviewId(),
                         "retryable failure — auto-retry " + next + "/" + budget + " in " + humanDelay(delay));
+                // The retry is scheduled above — this review's own lifecycle handling is done. Recording
+                // the credential fact runs last, so a persistence failure here cannot swallow the retry.
+                if (e.credentialRejected()) {
+                    markCredentialRejected(e.reviewId());
+                }
                 return;
             }
         }
@@ -319,6 +321,11 @@ public class ResultSaga {
         projection.setError(e.reviewId(), e.error());
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
+        // Recording the credential fact runs last, so a persistence failure here cannot swallow the
+        // review's own terminal handling above.
+        if (e.credentialRejected()) {
+            markCredentialRejected(e.reviewId());
+        }
     }
 
     /**
