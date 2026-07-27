@@ -984,7 +984,7 @@
   }
 
   .last-checked.failed {
-    color: var(--danger, #d64545);
+    color: var(--crit);
   }
 
   /* Context preview (Settings -> Context -> Test) */
