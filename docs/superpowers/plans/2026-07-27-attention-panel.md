@@ -1562,13 +1562,23 @@ In `IntegrationEvent`, replace the `ReviewFailed` declaration:
 
 `DiffWorker` classifies with a direct `instanceof` (no cause chain — its failures arrive unwrapped). At `DiffWorker.java:83-87`, keep that idiom:
 
+**Leave the existing `retryable` expression exactly as it is** — it is a ternary, not an `&&`, and
+its else-branch is what makes an I/O failure retryable. Add one line beside it:
+
 ```java
         boolean retryable = e instanceof ScmApiException api
-                && (api.status() >= 500 || api.isRateLimited());
+                ? api.status() >= 500 || api.isRateLimited()
+                : e instanceof java.io.UncheckedIOException;
         boolean credentialRejected = e instanceof ScmApiException api && api.isUnauthorized();
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
                 e.getMessage(), retryable, 1, credentialRejected));
 ```
+
+Rewriting that ternary as `instanceof ScmApiException && (...)` would drop the
+`UncheckedIOException` branch, turning a transient network failure from retryable into terminal —
+and no existing test would catch it, because every retryable assertion in `DiffWorkerTest` uses an
+HTTP status. Also add a test that pins the I/O branch: fail the fetch with an
+`UncheckedIOException` and assert `retryable()` is true while `credentialRejected()` is false.
 
 Leave the `isDiffTooLarge` emit at `:75` on the 6-arg constructor — an oversize diff says nothing about the credential.
 
