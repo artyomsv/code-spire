@@ -51,7 +51,7 @@ export default function AttentionBell() {
           ) : (
             <ul className="attention-list">
               {items.map((item) => (
-                <li key={`${item.code}:${item.subject ?? ''}`} className={`attention-row ${item.severity.toLowerCase()}`}>
+                <li key={`${item.code}:${item.subject ?? ''}:${item.action ?? ''}`} className={`attention-row ${item.severity.toLowerCase()}`}>
                   <span className="attention-icon">
                     {item.severity === 'BLOCKING' ? <CircleAlert size={15} /> : <TriangleAlert size={15} />}
                   </span>

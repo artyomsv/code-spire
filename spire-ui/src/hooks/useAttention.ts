@@ -19,6 +19,19 @@ const GATEWAY_UNREACHABLE: AttentionItem = {
   action: null,
 };
 
+/**
+ * The orchestrator feed can fail on its own (a DB blip, pool exhaustion) while the app is
+ * otherwise up. Dropping its rows silently would show an empty panel — a claim of "all clear"
+ * the app cannot make, since it never actually evaluated those conditions.
+ */
+const ATTENTION_UNAVAILABLE: AttentionItem = {
+  code: 'ATTENTION_UNAVAILABLE',
+  severity: 'BLOCKING',
+  subject: null,
+  message: 'Some conditions could not be loaded, so this list may be incomplete.',
+  action: null,
+};
+
 function bySeverityThenCode(a: AttentionItem, b: AttentionItem): number {
   const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
   if (bySeverity !== 0) return bySeverity;
@@ -41,6 +54,7 @@ export function useAttention(): { items: AttentionItem[] } {
       if (cancelled) return;
       const merged: AttentionItem[] = [];
       if (orchestrator.status === 'fulfilled') merged.push(...orchestrator.value);
+      else merged.push(ATTENTION_UNAVAILABLE);
       if (gateway.status === 'fulfilled') merged.push(...gateway.value);
       else merged.push(GATEWAY_UNREACHABLE);
       setItems(merged.sort(bySeverityThenCode));

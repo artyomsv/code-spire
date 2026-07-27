@@ -106,6 +106,16 @@ describe('AttentionBell', () => {
     expect(screen.getByTestId('attention-count').className).toContain('blocking');
   });
 
+  /** The mirror case: the orchestrator's own feed can fail on its own (a DB blip) while the app
+   *  is otherwise up. Losing its rows silently would render an empty panel — a claim of
+   *  "all clear" the app never actually evaluated. */
+  it('reports its own feed failing without losing the gateway rows', async () => {
+    stubFeeds(new Error('pool exhausted'), [warning]);
+    renderBell();
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
+    expect(screen.getByTestId('attention-count').className).toContain('blocking');
+  });
+
   it('lists each condition with a link to the page that fixes it', async () => {
     stubFeeds([blocking], []);
     renderBell();
@@ -113,5 +123,30 @@ describe('AttentionBell', () => {
     screen.getByTestId('attention-toggle').click();
     await waitFor(() => expect(screen.getByText(blocking.message)).toBeInTheDocument());
     expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings/llm');
+  });
+
+  /** CREDENTIAL_REJECTED subjects are provider names with no cross-registry uniqueness — an SCM
+   *  provider and an LLM provider can share a name and both be rejected. A React key that ignored
+   *  `action` (the one field that differs across registries) collided and dropped a row. */
+  it('renders every condition even when two share a code and subject', async () => {
+    const scmRejected: AttentionItem = {
+      code: 'CREDENTIAL_REJECTED',
+      severity: 'WARNING',
+      subject: 'prod',
+      message: "The source-control provider's credential was rejected.",
+      action: '/settings/providers',
+    };
+    const llmRejected: AttentionItem = {
+      code: 'CREDENTIAL_REJECTED',
+      severity: 'WARNING',
+      subject: 'prod',
+      message: "The LLM provider's credential was rejected.",
+      action: '/settings/llm',
+    };
+    stubFeeds([scmRejected, llmRejected], []);
+    renderBell();
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2));
   });
 });
