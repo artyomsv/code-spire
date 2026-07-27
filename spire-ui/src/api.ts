@@ -763,6 +763,30 @@ export async function discardDlqEntry(id: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to discard dead-letter entry');
 }
 
+// ---- attention (operator-facing conditions needing action) ----
+
+/** One operator-facing condition that is true right now. Mirrors the backend AttentionView. */
+export interface AttentionItem {
+  code: string;
+  severity: 'BLOCKING' | 'WARNING';
+  subject: string | null;
+  message: string;
+  action: string | null;
+}
+
+export async function fetchAttention(): Promise<AttentionItem[]> {
+  const res = await fetch('/api/attention');
+  if (!res.ok) throw new Error(`Attention request failed: ${res.status}`);
+  return res.json();
+}
+
+/** The gateway's own feed. Served by a different service, so it can fail independently. */
+export async function fetchWebhookAttention(): Promise<AttentionItem[]> {
+  const res = await fetch('/api/webhook-repos/attention');
+  if (!res.ok) throw new Error(`Webhook attention request failed: ${res.status}`);
+  return res.json();
+}
+
 // ---- prompts (per-kind system/body templates, with a locked suffix + variable palette) ----
 
 /** One `{{name}}` slot the body may reference — clickable in the editor's palette. */

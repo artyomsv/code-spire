@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { FileText, GitPullRequest } from 'lucide-react';
 import Tooltip from './components/Tooltip';
+import AttentionBell from './components/AttentionBell';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
@@ -185,6 +186,7 @@ export default function App() {
               <GitPullRequest size={17} />
             </button>
           </Tooltip>
+          <AttentionBell />
           <Tooltip label="Toggle theme">
             <button className="iconbtn" id="themeBtn" aria-label="Toggle theme" onClick={toggleTheme}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
