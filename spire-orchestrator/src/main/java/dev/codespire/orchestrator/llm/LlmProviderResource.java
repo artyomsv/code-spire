@@ -55,7 +55,11 @@ public class LlmProviderResource {
     public Response create(LlmProviderInput in) {
         validate(in, true);
         validator.ping(in.type(), in.baseUrl(), in.apiKey());
-        return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
+        LlmProviderView created = registry.create(in);
+        // validator.ping(...) just proved the key works; an apiKey is required to create
+        // (validate() above), so this call always re-validated it.
+        registry.recordCheck(UUID.fromString(created.id()), true, null);
+        return Response.status(Response.Status.CREATED).entity(created).build();
     }
 
     @PUT
@@ -63,11 +67,20 @@ public class LlmProviderResource {
     public LlmProviderView update(@PathParam("id") String id, LlmProviderInput in) {
         validate(in, false);
         // Validate the key only when a new one is supplied (blank = keep the stored key).
-        if (in.apiKey() != null && !in.apiKey().isBlank()) {
+        boolean rotatingKey = in.apiKey() != null && !in.apiKey().isBlank();
+        if (rotatingKey) {
             validator.ping(in.type(), in.baseUrl(), in.apiKey());
         }
-        return registry.update(uuid(id), in)
+        LlmProviderView updated = registry.update(uuid(id), in)
                 .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
+        // Only record when a key was actually supplied and pinged: that's the only case that
+        // re-validated the credential. Recording success unconditionally would silently clear a
+        // real prior rejection on an update that never touched the key at all (mirrors
+        // ProviderResource.update).
+        if (rotatingKey) {
+            registry.recordCheck(uuid(id), true, null);
+        }
+        return updated;
     }
 
     @PUT
@@ -99,7 +112,15 @@ public class LlmProviderResource {
                 .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
         LlmKeyValidator.CheckOutcome outcome =
                 validator.check(config.type(), config.baseUrl(), config.apiKey());
-        registry.recordCheck(config.id(), outcome.ok(), outcome.detail());
+        if (outcome.ok()) {
+            registry.recordCheck(config.id(), true, null);
+        } else if (outcome.isRejected()) {
+            // An unreachable provider (status 0) or any other non-auth failure (5xx, an unexpected
+            // status) is inconclusive, not a rejected key — leave the stored last_check_ok untouched
+            // so a transient outage cannot light up the row, and fixing the network can actually
+            // clear it.
+            registry.recordCheck(config.id(), false, outcome.detail());
+        }
         if (!outcome.ok()) {
             LOG.warnf("LLM provider %s (%s) key check failed: %s", id, config.type(), outcome.detail());
         }

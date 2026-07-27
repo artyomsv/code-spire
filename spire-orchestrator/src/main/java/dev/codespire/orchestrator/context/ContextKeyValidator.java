@@ -42,6 +42,17 @@ public class ContextKeyValidator {
 
     /** Result of a connectivity {@link #check}: owner display name on success; {@code detail} explains a failure. */
     public record CheckOutcome(boolean ok, String account, int status, String detail) {
+
+        /**
+         * True only for a genuine credential rejection (401/403) — deliberately excludes 0
+         * (unreachable) and any other non-2xx status (5xx, ...), which are inconclusive rather
+         * than proof the credential is bad. The resource uses this to decide whether persisting
+         * the outcome as {@code last_check_ok = FALSE} is warranted, instead of re-deriving the
+         * status comparison itself.
+         */
+        public boolean isRejected() {
+            return status == 401 || status == 403;
+        }
     }
 
     /** Save-time validation: throws {@link BadRequestException} if the credential is rejected or unreachable. */

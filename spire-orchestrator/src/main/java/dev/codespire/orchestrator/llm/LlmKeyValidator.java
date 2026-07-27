@@ -52,6 +52,17 @@ public class LlmKeyValidator {
      * {@code status} is 0 when the provider could not be reached at all.
      */
     public record CheckOutcome(boolean ok, int status, String detail) {
+
+        /**
+         * True only for a genuine credential rejection (401/403) — deliberately excludes 0
+         * (unreachable) and any other non-2xx status (5xx, ...), which are inconclusive rather
+         * than proof the key is bad. The resource uses this to decide whether persisting the
+         * outcome as {@code last_check_ok = FALSE} is warranted, instead of re-deriving the
+         * status comparison itself.
+         */
+        public boolean isRejected() {
+            return status == 401 || status == 403;
+        }
     }
 
     /**

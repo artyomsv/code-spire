@@ -145,7 +145,14 @@ public class ProviderResource {
         } catch (RuntimeException e) {
             LOG.warnf(e, "Provider connectivity check failed for %s (type %s)", id, provider.type());
             String detail = reason(e);
-            registry.recordCheck(provider.id(), false, detail);
+            // Only a genuine authentication rejection may write FALSE: a network error, a 5xx, or
+            // any other inconclusive failure is not proof the credential is bad, and recording it
+            // as FALSE would light up the row for a transient outage that fixing the network could
+            // never clear. isUnauthorized() is deliberately 401-only (see its Javadoc) — a 403 is
+            // not treated as a dead credential here either.
+            if (e instanceof ScmApiException api && api.isUnauthorized()) {
+                registry.recordCheck(provider.id(), false, detail);
+            }
             return new CheckResult(false, null, detail);
         }
     }

@@ -209,6 +209,111 @@ class ContextProviderResourceTest {
                 .body("detail", notNullValue());
     }
 
+    // ---- create/update: a successful save is itself a passing check --------------------------
+    //
+    // validator.ping(...) is an authoritative probe: it throws and 400s the save if the
+    // credential is bad, so a successful save already proved the credential works. Neither
+    // create nor update used to record that, so a rejected credential stayed rejected even
+    // after the operator pasted a working one and saved successfully.
+
+    @Test
+    void createRecordsAPassingCheck() {
+        String id = given().contentType("application/json").body(body("jira-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().when().get("/api/context-providers/" + id)
+                .then().statusCode(200).body("lastCheckOk", is(true)).body("lastCheckError", nullValue());
+    }
+
+    /** The negative case that protects the decision: silence must not read as success. */
+    @Test
+    void anUpdateWithNoNewSecretDoesNotClearARejectedCredential() {
+        String id = given().contentType("application/json").body(body("jira-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(401)));
+        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(false));
+
+        // Re-stub success so an accidental re-validation on update would clear the rejection
+        // (this is exactly the branch that must NOT run without a new secret).
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"accountId\": \"abc\", \"emailAddress\": \"bot@acme.com\" }")));
+        given().contentType("application/json").body(body(null)) // no secret -> keeps the stored one
+                .when().put("/api/context-providers/" + id).then().statusCode(200);
+
+        // An update that never touched the credential must not clear its rejection.
+        given().when().get("/api/context-providers/" + id)
+                .then().statusCode(200).body("lastCheckOk", is(false));
+    }
+
+    /** The positive counterpart: a genuine re-validation does clear the rejection. */
+    @Test
+    void anUpdateWithANewSecretClearsARejectedCredential() {
+        String id = given().contentType("application/json").body(body("jira-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(401)));
+        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(false));
+
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"accountId\": \"abc\", \"emailAddress\": \"bot@acme.com\" }")));
+        given().contentType("application/json").body(body("new-secret"))
+                .when().put("/api/context-providers/" + id).then().statusCode(200);
+
+        given().when().get("/api/context-providers/" + id)
+                .then().statusCode(200).body("lastCheckOk", is(true)).body("lastCheckError", nullValue());
+    }
+
+    // ---- check: only a genuine auth rejection may write FALSE ---------------------------------
+    //
+    // An unreachable provider or a 5xx is inconclusive, not proof the credential is bad — writing
+    // FALSE for either would light up the attention panel for a transient outage that fixing the
+    // network could never clear.
+
+    @Test
+    void checkOnAnUnreachableProviderDoesNotWriteFalseFromNeverChecked() {
+        // A create through the REST endpoint always records a passing check now (the create-records-
+        // a-check fix above), so reaching a genuinely never-checked row means going around it via the
+        // registry directly — exactly what ProviderCheckRecordTest.created() does for the SCM registry.
+        WireMockServer temp = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        temp.start();
+        String baseUrl = temp.baseUrl();
+        temp.stop(); // unreachable from the very first check
+
+        ContextProviderView view = registry.create(new ContextProviderInput("Acme Jira Temp", "jira",
+                baseUrl, "basic", "bot@acme.com", "jira-token", null, true, false));
+
+        given().when().post("/api/context-providers/" + view.id() + "/check")
+                .then().statusCode(200).body("ok", is(false));
+        given().when().get("/api/context-providers/" + view.id())
+                .then().statusCode(200).body("lastCheckOk", nullValue());
+    }
+
+    @Test
+    void checkFailureFromA5xxDoesNotClearAPriorPass() {
+        String id = given().contentType("application/json").body(body("jira-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(true));
+
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(500)));
+        given().when().post("/api/context-providers/" + id + "/check")
+                .then().statusCode(200).body("ok", is(false));
+
+        given().when().get("/api/context-providers/" + id)
+                .then().statusCode(200).body("lastCheckOk", is(true));
+    }
+
+    @Test
+    void checkFailureFromAnAuthRejectionDoesWriteFalse() {
+        String id = given().contentType("application/json").body(body("jira-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(401)));
+
+        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(false));
+
+        given().when().get("/api/context-providers/" + id)
+                .then().statusCode(200).body("lastCheckOk", is(false));
+    }
+
     @Test
     void previewResolvesABareNumberViaProjectKeysAndReturnsTheItem() {
         var b = body("jira-token");

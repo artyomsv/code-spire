@@ -71,7 +71,11 @@ public class ContextProviderResource {
     public Response create(ContextProviderInput in) {
         validate(in, true);
         validator.ping(in.type(), in.baseUrl(), in.authKind(), in.username(), in.secret());
-        return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
+        ContextProviderView created = registry.create(in);
+        // validator.ping(...) just proved the credential works; a secret is required to create
+        // (validate() above), so this call always re-validated it.
+        registry.recordCheck(UUID.fromString(created.id()), true, null);
+        return Response.status(Response.Status.CREATED).entity(created).build();
     }
 
     @PUT
@@ -79,11 +83,20 @@ public class ContextProviderResource {
     public ContextProviderView update(@PathParam("id") String id, ContextProviderInput in) {
         validate(in, false);
         // Validate the credential only when a new one is supplied (blank = keep the stored secret).
-        if (in.secret() != null && !in.secret().isBlank()) {
+        boolean rotatingSecret = in.secret() != null && !in.secret().isBlank();
+        if (rotatingSecret) {
             validator.ping(in.type(), in.baseUrl(), in.authKind(), in.username(), in.secret());
         }
-        return registry.update(uuid(id), in)
+        ContextProviderView updated = registry.update(uuid(id), in)
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
+        // Only record when a secret was actually supplied and pinged: that's the only case that
+        // re-validated the credential. Recording success unconditionally would silently clear a
+        // real prior rejection on an update that never touched the credential at all (mirrors
+        // ProviderResource.update).
+        if (rotatingSecret) {
+            registry.recordCheck(uuid(id), true, null);
+        }
+        return updated;
     }
 
     @DELETE
@@ -116,7 +129,13 @@ public class ContextProviderResource {
         // A specific detail (e.g. a sign-in page on a 200) beats the status-only category.
         String detail = out.detail() != null ? out.detail() : reason(out.status());
         LOG.warnf("Context provider %s (%s) connectivity check failed: %s", id, cfg.type(), detail);
-        registry.recordCheck(cfg.id(), false, detail);
+        // Only a genuine authentication rejection may write FALSE — an unreachable provider
+        // (status 0), a 5xx, or any other inconclusive failure is not proof the credential is bad,
+        // and recording it as FALSE would light up the row for a transient outage that fixing the
+        // network could never clear.
+        if (out.isRejected()) {
+            registry.recordCheck(cfg.id(), false, detail);
+        }
         return new CheckResult(false, null, detail);
     }
 
