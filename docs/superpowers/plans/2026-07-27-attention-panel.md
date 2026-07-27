@@ -1805,6 +1805,15 @@ which is a plausible place for a token to be echoed back."
 - Modify: `spire-gateway/src/main/java/dev/codespire/gateway/registry/WebhookRepoRegistry.java`
 - Modify: `spire-gateway/src/main/java/dev/codespire/gateway/RegistryWebhookEdge.java`
 - Test: `spire-gateway/src/test/java/dev/codespire/gateway/registry/WebhookRepoRejectionTest.java`
+- Test: edge wiring, added to one of the existing end-to-end webhook tests
+  (`BitbucketWebhookTest` / `GitHubWebhookTest` / `GitLabWebhookTest`, whichever gives the cheapest
+  handle on an invalid signature). The registry-level test proves the methods work when called
+  directly; it does **not** prove the edge calls them, or passes the right reason constant. Without
+  this, a missing or mistyped wiring line leaves every test green while the panel silently shows
+  nothing — the exact failure this feature exists to fix. Required pair: an invalid-signature
+  delivery records `bad_signature` with a non-zero count, and a subsequent valid signed delivery
+  clears it to zero with a null reason. The other three reasons are worth covering only if they need
+  no elaborate setup; the unknown-key path records nothing by design and must not be asserted.
 
 **Interfaces:**
 - Produces: `WebhookRepoRegistry.recordRejection(String webhookKey, String reason)`, `WebhookRepoRegistry.clearRejections(String webhookKey)`, `WebhookRepoRegistry.Rejection(String target, String reason, int count)`, `WebhookRepoRegistry.rejecting() → List<Rejection>`, `WebhookRepoRegistry.missingSecretTargets() → List<String>`.
