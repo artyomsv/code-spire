@@ -49,6 +49,7 @@ class AttentionQueriesTest {
         sql("DELETE FROM llm_provider");
         sql("DELETE FROM provider_author");
         sql("DELETE FROM scm_provider");
+        sql("DELETE FROM context_provider");
         sql("DELETE FROM dlq_entry");
         sql("DELETE FROM review_event");
         sql("DELETE FROM review_status");
@@ -265,6 +266,23 @@ class AttentionQueriesTest {
         assertFalse(codes().contains("CREDENTIAL_REJECTED"), codes().toString());
     }
 
+    /**
+     * The third of {@code credentialRows}' three near-identical table/action pairs — the one a
+     * copy-paste transposition would land on undetected without pinning both subject and action.
+     */
+    @Test
+    void aRejectedContextCredentialLinksToTheContextSettingsPage() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertContextProvider("TEST-context");
+        sql("UPDATE context_provider SET last_check_ok = FALSE WHERE name = 'TEST-context'");
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
+                .findFirst().orElseThrow();
+        assertEquals("TEST-context", row.subject());
+        assertEquals("/settings/context", row.action());
+    }
+
     // ---- fixtures: obviously-synthetic values only --------------------------
 
     private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
@@ -279,6 +297,12 @@ class AttentionQueriesTest {
                 + "bot_account_id, bot_username, enabled) VALUES ('" + UUID.randomUUID() + "', '" + name
                 + "', 'stub', 'https://scm.example.invalid', 'TEST-WS', 'bearer', 'TEST-SECRET', '"
                 + botAccountId + "', " + (botUsername == null ? "NULL" : "'" + botUsername + "'") + ", TRUE)");
+    }
+
+    private void insertContextProvider(String name) {
+        sql("INSERT INTO context_provider (id, name, type, base_url, auth_kind, auth_secret, enabled) "
+                + "VALUES ('" + UUID.randomUUID() + "', '" + name + "', 'jira', "
+                + "'https://context.example.invalid', 'bearer', 'TEST-SECRET', TRUE)");
     }
 
     private void insertDlqEntry(String status) {
