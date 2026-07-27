@@ -171,7 +171,17 @@ public class WebhookRepoRegistry {
     // ---- attention panel (rejection tracking) ------------------------------
 
     /** A registration whose deliveries are being refused, for the attention panel. */
-    public record Rejection(String target, String reason, int count) {
+    /**
+     * A registration whose deliveries are being refused. Carries {@code providerType} because a
+     * repo path alone cannot identify a registration: the same workspace name can be registered on
+     * two different providers, so an operator told only {@code owner/repo} would not know which
+     * provider's webhook settings to open.
+     */
+    public record Rejection(String providerType, String target, String reason, int count) {
+    }
+
+    /** An enabled registration, identified the way an operator has to act on it. */
+    public record Registration(String providerType, String target) {
     }
 
     /**
@@ -222,12 +232,12 @@ public class WebhookRepoRegistry {
     public List<Rejection> rejecting() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT target, last_rejection_reason, rejection_count FROM webhook_repo "
+                     "SELECT provider_type, target, last_rejection_reason, rejection_count FROM webhook_repo "
                              + "WHERE enabled = TRUE AND rejection_count > 0 ORDER BY target");
              ResultSet rs = ps.executeQuery()) {
             List<Rejection> out = new ArrayList<>();
             while (rs.next()) {
-                out.add(new Rejection(rs.getString("target"),
+                out.add(new Rejection(rs.getString("provider_type"), rs.getString("target"),
                         rs.getString("last_rejection_reason"), rs.getInt("rejection_count")));
             }
             return out;
@@ -237,15 +247,15 @@ public class WebhookRepoRegistry {
     }
 
     /** Enabled registrations with no shared secret — they can never verify a delivery. */
-    public List<String> missingSecretTargets() {
+    public List<Registration> missingSecret() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT target FROM webhook_repo WHERE enabled = TRUE "
+                     "SELECT provider_type, target FROM webhook_repo WHERE enabled = TRUE "
                              + "AND (webhook_secret IS NULL OR webhook_secret = '') ORDER BY target");
              ResultSet rs = ps.executeQuery()) {
-            List<String> out = new ArrayList<>();
+            List<Registration> out = new ArrayList<>();
             while (rs.next()) {
-                out.add(rs.getString("target"));
+                out.add(new Registration(rs.getString("provider_type"), rs.getString("target")));
             }
             return out;
         } catch (SQLException e) {

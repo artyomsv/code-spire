@@ -31,18 +31,38 @@ public class WebhookAttentionResource {
     @GET
     public List<AttentionView> list() {
         List<AttentionView> rows = new ArrayList<>();
-        for (String target : registry.missingSecretTargets()) {
-            rows.add(new AttentionView("WEBHOOK_SECRET_MISSING", Severity.WARNING, target,
+        for (WebhookRepoRegistry.Registration reg : registry.missingSecret()) {
+            rows.add(new AttentionView("WEBHOOK_SECRET_MISSING", Severity.WARNING, subject(reg.providerType(), reg.target()),
                     "This webhook registration has no shared secret, so no delivery can be verified.",
                     "/settings/webhooks"));
         }
         for (WebhookRepoRegistry.Rejection rejection : registry.rejecting()) {
-            rows.add(new AttentionView("WEBHOOK_DELIVERIES_REJECTED", Severity.WARNING, rejection.target(),
-                    rejection.count() + " delivery(s) refused (" + reason(rejection.reason())
-                            + "). Rotate the secret and re-save it at the provider.",
+            rows.add(new AttentionView("WEBHOOK_DELIVERIES_REJECTED", Severity.WARNING,
+                    subject(rejection.providerType(), rejection.target()),
+                    refused(rejection.count()) + " — " + reason(rejection.reason())
+                            + ". Rotate the secret here, then re-save it in the webhook settings at "
+                            + rejection.providerType() + ".",
                     "/settings/webhooks"));
         }
         return rows;
+    }
+
+    /**
+     * How an operator identifies the registration they have to go and fix. A repo path alone is
+     * ambiguous — the same workspace name can be registered on two different providers — and it
+     * also never says what kind of thing is broken, so a bare {@code owner/repo} left the operator
+     * guessing which provider's webhook settings to open. Both parts are database values, so no
+     * provider name enters this source.
+     */
+    private static String subject(String providerType, String target) {
+        return providerType + " · " + target;
+    }
+
+    /** Operator-facing prose, so a count of one does not read as "1 delivery(s)". */
+    private static String refused(int count) {
+        return count == 1
+                ? "1 webhook delivery was refused"
+                : count + " webhook deliveries were refused";
     }
 
     /** The closed neutral reason set, as operator-facing text. */

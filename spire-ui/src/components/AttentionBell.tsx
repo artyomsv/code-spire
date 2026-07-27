@@ -5,6 +5,24 @@ import { useAttention } from '../hooks/useAttention';
 import Tooltip from './Tooltip';
 
 /**
+ * Where a row's link goes, as its visible text. Every row used to read "Settings", which told the
+ * operator nothing about where they were about to land and left several rows' links
+ * indistinguishable from each other — including to a screen reader, which announces link text.
+ */
+const ACTION_LABELS: Record<string, string> = {
+  '/settings/webhooks': 'Settings · Webhooks',
+  '/settings/providers': 'Settings · Providers',
+  '/settings/llm': 'Settings · LLM',
+  '/settings/context': 'Settings · Context',
+  '/settings/dlq': 'Dead-letter',
+  '/': 'Reviews',
+};
+
+function actionLabel(action: string): string {
+  return ACTION_LABELS[action] ?? 'Open';
+}
+
+/**
  * Conditions needing the operator's attention. There is no dismiss action anywhere: every row
  * is a query result, so fixing the cause is what removes it. Zero conditions renders NO badge
  * rather than a green tick — the panel only knows about conditions it checks, so "all clear"
@@ -60,7 +78,7 @@ export default function AttentionBell() {
                     <span className="attention-message">{item.message}</span>
                     {item.action && (
                       <Link className="attention-action" to={item.action} onClick={() => setOpen(false)}>
-                        Settings
+                        {actionLabel(item.action)}
                       </Link>
                     )}
                   </span>

@@ -17,9 +17,12 @@ import java.util.List;
 import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
@@ -31,8 +34,16 @@ class WebhookAttentionResourceTest {
     @Inject
     DataSource dataSource;
 
+    /**
+     * The subject names the provider as well as the repo. A repo path alone is ambiguous — the same
+     * workspace name can be registered on two different providers — and it never says what kind of
+     * thing is broken, so an operator shown only {@code owner/repo} could not tell which provider's
+     * webhook settings to open. The message must name the condition in words too, for the same
+     * reason: the row has to be actionable without the reader already knowing which feed it came
+     * from.
+     */
     @Test
-    void aRejectingRegistrationIsReportedWithItsTarget() {
+    void aRejectingRegistrationIsReportedWithItsProviderAndTarget() {
         WebhookRepoSecret created = registry.create(
                 new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-att", true));
         registry.recordRejection(created.repo().webhookKey(), "bad_signature");
@@ -40,9 +51,24 @@ class WebhookAttentionResourceTest {
         given().when().get("/api/webhook-repos/attention")
                 .then().statusCode(200).contentType(ContentType.JSON)
                 .body("code", hasItem("WEBHOOK_DELIVERIES_REJECTED"))
-                .body("subject", hasItem("TEST-OWNER/TEST-REPO-att"))
+                .body("subject", hasItem("stub · TEST-OWNER/TEST-REPO-att"))
+                .body("find { it.subject == 'stub · TEST-OWNER/TEST-REPO-att' }.message",
+                        containsString("webhook"))
                 .body("findAll { it.code == 'WEBHOOK_DELIVERIES_REJECTED' }.severity",
                         everyItem(is("WARNING")));
+    }
+
+    /** A single refusal must not read as "1 delivery(s)" — this is operator-facing prose. */
+    @Test
+    void aSingleRefusedDeliveryReadsAsOneDelivery() {
+        WebhookRepoSecret created = registry.create(
+                new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-one", true));
+        registry.recordRejection(created.repo().webhookKey(), "bad_signature");
+
+        given().when().get("/api/webhook-repos/attention")
+                .then().statusCode(200)
+                .body("find { it.subject == 'stub · TEST-OWNER/TEST-REPO-one' }.message",
+                        allOf(containsString("1 webhook delivery was refused"), not(containsString("(s)"))));
     }
 
     /**
@@ -64,7 +90,7 @@ class WebhookAttentionResourceTest {
      * {@code registry.create()} always mints a secret, so a secret-missing row can only be
      * produced below the registry — a direct insert into {@code webhook_repo} with a blank
      * {@code webhook_secret} (the column is NOT NULL, so blank rather than null; the query
-     * behind {@code missingSecretTargets()} treats both the same).
+     * behind {@code missingSecret()} treats both the same).
      */
     @Test
     void aSecretMissingRegistrationIsReportedWithItsTarget() throws SQLException {
@@ -73,9 +99,9 @@ class WebhookAttentionResourceTest {
 
         given().when().get("/api/webhook-repos/attention")
                 .then().statusCode(200).contentType(ContentType.JSON)
-                .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == '" + target + "' }.severity",
+                .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.severity",
                         is("WARNING"))
-                .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == '" + target + "' }.action",
+                .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.action",
                         is("/settings/webhooks"));
     }
 

@@ -125,6 +125,35 @@ describe('AttentionBell', () => {
     expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings/llm');
   });
 
+  /**
+   * Every row's link used to read the bare word "Settings", which told the operator nothing about
+   * where they were about to land and left rows indistinguishable from each other — including to a
+   * screen reader, which announces link text. Each destination must name itself.
+   */
+  it('names each link by where it goes, so two rows are distinguishable', async () => {
+    const webhook: AttentionItem = {
+      code: 'WEBHOOK_DELIVERIES_REJECTED',
+      severity: 'WARNING',
+      subject: 'stub · TEST-OWNER/TEST-REPO',
+      message: '1 webhook delivery was refused — signature did not verify.',
+      action: '/settings/webhooks',
+    };
+    stubFeeds([blocking], [webhook]);
+    renderBell();
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(webhook.message)).toBeInTheDocument());
+
+    expect(screen.getByRole('link', { name: 'Settings · LLM' })).toHaveAttribute(
+      'href',
+      '/settings/llm',
+    );
+    expect(screen.getByRole('link', { name: 'Settings · Webhooks' })).toHaveAttribute(
+      'href',
+      '/settings/webhooks',
+    );
+  });
+
   /** CREDENTIAL_REJECTED subjects are provider names with no cross-registry uniqueness — an SCM
    *  provider and an LLM provider can share a name and both be rejected. A React key that ignored
    *  `action` (the one field that differs across registries) collided and dropped a row. */
