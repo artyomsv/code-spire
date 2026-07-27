@@ -115,10 +115,15 @@ class DiffWorkerTest {
 
     @Test
     void serverErrorIsRetryable() {
-        failure = new BitbucketApiException(503, "GET", "/diff");
-        worker.fetchDiff(COMMAND);
-        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, runDiffFetchFailing(503).getFirst());
         assertTrue(failed.retryable());
+    }
+
+    /** Arranges a diff-fetch failure at the given status and returns what DiffWorker emitted. */
+    private List<IntegrationEvent> runDiffFetchFailing(int status) {
+        failure = new BitbucketApiException(status, "GET", "/diff");
+        worker.fetchDiff(COMMAND);
+        return emitted;
     }
 
     @Test
@@ -169,5 +174,28 @@ class DiffWorkerTest {
         ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
         assertFalse(failed.retryable());
         assertTrue(failed.error().contains("too large to review"));
+    }
+
+    /**
+     * A real review rejected with a 401 is stronger evidence than any synthetic probe: it is
+     * the credential actually failing at the work it exists to do.
+     */
+    @Test
+    void a401WhileFetchingTheDiffMarksTheCredentialAsRejected() {
+        // Arrange the same way the existing retryable test does, but with a 401 failure.
+        List<IntegrationEvent> emitted = runDiffFetchFailing(401);
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.credentialRejected());
+        assertFalse(failed.retryable(), "a rejected credential cannot be fixed by retrying");
+    }
+
+    /** Everything else must leave the credential's standing alone. */
+    @Test
+    void a500WhileFetchingTheDiffDoesNotMarkTheCredential() {
+        List<IntegrationEvent> emitted = runDiffFetchFailing(500);
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertFalse(failed.credentialRejected());
     }
 }

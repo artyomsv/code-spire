@@ -185,8 +185,20 @@ public sealed interface IntegrationEvent {
         }
     }
 
+    /**
+     * @param credentialRejected the provider refused the credential (not a transient fault), so
+     *                           the orchestrator can flag it for the operator instead of leaving
+     *                           a dead token to be inferred from repeated failures
+     */
     record ReviewFailed(String reviewId, String commit, String phase, String error,
-                        boolean retryable, int attempt) implements IntegrationEvent {
+                        boolean retryable, int attempt, boolean credentialRejected)
+            implements IntegrationEvent {
+
+        /** Call sites and in-flight records from before the credential signal existed. */
+        public ReviewFailed(String reviewId, String commit, String phase, String error,
+                            boolean retryable, int attempt) {
+            this(reviewId, commit, phase, error, retryable, attempt, false);
+        }
     }
 
     record CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,

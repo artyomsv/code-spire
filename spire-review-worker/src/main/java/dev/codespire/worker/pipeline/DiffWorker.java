@@ -83,8 +83,9 @@ public class DiffWorker {
         boolean retryable = e instanceof ScmApiException api
                 ? api.status() >= 500 || api.isRateLimited()
                 : e instanceof java.io.UncheckedIOException;
+        boolean credentialRejected = e instanceof ScmApiException api && api.isUnauthorized();
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
-                e.getMessage(), retryable, 1));
+                e.getMessage(), retryable, 1, credentialRejected));
     }
 
     private long approximateSize(List<FilePatch> files) {
