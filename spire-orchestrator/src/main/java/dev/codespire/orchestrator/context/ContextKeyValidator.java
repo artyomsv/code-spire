@@ -44,14 +44,22 @@ public class ContextKeyValidator {
     public record CheckOutcome(boolean ok, String account, int status, String detail) {
 
         /**
-         * True only for a genuine credential rejection (401/403) — deliberately excludes 0
-         * (unreachable) and any other non-2xx status (5xx, ...), which are inconclusive rather
-         * than proof the credential is bad. The resource uses this to decide whether persisting
-         * the outcome as {@code last_check_ok = FALSE} is warranted, instead of re-deriving the
-         * status comparison itself.
+         * True for a genuine credential rejection — deliberately excludes 0 (unreachable) and any
+         * other non-2xx status (5xx, ...), which are inconclusive rather than proof the credential
+         * is bad. The resource uses this to decide whether persisting the outcome as
+         * {@code last_check_ok = FALSE} is warranted, instead of re-deriving the status comparison
+         * itself.
+         *
+         * <p>401/403 are explicit refusals. A 2xx that still failed ({@code !ok}) is, by
+         * construction of {@link #check}, the sign-in-page case: the provider is reachable and
+         * answered 200, but the body wasn't the "who am I" JSON — an SSO/login redirect refusing
+         * the token in HTML rather than with a status code. {@code ping()} already treats that the
+         * same as an explicit 401/403 (it throws and blocks the save); a compare on {@code status}
+         * rather than the detail string, so a later wording change to the message can't silently
+         * stop this from firing.
          */
         public boolean isRejected() {
-            return status == 401 || status == 403;
+            return status == 401 || status == 403 || (status / 100 == 2 && !ok);
         }
     }
 

@@ -314,6 +314,26 @@ class ContextProviderResourceTest {
                 .then().statusCode(200).body("lastCheckOk", is(false));
     }
 
+    /**
+     * A sign-in page is also a genuine rejection, just expressed as 200-HTML instead of a status
+     * code: {@code ping()} already blocks the save for exactly this response, so {@code check()}
+     * must record it as a rejection the same way, not leave it inconclusive like a 5xx.
+     */
+    @Test
+    void checkFailureFromASignInPageDoesWriteFalse() {
+        String id = given().contentType("application/json").body(body("jira-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        // token later starts bouncing to a 200 HTML sign-in page (an SSO/login redirect)
+        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/html")
+                .withBody("<!DOCTYPE html><html>Log in</html>")));
+
+        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(false));
+
+        given().when().get("/api/context-providers/" + id)
+                .then().statusCode(200).body("lastCheckOk", is(false));
+    }
+
     @Test
     void previewResolvesABareNumberViaProjectKeysAndReturnsTheItem() {
         var b = body("jira-token");
