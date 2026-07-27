@@ -168,6 +168,91 @@ public class WebhookRepoRegistry {
         }
     }
 
+    // ---- attention panel (rejection tracking) ------------------------------
+
+    /** A registration whose deliveries are being refused, for the attention panel. */
+    public record Rejection(String target, String reason, int count) {
+    }
+
+    /**
+     * Count one refused delivery against the registration this key resolves to. An unknown key
+     * matches no row and is silently ignored — there is nothing to attach a counter to, which is
+     * why a wrong URL stays a log-only condition.
+     *
+     * @param reason one of the closed neutral set; never an exception message
+     */
+    @Transactional
+    public void recordRejection(String webhookKey, String reason) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE webhook_repo
+                        SET rejection_count = rejection_count + 1,
+                            last_rejection_reason = ?,
+                            last_rejected_at = now()
+                      WHERE webhook_key = ?
+                     """)) {
+            ps.setString(1, reason);
+            ps.setString(2, webhookKey);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record a webhook rejection", e);
+        }
+    }
+
+    /**
+     * A verified delivery landed, so this registration is healthy again. Guarded on a non-zero
+     * count so the hot path does no write in the normal case.
+     */
+    @Transactional
+    public void clearRejections(String webhookKey) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE webhook_repo
+                        SET rejection_count = 0, last_rejection_reason = NULL, last_rejected_at = NULL
+                      WHERE webhook_key = ? AND rejection_count > 0
+                     """)) {
+            ps.setString(1, webhookKey);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear webhook rejections", e);
+        }
+    }
+
+    /** Enabled registrations currently refusing deliveries. */
+    public List<Rejection> rejecting() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT target, last_rejection_reason, rejection_count FROM webhook_repo "
+                             + "WHERE enabled = TRUE AND rejection_count > 0 ORDER BY target");
+             ResultSet rs = ps.executeQuery()) {
+            List<Rejection> out = new ArrayList<>();
+            while (rs.next()) {
+                out.add(new Rejection(rs.getString("target"),
+                        rs.getString("last_rejection_reason"), rs.getInt("rejection_count")));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list rejecting webhook repos", e);
+        }
+    }
+
+    /** Enabled registrations with no shared secret — they can never verify a delivery. */
+    public List<String> missingSecretTargets() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT target FROM webhook_repo WHERE enabled = TRUE "
+                             + "AND (webhook_secret IS NULL OR webhook_secret = '') ORDER BY target");
+             ResultSet rs = ps.executeQuery()) {
+            List<String> out = new ArrayList<>();
+            while (rs.next()) {
+                out.add(rs.getString("target"));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list webhook repos without a secret", e);
+        }
+    }
+
     // ---- helpers -----------------------------------------------------------
 
     private WebhookRepoView toView(ResultSet rs) throws SQLException {
