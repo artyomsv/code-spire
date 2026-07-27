@@ -105,11 +105,19 @@ public class AttentionQueries {
      * review whose PR was merged or closed, and a row about yesterday's merged PR is not
      * actionable. Both rows are aggregates carrying a count — one stalled broker should not
      * produce thirty identical rows.
+     *
+     * <p>{@code review_status.status} is the READ MODEL's own lowercase vocabulary — written by
+     * {@link dev.codespire.orchestrator.readmodel.ReviewProjection} as {@code reviewing},
+     * {@code completed}, {@code failed}, {@code cancelled}, {@code superseded} — and is NOT
+     * {@code ReviewState.Status}'s uppercase enum names. Comparing against the enum spelling made
+     * every completed review on an open PR read as stuck and made a genuinely failed review
+     * invisible, so both predicates fold case and the terminal set names all four terminal values.
+     * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled.
      */
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         int stuck = countWithInt(c, """
                 SELECT COUNT(*) FROM review_status
-                 WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded')
                    AND pr_state = 'OPEN'
                    AND updated_at < now() - make_interval(mins => ?)
                 """, stuckMinutes);
@@ -120,7 +128,7 @@ public class AttentionQueries {
         }
         int failed = countWithInt(c, """
                 SELECT COUNT(*) FROM review_status
-                 WHERE status = 'FAILED'
+                 WHERE lower(status) = 'failed'
                    AND updated_at > now() - make_interval(hours => ?)
                 """, failedWindowHours);
         if (failed > 0) {

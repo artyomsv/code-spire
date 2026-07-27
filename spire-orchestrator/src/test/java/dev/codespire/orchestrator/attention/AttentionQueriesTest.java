@@ -150,8 +150,8 @@ class AttentionQueriesTest {
     void aReviewStuckPastTheThresholdIsReportedWithItsCount() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        insertReview("TEST-r1", "REVIEWING", "OPEN", "2 hours");
-        insertReview("TEST-r2", "IDLE", "OPEN", "2 hours");
+        insertReview("TEST-r1", "reviewing", "OPEN", "2 hours");
+        insertReview("TEST-r2", "reviewing", "OPEN", "2 hours");
         AttentionView row = queries.collect().stream()
                 .filter(v -> "REVIEW_STUCK".equals(v.code()))
                 .findFirst().orElseThrow();
@@ -164,7 +164,7 @@ class AttentionQueriesTest {
     void aRecentInProgressReviewIsNotReportedAsStuck() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        insertReview("TEST-r1", "REVIEWING", "OPEN", "1 minute");
+        insertReview("TEST-r1", "reviewing", "OPEN", "1 minute");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
     }
 
@@ -173,16 +173,46 @@ class AttentionQueriesTest {
     void aStuckReviewOnAClosedPrIsNotReported() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        insertReview("TEST-r1", "REVIEWING", "MERGED", "2 hours");
+        insertReview("TEST-r1", "reviewing", "MERGED", "2 hours");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
     }
 
-    /** A terminal review is not stuck, however old. */
+    /**
+     * A terminal review is not stuck, however old.
+     *
+     * <p>The status values here are the READ MODEL's own lowercase vocabulary, which is what
+     * {@code ReviewProjection} actually writes — NOT {@code ReviewState.Status}'s uppercase enum
+     * names. These fixtures originally used the enum spelling, which matched the query's spelling,
+     * so the pair agreed with each other and disagreed with production: on a real database every
+     * completed review on an open PR reported as stuck and a genuinely failed one was invisible.
+     * Keep these lowercase — they are the regression guard for that.
+     */
     @Test
     void anOldCompletedReviewIsNotReportedAsStuck() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        insertReview("TEST-r1", "COMPLETED", "OPEN", "30 days");
+        insertReview("TEST-r1", "completed", "OPEN", "30 days");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+    }
+
+    /**
+     * A run replaced by a newer commit is finished, not stalled. {@code superseded} was missing
+     * from the terminal set entirely, independently of the casing bug.
+     */
+    @Test
+    void aSupersededReviewIsNotReportedAsStuck() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "superseded", "OPEN", "2 hours");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+    }
+
+    /** A cancelled review is terminal too. */
+    @Test
+    void aCancelledReviewIsNotReportedAsStuck() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "cancelled", "OPEN", "2 hours");
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
     }
 
@@ -191,7 +221,7 @@ class AttentionQueriesTest {
     void aRecentlyFailedReviewIsReported() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        insertReview("TEST-r1", "FAILED", "OPEN", "1 hour");
+        insertReview("TEST-r1", "failed", "OPEN", "1 hour");
         assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
     }
 
@@ -203,7 +233,7 @@ class AttentionQueriesTest {
     void aFailureOlderThanTheWindowIsNotReported() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        insertReview("TEST-r1", "FAILED", "OPEN", "30 days");
+        insertReview("TEST-r1", "failed", "OPEN", "30 days");
         assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
     }
 
