@@ -1,6 +1,7 @@
 package dev.codespire.gateway;
 
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.gateway.registry.WebhookRepoRegistry;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.kafka.InjectKafkaCompanion;
@@ -30,7 +31,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * GitHub gateway edge: a signed webhook routed by {key} resolves the registered
  * repo's secret from the DB, verifies, and lands a keyed, typed event on
  * cs.integration; bad signatures, unknown keys, wrong-repo payloads and ping
- * events never reach the bus.
+ * events never reach the bus. Also proves the rejection-tracking wiring
+ * (recordRejection / clearRejections) end to end through the real edge, not just
+ * against the registry directly — a missing or miswired call here would leave the
+ * attention panel silently empty.
  */
 @QuarkusTest
 @QuarkusTestResource(KafkaCompanionResource.class)
@@ -50,6 +54,9 @@ class GitHubWebhookTest {
 
     @Inject
     EncryptionService encryption; // the gateway's webhook keyset
+
+    @Inject
+    WebhookRepoRegistry registry;
 
     @BeforeEach
     void seedWebhookRepo() throws Exception {
@@ -177,6 +184,89 @@ class GitHubWebhookTest {
                 .body(body)
                 .post("/webhooks/github/" + KEY)
                 .then().statusCode(204);
+    }
+
+    @Test
+    void invalidSignatureRecordsARejectionOnTheRegistration() {
+        byte[] body = PR_OPENED.getBytes(StandardCharsets.UTF_8);
+        RestAssured.given()
+                .header("X-GitHub-Event", "pull_request")
+                .header("X-Hub-Signature-256", "sha256=" + "00".repeat(32))
+                .body(body)
+                .post("/webhooks/github/" + KEY)
+                .then().statusCode(401);
+
+        WebhookRepoRegistry.Rejection row = registry.rejecting().stream()
+                .filter(r -> r.target().equals(REPO)).findFirst().orElseThrow();
+        assertEquals("bad_signature", row.reason());
+        assertEquals(1, row.count());
+    }
+
+    /** The self-clearing half: a registration that recovers must stop nagging the panel. */
+    @Test
+    void aValidSignedDeliveryClearsAPriorRejection() throws Exception {
+        byte[] body = PR_OPENED.getBytes(StandardCharsets.UTF_8);
+        RestAssured.given()
+                .header("X-GitHub-Event", "pull_request")
+                .header("X-Hub-Signature-256", "sha256=" + "00".repeat(32))
+                .body(body)
+                .post("/webhooks/github/" + KEY)
+                .then().statusCode(401);
+        assertTrue(registry.rejecting().stream().anyMatch(r -> r.target().equals(REPO)));
+
+        RestAssured.given()
+                .header("X-GitHub-Event", "pull_request")
+                .header("X-Hub-Signature-256", "sha256=" + hmac(body))
+                .body(body)
+                .post("/webhooks/github/" + KEY)
+                .then().statusCode(202);
+
+        assertTrue(registry.rejecting().stream().noneMatch(r -> r.target().equals(REPO)));
+    }
+
+    @Test
+    void aKeyRegisteredForAnotherProviderRecordsAProviderMismatch() {
+        RestAssured.given()
+                .body("{}".getBytes(StandardCharsets.UTF_8))
+                .post("/webhooks/gitlab/" + KEY) // KEY is registered for github, not gitlab
+                .then().statusCode(404);
+
+        WebhookRepoRegistry.Rejection row = registry.rejecting().stream()
+                .filter(r -> r.target().equals(REPO)).findFirst().orElseThrow();
+        assertEquals("provider_mismatch", row.reason());
+    }
+
+    @Test
+    void aPayloadOutsideTheRegistrationScopeRecordsAnOutOfScopeRejection() throws Exception {
+        byte[] body = PR_OPENED.replace("artyomsv/spire-test", "someone/other-repo")
+                .getBytes(StandardCharsets.UTF_8);
+        RestAssured.given()
+                .header("X-GitHub-Event", "pull_request")
+                .header("X-Hub-Signature-256", "sha256=" + hmac(body))
+                .body(body)
+                .post("/webhooks/github/" + KEY)
+                .then().statusCode(400);
+
+        WebhookRepoRegistry.Rejection row = registry.rejecting().stream()
+                .filter(r -> r.target().equals(REPO)).findFirst().orElseThrow();
+        assertEquals("out_of_scope", row.reason());
+    }
+
+    /** Signature verifies (same secret signs any bytes); translate() then throws on the malformed body. */
+    @Test
+    void anAuthenticatedButMalformedPayloadRecordsAMalformedPayloadRejection() throws Exception {
+        byte[] body = PR_OPENED.replace("artyomsv/spire-test", "no-slash-repo")
+                .getBytes(StandardCharsets.UTF_8);
+        RestAssured.given()
+                .header("X-GitHub-Event", "pull_request")
+                .header("X-Hub-Signature-256", "sha256=" + hmac(body))
+                .body(body)
+                .post("/webhooks/github/" + KEY)
+                .then().statusCode(400);
+
+        WebhookRepoRegistry.Rejection row = registry.rejecting().stream()
+                .filter(r -> r.target().equals(REPO)).findFirst().orElseThrow();
+        assertEquals("malformed_payload", row.reason());
     }
 
     private static String hmac(byte[] body) throws Exception {
