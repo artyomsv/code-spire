@@ -191,6 +191,19 @@ public class LlmProviderRegistry {
         }
     }
 
+    /** One provider with its key decrypted, for a re-check. Empty when unknown. */
+    public Optional<LlmProviderConfig> resolveById(UUID id) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve LLM provider " + id, e);
+        }
+    }
+
     // ---- helpers -----------------------------------------------------------
 
     private LlmProviderConfig decrypted(ResultSet rs) throws SQLException {

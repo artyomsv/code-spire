@@ -15,6 +15,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Set;
@@ -26,6 +27,7 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmProviderResource {
 
+    private static final Logger LOG = Logger.getLogger(LlmProviderResource.class);
     private static final Set<String> TYPES = Set.of("openai", "anthropic", "gemini");
 
     @Inject
@@ -82,6 +84,30 @@ public class LlmProviderResource {
             throw new NotFoundException("No LLM provider " + id);
         }
         return Response.noContent().build();
+    }
+
+    /**
+     * Live key check against the provider's stored credential, mirroring the SCM and context
+     * providers' Check buttons. Records the outcome so the attention panel can report a key the
+     * provider has started refusing. Never returns the key; only a safe category of the failure.
+     */
+    @POST
+    @Path("/{id}/check")
+    @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
+    public CheckResult check(@PathParam("id") String id) {
+        LlmProviderConfig config = registry.resolveById(uuid(id))
+                .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
+        LlmKeyValidator.CheckOutcome outcome =
+                validator.check(config.type(), config.baseUrl(), config.apiKey());
+        registry.recordCheck(config.id(), outcome.ok(), outcome.detail());
+        if (!outcome.ok()) {
+            LOG.warnf("LLM provider %s (%s) key check failed: %s", id, config.type(), outcome.detail());
+        }
+        return new CheckResult(outcome.ok(), outcome.detail());
+    }
+
+    /** Result of {@link #check}: a safe {@code detail} on failure, null on success. */
+    public record CheckResult(boolean ok, String detail) {
     }
 
     private void validate(LlmProviderInput in, boolean creating) {
