@@ -12,10 +12,46 @@ The originating case: a webhook URL edit in GitLab blanked the shared token. Eve
 rejected with 401. The gateway logged a WARN, nothing surfaced, and the symptom — the bot stopped
 responding — was indistinguishable from a working bot that chose not to reply.
 
+## Amendment (2026-07-30): review rows are per-review and dismissable
+
+Live testing found this spec wrong about one row family, and the correction is recorded here rather
+than left as a silent divergence.
+
+**The claim that failed.** "Every row is a condition true right now, and fixing the cause removes
+it" holds for configuration state — a rejected credential, a missing LLM default, a webhook refusing
+deliveries. It is **false for `REVIEW_FAILED`**: a review that failed stays failed, and no repair an
+operator can make will clear it. The original design papered over that with a 24-hour window, and
+this document justified the window by saying the panel "has no dismiss action" — the design admitting
+it had the wrong model for that row and reaching for a timer. A timer is expiry, not resolution, and
+it would retire a failure nobody ever saw.
+
+**What changed.**
+
+- `REVIEW_STUCK` and `REVIEW_FAILED` now emit **one row per review**, named `workspace/slug#pr` and
+  linked to that review's detail page. They were aggregates carrying a count, which threw away the
+  only thing that made them actionable. The flooding that justified aggregating turned out to be a
+  symptom of a defect — a status comparison that reported every completed review as stalled — not of
+  real failures. The guard is now a cap: past five, the remainder becomes one summary row that says
+  so, which keeps a systemic outage from burying the BLOCKING rows.
+- Those two row types are **dismissable**, via `POST /api/reviews/{ws}/{slug}/{pr}/attention-ack`
+  and a new nullable `review_status.attention_ack_at` (V29). Acknowledging is the only resolution a
+  past event has.
+- Dismissal is **scoped to the state the operator saw**, not to the review: the row is raised when
+  `updated_at > attention_ack_at`, so a later failure on the same review raises it again. A boolean
+  flag would silence that review permanently, which is how a dismissable alert becomes wallpaper.
+- The 24-hour window and `SPIRE_ATTENTION_FAILED_WINDOW_HOURS` are **removed**. With acknowledgement
+  as the resolution the timer was redundant and actively harmful.
+
+**What did not change.** Every other row remains underivable-from-nothing and undismissable. A
+condition an operator can genuinely fix must not be silenceable, or a broken system could be made to
+look healthy. `AttentionView.dismiss` is null for all of them, and that is the distinction that keeps
+dismissal honest rather than universal.
+
 ## Non-goals
 
-- **Not an incident inbox.** No stored notification rows, no dismiss button, no retention policy.
-  Every row is a query result; fixing the cause removes the row.
+- **Not an incident inbox.** No stored notification rows and no retention policy. Every row is a
+  query result; fixing the cause removes the row. **Exception, per the amendment above:** the two
+  review row types store an acknowledgement, because a past event has no cause left to fix.
 - **Not per-review noise.** Turn cap reached and reply declined are per-review facts. The turn cap
   already posts a notice to its own thread; declined replies belong in the review detail view
   (tracked in `techdebt/global/`). Routing them into a global bell would drown the BLOCKING rows

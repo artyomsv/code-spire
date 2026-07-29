@@ -10,6 +10,7 @@ const blocking: AttentionItem = {
   subject: null,
   message: 'No enabled LLM provider is marked as the default, so no review can run.',
   action: '/settings/llm',
+  dismiss: null,
 };
 
 const warning: AttentionItem = {
@@ -18,6 +19,7 @@ const warning: AttentionItem = {
   subject: null,
   message: '2 message(s) failed processing and are waiting in the dead-letter queue.',
   action: '/settings/dlq',
+  dismiss: null,
 };
 
 /** Serve the orchestrator feed and the gateway feed independently, as the hook fetches them. */
@@ -116,6 +118,59 @@ describe('AttentionBell', () => {
     expect(screen.getByTestId('attention-count').className).toContain('blocking');
   });
 
+  /**
+   * Only a row describing a past event no fix can clear carries a dismiss. A condition the operator
+   * can actually repair must never be silenceable, or a broken system could be made to look healthy
+   * — so the absence of the control on those rows is the behaviour under test, not an omission.
+   */
+  it('offers dismiss only on rows that carry one', async () => {
+    const failed: AttentionItem = {
+      code: 'REVIEW_FAILED',
+      severity: 'WARNING',
+      subject: 'TEST-WS/TEST-REPO#1',
+      message: 'This review failed.',
+      action: '/r/TEST-WS/TEST-REPO/1',
+      dismiss: '/api/reviews/TEST-WS/TEST-REPO/1/attention-ack',
+    };
+    stubFeeds([blocking, failed], []);
+    renderBell();
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(failed.message)).toBeInTheDocument());
+
+    // One dismiss control, and it names its row so a screen reader can tell several apart.
+    const buttons = screen.getAllByRole('button', { name: /^Dismiss:/ });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAccessibleName('Dismiss: TEST-WS/TEST-REPO#1');
+  });
+
+  /** Posts where the server told it to and re-reads, rather than removing the row locally. */
+  it('posts the dismiss path and re-reads the feeds', async () => {
+    const failed: AttentionItem = {
+      code: 'REVIEW_FAILED',
+      severity: 'WARNING',
+      subject: 'TEST-WS/TEST-REPO#1',
+      message: 'This review failed.',
+      action: '/r/TEST-WS/TEST-REPO/1',
+      dismiss: '/api/reviews/TEST-WS/TEST-REPO/1/attention-ack',
+    };
+    stubFeeds([failed], []);
+    renderBell();
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(failed.message)).toBeInTheDocument());
+
+    const before = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    screen.getByRole('button', { name: /^Dismiss:/ }).click();
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.some((c) => c[0] === failed.dismiss && c[1]?.method === 'POST')).toBe(true);
+      // Re-read rather than local removal: the server decides whether the row still holds.
+      expect(calls.length).toBeGreaterThan(before + 1);
+    });
+  });
+
   it('lists each condition with a link to the page that fixes it', async () => {
     stubFeeds([blocking], []);
     renderBell();
@@ -137,6 +192,7 @@ describe('AttentionBell', () => {
       subject: 'stub · TEST-OWNER/TEST-REPO',
       message: '1 webhook delivery was refused — signature did not verify.',
       action: '/settings/webhooks',
+      dismiss: null,
     };
     stubFeeds([blocking], [webhook]);
     renderBell();
@@ -166,6 +222,7 @@ describe('AttentionBell', () => {
       subject: 'stub · TEST-OWNER/TEST-REPO',
       message: '1 webhook delivery was refused.',
       action: '/settings/webhooks?edit=TEST-id-1',
+      dismiss: null,
     };
     stubFeeds([], [deepLinked]);
     renderBell();
@@ -189,6 +246,7 @@ describe('AttentionBell', () => {
       subject: 'prod',
       message: "The source-control provider's credential was rejected.",
       action: '/settings/providers',
+      dismiss: null,
     };
     const llmRejected: AttentionItem = {
       code: 'CREDENTIAL_REJECTED',
@@ -196,6 +254,7 @@ describe('AttentionBell', () => {
       subject: 'prod',
       message: "The LLM provider's credential was rejected.",
       action: '/settings/llm',
+      dismiss: null,
     };
     stubFeeds([scmRejected, llmRejected], []);
     renderBell();

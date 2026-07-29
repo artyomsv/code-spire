@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, CircleAlert, TriangleAlert } from 'lucide-react';
 import { useAttention } from '../hooks/useAttention';
+import { dismissAttention } from '../api';
 import Tooltip from './Tooltip';
 
 /**
@@ -33,8 +34,18 @@ function actionLabel(action: string): string {
  * would be a claim it cannot make.
  */
 export default function AttentionBell() {
-  const { items } = useAttention();
+  const { items, refresh } = useAttention();
   const [open, setOpen] = useState(false);
+
+  /**
+   * Refreshes rather than removing the row locally: the server decides whether the condition still
+   * holds, so re-reading keeps the panel a view of real state instead of a list the UI edits. A
+   * failed dismiss therefore leaves the row visible, which is the honest outcome.
+   */
+  const dismiss = async (path: string) => {
+    await dismissAttention(path);
+    refresh();
+  };
 
   const blocking = items.some((item) => item.severity === 'BLOCKING');
   const tone = blocking ? 'blocking' : 'warning';
@@ -80,11 +91,23 @@ export default function AttentionBell() {
                   <span className="attention-body">
                     {item.subject && <span className="attention-subject">{item.subject}</span>}
                     <span className="attention-message">{item.message}</span>
-                    {item.action && (
-                      <Link className="attention-action" to={item.action} onClick={() => setOpen(false)}>
-                        {actionLabel(item.action)}
-                      </Link>
-                    )}
+                    <span className="attention-row-actions">
+                      {item.action && (
+                        <Link className="attention-action" to={item.action} onClick={() => setOpen(false)}>
+                          {actionLabel(item.action)}
+                        </Link>
+                      )}
+                      {item.dismiss && (
+                        <button
+                          type="button"
+                          className="attention-dismiss"
+                          aria-label={`Dismiss: ${item.subject ?? item.code}`}
+                          onClick={() => void dismiss(item.dismiss as string)}
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </span>
                   </span>
                 </li>
               ))}

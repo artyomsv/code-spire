@@ -17,6 +17,7 @@ const GATEWAY_UNREACHABLE: AttentionItem = {
   subject: null,
   message: 'The webhook gateway is not responding, so no pull request event can arrive.',
   action: null,
+  dismiss: null,
 };
 
 /**
@@ -30,6 +31,7 @@ const ATTENTION_UNAVAILABLE: AttentionItem = {
   subject: null,
   message: 'Some conditions could not be loaded, so this list may be incomplete.',
   action: null,
+  dismiss: null,
 };
 
 function bySeverityThenCode(a: AttentionItem, b: AttentionItem): number {
@@ -39,8 +41,16 @@ function bySeverityThenCode(a: AttentionItem, b: AttentionItem): number {
   return byCode !== 0 ? byCode : (a.subject ?? '').localeCompare(b.subject ?? '');
 }
 
-export function useAttention(): { items: AttentionItem[] } {
+/**
+ * @returns the merged rows, and a `refresh` that re-reads both feeds immediately — so acknowledging
+ *          a row updates the bell at once instead of leaving a dismissed row on screen for up to a
+ *          full poll interval.
+ */
+export function useAttention(): { items: AttentionItem[]; refresh: () => void } {
   const [items, setItems] = useState<AttentionItem[]>([]);
+  // Bumping this re-runs the effect, which reloads and restarts the interval. Re-running the effect
+  // rather than calling a hoisted loader keeps the cancelled-flag guard in one place.
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,7 +76,7 @@ export function useAttention(): { items: AttentionItem[] } {
       cancelled = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [reloadCount]);
 
-  return { items };
+  return { items, refresh: () => setReloadCount((n) => n + 1) };
 }

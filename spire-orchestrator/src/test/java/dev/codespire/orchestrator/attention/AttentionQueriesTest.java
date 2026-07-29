@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -145,18 +146,88 @@ class AttentionQueriesTest {
         }
     }
 
-    /** A review that has not moved is the closest honest signal that deliveries stopped arriving. */
+    /**
+     * A review that has not moved is the closest honest signal that deliveries stopped arriving —
+     * and each one is a discrete record with its own page, so each gets its own row rather than
+     * being collapsed into a count the operator cannot navigate from.
+     */
     @Test
-    void aReviewStuckPastTheThresholdIsReportedWithItsCount() {
+    void eachStuckReviewIsReportedAsItsOwnNavigableRow() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "reviewing", "OPEN", "2 hours");
         insertReview("TEST-r2", "reviewing", "OPEN", "2 hours");
-        AttentionView row = queries.collect().stream()
-                .filter(v -> "REVIEW_STUCK".equals(v.code()))
-                .findFirst().orElseThrow();
-        assertTrue(row.message().contains("2"), row.message());
-        assertEquals("/", row.action());
+
+        List<AttentionView> stuck = queries.collect().stream()
+                .filter(v -> "REVIEW_STUCK".equals(v.code())).toList();
+
+        assertEquals(2, stuck.size(), stuck.toString());
+        assertTrue(stuck.stream().anyMatch(v -> "TEST-WS/TEST-REPO#1".equals(v.subject())), stuck.toString());
+        assertTrue(stuck.stream().anyMatch(v -> "TEST-WS/TEST-REPO#2".equals(v.subject())), stuck.toString());
+        AttentionView first = stuck.getFirst();
+        assertEquals("/r/TEST-WS/TEST-REPO/" + prOf("TEST-r1"), first.action());
+        assertTrue(first.dismiss().endsWith("/attention-ack"), first.dismiss());
+    }
+
+    /**
+     * Past the cap the remainder collapses into one summary row that SAYS it is a remainder. A
+     * silently truncated list reads as "that is all of them", which is the worst possible impression
+     * during a systemic outage.
+     */
+    @Test
+    void beyondTheCapTheRemainderIsSummarisedRatherThanDropped() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        for (int i = 1; i <= 7; i++) {
+            insertReview("TEST-r" + i, "reviewing", "OPEN", "2 hours");
+        }
+
+        List<AttentionView> stuck = queries.collect().stream()
+                .filter(v -> "REVIEW_STUCK".equals(v.code())).toList();
+
+        assertEquals(6, stuck.size(), "5 individual rows plus one remainder row: " + stuck);
+        // Identified by what makes it the remainder — no single review — not by position: collect()
+        // sorts by subject, and a null subject sorts ahead of the named rows rather than after them.
+        AttentionView remainder = stuck.stream()
+                .filter(v -> v.subject() == null).findFirst()
+                .orElseThrow(() -> new AssertionError("no remainder row in " + stuck));
+        assertTrue(remainder.message().contains("2"), remainder.message());
+        assertNull(remainder.dismiss(), "a remainder covering several reviews cannot be acknowledged");
+        assertEquals(5, stuck.stream().filter(v -> v.subject() != null).count(), stuck.toString());
+    }
+
+    /**
+     * Acknowledging is the only resolution a past failure has — nothing an operator fixes makes a
+     * failed review un-fail — so these two row types are the panel's only dismissable ones.
+     */
+    @Test
+    void anAcknowledgedReviewStopsRaisingItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "failed", "OPEN", "1 hour");
+        assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
+
+        acknowledge("TEST-r1");
+
+        assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
+    }
+
+    /**
+     * Scoped to the state the operator saw, not to the review forever. A boolean flag would silence
+     * that review permanently, which is how a dismissable alert becomes wallpaper.
+     */
+    @Test
+    void aLaterFailureRaisesTheRowAgainAfterAnAcknowledgement() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "failed", "OPEN", "1 hour");
+        acknowledge("TEST-r1");
+        assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
+
+        // A fresh failure on the same review moves updated_at past the acknowledgement.
+        sql("UPDATE review_status SET updated_at = now() WHERE review_id = 'TEST-r1'");
+
+        assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
     }
 
     /** A review that is merely young is not stuck. */
@@ -216,25 +287,33 @@ class AttentionQueriesTest {
         assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
     }
 
-    /** Recent failures are actionable. */
+    /** A failure is actionable: open it for the reason, re-run it, or acknowledge it. */
     @Test
-    void aRecentlyFailedReviewIsReported() {
+    void aFailedReviewIsReportedWithItsOwnRow() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "failed", "OPEN", "1 hour");
-        assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
+
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "REVIEW_FAILED".equals(v.code()))
+                .findFirst().orElseThrow();
+
+        assertEquals("TEST-WS/TEST-REPO#1", row.subject());
+        assertEquals("/r/TEST-WS/TEST-REPO/1", row.action());
+        assertTrue(row.dismiss().endsWith("/attention-ack"), row.dismiss());
     }
 
     /**
-     * With no dismiss button anywhere in this design, an unwindowed failure row would nag
-     * forever. The window is what makes it self-clearing.
+     * An OLD failure is still reported. There was a 24-hour window here, added because the panel had
+     * no dismiss action — but a timer is expiry, not resolution, and it would retire a failure nobody
+     * ever saw. Acknowledging replaced it, so age alone no longer silences anything.
      */
     @Test
-    void aFailureOlderThanTheWindowIsNotReported() {
+    void anOldUnacknowledgedFailureIsStillReported() {
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         insertReview("TEST-r1", "failed", "OPEN", "30 days");
-        assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
+        assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
     }
 
     /** A credential the provider refused is the case that started this feature. */
@@ -342,10 +421,26 @@ class AttentionQueriesTest {
     }
 
     /** {@code age} is a Postgres interval literal, e.g. "2 hours". */
+    /**
+     * {@code age} is a Postgres interval literal, e.g. "2 hours". The PR number is derived from the
+     * review id so separate reviews get distinct subjects and detail routes — rows are per-review
+     * now, so two fixtures sharing a PR would be indistinguishable in an assertion.
+     */
     private void insertReview(String reviewId, String status, String prState, String age) {
         sql("INSERT INTO review_status (review_id, workspace, slug, pr_id, status, pr_state, "
-                + "created_at, updated_at) VALUES ('" + reviewId + "', 'TEST-WS', 'TEST-REPO', 1, '"
-                + status + "', '" + prState + "', now() - interval '" + age + "', "
-                + "now() - interval '" + age + "')");
+                + "created_at, updated_at) VALUES ('" + reviewId + "', 'TEST-WS', 'TEST-REPO', "
+                + prOf(reviewId) + ", '" + status + "', '" + prState + "', now() - interval '" + age
+                + "', now() - interval '" + age + "')");
+    }
+
+    /** Trailing digits of the id, so "TEST-r7" is PR 7. */
+    private static int prOf(String reviewId) {
+        String digits = reviewId.replaceAll("\\D+", "");
+        return digits.isEmpty() ? 1 : Integer.parseInt(digits);
+    }
+
+    /** Acknowledge a review the way the resource does, without bumping updated_at. */
+    private void acknowledge(String reviewId) {
+        sql("UPDATE review_status SET attention_ack_at = now() WHERE review_id = '" + reviewId + "'");
     }
 }

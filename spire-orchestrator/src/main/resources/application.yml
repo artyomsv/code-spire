@@ -133,11 +133,11 @@ spire:
     # here; only %dev/%test relax it for http://localhost WireMock SCMs.
     allow-insecure-provider-urls: false
   attention:
-    # Attention panel thresholds. A review normally finishes in seconds; 15 minutes without
-    # movement means the delivery path or a worker is broken. The failure window keeps a row
-    # self-clearing, since the panel has no dismiss action.
+    # How long a review may sit without progressing before the panel calls it stalled. A review
+    # normally finishes in seconds, so 15 minutes of silence means the delivery path or a worker is
+    # broken. There is no companion window for failed reviews: a failure is acknowledged, not aged
+    # out, because a timer would retire one nobody ever saw.
     stuck-minutes: ${SPIRE_ATTENTION_STUCK_MINUTES:15}
-    failed-window-hours: ${SPIRE_ATTENTION_FAILED_WINDOW_HOURS:24}
 
 # Dev: docker-compose Postgres + Redpanda. Credentials come from .env (Quarkus
 # loads it from the project root) — NO defaults for credentials, fail fast.

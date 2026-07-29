@@ -788,6 +788,18 @@ export interface AttentionItem {
   subject: string | null;
   message: string;
   action: string | null;
+  /**
+   * An API path to POST to acknowledge this row, or null when it is not dismissable. Only rows
+   * describing a past event no fix can clear carry one — a condition the operator can actually
+   * repair must not be silenceable, or a broken system could be made to look healthy.
+   */
+  dismiss: string | null;
+}
+
+/** Acknowledge one row. The server decides what that means; the UI just posts where it was told. */
+export async function dismissAttention(path: string): Promise<void> {
+  const res = await fetch(path, { method: 'POST' });
+  if (!res.ok) throw new Error(`Dismiss failed: ${res.status}`);
 }
 
 export async function fetchAttention(): Promise<AttentionItem[]> {

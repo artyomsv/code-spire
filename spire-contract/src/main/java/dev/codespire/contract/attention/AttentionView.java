@@ -9,7 +9,17 @@ package dev.codespire.contract.attention;
  * more than one service without knowing which produced what.
  */
 public record AttentionView(String code, Severity severity, String subject,
-                            String message, String action) {
+                            String message, String action, String dismiss) {
+
+    /**
+     * A row that cannot be dismissed — every condition derived purely from current state.
+     *
+     * <p>This is the overwhelming majority and the default on purpose. A condition an operator can
+     * actually fix must not be dismissable, or a broken system could be made to look healthy.
+     */
+    public AttentionView(String code, Severity severity, String subject, String message, String action) {
+        this(code, severity, subject, message, action, null);
+    }
 
     /**
      * How badly the condition hurts. Two values on purpose — an operator triaging a bell
@@ -30,6 +40,10 @@ public record AttentionView(String code, Severity severity, String subject,
      *                 from the database, or null for a system-wide condition
      * @param message  one operator-facing sentence stating the consequence
      * @param action   a spire-ui route to the page that fixes it, or null
+     * @param dismiss  an API path the UI POSTs to acknowledge this row, or null when the row is not
+     *                 dismissable. Unlike {@code action} — a UI route — this is a server endpoint,
+     *                 so the UI never has to reconstruct one from {@code subject}. Non-null only for
+     *                 rows describing a PAST event that no fix can clear.
      */
     public AttentionView {
     }

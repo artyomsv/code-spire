@@ -1185,3 +1185,39 @@
     outline: 2px solid var(--iris);
     outline-offset: 2px;
   }
+
+  .attention-row-actions {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-top: 3px;
+  }
+
+  .attention-row-actions .attention-action {
+    margin-top: 0;
+  }
+
+  /* Deliberately quieter than the action link: acknowledging is the fallback for a past event that
+     cannot be fixed, not the thing we want the operator reaching for first. */
+  .attention-dismiss {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text-3);
+    cursor: pointer;
+    border-radius: 3px;
+  }
+
+  .attention-dismiss:hover {
+    color: var(--text-2);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .attention-dismiss:focus-visible {
+    outline: 2px solid var(--iris);
+    outline-offset: 2px;
+  }

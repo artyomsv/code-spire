@@ -30,6 +30,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class AttentionQueries {
 
+    /**
+     * Past this many affected reviews the remainder collapses into one summary row. Five is enough
+     * to act on individually while keeping a systemic outage from burying the BLOCKING rows that
+     * mean nothing works at all.
+     */
+    private static final int MAX_REVIEW_ROWS = 5;
+
     @Inject
     DataSource dataSource;
 
@@ -38,9 +45,6 @@ public class AttentionQueries {
 
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
-
-    @ConfigProperty(name = "spire.attention.failed-window-hours")
-    int failedWindowHours;
 
     /** Blockers first, then warnings; stable by code within a severity. */
     public List<AttentionView> collect() {
@@ -117,26 +121,74 @@ public class AttentionQueries {
      * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled.
      */
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
-        int stuck = countWithInt(c, """
-                SELECT COUNT(*) FROM review_status
+        rows.addAll(perReviewRows(c, """
+                SELECT workspace, slug, pr_id FROM review_status
                  WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded')
                    AND pr_state = 'OPEN'
                    AND updated_at < now() - make_interval(mins => ?)
-                """, stuckMinutes);
-        if (stuck > 0) {
-            rows.add(new AttentionView("REVIEW_STUCK", Severity.WARNING, null,
-                    stuck + " review(s) have not progressed for over " + stuckMinutes
-                            + " minutes — a webhook delivery path or a worker may be down.", "/"));
-        }
-        int failed = countWithInt(c, """
-                SELECT COUNT(*) FROM review_status
+                   AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
+                 ORDER BY updated_at
+                """, stuckMinutes, "REVIEW_STUCK",
+                "This review has not progressed for over " + stuckMinutes
+                        + " minutes — a webhook delivery path or a worker may be down.",
+                "review(s) stalled"));
+
+        rows.addAll(perReviewRows(c, """
+                SELECT workspace, slug, pr_id FROM review_status
                  WHERE lower(status) = 'failed'
-                   AND updated_at > now() - make_interval(hours => ?)
-                """, failedWindowHours);
-        if (failed > 0) {
-            rows.add(new AttentionView("REVIEW_FAILED", Severity.WARNING, null,
-                    failed + " review(s) failed in the last " + failedWindowHours + " hours.", "/"));
+                   AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
+                 ORDER BY updated_at DESC
+                """, null, "REVIEW_FAILED",
+                "This review failed. Open it for the reason, then re-run it or dismiss this.",
+                "review(s) failed"));
+    }
+
+    /**
+     * One row per affected review, named and linked to its own detail page.
+     *
+     * <p>Deliberately not one aggregate row carrying a count. A failed review is a discrete event
+     * about a specific record with a page to open, so collapsing several into "3 review(s) failed"
+     * throws away the only thing that makes the row actionable. The flooding this originally guarded
+     * against turned out to be a symptom of a defect rather than of real failures — a status
+     * comparison that reported every completed review as stalled — so the guard is now a cap rather
+     * than an unconditional collapse: past {@link #MAX_REVIEW_ROWS} the remainder becomes a single
+     * summary row, which keeps a systemic outage from burying the configuration blockers above it.
+     *
+     * @param minutes bound for the stuck query's interval, or null when the SQL takes no parameter
+     */
+    private List<AttentionView> perReviewRows(Connection c, String sql, Integer minutes,
+                                              String code, String message, String moreNoun)
+            throws SQLException {
+        List<AttentionView> found = new ArrayList<>();
+        int total = 0;
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            if (minutes != null) {
+                ps.setInt(1, minutes);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    total++;
+                    if (found.size() >= MAX_REVIEW_ROWS) {
+                        continue;
+                    }
+                    String workspace = rs.getString("workspace");
+                    String slug = rs.getString("slug");
+                    long pr = rs.getLong("pr_id");
+                    String repo = workspace + "/" + slug;
+                    found.add(new AttentionView(code, Severity.WARNING, repo + "#" + pr, message,
+                            "/r/" + workspace + "/" + slug + "/" + pr,
+                            "/api/reviews/" + workspace + "/" + slug + "/" + pr + "/attention-ack"));
+                }
+            }
         }
+        int hidden = total - found.size();
+        if (hidden > 0) {
+            // Never silently truncate: a capped list that does not say so reads as "that is all of
+            // them", which is exactly the wrong impression during a systemic outage.
+            found.add(new AttentionView(code, Severity.WARNING, null,
+                    hidden + " further " + moreNoun + ", not listed individually.", "/"));
+        }
+        return found;
     }
 
     /**
@@ -165,15 +217,6 @@ public class AttentionQueries {
                         "The " + kind + "'s credential was rejected"
                                 + (detail == null || detail.isBlank() ? "." : ": " + detail),
                         editLink(action, rs.getObject("id", UUID.class))));
-            }
-        }
-    }
-
-    private static int countWithInt(Connection c, String sql, int arg) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setInt(1, arg);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getInt(1) : 0;
             }
         }
     }

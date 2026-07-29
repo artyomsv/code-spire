@@ -186,6 +186,20 @@ public class ReviewProjection {
     }
 
     /**
+     * The operator acknowledged this review's current stuck/failed state, so the attention panel
+     * stops raising a row for it. A later failure raises it again, because the panel compares this
+     * against {@code updated_at}.
+     *
+     * <p>Deliberately does NOT bump {@code updated_at}, unlike every other write here. The panel's
+     * predicate is {@code updated_at > attention_ack_at}; bumping both would leave them equal and
+     * make the acknowledgement a no-op — or, worse, race into re-raising the row it just dismissed.
+     */
+    public void acknowledgeAttention(String reviewId) {
+        update("UPDATE review_status SET attention_ack_at = now() WHERE review_id = ?",
+                ps -> ps.setString(1, reviewId));
+    }
+
+    /**
      * Bump the review's updated_at and push a fresh summary to live clients — used by
      * activity that changes detail-page data (conversation turns, follow-up costs)
      * without going through a status/stage write, which would otherwise broadcast.
