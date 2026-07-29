@@ -1157,7 +1157,31 @@
     line-height: 1.4;
   }
 
+  /* The row's one action, so it has to read as clickable at rest — the global reset strips link
+     colour and underline, which left this looking like a third line of prose that only revealed
+     itself on hover. Underlined and accented like the app's other links, plus an arrow, so the
+     affordance survives greyscale and does not depend on colour alone. */
   .attention-action {
     align-self: flex-start;
+    margin-top: 3px;
     font-size: 11px;
+    font-weight: 500;
+    color: var(--iris);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .attention-action::after {
+    content: ' \2192';
+    text-decoration: none;
+  }
+
+  .attention-action:hover {
+    color: var(--iris-ink);
+  }
+
+  .attention-action:focus-visible {
+    outline: 2px solid var(--iris);
+    outline-offset: 2px;
   }
