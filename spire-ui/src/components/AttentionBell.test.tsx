@@ -154,6 +154,31 @@ describe('AttentionBell', () => {
     );
   });
 
+  /**
+   * A row naming one record deep-links to it with `?edit=<id>`. The label map is keyed on the path
+   * alone, so the query string must not push the row onto the "Open" fallback — that would undo the
+   * naming the label exists for.
+   */
+  it('keeps a named label when the action deep-links to a record', async () => {
+    const deepLinked: AttentionItem = {
+      code: 'WEBHOOK_DELIVERIES_REJECTED',
+      severity: 'WARNING',
+      subject: 'stub · TEST-OWNER/TEST-REPO',
+      message: '1 webhook delivery was refused.',
+      action: '/settings/webhooks?edit=TEST-id-1',
+    };
+    stubFeeds([], [deepLinked]);
+    renderBell();
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(deepLinked.message)).toBeInTheDocument());
+
+    expect(screen.getByRole('link', { name: 'Settings · Webhooks' })).toHaveAttribute(
+      'href',
+      '/settings/webhooks?edit=TEST-id-1',
+    );
+  });
+
   /** CREDENTIAL_REJECTED subjects are provider names with no cross-registry uniqueness — an SCM
    *  provider and an LLM provider can share a name and both be rejected. A React key that ignored
    *  `action` (the one field that differs across registries) collided and dropped a row. */

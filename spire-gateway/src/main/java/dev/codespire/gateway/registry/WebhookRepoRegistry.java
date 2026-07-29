@@ -177,11 +177,11 @@ public class WebhookRepoRegistry {
      * two different providers, so an operator told only {@code owner/repo} would not know which
      * provider's webhook settings to open.
      */
-    public record Rejection(String providerType, String target, String reason, int count) {
+    public record Rejection(String id, String providerType, String target, String reason, int count) {
     }
 
     /** An enabled registration, identified the way an operator has to act on it. */
-    public record Registration(String providerType, String target) {
+    public record Registration(String id, String providerType, String target) {
     }
 
     /**
@@ -232,12 +232,13 @@ public class WebhookRepoRegistry {
     public List<Rejection> rejecting() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT provider_type, target, last_rejection_reason, rejection_count FROM webhook_repo "
+                     "SELECT id, provider_type, target, last_rejection_reason, rejection_count FROM webhook_repo "
                              + "WHERE enabled = TRUE AND rejection_count > 0 ORDER BY target");
              ResultSet rs = ps.executeQuery()) {
             List<Rejection> out = new ArrayList<>();
             while (rs.next()) {
-                out.add(new Rejection(rs.getString("provider_type"), rs.getString("target"),
+                out.add(new Rejection(rs.getObject("id", UUID.class).toString(),
+                        rs.getString("provider_type"), rs.getString("target"),
                         rs.getString("last_rejection_reason"), rs.getInt("rejection_count")));
             }
             return out;
@@ -250,12 +251,13 @@ public class WebhookRepoRegistry {
     public List<Registration> missingSecret() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT provider_type, target FROM webhook_repo WHERE enabled = TRUE "
+                     "SELECT id, provider_type, target FROM webhook_repo WHERE enabled = TRUE "
                              + "AND (webhook_secret IS NULL OR webhook_secret = '') ORDER BY target");
              ResultSet rs = ps.executeQuery()) {
             List<Registration> out = new ArrayList<>();
             while (rs.next()) {
-                out.add(new Registration(rs.getString("provider_type"), rs.getString("target")));
+                out.add(new Registration(rs.getObject("id", UUID.class).toString(),
+                        rs.getString("provider_type"), rs.getString("target")));
             }
             return out;
         } catch (SQLException e) {

@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Every orchestrator-side condition, evaluated fresh on each call. Nothing is stored and
@@ -83,7 +84,7 @@ public class AttentionQueries {
         // bot_account_id is NOT NULL DEFAULT '' while bot_username is a nullable TEXT, so both
         // blank forms have to be tested. Either field alone is enough to identify the bot.
         try (PreparedStatement ps = c.prepareStatement("""
-                SELECT name FROM scm_provider
+                SELECT id, name FROM scm_provider
                  WHERE enabled = TRUE
                    AND (bot_account_id IS NULL OR bot_account_id = '')
                    AND (bot_username   IS NULL OR bot_username   = '')
@@ -93,7 +94,8 @@ public class AttentionQueries {
             while (rs.next()) {
                 rows.add(new AttentionView("BOT_IDENTITY_UNRESOLVED", Severity.WARNING, rs.getString("name"),
                         "The bot's own identity could not be resolved, so it cannot recognise its own "
-                                + "comments and will not hold a conversation.", "/settings/providers"));
+                                + "comments and will not hold a conversation.",
+                        editLink("/settings/providers", rs.getObject("id", UUID.class))));
             }
         }
     }
@@ -154,7 +156,7 @@ public class AttentionQueries {
         // The table name is a compile-time constant from the private call sites above, never
         // caller input, so it cannot carry injection.
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT name, last_check_error FROM " + table
+                "SELECT id, name, last_check_error FROM " + table
                         + " WHERE enabled = TRUE AND last_check_ok = FALSE ORDER BY name");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
@@ -162,7 +164,7 @@ public class AttentionQueries {
                 rows.add(new AttentionView("CREDENTIAL_REJECTED", Severity.WARNING, rs.getString("name"),
                         "The " + kind + "'s credential was rejected"
                                 + (detail == null || detail.isBlank() ? "." : ": " + detail),
-                        action));
+                        editLink(action, rs.getObject("id", UUID.class))));
             }
         }
     }
@@ -183,6 +185,17 @@ public class AttentionQueries {
                     pending + " message(s) failed processing and are waiting in the dead-letter queue.",
                     "/settings/dlq"));
         }
+    }
+
+    /**
+     * Deep-links to the one provider that needs changing, rather than to a page the operator then
+     * has to search. A row that names a specific record should land the reader on that record: with
+     * several providers registered, "go to Settings" leaves them working out which row was meant.
+     * Aggregate rows (stuck reviews, dead-letter entries) keep a plain page link — they name no
+     * single record to open.
+     */
+    private static String editLink(String page, UUID id) {
+        return page + "?edit=" + id;
     }
 
     private static int count(Connection c, String sql) throws SQLException {

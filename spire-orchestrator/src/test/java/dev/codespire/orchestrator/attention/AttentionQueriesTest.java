@@ -248,7 +248,7 @@ class AttentionQueriesTest {
                 .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
                 .findFirst().orElseThrow();
         assertEquals("TEST-scm", row.subject());
-        assertEquals("/settings/providers", row.action());
+        assertTrue(row.action().startsWith("/settings/providers?edit="), row.action());
         assertTrue(row.message().contains("401"), row.message());
     }
 
@@ -262,7 +262,7 @@ class AttentionQueriesTest {
         AttentionView row = queries.collect().stream()
                 .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
                 .findFirst().orElseThrow();
-        assertEquals("/settings/llm", row.action());
+        assertTrue(row.action().startsWith("/settings/llm?edit="), row.action());
     }
 
     /**
@@ -310,7 +310,7 @@ class AttentionQueriesTest {
                 .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
                 .findFirst().orElseThrow();
         assertEquals("TEST-context", row.subject());
-        assertEquals("/settings/context", row.action());
+        assertTrue(row.action().startsWith("/settings/context?edit="), row.action());
     }
 
     // ---- fixtures: obviously-synthetic values only --------------------------

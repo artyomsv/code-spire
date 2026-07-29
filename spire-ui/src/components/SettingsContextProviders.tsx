@@ -17,6 +17,7 @@ import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Tooltip from './Tooltip';
 import Select from './Select';
+import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
 const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence'];
 
@@ -79,6 +80,8 @@ export default function SettingsContextProviders() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<'new' | ContextProviderView | null>(null);
+  // An attention row names one provider; land the operator on it, not just on this page.
+  useEditDeepLink(providers, setForm);
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
   const [conns, setConns] = useState<Record<string, Conn>>({});
   const [testProvider, setTestProvider] = useState<ContextProviderView | null>(null);

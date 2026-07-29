@@ -23,6 +23,7 @@ import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Select from './Select';
 import Tooltip from './Tooltip';
+import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
 const LLM_TYPES: LlmType[] = ['openai', 'anthropic', 'gemini'];
@@ -78,6 +79,8 @@ export default function SettingsLlmProviders() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [providerForm, setProviderForm] = useState<'new' | LlmProviderView | null>(null);
+  // An attention row names one provider; land the operator on it, not just on this page.
+  useEditDeepLink(providers, setProviderForm);
   const [modelForm, setModelForm] = useState<'new' | LlmModelView | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ kind: 'provider' | 'model'; id: string; name: string } | null>(
     null,

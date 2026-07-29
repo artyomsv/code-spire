@@ -32,19 +32,32 @@ public class WebhookAttentionResource {
     public List<AttentionView> list() {
         List<AttentionView> rows = new ArrayList<>();
         for (WebhookRepoRegistry.Registration reg : registry.missingSecret()) {
-            rows.add(new AttentionView("WEBHOOK_SECRET_MISSING", Severity.WARNING, subject(reg.providerType(), reg.target()),
+            rows.add(new AttentionView("WEBHOOK_SECRET_MISSING", Severity.WARNING,
+                    subject(reg.providerType(), reg.target()),
                     "This webhook registration has no shared secret, so no delivery can be verified.",
-                    "/settings/webhooks"));
+                    editLink(reg.id())));
         }
         for (WebhookRepoRegistry.Rejection rejection : registry.rejecting()) {
             rows.add(new AttentionView("WEBHOOK_DELIVERIES_REJECTED", Severity.WARNING,
                     subject(rejection.providerType(), rejection.target()),
-                    refused(rejection.count()) + " — " + reason(rejection.reason())
+                    refused(rejection.count()) + ": " + reason(rejection.reason())
                             + ". Rotate the secret here, then re-save it in the webhook settings at "
                             + rejection.providerType() + ".",
-                    "/settings/webhooks"));
+                    editLink(rejection.id())));
         }
         return rows;
+    }
+
+    /**
+     * Deep-links to the one registration that needs changing, rather than to a page the operator
+     * then has to search — with three registrations and a repo path that can exist on two
+     * providers, "go to Settings" was leaving the reader to work out which row was meant.
+     * The UI opens that registration's dialog; rotating the secret stays a deliberate click,
+     * because rotating invalidates the live one and a mis-clicked link must not break a
+     * working webhook.
+     */
+    private static String editLink(String id) {
+        return "/settings/webhooks?edit=" + id;
     }
 
     /**

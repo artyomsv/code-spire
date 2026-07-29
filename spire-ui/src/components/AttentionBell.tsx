@@ -18,8 +18,12 @@ const ACTION_LABELS: Record<string, string> = {
   '/': 'Reviews',
 };
 
+/**
+ * Keyed on the path alone: a row that names one record deep-links to it with `?edit=<id>`, and
+ * matching the whole string would miss the map and label every such row "Open".
+ */
 function actionLabel(action: string): string {
-  return ACTION_LABELS[action] ?? 'Open';
+  return ACTION_LABELS[action.split('?')[0]] ?? 'Open';
 }
 
 /**

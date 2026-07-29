@@ -20,6 +20,7 @@ import IconButton from './IconButton';
 import Select from './Select';
 import Tooltip from './Tooltip';
 import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
+import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
 const SCOPES: { value: WebhookScope; label: string }[] = [
   { value: 'repo', label: 'Repository' },
@@ -40,6 +41,8 @@ export default function SettingsWebhookRepos() {
 
   // null = form closed; a WebhookRepoView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | WebhookRepoView | null>(null);
+  // An attention row names one registration; land the operator on it, not just on this page.
+  useEditDeepLink(repos, setForm);
   const [confirmDelete, setConfirmDelete] = useState<WebhookRepoView | null>(null);
 
   async function load() {

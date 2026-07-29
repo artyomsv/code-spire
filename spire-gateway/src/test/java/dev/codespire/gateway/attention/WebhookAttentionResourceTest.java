@@ -23,6 +23,7 @@ import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
@@ -102,7 +103,7 @@ class WebhookAttentionResourceTest {
                 .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.severity",
                         is("WARNING"))
                 .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.action",
-                        is("/settings/webhooks"));
+                        startsWith("/settings/webhooks?edit="));
     }
 
     /**
