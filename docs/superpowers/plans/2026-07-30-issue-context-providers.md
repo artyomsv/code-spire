@@ -2201,7 +2201,7 @@ public class GitHubIssueContextProvider implements ContextProvider {
         JsonNode comments;
         try {
             comments = client.getJson(target.path() + "/comments?per_page=100");
-        } catch (GitHubIssueApiException | RuntimeException e) {
+        } catch (RuntimeException e) {
             return;
         }
         if (!comments.isArray() || comments.isEmpty()) {
@@ -3514,7 +3514,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
         JsonNode notes;
         try {
             notes = client.getJson(notesPath + "?per_page=100");
-        } catch (GitLabIssueApiException | RuntimeException e) {
+        } catch (RuntimeException e) {
             return;
         }
         if (!notes.isArray() || notes.isEmpty()) {
