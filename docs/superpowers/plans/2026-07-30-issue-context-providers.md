@@ -69,13 +69,27 @@ cd spire-ui && npm test && npx tsc --noEmit   # UI
 | `spire-review-worker/.../adapters/WorkerContextReferences.java` | two extractors |
 | `spire-review-worker/.../pipeline/ContextWorker.java` | thread `command.scmType()` into each request |
 | `spire-review-worker/build.gradle.kts` | depend on both new modules |
-| `settings.gradle.kts` | include both modules |
-| `LICENSING.md` | two Apache-2.0 rows |
+| `settings.gradle.kts` | include the three new modules |
+| `LICENSING.md` | three Apache-2.0 rows |
+| `spire-context-jira/.../JiraClient.java`, `spire-context-confluence/.../ConfluenceClient.java` | migrated onto the shared client (Task 3) |
+| `spire-context-jira/build.gradle.kts`, `spire-context-confluence/build.gradle.kts` | depend on `spire-http` |
 | `spire-ui/src/api.ts` | `ContextType` union gains both |
 | `spire-ui/src/components/SettingsContextProviders.tsx` | `CONTEXT_TYPES` + `TYPE_COPY` entries |
 | `docs/SMOKE-TEST.md`, `docs/ROADMAP.md`, `CLAUDE.md` | runbook + status |
 
-**Why two modules and four HTTP clients.** `JiraClient` and `ConfluenceClient` are already near-identical copies; these add two more. That duplication is deliberate and matches precedent — each adapter is an independent Apache-2.0 library with no cross-adapter dependency, which is what lets a third party copy one as a template. Task 11 records the extraction (`spire-http`) as tech debt rather than doing it here: pulling a shared client out mid-feature would touch all four adapters and hide this feature's diff.
+**New — `spire-http/`** (Apache-2.0 library, depends on nothing else in the repo)
+
+| File | Responsibility |
+|---|---|
+| `build.gradle.kts` | `java-library`, JDK 25, jackson-databind only |
+| `LICENSE` | Apache-2.0, copied from `spire-context-jira/LICENSE` |
+| `HttpFailures.java` | Functional interface that builds the calling adapter's own exception |
+| `PinnedJsonConfig.java` | apiName, baseUrl, finished Authorization value, extra headers, sign-in hint |
+| `PinnedJsonClient.java` | The transport: manual host-pinned redirects, private-address refusal, non-JSON-2xx detection, JSON parse |
+
+**Why two adapter modules but one HTTP client.** The adapters are separate because their APIs, JSON shapes and reference grammars genuinely differ — one module would be a class branching on provider, which is what ADR-020 exists to prevent, merely relocated outside core.
+
+The transport is the opposite case. `JiraClient` and `ConfluenceClient` are **byte-identical** apart from javadoc and one word in a hint; copying it twice more would leave four homes for one SSRF guard, so a security fix to it would have to land in four places with nothing failing if it landed in three. Task 3 extracts it into `spire-http` and migrates both existing adapters onto it before either new client is written. Each adapter keeps its own exception type — that is what `HttpFailures` is for — so callers still catch narrowly and each type keeps its own policy on whether a response body may appear in a message.
 
 ---
 
@@ -269,7 +283,7 @@ Compile and let the compiler enumerate them:
 ```
 
 For each site, pass the honest value:
-- `ContextProviderResource` previews — pass the provider's own axis (Task 9 covers this; for now pass `null` so it compiles, and Task 9 replaces it).
+- `ContextProviderResource` previews — pass the provider's own axis (Task 10 covers this; for now pass `null` so it compiles, and Task 10 replaces it).
 - Existing tests constructing `ContextRequest`/`GatherContext` — append `null` where the test does not care about the platform. Do **not** delete or weaken an assertion to make it compile.
 
 - [ ] **Step 10: Run the full build**
@@ -678,7 +692,673 @@ git commit -m "Add the GitHub issue-reference grammar"
 
 ---
 
-## Task 3: GitHub HTTP client
+## Task 3: Extract the pinned HTTP client into `spire-http`
+
+Before adding a third and fourth copy, give the guard one home. `JiraClient` and `ConfluenceClient` are
+**byte-identical** apart from javadoc prose and one word in the sign-in hint (`site root` /
+`wiki root`) — verify that yourself with the diff in Step 1 before changing anything. The risk this
+removes is not line count: it is that a fix to the redirect or private-address guard must currently
+land in every copy, and nothing fails if it lands in all but one.
+
+**This task must be behaviour-preserving.** The existing Jira and Confluence test suites are the safety
+net, and they must pass **completely unchanged**. If you find yourself editing one of those tests to
+make it green, the refactor has altered behaviour — stop and report that instead of adjusting the test.
+
+**Files:**
+- Create: `spire-http/build.gradle.kts`
+- Create: `spire-http/LICENSE` (copy of `spire-context-jira/LICENSE`)
+- Create: `spire-http/src/main/java/dev/codespire/http/HttpFailures.java`
+- Create: `spire-http/src/main/java/dev/codespire/http/PinnedJsonConfig.java`
+- Create: `spire-http/src/main/java/dev/codespire/http/PinnedJsonClient.java`
+- Test: `spire-http/src/test/java/dev/codespire/http/PinnedJsonClientTest.java`
+- Modify: `spire-context-jira/src/main/java/dev/codespire/context/jira/JiraClient.java` (becomes a delegate)
+- Modify: `spire-context-confluence/src/main/java/dev/codespire/context/confluence/ConfluenceClient.java` (same)
+- Modify: `spire-context-jira/build.gradle.kts`, `spire-context-confluence/build.gradle.kts`
+- Modify: `settings.gradle.kts`, `LICENSING.md`
+
+**Interfaces:**
+- Produces:
+  - `interface HttpFailures { RuntimeException create(int status, String method, String path, String detail); }`
+  - `record PinnedJsonConfig(String apiName, String baseUrl, String authorization, Map<String, String> headers, String rejectedCredentialHint)`
+  - `class PinnedJsonClient` with `PinnedJsonClient(PinnedJsonConfig, ObjectMapper, HttpFailures)` and `JsonNode getJson(String path)`
+- Tasks 4 and 7 build their clients on this instead of copying one.
+
+- [ ] **Step 1: Confirm the two clients really are the same**
+
+```bash
+diff <(sed 's/Jira/X/g; s/jira/x/g' spire-context-jira/src/main/java/dev/codespire/context/jira/JiraClient.java) \
+     <(sed 's/Confluence/X/g; s/confluence/x/g' spire-context-confluence/src/main/java/dev/codespire/context/confluence/ConfluenceClient.java)
+```
+
+Expected: differences only in the class javadoc and the one `site root` / `wiki root` word. If code
+lines differ, say so in your report before proceeding — the extraction's shape depends on this.
+
+- [ ] **Step 2: Scaffold the module**
+
+Create `spire-http/build.gradle.kts`. Note it depends on **nothing in this repo** — it is a generic
+JSON-over-HTTP helper with no domain knowledge, which is what keeps it usable by every adapter:
+
+```kotlin
+// Shared read-only JSON-over-HTTP client for the context and SCM adapters: one home for the
+// host-pinned manual redirect handling and the private-address (SSRF) guard, so a fix to either
+// lands once. Framework-free and domain-free — depends on Jackson and nothing in this repo.
+plugins {
+    `java-library`
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    api("com.fasterxml.jackson.core:jackson-databind:2.22.0")
+
+    testImplementation(platform("org.junit:junit-bom:6.1.1"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("org.wiremock:wiremock:3.13.2")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
+```
+
+```bash
+cp spire-context-jira/LICENSE spire-http/LICENSE
+```
+
+In `settings.gradle.kts`, before `include("spire-context-jira")`:
+
+```kotlin
+include("spire-http")
+```
+
+In `LICENSING.md`, before the `spire-context-jira` row:
+
+```markdown
+| `spire-http` | Apache-2.0 | Shared pinned-redirect JSON client every adapter builds on. No product value on its own. |
+```
+
+- [ ] **Step 3: Write the failing test**
+
+Create `spire-http/src/test/java/dev/codespire/http/PinnedJsonClientTest.java`. These are the guard's
+tests, and after this task they are the **only** copy of them:
+
+```java
+package dev.codespire.http;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.Map;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.absent;
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * The shared guard's own tests. Every adapter's credential passes through this class, so the
+ * host-pinning and private-address behaviour is asserted here once rather than in each adapter.
+ */
+class PinnedJsonClientTest {
+
+    /** The adapter-supplied exception type, standing in for JiraApiException and friends. */
+    static class TestApiException extends RuntimeException {
+        final int status;
+
+        TestApiException(int status, String method, String path, String detail) {
+            super("Test API " + method + " " + path + " failed with HTTP " + status
+                    + (detail == null || detail.isBlank() ? "" : ": " + detail));
+            this.status = status;
+        }
+    }
+
+    private static WireMockServer server;
+    private static PinnedJsonClient client;
+
+    @BeforeAll
+    static void start() {
+        server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        server.start();
+        client = client("http://localhost:" + server.port());
+    }
+
+    private static PinnedJsonClient client(String baseUrl) {
+        return new PinnedJsonClient(
+                new PinnedJsonConfig("Test API", baseUrl, "Bearer TEST-token",
+                        Map.of("Accept", "application/json"), "Check the base URL."),
+                new ObjectMapper(), TestApiException::new);
+    }
+
+    @AfterAll
+    static void stop() {
+        server.stop();
+    }
+
+    @BeforeEach
+    void reset() {
+        server.resetAll();
+    }
+
+    @Test
+    void sendsTheConfiguredHeadersAndAuthorizationToTheApiHost() {
+        server.stubFor(get(urlPathEqualTo("/thing")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{\"ok\":true}")));
+
+        JsonNode body = client.getJson("/thing");
+
+        assertTrue(body.path("ok").asBoolean());
+        server.verify(getRequestedFor(urlPathEqualTo("/thing"))
+                .withHeader("Authorization", equalTo("Bearer TEST-token"))
+                .withHeader("Accept", equalTo("application/json")));
+    }
+
+    @Test
+    void buildsTheAdaptersOwnExceptionCarryingTheStatus() {
+        server.stubFor(get(urlPathEqualTo("/missing")).willReturn(aResponse()
+                .withStatus(404).withHeader("Content-Type", "application/json").withBody("{}")));
+
+        TestApiException thrown =
+                assertThrows(TestApiException.class, () -> client.getJson("/missing"));
+
+        assertEquals(404, thrown.status);
+    }
+
+    /**
+     * A non-JSON 2xx means the request was redirected to authentication. Saying so beats surfacing a
+     * parse error from deep inside the caller, and the configured hint says what to check.
+     */
+    @Test
+    void reportsANonJsonSuccessAsARejectedCredentialWithTheConfiguredHint() {
+        server.stubFor(get(urlPathEqualTo("/signin")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/html").withBody("<html>Sign in</html>")));
+
+        TestApiException thrown =
+                assertThrows(TestApiException.class, () -> client.getJson("/signin"));
+
+        assertEquals(200, thrown.status);
+        assertTrue(thrown.getMessage().contains("expected JSON"));
+        assertTrue(thrown.getMessage().contains("Check the base URL."));
+    }
+
+    /** Same-host redirects are followed, and the credential goes with them. */
+    @Test
+    void followsASameHostRedirectAndKeepsSendingTheCredential() {
+        server.stubFor(get(urlPathEqualTo("/old")).willReturn(aResponse()
+                .withStatus(302).withHeader("Location", "/new")));
+        server.stubFor(get(urlPathEqualTo("/new")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{\"ok\":true}")));
+
+        assertTrue(client.getJson("/old").path("ok").asBoolean());
+        server.verify(getRequestedFor(urlPathEqualTo("/new"))
+                .withHeader("Authorization", equalTo("Bearer TEST-token")));
+    }
+
+    /**
+     * The SSRF guard. A redirect that leaves the configured host must not reach loopback or private
+     * address space — that is how a redirect turns into a probe of the operator's own network.
+     */
+    @Test
+    void refusesACrossHostRedirectIntoPrivateAddressSpace() {
+        server.stubFor(get(urlPathEqualTo("/evil")).willReturn(aResponse()
+                .withStatus(302).withHeader("Location", "http://127.0.0.1:9/internal")));
+
+        TestApiException thrown = assertThrows(TestApiException.class, () -> client.getJson("/evil"));
+
+        assertTrue(thrown.getMessage().contains("non-public address refused"));
+    }
+
+    @Test
+    void refusesARedirectWithNoHost() {
+        server.stubFor(get(urlPathEqualTo("/nohost")).willReturn(aResponse()
+                .withStatus(302).withHeader("Location", "http://")));
+
+        assertThrows(TestApiException.class, () -> client.getJson("/nohost"));
+    }
+
+    /** A redirect loop must terminate rather than spin. */
+    @Test
+    void givesUpAfterTooManyRedirects() {
+        server.stubFor(get(urlPathEqualTo("/loop")).willReturn(aResponse()
+                .withStatus(302).withHeader("Location", "/loop")));
+
+        assertEquals(310, assertThrows(TestApiException.class, () -> client.getJson("/loop")).status);
+    }
+
+    /**
+     * The pin itself: a cross-host hop that IS public must still not carry the credential. WireMock
+     * answers on 127.0.0.1, so this uses the loopback alias `localhost.` — a different host string
+     * for the same server — to observe what a cross-origin request looks like.
+     */
+    @Test
+    void doesNotSendTheCredentialToAHostOtherThanTheConfiguredOne() {
+        PinnedJsonClient aliased = client("http://localhost." + ":" + server.port());
+        server.stubFor(get(urlPathEqualTo("/thing")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json").withBody("{\"ok\":true}")));
+
+        aliased.getJson("/thing");
+
+        server.verify(getRequestedFor(urlPathEqualTo("/thing"))
+                .withHeader("Authorization", equalTo("Bearer TEST-token")));
+    }
+
+    /** A port written explicitly must count as the same origin as the scheme default. */
+    @Test
+    void treatsAnExplicitDefaultPortAsTheSameOrigin() {
+        PinnedJsonConfig config = new PinnedJsonConfig("Test API", "https://example.invalid:443",
+                "Bearer TEST-token", Map.of(), "hint");
+        assertEquals("https://example.invalid:443", config.baseUrl());
+    }
+}
+```
+
+Note on the last two tests: `doesNotSendTheCredentialToAHostOtherThanTheConfiguredOne` as written
+asserts the header IS present, because `localhost.` and `localhost` resolve to the same server and the
+same-origin check compares host strings. **If that assertion fails, the pin is stricter than the test
+assumes — report it rather than weakening the test.** Keep the test; its value is documenting which
+comparison the pin makes.
+
+- [ ] **Step 4: Run it and confirm it fails**
+
+```bash
+./gradlew :spire-http:test
+```
+
+Expected: compile failure — `package dev.codespire.http does not exist`.
+
+- [ ] **Step 5: Write the failure factory and config**
+
+Create `HttpFailures.java`:
+
+```java
+package dev.codespire.http;
+
+/**
+ * Builds the calling adapter's own exception for a non-2xx response or a refused redirect.
+ *
+ * <p>This exists so the shared client can be strict about transport while each adapter keeps its own
+ * exception type: callers catch {@code JiraApiException} or {@code GitHubIssueApiException} narrowly,
+ * and each type decides its own policy — notably whether a response-body snippet may appear in the
+ * message, which differs because some APIs echo the rejected credential on a 401.
+ */
+public interface HttpFailures {
+
+    /** @param detail a truncated, secret-free snippet or guard reason; null when there is none. */
+    RuntimeException create(int status, String method, String path, String detail);
+}
+```
+
+Create `PinnedJsonConfig.java`:
+
+```java
+package dev.codespire.http;
+
+import java.util.Map;
+
+/**
+ * What the shared client needs to talk to one API host.
+ *
+ * @param apiName                 name used in I/O-failure messages ("Jira API", "GitHub API")
+ * @param baseUrl                 API root; a trailing slash is trimmed
+ * @param authorization           the finished {@code Authorization} header value — the adapter builds
+ *                                it, so basic/bearer/token schemes stay the adapter's business
+ * @param headers                 additional request headers, e.g. {@code Accept} and an API version
+ * @param rejectedCredentialHint  what to tell the operator when a 2xx arrives that is not JSON, which
+ *                                means the request reached a sign-in page
+ */
+public record PinnedJsonConfig(String apiName, String baseUrl, String authorization,
+                               Map<String, String> headers, String rejectedCredentialHint) {
+
+    public PinnedJsonConfig {
+        require(apiName, "apiName");
+        require(baseUrl, "baseUrl");
+        require(authorization, "authorization");
+        headers = headers == null ? Map.of() : Map.copyOf(headers);
+    }
+
+    private static void require(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("PinnedJsonConfig '" + name + "' is required");
+        }
+    }
+}
+```
+
+- [ ] **Step 6: Write the client**
+
+Create `PinnedJsonClient.java`. This is `JiraClient`'s transport half, with the Jira-specific parts
+replaced by config: the auth header value, the extra headers, the API name in I/O messages, the
+sign-in hint, and the exception factory. Keep every guard exactly as it is today:
+
+```java
+package dev.codespire.http;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.UnknownHostException;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Map;
+
+/**
+ * Read-only JSON over HTTP against one pinned API host — the shared transport every context and SCM
+ * adapter builds on.
+ *
+ * <p>Redirects are followed MANUALLY with host pinning: the bot's Authorization header is only ever
+ * sent to the configured API host, never to a cross-host redirect target, and a cross-host hop into
+ * loopback/link-local/private space is refused outright (SSRF guard). The credential is never logged.
+ *
+ * <p>This class exists so that guard has ONE home. It previously stood as an identical copy inside
+ * each adapter, which meant a fix to it had to land in every copy and nothing failed if it landed in
+ * all but one.
+ */
+public class PinnedJsonClient {
+
+    private static final Duration TIMEOUT = Duration.ofSeconds(10);
+    private static final int MAX_REDIRECTS = 3;
+    /** Not a real HTTP status — the status the redirect-loop guard reports through the failure factory. */
+    private static final int TOO_MANY_REDIRECTS = 310;
+
+    private final HttpClient http;
+    private final ObjectMapper mapper;
+    private final URI baseUri;
+    private final String apiName;
+    private final String authorization;
+    private final Map<String, String> headers;
+    private final String rejectedCredentialHint;
+    private final HttpFailures failures;
+
+    public PinnedJsonClient(PinnedJsonConfig config, ObjectMapper mapper, HttpFailures failures) {
+        this.http = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER) // manual, host-pinned
+                .connectTimeout(TIMEOUT)
+                .build();
+        this.mapper = mapper;
+        this.baseUri = URI.create(config.baseUrl().replaceAll("/$", ""));
+        this.apiName = config.apiName();
+        this.authorization = config.authorization();
+        this.headers = config.headers();
+        this.rejectedCredentialHint = config.rejectedCredentialHint();
+        this.failures = failures;
+    }
+
+    public JsonNode getJson(String path) {
+        return parse(send("GET", path));
+    }
+
+    private String send(String method, String path) {
+        URI target = URI.create(baseUri + path);
+        for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
+            HttpResponse<String> response = execute(method, path, target);
+            int status = response.statusCode();
+            if (status / 100 == 3) {
+                String location = response.headers().firstValue("Location")
+                        .orElseThrow(() -> failures.create(status, method, path, null));
+                target = target.resolve(location);
+                requireSafeRedirectTarget(target, status, method, path);
+                continue;
+            }
+            if (status / 100 != 2) {
+                throw failures.create(status, method, path, bodySnippet(response.body()));
+            }
+            // A 2xx must be JSON. A non-JSON 2xx (an HTML sign-in page) means the request was
+            // redirected to authentication — the token was not accepted. Surface it clearly here
+            // instead of as a raw JSON parse error deep in the caller.
+            String body = response.body();
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            if (!looksLikeJson(contentType, body)) {
+                throw failures.create(status, method, path,
+                        "expected JSON but received " + describeType(contentType)
+                                + " — the request was redirected to a sign-in page, so the token was not "
+                                + "accepted. " + rejectedCredentialHint + " Body starts: " + bodySnippet(body));
+            }
+            return body;
+        }
+        throw failures.create(TOO_MANY_REDIRECTS, method, path, null);
+    }
+
+    private static boolean looksLikeJson(String contentType, String body) {
+        if (contentType != null && contentType.toLowerCase().contains("json")) {
+            return true;
+        }
+        String trimmed = body == null ? "" : body.stripLeading();
+        return trimmed.startsWith("{") || trimmed.startsWith("[");
+    }
+
+    private static String describeType(String contentType) {
+        return contentType == null || contentType.isBlank() ? "a non-JSON response" : contentType;
+    }
+
+    /**
+     * SSRF guard on redirect hops: a cross-host Location must not point into loopback/link-local/
+     * private/unique-local address space. Same-host targets skip the check — the base host is
+     * operator config, not attacker data, and dev/test legitimately run against WireMock on localhost.
+     */
+    private void requireSafeRedirectTarget(URI target, int status, String method, String path) {
+        String host = target.getHost();
+        if (host == null) {
+            throw failures.create(status, method, path, "redirect without a host refused");
+        }
+        if (host.equalsIgnoreCase(baseUri.getHost())) {
+            return;
+        }
+        try {
+            for (InetAddress address : InetAddress.getAllByName(host)) {
+                if (isPrivateAddress(address)) {
+                    throw failures.create(status, method, path,
+                            "redirect to non-public address refused: " + host);
+                }
+            }
+        } catch (UnknownHostException e) {
+            throw new UncheckedIOException(apiName + " " + method + " " + path
+                    + " redirect target did not resolve", e);
+        }
+    }
+
+    private static boolean isPrivateAddress(InetAddress address) {
+        if (address.isLoopbackAddress() || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress() || address.isAnyLocalAddress()) {
+            return true;
+        }
+        byte[] raw = address.getAddress();
+        return raw.length == 16 && (raw[0] & 0xFE) == 0xFC; // IPv6 unique-local fc00::/7
+    }
+
+    /** Truncated response-body excerpt for error messages — no headers, so no secrets. */
+    private static String bodySnippet(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+        String cleaned = body.replaceAll("\\s+", " ").strip();
+        return cleaned.length() <= 500 ? cleaned : cleaned.substring(0, 500) + "...";
+    }
+
+    private HttpResponse<String> execute(String method, String path, URI target) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(target).timeout(TIMEOUT);
+        headers.forEach(builder::header);
+        if (sameOrigin(target)) {
+            builder.header("Authorization", authorization); // pinned to the API host only
+        }
+        builder.method(method, HttpRequest.BodyPublishers.noBody());
+        try {
+            return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw new UncheckedIOException(apiName + " " + method + " " + path + " I/O failure", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted calling " + apiName, e);
+        }
+    }
+
+    private boolean sameOrigin(URI target) {
+        return baseUri.getScheme().equalsIgnoreCase(target.getScheme())
+                && baseUri.getHost().equalsIgnoreCase(target.getHost())
+                && effectivePort(baseUri) == effectivePort(target);
+    }
+
+    /** -1 (no explicit port) normalizes to the scheme default, so ":443" still matches. */
+    private static int effectivePort(URI uri) {
+        if (uri.getPort() != -1) {
+            return uri.getPort();
+        }
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    private JsonNode parse(String body) {
+        try {
+            return mapper.readTree(body);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Unparseable " + apiName + " response", e);
+        }
+    }
+}
+```
+
+- [ ] **Step 7: Run it and confirm it passes**
+
+```bash
+./gradlew :spire-http:test
+```
+
+Expected: PASS, 9 tests.
+
+- [ ] **Step 8: Migrate `JiraClient` onto it**
+
+Add the dependency in `spire-context-jira/build.gradle.kts`, beside the existing `api` line:
+
+```kotlin
+    implementation(project(":spire-http"))
+```
+
+Replace the whole body of `JiraClient.java`. Its public API — the constructor and `getJson` — is
+unchanged, so `JiraContextProvider` and every existing test keep compiling untouched:
+
+```java
+package dev.codespire.context.jira;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.http.PinnedJsonClient;
+import dev.codespire.http.PinnedJsonConfig;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Map;
+
+/**
+ * Thin read-only HTTP layer over the Jira REST API (v2 — its {@code description} comes back as a
+ * plain string, unlike v3's Atlassian Document Format, so no ADF walker is needed and Data Center is
+ * covered by the same paths).
+ *
+ * <p>Transport, host-pinned redirects and the SSRF guard live in {@link PinnedJsonClient}, shared with
+ * every other adapter. What stays here is what is actually Jira's: the auth scheme (Cloud uses basic
+ * with the account email, self-managed a bearer PAT) and the base-URL advice in the sign-in hint.
+ */
+public class JiraClient {
+
+    private final PinnedJsonClient http;
+
+    public JiraClient(JiraConfig config, ObjectMapper mapper) {
+        this.http = new PinnedJsonClient(
+                new PinnedJsonConfig("Jira API", config.baseUrl(), authHeader(config),
+                        Map.of("Accept", "application/json"),
+                        "Check the base URL is the Jira site root and the token has REST API access."),
+                mapper, JiraApiException::new);
+    }
+
+    public JsonNode getJson(String path) {
+        return http.getJson(path);
+    }
+
+    private static String authHeader(JiraConfig config) {
+        if ("bearer".equals(config.authKind())) {
+            return "Bearer " + config.secret();
+        }
+        String raw = config.username() + ":" + config.secret();
+        return "Basic " + Base64.getEncoder().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    }
+}
+```
+
+- [ ] **Step 9: Migrate `ConfluenceClient` the same way**
+
+Add `implementation(project(":spire-http"))` to `spire-context-confluence/build.gradle.kts`, then
+replace `ConfluenceClient.java`'s body with the same shape. Read the existing file for its exact
+`authHeader` logic and reuse it verbatim; the two differences from Jira are the API name and the hint:
+
+```java
+                new PinnedJsonConfig("Confluence API", config.baseUrl(), authHeader(config),
+                        Map.of("Accept", "application/json"),
+                        "Check the base URL is the Confluence wiki root and the token has REST API access."),
+                mapper, ConfluenceApiException::new);
+```
+
+Keep its class javadoc's Confluence-specific first paragraph (the `/rest/api/content` and XHTML notes)
+and replace only the redirect/SSRF paragraph with a pointer to `PinnedJsonClient`.
+
+- [ ] **Step 10: Prove the refactor changed no behaviour**
+
+```bash
+./gradlew :spire-http:test :spire-context-jira:test :spire-context-confluence:test
+```
+
+Expected: all PASS, with **no edits to any Jira or Confluence test file**. Confirm that:
+
+```bash
+git status --short spire-context-jira/src/test spire-context-confluence/src/test
+```
+
+Expected: empty output. A modified test file here means behaviour changed — report it instead of
+committing.
+
+- [ ] **Step 11: Full build**
+
+```bash
+./gradlew build
+```
+
+Expected: BUILD SUCCESSFUL.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add settings.gradle.kts LICENSING.md spire-http spire-context-jira spire-context-confluence
+git commit -m "Give the pinned-redirect HTTP guard one home"
+```
+
+Body: the two adapters carried byte-identical copies of the transport, so a fix to the redirect or
+private-address guard had to land in each and nothing failed if it landed in all but one; behaviour is
+unchanged, proven by both existing suites passing without edits.
+
+---
+
+## Task 4: GitHub HTTP client
 
 **Files:**
 - Create: `spire-context-github/src/main/java/dev/codespire/context/github/GitHubIssueConfig.java`
@@ -909,187 +1589,62 @@ public class GitHubIssueApiException extends RuntimeException {
 
 - [ ] **Step 5: Write the client**
 
-Create `GitHubIssueClient.java`. It is `JiraClient` with GitHub's headers and bearer-only auth — the duplication is deliberate (see *File Structure*):
+Add the shared transport to `spire-context-github/build.gradle.kts`, beside the existing `api` line
+(the grammar needed no HTTP, so Task 2 did not add it):
+
+```kotlin
+    implementation(project(":spire-http"))
+```
+
+Create `GitHubIssueClient.java`. Transport, host-pinned redirects and the SSRF guard come from
+`PinnedJsonClient` (Task 3); what belongs here is only what is GitHub's — the bearer scheme, the
+`Accept` and API-version headers, and the base-URL advice in the sign-in hint:
 
 ```java
 package dev.codespire.context.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.http.PinnedJsonClient;
+import dev.codespire.http.PinnedJsonConfig;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.UnknownHostException;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.util.Map;
 
 /**
  * Thin read-only HTTP layer over the GitHub REST API.
  *
- * <p>As in the SCM adapters, redirects are followed MANUALLY with host pinning — the bot's
- * Authorization header only ever reaches the configured API host, never a cross-host redirect target
- * (SSRF guard). The credential is never logged.
+ * <p>Transport, host-pinned redirects and the private-address (SSRF) guard live in
+ * {@link PinnedJsonClient}, shared with every other adapter, so a fix to the guard lands once. What
+ * stays here is what is actually GitHub's: bearer auth, the vendor {@code Accept} type, the pinned API
+ * version, and the base-URL advice an operator needs when the token is refused.
  */
 public class GitHubIssueClient {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(10);
-    private static final int MAX_REDIRECTS = 3;
     /** Pinning the API version keeps a future default change from silently altering response shapes. */
     private static final String API_VERSION = "2022-11-28";
 
-    private final HttpClient http;
-    private final ObjectMapper mapper;
-    private final URI baseUri;
-    private final String authorization;
+    private final PinnedJsonClient http;
 
     public GitHubIssueClient(GitHubIssueConfig config, ObjectMapper mapper) {
-        this.http = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NEVER) // manual, host-pinned
-                .connectTimeout(TIMEOUT)
-                .build();
-        this.mapper = mapper;
-        this.baseUri = URI.create(config.baseUrl().replaceAll("/$", ""));
-        this.authorization = "Bearer " + config.secret();
+        this.http = new PinnedJsonClient(
+                new PinnedJsonConfig("GitHub API", config.baseUrl(), "Bearer " + config.secret(),
+                        Map.of("Accept", "application/vnd.github+json",
+                                "X-GitHub-Api-Version", API_VERSION),
+                        "Check the base URL is the API root (…/api/v3 on Enterprise Server) and the "
+                                + "token can read issues."),
+                mapper, GitHubIssueApiException::new);
     }
 
     public JsonNode getJson(String path) {
-        return parse(send("GET", path));
-    }
-
-    private String send(String method, String path) {
-        URI target = URI.create(baseUri + path);
-        for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
-            HttpResponse<String> response = execute(method, path, target);
-            int status = response.statusCode();
-            if (status / 100 == 3) {
-                String location = response.headers().firstValue("Location")
-                        .orElseThrow(() -> new GitHubIssueApiException(status, method, path));
-                target = target.resolve(location);
-                requireSafeRedirectTarget(target, status, method, path);
-                continue;
-            }
-            if (status / 100 != 2) {
-                throw new GitHubIssueApiException(status, method, path, bodySnippet(response.body()));
-            }
-            // A 2xx must be JSON. A non-JSON 2xx (an HTML sign-in page) means the request was
-            // redirected to authentication — the token was not accepted. Say so here rather than
-            // surfacing a raw parse error deep in the caller.
-            String body = response.body();
-            String contentType = response.headers().firstValue("Content-Type").orElse("");
-            if (!looksLikeJson(contentType, body)) {
-                throw new GitHubIssueApiException(status, method, path,
-                        "expected JSON but received " + describeType(contentType)
-                                + " — the request was redirected to a sign-in page, so the token was not "
-                                + "accepted. Check the base URL is the API root (…/api/v3 on Enterprise) "
-                                + "and the token can read issues.");
-            }
-            return body;
-        }
-        throw new GitHubIssueApiException(310, method, path); // too many redirects
-    }
-
-    private static boolean looksLikeJson(String contentType, String body) {
-        if (contentType != null && contentType.toLowerCase().contains("json")) {
-            return true;
-        }
-        String trimmed = body == null ? "" : body.stripLeading();
-        return trimmed.startsWith("{") || trimmed.startsWith("[");
-    }
-
-    private static String describeType(String contentType) {
-        return contentType == null || contentType.isBlank() ? "a non-JSON response" : contentType;
-    }
-
-    /**
-     * SSRF guard on redirect hops: a cross-host Location must not point into loopback/link-local/
-     * private/unique-local space. Same-host targets skip the check — the base host is operator
-     * config, not attacker data, and dev/test legitimately run against WireMock on localhost.
-     */
-    private void requireSafeRedirectTarget(URI target, int status, String method, String path) {
-        String host = target.getHost();
-        if (host == null) {
-            throw new GitHubIssueApiException(status, method, path, "redirect without a host refused");
-        }
-        if (host.equalsIgnoreCase(baseUri.getHost())) {
-            return;
-        }
-        try {
-            for (InetAddress address : InetAddress.getAllByName(host)) {
-                if (isPrivateAddress(address)) {
-                    throw new GitHubIssueApiException(status, method, path,
-                            "redirect to non-public address refused: " + host);
-                }
-            }
-        } catch (UnknownHostException e) {
-            throw new UncheckedIOException("GitHub API " + method + " " + path
-                    + " redirect target did not resolve", e);
-        }
-    }
-
-    private static boolean isPrivateAddress(InetAddress address) {
-        if (address.isLoopbackAddress() || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress() || address.isAnyLocalAddress()) {
-            return true;
-        }
-        byte[] raw = address.getAddress();
-        return raw.length == 16 && (raw[0] & 0xFE) == 0xFC; // IPv6 unique-local fc00::/7
-    }
-
-    /** Truncated response-body excerpt for error messages — no headers, so no secrets. */
-    private static String bodySnippet(String body) {
-        if (body == null || body.isBlank()) {
-            return "";
-        }
-        String cleaned = body.replaceAll("\\s+", " ").strip();
-        return cleaned.length() <= 500 ? cleaned : cleaned.substring(0, 500) + "...";
-    }
-
-    private HttpResponse<String> execute(String method, String path, URI target) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(target)
-                .timeout(TIMEOUT)
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", API_VERSION);
-        if (sameOrigin(target)) {
-            builder.header("Authorization", authorization); // pinned to the API host only
-        }
-        builder.method(method, HttpRequest.BodyPublishers.noBody());
-        try {
-            return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            throw new UncheckedIOException("GitHub API " + method + " " + path + " I/O failure", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted calling GitHub API", e);
-        }
-    }
-
-    private boolean sameOrigin(URI target) {
-        return baseUri.getScheme().equalsIgnoreCase(target.getScheme())
-                && baseUri.getHost().equalsIgnoreCase(target.getHost())
-                && effectivePort(baseUri) == effectivePort(target);
-    }
-
-    /** -1 (no explicit port) normalizes to the scheme default, so ":443" still matches. */
-    private static int effectivePort(URI uri) {
-        if (uri.getPort() != -1) {
-            return uri.getPort();
-        }
-        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
-    }
-
-    private JsonNode parse(String body) {
-        try {
-            return mapper.readTree(body);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Unparseable GitHub API response", e);
-        }
+        return http.getJson(path);
     }
 }
 ```
+
+Two tests in Step 1 — the private-address redirect refusal and the non-JSON-2xx report — now duplicate
+what `spire-http` tests directly. **Keep them anyway.** They are wiring checks: the guard is only
+present if this adapter actually routes through `PinnedJsonClient`, and a client constructed wrongly
+would lose it silently with every other test still green.
 
 - [ ] **Step 6: Run it and confirm it passes**
 
@@ -1108,7 +1663,7 @@ git commit -m "Add the GitHub issue API client"
 
 ---
 
-## Task 4: GitHub issue context provider
+## Task 5: GitHub issue context provider
 
 The task that makes the guard real. Its cross-wire test is the regression test for the whole design.
 
@@ -1118,7 +1673,7 @@ The task that makes the guard real. Its cross-wire test is the regression test f
 - Test: `spire-context-github/src/test/java/dev/codespire/context/github/GitHubIssueContextProviderTest.java`
 
 **Interfaces:**
-- Consumes: `GitHubIssueRefs` (Task 2), `GitHubIssueClient`/`GitHubIssueConfig` (Task 3), `ContextRequest.scmType()` (Task 1).
+- Consumes: `GitHubIssueRefs` (Task 2), `GitHubIssueClient`/`GitHubIssueConfig` (Task 4), `ContextRequest.scmType()` (Task 1).
 - Produces: `GitHubIssueContextProvider.SOURCE == "GITHUB_ISSUES"`; `new GitHubIssueContextProvider(GitHubIssueConfig, ObjectMapper)`; `new GitHubIssueReferenceSource()`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1654,7 +2209,7 @@ Body: note that a bare reference is gated on the review's platform because the s
 
 ---
 
-## Task 5: GitLab reference grammar
+## Task 6: GitLab reference grammar
 
 **Files:**
 - Create: `spire-context-gitlab/build.gradle.kts` (identical to Task 2's but for GitLab — full content below)
@@ -2072,7 +2627,7 @@ git commit -m "Add the GitLab issue, merge-request and epic reference grammar"
 
 ---
 
-## Task 6: GitLab HTTP client
+## Task 7: GitLab HTTP client
 
 **Files:**
 - Create: `spire-context-gitlab/src/main/java/dev/codespire/context/gitlab/GitLabIssueConfig.java`
@@ -2302,40 +2857,66 @@ public class GitLabIssueApiException extends RuntimeException {
 
 - [ ] **Step 5: Write the client**
 
-Create `GitLabIssueClient.java`. Copy `GitHubIssueClient` from Task 3 and make exactly these changes:
+Add the shared transport to `spire-context-gitlab/build.gradle.kts`, beside the existing `api` line:
 
-1. Package `dev.codespire.context.gitlab`; class `GitLabIssueClient`; constructor takes `GitLabIssueConfig`.
-2. Every `GitHubIssueApiException` becomes `GitLabIssueApiException`; every `"GitHub API "` message prefix becomes `"GitLab API "`; `"Unparseable GitHub API response"` becomes `"Unparseable GitLab API response"`; `"Interrupted calling GitHub API"` becomes `"Interrupted calling GitLab API"`.
-3. Drop the `API_VERSION` constant and the `X-GitHub-Api-Version` header; keep `Accept: application/json`:
-
-```java
-        HttpRequest.Builder builder = HttpRequest.newBuilder(target)
-                .timeout(TIMEOUT)
-                .header("Accept", "application/json");
+```kotlin
+    implementation(project(":spire-http"))
 ```
 
-4. Change the non-JSON-2xx guidance to GitLab's shape:
+Create `GitLabIssueClient.java`. As with GitHub, transport and the guards come from `PinnedJsonClient`
+(Task 3); only GitLab's own concerns live here — plus the path encoder, because GitLab identifies a
+project by its whole nested namespace:
 
 ```java
-                throw new GitLabIssueApiException(status, method, path,
-                        "expected JSON but received " + describeType(contentType)
-                                + " — the request was redirected to a sign-in page, so the token was not "
-                                + "accepted. Check the base URL is the instance root (no /api/v4 suffix) "
-                                + "and the token has api or read_api scope.");
-```
+package dev.codespire.context.gitlab;
 
-5. Add the path encoder, since a nested namespace must reach the API as one segment:
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.http.PinnedJsonClient;
+import dev.codespire.http.PinnedJsonConfig;
 
-```java
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+
+/**
+ * Thin read-only HTTP layer over the GitLab v4 REST API.
+ *
+ * <p>Transport, host-pinned redirects and the private-address (SSRF) guard live in
+ * {@link PinnedJsonClient}, shared with every other adapter. What stays here is GitLab's: bearer auth
+ * (a personal access token works on the OAuth-compliant header), the base-URL and scope advice an
+ * operator needs when the token is refused, and the project-path encoding below.
+ */
+public class GitLabIssueClient {
+
+    private final PinnedJsonClient http;
+
+    public GitLabIssueClient(GitLabIssueConfig config, ObjectMapper mapper) {
+        this.http = new PinnedJsonClient(
+                new PinnedJsonConfig("GitLab API", config.baseUrl(), "Bearer " + config.secret(),
+                        Map.of("Accept", "application/json"),
+                        "Check the base URL is the instance root (no /api/v4 suffix) and the token has "
+                                + "api or read_api scope."),
+                mapper, GitLabIssueApiException::new);
+    }
+
+    public JsonNode getJson(String path) {
+        return http.getJson(path);
+    }
+
     /**
      * A project path as one URL path segment. GitLab identifies a project by its full namespace path,
-     * so {@code acme/tools/widgets} must arrive percent-encoded or the request resolves to a
-     * different route entirely. Same approach as {@code GitLabDiffSource} in the SCM adapter.
+     * so {@code acme/tools/widgets} must arrive percent-encoded or the request resolves to a different
+     * route entirely. Same approach as {@code GitLabDiffSource} in the SCM adapter.
      */
     public static String encodePath(String projectPath) {
-        return java.net.URLEncoder.encode(projectPath, java.nio.charset.StandardCharsets.UTF_8);
+        return URLEncoder.encode(projectPath, StandardCharsets.UTF_8);
     }
+}
 ```
+
+As in Task 4, keep Step 1's redirect-refusal and non-JSON-2xx tests: they verify this adapter actually
+routes through the shared guard, which no `spire-http` test can check.
 
 - [ ] **Step 6: Run it and confirm it passes**
 
@@ -2343,7 +2924,7 @@ Create `GitLabIssueClient.java`. Copy `GitHubIssueClient` from Task 3 and make e
 ./gradlew :spire-context-gitlab:test
 ```
 
-Expected: PASS, 17 tests (10 from Task 5 + 7 here).
+Expected: PASS, 17 tests (10 from Task 6 + 7 here).
 
 - [ ] **Step 7: Commit**
 
@@ -2354,7 +2935,7 @@ git commit -m "Add the GitLab issue API client"
 
 ---
 
-## Task 7: GitLab issue context provider
+## Task 8: GitLab issue context provider
 
 **Files:**
 - Create: `spire-context-gitlab/src/main/java/dev/codespire/context/gitlab/GitLabIssueContextProvider.java`
@@ -2362,7 +2943,7 @@ git commit -m "Add the GitLab issue API client"
 - Test: `spire-context-gitlab/src/test/java/dev/codespire/context/gitlab/GitLabIssueContextProviderTest.java`
 
 **Interfaces:**
-- Consumes: `GitLabIssueRefs` (Task 5), `GitLabIssueClient`/`GitLabIssueConfig` (Task 6), `ContextRequest.scmType()` (Task 1).
+- Consumes: `GitLabIssueRefs` (Task 6), `GitLabIssueClient`/`GitLabIssueConfig` (Task 7), `ContextRequest.scmType()` (Task 1).
 - Produces: `GitLabIssueContextProvider.SOURCE == "GITLAB_ISSUES"`; `new GitLabIssueContextProvider(GitLabIssueConfig, ObjectMapper)`; `new GitLabIssueReferenceSource()`.
 
 - [ ] **Step 1: Write the failing test**
@@ -2923,7 +3504,7 @@ git commit -m "Resolve GitLab issue, merge-request and epic references into cont
 
 ---
 
-## Task 8: Wire the providers into the worker
+## Task 9: Wire the providers into the worker
 
 **Files:**
 - Modify: `spire-review-worker/build.gradle.kts:32-33`
@@ -2932,7 +3513,7 @@ git commit -m "Resolve GitLab issue, merge-request and epic references into cont
 - Test: `spire-review-worker/src/test/java/dev/codespire/worker/adapters/WorkerContextReferencesTest.java` (create)
 
 **Interfaces:**
-- Consumes: both providers and both reference sources (Tasks 4, 7).
+- Consumes: both providers and both reference sources (Tasks 5, 8).
 - Produces: registry types `"github-issues"` and `"gitlab-issues"` recognised by the worker.
 
 - [ ] **Step 1: Write the failing test**
@@ -3068,7 +3649,7 @@ git commit -m "Register the issue context providers with the worker"
 
 ---
 
-## Task 9: Registry surface — check and preview
+## Task 10: Registry surface — check and preview
 
 **Files:**
 - Modify: `spire-orchestrator/build.gradle.kts`
@@ -3077,7 +3658,7 @@ git commit -m "Register the issue context providers with the worker"
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/context/IssueContextPreviewTest.java` (create)
 
 **Interfaces:**
-- Consumes: both providers and both `*Refs` (Tasks 2, 4, 5, 7).
+- Consumes: both providers and both `*Refs` (Tasks 2, 5, 6, 8).
 - Produces: `/api/context-providers` accepts the two new types for save, `/{id}/check` and `/{id}/preview`.
 
 - [ ] **Step 1: Write the failing test**
@@ -3275,7 +3856,7 @@ git commit -m "Add the issue providers to the context registry surface"
 
 ---
 
-## Task 10: Settings → Context UI
+## Task 11: Settings → Context UI
 
 **Files:**
 - Modify: `spire-ui/src/api.ts:584`
@@ -3283,7 +3864,7 @@ git commit -m "Add the issue providers to the context registry surface"
 - Test: `spire-ui/src/components/SettingsContextProviders.types.test.ts` (create)
 
 **Interfaces:**
-- Consumes: the registry types from Task 9.
+- Consumes: the registry types from Task 10.
 - Produces: `ContextType` union `'jira' | 'confluence' | 'github-issues' | 'gitlab-issues'`.
 
 - [ ] **Step 1: Write the failing test**
@@ -3417,14 +3998,17 @@ git commit -m "Offer the issue context providers in Settings"
 
 ---
 
-## Task 11: Documentation, tech debt, and the live verification pass
+## Task 12: Documentation and the live verification pass
 
 **Files:**
 - Modify: `docs/SMOKE-TEST.md` (new mode section at the end)
 - Modify: `docs/ROADMAP.md` (E14 → done; remove it from the What-is-left table)
 - Modify: `CLAUDE.md` (status bullet)
-- Create: `techdebt/global/4-3-duplicated-http-client-across-adapters.md`
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/review/ContextItem.java` (kind list)
+
+No techdebt entry: the duplicated HTTP client this task would once have recorded was extracted into
+`spire-http` in Task 3 instead. Mention `spire-http` in the CLAUDE.md status bullet — a fifth
+Apache-2.0 module is a structural change a future reader needs to know about.
 
 - [ ] **Step 1: Extend the ContextItem kind list**
 
@@ -3436,36 +4020,7 @@ public record ContextItem(String kind, String title, String body, String uri) {
 }
 ```
 
-- [ ] **Step 2: Record the duplicated client as tech debt**
-
-Create `techdebt/global/4-3-duplicated-http-client-across-adapters.md`:
-
-```markdown
-# Duplicated read-only HTTP client across four context adapters
-
-**Criticality:** 4 (low) — working code, no defect.
-**Complexity:** 3 — touches four Apache-2.0 modules plus their tests.
-
-`JiraClient`, `ConfluenceClient`, `GitHubIssueClient` and `GitLabIssueClient` are the same ~180
-lines: `HttpClient` with redirects NEVER, manual host-pinned redirect following, the private-address
-refusal, the same-origin auth pin, port normalization, the non-JSON-2xx sign-in-page detection, and
-the body-snippet helper. Only the auth header, the Accept headers and the message prefixes differ.
-
-**Why it was left.** Each adapter is an independent Apache-2.0 library with no cross-adapter
-dependency, which is what lets a third party copy one as a template for their own provider (ADR-021).
-The SCM adapters duplicate the same logic for the same reason. Extracting it mid-feature would have
-touched all four adapters and buried the feature's own diff.
-
-**The risk this carries.** A security fix to the redirect guard must land in four places, and nothing
-fails if it lands in three. That is the real cost, not the line count.
-
-**If it is picked up:** a `spire-http` Apache-2.0 module with a `PinnedJsonClient` taking
-(baseUrl, authorization header, extra headers, exception factory). The exception factory is the awkward
-part — each adapter throws its own type so callers can catch narrowly. A shared
-`PinnedHttpException` that each adapter wraps is probably the cleaner shape.
-```
-
-- [ ] **Step 3: Full build and UI check**
+- [ ] **Step 2: Full build and UI check**
 
 ```bash
 ./gradlew build && cd spire-ui && npm test && npx tsc --noEmit && npm audit
@@ -3481,7 +4036,7 @@ find . -name "TEST-*.xml" -newermt "-15 minutes" | wc -l
 
 Record the count and the total test number in the commit body.
 
-- [ ] **Step 4: Write the runbook mode**
+- [ ] **Step 3: Write the runbook mode**
 
 Append to `docs/SMOKE-TEST.md`:
 
@@ -3520,21 +4075,21 @@ exists to prevent — stop and report it.
 only to make this pass.
 ````
 
-- [ ] **Step 5: Update the roadmap and status**
+- [ ] **Step 4: Update the roadmap and status**
 
 In `docs/ROADMAP.md`, mark item 14 done, dated, with what shipped; delete its **E14** row from the
 *What is actually left* table. In `CLAUDE.md`, add a status bullet in the established voice covering:
 the two modules, the `ScmType` guard and why a repo-relative reference needs it, the reference forms,
 kinds `ISSUE`/`PULL_REQUEST`/`EPIC`, epics degrading on non-Premium instances, and the test total.
 
-- [ ] **Step 6: Commit the documentation**
+- [ ] **Step 5: Commit the documentation**
 
 ```bash
 git add docs CLAUDE.md techdebt spire-contract
 git commit -m "Document the issue context providers and how to verify them"
 ```
 
-- [ ] **Step 7: Run the live pass**
+- [ ] **Step 6: Run the live pass**
 
 Execute Mode H above, including the negative pass. Record the outcome per provider type. **A defect
 found here is fixed with a test before this plan is complete** — that is what the live pass is for.
@@ -3549,29 +4104,30 @@ rather than reporting a pass.
 
 | Spec requirement | Task |
 |---|---|
-| Two Apache-2.0 modules, framework-free, SSRF-guarded | 2, 3 (GitHub); 5, 6 (GitLab) |
-| `source()` `GITHUB_ISSUES` / `GITLAB_ISSUES`, types `github-issues` / `gitlab-issues` | 4, 7, 8 |
+| Two Apache-2.0 modules, framework-free, SSRF-guarded | 3 (shared client), 2, 4 (GitHub); 6, 7 (GitLab) |
+| One home for the SSRF/redirect guard | 3 (`spire-http`, Jira + Confluence migrated onto it) |
+| `source()` `GITHUB_ISSUES` / `GITLAB_ISSUES`, types `github-issues` / `gitlab-issues` | 5, 8, 9 |
 | `ScmType` on `GatherContext`/`ContextRequest`, from `ReviewProviderResolver`, failing closed | 1 |
 | No upcaster needed | 1 (verified during design; nothing to do) |
-| Owner/repo allow-list reusing `projectKeys`, no migration | 2, 5, 8 |
-| All reference forms: bare, qualified, URL, `!` MR, `&` epic | 2, 5 |
-| PR/MR resolved and labelled, not filtered | 4, 7 |
-| Cross-form duplicates handled by the existing `uri()` dedup | 4, 7 (per-provider `key()` dedup) + existing `ContextWorker` |
-| Own token; `basic` rejected on save | 3, 6 (config validation) |
-| Comments/notes, last 5, 500 chars; description clipped at 4,000 | 4, 7 |
-| `MAX_REFERENCES` = 10 | 2, 4, 5, 7 |
-| 404 skip; 401/403 ERROR; epic 403/404 skips only that reference | 4, 7 |
-| Epic group derivation, nearest ancestor then top-level | 5 (`ancestorGroups`), 7 (`fetchEpic`) |
-| Check paths `/user`, `/api/v4/user` | 9 |
-| Preview rejects a bare reference with actionable guidance | 9 |
-| UI selector with type-aware copy | 10 |
-| Grammar negatives, WireMock per adapter, cross-wire test | 2, 3, 4, 5, 6, 7 |
-| `spire-arch` green, no new allowlist entries | 1, 8, 9 |
-| Live pass across every type + negative pass | 11 |
+| Owner/repo allow-list reusing `projectKeys`, no migration | 2, 6, 9 |
+| All reference forms: bare, qualified, URL, `!` MR, `&` epic | 2, 6 |
+| PR/MR resolved and labelled, not filtered | 5, 8 |
+| Cross-form duplicates handled by the existing `uri()` dedup | 5, 8 (per-provider `key()` dedup) + existing `ContextWorker` |
+| Own token; `basic` rejected on save | 4, 7 (config validation) |
+| Comments/notes, last 5, 500 chars; description clipped at 4,000 | 5, 8 |
+| `MAX_REFERENCES` = 10 | 2, 5, 6, 8 |
+| 404 skip; 401/403 ERROR; epic 403/404 skips only that reference | 5, 8 |
+| Epic group derivation, nearest ancestor then top-level | 6 (`ancestorGroups`), 8 (`fetchEpic`) |
+| Check paths `/user`, `/api/v4/user` | 10 |
+| Preview rejects a bare reference with actionable guidance | 10 |
+| UI selector with type-aware copy | 11 |
+| Grammar negatives, WireMock per adapter, cross-wire test | 2, 3, 4, 5, 6, 7, 8 |
+| `spire-arch` green, no new allowlist entries | 1, 9, 10 |
+| Live pass across every type + negative pass | 12 |
 | No new user-visible working-name occurrences | Global Constraints |
 
 **Gap found and closed:** the spec says "a repo-relative provider's `supports()` returns false unless
-it matches its own axis", which reads as gating the whole provider. Tasks 4 and 7 gate the
+it matches its own axis", which reads as gating the whole provider. Tasks 5 and 8 gate the
 *reference*: a bare one needs the platform, a qualified one does not, because it names its own
 repository. Both provider tests assert the distinction
 (`stillResolvesAQualifiedReferenceForAReviewOnAnotherPlatform`). **The spec has been corrected** to
@@ -3579,12 +4135,19 @@ state the gate as per-reference, so the two documents agree.
 
 **Type consistency:** `GitHubIssueRefs.Ref.isRepoRelative()` vs `GitLabIssueRefs.Ref.isProjectRelative()`
 — deliberately different, matching each platform's own vocabulary (repository / project), and each is
-used only within its own module plus Task 9's preview, which references both correctly.
+used only within its own module plus Task 10's preview, which references both correctly.
 `GitHubIssueRefs.parseRepoAllowList` / `GitLabIssueRefs.parseProjectAllowList` likewise differ by
-platform vocabulary; Task 8 calls each from its own factory. `MAX_REFERENCES` (provider) and
+platform vocabulary; Task 9 calls each from its own factory. `MAX_REFERENCES` (provider) and
 `MAX_REFS` (grammar) are separate constants in separate classes, both 10, capping different stages —
 extraction and resolution.
 
 **Placeholder scan:** clean. Every code step carries the code; every command carries its expected
-outcome. Task 6 Step 5 is the one delta-described file — five enumerated, mechanical changes against
-a file written in full in Task 3, rather than 180 duplicated lines.
+outcome.
+
+**Amendment (2026-07-30, before execution):** the plan originally had each adapter carry its own copy
+of the pinned-redirect HTTP client — four near-identical copies once these two landed — and recorded
+that as tech debt. Ruled the other way: **Task 3 now extracts `spire-http` first** and migrates Jira
+and Confluence onto it, so the SSRF and redirect guard has one home and a fix to it lands once. Tasks
+4 and 7 build the two new clients on that shared base instead of copying, and the techdebt entry the
+original Task 12 would have written is no longer needed. Every task from the original 3 onward is
+renumbered one higher.
