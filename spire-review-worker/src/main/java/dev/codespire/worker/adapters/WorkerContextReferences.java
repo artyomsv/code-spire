@@ -38,6 +38,23 @@ public class WorkerContextReferences {
     }
 
     /**
+     * The {@code source()} of every registered extractor.
+     *
+     * <p>Exists so a test can assert this root's contents directly. The union of extracted references
+     * cannot do that job: no input string is produced by only one source, because GitLab's patterns are
+     * supersets of GitHub's — its qualified form takes one *or more* slashes, so it also matches
+     * {@code acme/widgets#56} — and the Confluence extractor emits every {@code https://} URL it sees.
+     * Package-private, so it adds nothing to the class's public surface.
+     */
+    Set<String> registeredSources() {
+        Set<String> sources = new LinkedHashSet<>();
+        for (ContextReferenceSource extractor : extractors) {
+            sources.add(extractor.source());
+        }
+        return sources;
+    }
+
+    /**
      * Candidates not already seen, compared in each extractor's own normalized form so a
      * differently-spelled repeat does not start another retrieval round.
      *

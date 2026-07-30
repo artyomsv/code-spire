@@ -4,17 +4,30 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * The composition root's whole job is naming every extractor. A source whose extractor is missing
- * here contributes nothing and fails silently — the pipeline would simply never produce a candidate
- * for it, with no error anywhere. So the union is asserted directly.
- */
 class WorkerContextReferencesTest {
 
     private final WorkerContextReferences references = new WorkerContextReferences();
 
+    /**
+     * Every source's extractor must be registered here, because a missing one contributes nothing and
+     * fails silently — the pipeline would simply never produce a candidate for it, with no error.
+     *
+     * <p>This asserts on the registry rather than on the union of what the extractors produce, because
+     * the union cannot discriminate between them: GitLab's patterns are supersets of GitHub's, and the
+     * Confluence extractor emits every {@code https://} URL. So no input string is produced by only one
+     * source, and a union assertion would still pass with an extractor dropped.
+     */
+    @Test
+    void registersEverySourcesExtractor() {
+        assertEquals(
+                Set.of("JIRA", "CONFLUENCE", "GITHUB_ISSUES", "GITLAB_ISSUES"),
+                references.registeredSources());
+    }
+
+    /** And the union still has to actually work across the syntaxes those extractors own. */
     @Test
     void unionsEveryRegisteredSourcesReferencesFromOneText() {
         Set<String> found = references.referencesIn(
