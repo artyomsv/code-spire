@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-07-09)
+## Current status & next-up backlog (updated 2026-07-30)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -17,8 +17,9 @@ down is the original design-time roadmap (kept for reference).
 - **Provider registry** (Settings → Providers): encrypted credentials in the DB, no `.env` tokens.
 - **ADR-015**: active-mode worker gets per-command SCM credentials brokered (encrypted) over the bus.
 - **GitHub adapter** (`spire-scm-github`): registry is type-aware end-to-end; GitHub PRs register and
-  observe live (verified against `github.com/artyomsv/spire-test`). Bitbucket API access is still
-  blocked at work, so GitHub/GitLab are being built first to prove the flow.
+  observe live (verified against `github.com/artyomsv/spire-test`). GitHub/GitLab were built out first
+  because Bitbucket API access was blocked at the time; that constraint has since lifted and all three
+  are live-verified to parity (2026-07-26).
 - **UI**: provider badge, dedicated Title/Author columns, truncate-plus-copy (`CopyableValue`),
   provider-aware "Open in …", non-overflowing metadata card.
 - **Correctness pass (C7/C8/C9, 2026-07-07)**: provider type persisted on the review row (badge is now
@@ -127,6 +128,59 @@ down is the original design-time roadmap (kept for reference).
   rename following, same-anchor merging + ghost cleanup, unified findings list in the UI, live
   dashboard updates on conversation activity. V17–V20; verified live on GitHub (`artyomsv/spire-test`
   PRs #8–#11).
+- **Operator-controlled prompts — delivered (2026-07-21..23)**: closes item 15, which this doc still
+  listed as needing a design pass. DB-backed versioned templates (V23 `prompt_template`) seeded from
+  the built-in `PromptCatalog`, with reset-to-default; `PromptTemplate`/`PromptVariable`/
+  `PromptValidation` in `spire-contract` keep the structural invariants (untrusted-data fencing,
+  sentinel neutralization, token clipping, JSON output contract) unbreakable by customization;
+  `PromptRegistry`/`PromptResource` in the orchestrator broker templates to the worker
+  (`WorkerPromptTemplates`); Settings → **Prompts** (`PromptsSettings.tsx` + `PromptDetail.tsx`) is a
+  slot-aware editor, not a raw textarea. Scope is global (per-repo deferred).
+- **GitHub finalized + PR-12 fix batch (2026-07-21..23)**: 403/GraphQL `RATE_LIMITED` classify as
+  retryable with a Retry-After-aware posting backoff; `/review` forces a re-run; draft-PR skip;
+  OLD-side/multi-line anchors; plain PR comments get conversational answers. Reviews-list rows show
+  reconciled open-finding counts and cumulative cost instead of overwritten last-run columns;
+  `STILL_OPEN` downgrades at hunk not file granularity; a transient `answering` flag (V21) drives a
+  responding indicator; distinct `pr_state` badge (V22) from the open/close webhook on all three SCMs.
+- **Reusable Select component (2026-07-23)**: all 13 native `<select>` elements across 5 files replaced
+  by a hand-rolled accessible, theme-aware `Select` that escapes modal clipping and handles long
+  `name · type · workspace` labels.
+- **Scheduled retry backoff (2026-07-23)**: the ADR-016 retry budget became an operator Settings field
+  and retries now back off via a scheduled re-drive (V25 `review_retry_at`) instead of restarting
+  immediately.
+- **Three-provider parity verified live (2026-07-25..26)**: closes item 13. S1–S11 run end to end on a
+  real GitHub PR, GitLab MR **and** Bitbucket PR — 11/11 on all three (SMOKE-TEST.md **Mode G**, now the
+  reusable regression script). 13 defects the runs exposed are fixed with tests: cross-provider
+  resolution by stored SCM type, conversation root-keying (V24), Bitbucket thread resolve, GitHub's
+  false-success `resolveThread`, re-posted-finding reconciliation, Bitbucket `@{account_id}` mentions,
+  fenced code in follow-ups, GitLab's compare diff parsing to zero files (silently disabling
+  reconciliation on GitLab alone), the silent turn cap (now an explicit `NotifyTurnCap` notice that
+  costs no LLM call and consumes no turn), over-broad follow-up replies, and four UI display bugs.
+- **Provider neutrality enforced by the build (ADR-020, 2026-07-26)**: new `spire-arch` module fails the
+  build when a core module names an SCM or context provider outside a reasoned allowlist — scanning
+  **source text**, since the leaks that caused real bugs were string literals. Three name-carrying leaks
+  fixed (one a real defect: a GitHub/GitLab 404 escaping as a 500) plus six **semantic** leaks a name
+  scan cannot see, including a live GitLab defect where thread recency compared opaque discussion ids as
+  `BigInteger`, making ADR-019 reconciliation inert on GitLab. `DiffRefs` deleted in favour of a single
+  `headCommit`; mention syntax moved into each ingress; new credential-free `ContextReferenceSource` SPI
+  so reference extraction (which runs before context credentials are brokered) needs no configured
+  provider. Allowlist: 13 entries, every one a composition root or `ScmType`.
+- **Split licensing (ADR-021, 2026-07-26)**: source-available, licensed per module — Apache-2.0 for the
+  SPI/libraries/reference adapters, FSL-1.1-ALv2 for the four deployables, each carrying its own
+  `LICENSE`; map and reasoning in `LICENSING.md`, DCO + relicensing grant in `CONTRIBUTING.md`.
+  Invariant: no Apache-2.0 module may depend on a service module. The same pass corrected the PR-Agent
+  provenance language (read as prior art, no upstream code used — `NOTICE`, and the shipped-vs-upstream
+  comparison recorded in RESEARCH.md §4).
+- **Operator attention panel (2026-07-27..30)**: a topbar bell whose rows are conditions true right now,
+  derived on demand — no usable default LLM provider, no SCM provider, unresolved bot identity, rejected
+  credential, stuck/failed reviews, pending DLQ, webhook registrations with no secret or refusing
+  deliveries. Two same-shape feeds (`AttentionView`) from the orchestrator and gateway, each **pushed
+  over its own WebSocket** and merged client-side — no new topic, no non-`reviewId` message class, since
+  most of the catalog is state rather than events. Credential health rides on work already happening
+  (V28 three-valued `last_check_ok`; `ScmApiException.isUnauthorized()` is 401-only because one provider
+  overloads 403 for rate limiting). Stuck/failed reviews are per-review, navigable and dismissable
+  (V29) — the one place where a row describes a past event no repair can clear. Verified live on a real
+  GitHub PR incl. self-clearing on the next verified delivery. Merged as PR #2.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -138,7 +192,8 @@ down is the original design-time roadmap (kept for reference).
    self-managed), MR `iid`, 3 SHAs, discussion-thread replies, nested-group project paths (slug parsers
    widened). Read+write over manual Register PR; WireMock + register tests green; live diff → LLM →
    inline + summary confirmed. Webhook ingress deliberately omitted — see item 3. See SMOKE-TEST.md Mode D.
-3. **Real webhooks (Phase D)** · M · **GitHub done (2026-07-09); GitLab + Bitbucket pending.** A single
+3. ✅ **Real webhooks (Phase D)** · M · **all three SCMs done** (GitHub 2026-07-09, GitLab + Bitbucket
+   2026-07-16). A single
    registry-backed edge `POST /webhooks/github/{key}` auto-registers PRs on open/update/reopen (and
    `closed` → cancel; `/review` issue-comments → force). Per-repository registrations live in a new
    `webhook_repo` table (Settings → **Webhooks**): an unguessable routing `key` in the URL + a
@@ -147,13 +202,17 @@ down is the original design-time roadmap (kept for reference).
    tokens. `GitHubIngress` (X-Hub-Signature-256, constant-time) translates to the same
    `PullRequestEventReceived` the manual path emits, so the whole downstream saga (incl. the decider's
    same-commit idempotency for re-deliveries) is unchanged. Live via **Tailscale Funnel** — see
-   SMOKE-TEST.md **Mode E**. Next: fold GitLab (`X-Gitlab-Token`) and Bitbucket (`X-Hub-Signature`)
-   onto the same per-repo model.
+   SMOKE-TEST.md **Mode E**. GitLab (`X-Gitlab-Token`, constant-time compare — GitLab does not sign the
+   body) and Bitbucket were folded onto the same per-repo model on 2026-07-16 behind a shared
+   `RegistryWebhookEdge`, and the legacy single-secret Bitbucket edge was removed. SMOKE-TEST.md
+   **Mode F** covers the GitLab edge.
 
 **B. Make the reviewer genuinely useful (P2 — currently diff-only)**
 4. ✅ **`/review` command** (GitHub, 2026-07-21) — a `/review` PR comment forces a re-run via
    `ReviewRerunService` (see item 13 / the finalize-GitHub thread). GitLab/Bitbucket fold on next.
-5. **Conversational replies** · M. Answer follow-ups in a thread (`AuthorReplied` received but ignored).
+5. ✅ **Conversational replies** (2026-07-16..18, hardened through 2026-07-26) · M. In-thread LLM answers
+   on all three SCMs, per-provider conversation levels, root-keyed multi-turn threads (V24), an explicit
+   turn-cap notice, and replies scoped to the question asked.
 6. ✅ **ContextProviders (Jira/Confluence)** · L. Enrich reviews with linked ticket & page context. Biggest lever.
    ✅ **Jira done (2026-07-08)** — SPI made real end-to-end (`spire-context-jira`, ticket-key extraction,
    worker-local aggregator, Postgres `BlobStore`, encrypted registry). ✅ **Confluence done (2026-07-09)** —
@@ -168,7 +227,7 @@ down is the original design-time roadmap (kept for reference).
    list; `Attempt` on the detail page is now live too.
 
 **E. SCM parity & new feature threads (added 2026-07-21)**
-13. **SCM parity live-testing for the full loop** · M · ⚑ (needs live GitLab/Bitbucket repos+tokens).
+13. ✅ **SCM parity live-testing for the full loop** — **complete on all three SCMs (2026-07-26)** · M.
     GitHub is the proven reference (webhook → review → conversation → reconciliation, PRs #8–#11).
     ✅ **GitHub half done (2026-07-21..22)** — the live-use audit's 12 findings are fixed: truthful
     403/GraphQL rate-limit detection + posting backoff, `/review` wired to a forced re-run, draft-PR
@@ -191,8 +250,13 @@ down is the original design-time roadmap (kept for reference).
     **Bitbucket thread resolve** (so "reply-only" above no longer holds), GitHub's false-success
     `resolveThread`, re-posted-finding reconciliation, Bitbucket `@{account_id}` mentions, fenced code
     in follow-ups, and four UI conversation-display bugs. See CLAUDE.md for the itemized list.
-    **Remaining = the GitLab live pass**: run Mode G on a real GitLab MR (the adapter is code-complete
-    and WireMock-tested; only the live end-to-end pass is outstanding).
+    ✅ **GitLab live pass done (2026-07-26)** — Mode G run on a real GitLab MR alongside GitHub and
+    Bitbucket, 11/11 behaviourally on all three. Every reconcile verdict except `ACKNOWLEDGED` was
+    exercised (`SUPERSEDED` correctly never fired), 14 thread resolves across three different resolve
+    mechanisms, a finding born mid-reconciliation closed two rounds later, and a 100%-similarity rename
+    that did not churn finding identity. Three defects fixed — GitLab's compare diff parsing to zero
+    files (reconciliation was inert on GitLab while *reading* correctly, so the notes looked right), the
+    silent turn cap, and over-broad follow-up replies.
 14. **Ticket-reference context providers: GitHub Issues + GitLab Issues** · M. Extend the proven
     ContextProvider SPI (Jira/Confluence precedent — zero core changes expected): resolve issue
     references from PR title/branch/description (`#123`, `GH-123`, `org/repo#123`, GitLab `#123` /
@@ -200,17 +264,22 @@ down is the original design-time roadmap (kept for reference).
     credentials where the provider type matches. Same encrypted registry + Settings → Context +
     preview/connectivity-check pattern. Rounds out "reviews understand the ticket" across all
     supported platforms.
-15. **Prompt management (operator-controlled prompts)** · L · ⚑ (needs a design pass / brainstorm
-    before implementation). As a self-hosted, source-available project, operators must be able to inspect, customize,
-    and maintain the prompts the reviewer uses (review, reconcile, follow-up) for their own needs.
-    Sketch: a **Settings → Prompts** sidebar section; DB-backed, versioned prompt templates seeded
-    from the built-in defaults with a "reset to default" path; the existing prompt builders
-    (`ReviewPromptBuilder`, `ReconcilePrompt`, `FollowUpPrompt`) become slot/template-driven so
-    custom prompts keep the structural invariants (untrusted-data fencing, sentinel neutralization,
-    token clipping, JSON output contract) that customization must NOT be able to break; possibly a
-    guided builder UI over the slots rather than a raw textarea. Open questions for the brainstorm:
-    per-repo vs global scope, template variable surface, validation/preview against a sample diff,
-    migration story when built-in defaults evolve.
+15. ✅ **Prompt management (operator-controlled prompts)** — **delivered 2026-07-21..23** · L. Settings →
+    **Prompts** over DB-backed versioned templates (V23 `prompt_template`) seeded from the built-in
+    `PromptCatalog` with reset-to-default; the prompt builders became slot/template-driven, and
+    `PromptValidation` enforces the structural invariants (untrusted-data fencing, sentinel
+    neutralization, token clipping, JSON output contract) so customization cannot break them. Editor is
+    slot-aware rather than a raw textarea. **Scope shipped global**; per-repo prompts, preview against a
+    sample diff, and a migration story for evolving built-in defaults remain open (see item 16).
+16. **Prompt management follow-ups** · M. The three questions the global-scope shipment deferred:
+    **per-repo prompt scope** (which needs a resolution order — repo overrides global — and a UI that
+    makes the effective template obvious), **preview against a sample diff** so an operator can see what
+    a template renders before it reaches a real PR, and a **migration story for evolving built-in
+    defaults** (a customized template silently misses improvements to the shipped prompt; today's only
+    answer is reset-to-default, which discards the customization wholesale).
+17. **Conversation-derived findings** · M. A discussion that surfaces a real defect doesn't register one —
+    the finding exists only as prose in a thread, so it never reaches the findings list, the reconciled
+    open count, or the next round's exclusion set. Tracked in `techdebt/global/`.
 
 **D. Infra & security hardening**
 10. **OIDC on the dashboard** · M. UI/API is unauthenticated — matters before any shared deployment.
@@ -218,16 +287,42 @@ down is the original design-time roadmap (kept for reference).
     pricing (`llm_model`); a review's real token usage is priced into `review_status.cost_millicents`
     and shown on the detail page + a Cost column in the reviews list. Model is now a dropdown from the
     catalog. See ADR-018.
-12. **MinIO / BlobStore** · M. Wire the storage port (large-diff handling, future artifacts).
+12. **MinIO / object-store BlobStore** · M. The `BlobStore` port itself is wired and in production use —
+    `PostgresBlobStore` holds encrypted assembled context (`worker.context_blob`). What remains is an
+    **object-store adapter** (MinIO/S3) plus the large-diff and future-artifact cases that outgrow a
+    Postgres column.
 
-**Suggested order for momentum:** C (7/8/9), 1 (GitHub active), and 2 (GitLab adapter) are all done and
-verified live; native Anthropic + Gemini LLM providers landed 2026-07-08. **Webhooks (3) — GitHub done
-2026-07-09** (per-repo key + dedicated webhook keyset + Tailscale Funnel runbook); GitLab + Bitbucket
-ingress fold onto the same model next. With a real webhook edge, **B4** (`/review` command) is now
-partially live (issue-comment `/command` → force review); **B5** (conversational replies) still parked.
-**B6 Jira landed 2026-07-08** and **B6 Confluence landed 2026-07-09** — the ContextProvider SPI is proven
-generic across two sources. Other levers with no infra blocker: **D10** (OIDC, before any shared deploy),
-**D12** (MinIO/BlobStore), or a third ContextProvider (repo rules / RAG). Operator decides.
+### What is actually left
+
+**Every numbered item in A, B, C and E is now closed** (1–9, 11, 13, 15). The product loop —
+webhook → diff → context → review → conversation → reconciliation — is complete and live-verified on
+GitHub, GitLab **and** Bitbucket, with operator-editable prompts and an attention panel over its health.
+
+Open, by nature of the work rather than by section:
+
+| # | Item | Effort | Why it's next / what gates it |
+|---|---|---|---|
+| **D10** | **OIDC on the dashboard** | M | The UI and every REST/WS endpoint are **unauthenticated**. This is the one hard gate before the app is reachable by anyone but its operator — including a LAN or tunnel deployment. Highest-priority open item for that reason alone. |
+| **E14** | GitHub + GitLab Issues context providers | M | Rounds out "reviews understand the ticket" for teams not on Jira. The SPI is proven generic across two sources; expect zero core changes, and `ContextReferenceSource` now exists for the extraction half. |
+| **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
+| **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
+| **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
+| **P2 rest** | Repo rules provider (`.codespire` config) | M | The last unbuilt piece of the original Phase 2; lets a repo state its own conventions instead of relying on the global prompt. |
+| **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
+| **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
+| — | Contract-compat CI gate | S | Round-trip + snapshot tests on `spire-contract`; fail a breaking change without an `eventVersion` bump + upcaster (ADR-013). Cheap, and it protects event-store replay. |
+| — | Packaging: image, Helm/ArgoCD manifests | M | Pairs with D10 — both are what "someone else can run this" requires. |
+| — | Fleet cost/abuse caps | M | Explicitly deferred from v1 and a **known operator-facing gap**: no per-repo rate limit, no daily spend cap, no hard giant-PR skip. |
+
+Also open and tracked outside this file: **9 techdebt items** in `techdebt/` — 1 high
+(`2-4-native-structured-output-response-schema`), 5 medium, 3 low — plus the still-pending P1 scope noted
+in CLAUDE.md (SmallRye Fault Tolerance call-level retry budgets; a cost table for
+`ModelUsage.costMillicents`).
+
+**Suggested order:** **D10 (OIDC)** first if this is ever to run anywhere but a single operator's machine —
+everything else is a feature on an open door. Otherwise **E14** is the cheapest real user-visible gain,
+and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs.
+Operator decides.
 
 ---
 
@@ -243,19 +338,21 @@ generic across two sources. Other levers with no infra blocker: **D10** (OIDC, b
 ## Phase 1 — Real Bitbucket review, one bot (~3–4 pw) — split into services + Redpanda
 - Split Phase-0 modules into `spire-gateway` / `spire-orchestrator` / `spire-review-worker` over
   **Redpanda** (Kafka connector); keep the in-memory connector for tests.
-- `spire-diff`: port `git_patch_processing` + `pr_processing` + token handling + YAML-repair; prompts → Qute.
+- `spire-diff`: own unified-diff parser (typed `FilePatch`/`Hunk`/`DiffLine`), dual line numbers, token
+  clipping, prompt rendering and anchor resolution. PR-Agent was **read as prior art; no upstream code
+  was used** — see `NOTICE` and RESEARCH.md §4 for the shipped-vs-upstream comparison.
 - `spire-scm-bitbucket`: `ScmIngress` (webhook + HMAC, **drop bot-authored events**), `DiffSource`,
   `CommentSink` (inline + summary + thread-reply + PR-author). Bitbucket Cloud first, then DC.
 - `spire-llm`: one `LlmProvider` via LangChain4j (config-selected, no default) + fallback saga.
 - **Idempotent posting + stale-run pre-check** (ADR-013); ingress returns 202; fully async.
 - **Exit:** open a PR in a real Bitbucket repo → the bot posts a real inline review as one account.
 
-## Phase 2 — Context providers (~2–3 pw)
-- Context-provider pipeline + aggregator (completeness/timeout policy).
-- `spire-context-jira` and `spire-context-confluence` plugins.
-- Repo rules provider (`.codespire` config).
-- Conversational follow-up loop (S8).
-- **Exit:** reviews cite the linked Jira ticket; author replies get in-thread answers.
+## Phase 2 — Context providers (~2–3 pw) — ✅ exit met; one item unbuilt
+- ✅ Context-provider pipeline + aggregator (completeness/timeout policy).
+- ✅ `spire-context-jira` and `spire-context-confluence` plugins.
+- **Repo rules provider (`.codespire` config) — still unbuilt.** The only outstanding Phase 2 item.
+- ✅ Conversational follow-up loop (S8).
+- **Exit met (2026-07-18):** reviews cite the linked Jira ticket; author replies get in-thread answers.
 
 ## Phase 3 — Whole-repo RAG (the differentiator) (~4–6 pw)
 - `RepositoryIndexDecider` + push-triggered incremental indexer.
@@ -275,22 +372,30 @@ generic across two sources. Other levers with no infra blocker: **D10** (OIDC, b
 - **Contract-compat CI gate** — round-trip + snapshot tests on `spire-contract` events; fail on a
   breaking change without an `eventVersion` bump + upcaster (ADR-013).
 - Packaging: container image, Helm chart / ArgoCD-friendly manifests, `.env.example` contract.
-- Docs site + contribution guide once the plugin SPI stabilizes.
+- Docs site — still open. ✅ Contribution guide done (`CONTRIBUTING.md`, DCO + relicensing grant, ADR-021);
+  the licence split it documents makes the grant a hard requirement, not a nicety.
 
 ## Explicitly deferred (NOT in v1)
 - **Fleet-level cost/abuse caps** — per-repo/workspace rate limit, daily LLM spend cap, giant-PR
   guard, bot-authored-PR skip. v1 has only per-review token budgeting. (Draft/WIP-PR skip
-  is no longer deferred — shipped for GitHub 2026-07-21, item 13; GitLab/Bitbucket fold on next.)
+  is **no longer deferred at all** — shipped on all three SCMs by 2026-07-23, item 13.)
   Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of. NOTE: a giant PR
   is not silently mis-reviewed — the diff is clipped to the token budget and the partial review is now
   MARKED (dashboard note + a line on the posted summary comment). A hard giant-PR skip is still future.
-- Whole-repo RAG (P3), learned memory + per-author analytics (P4), non-Bitbucket SCMs.
+- Whole-repo RAG (P3), learned memory + per-author analytics (P4).
+  (**"non-Bitbucket SCMs" is no longer deferred** — GitHub and GitLab both shipped and are live-verified
+  to full parity with Bitbucket as of 2026-07-26.)
 
-## Immediate next steps
+## Design-time decisions (historical — all long since executed)
+
+Kept for provenance. **This is not a to-do list** — for what to do next, see
+[What is actually left](#what-is-actually-left) at the top.
+
 1. SCM target: **DECIDED = Bitbucket Cloud** (`api.bitbucket.org/2.0`, App Password, signed webhooks). See CONTRACT.md §10.
+   (Since joined by GitHub and GitLab at full parity.)
 2. Event store: **DECIDED = Postgres append-only** (ADR-007).
 3. Domain formalism: **DECIDED = hand-rolled** Decider/View/Saga (ADR, minimal deps).
 4. Domain contract: **DONE** — see CONTRACT.md (`spire-contract`).
-5. Local dev: **DECIDED = docker-compose** (Redpanda + Postgres + Keycloak).
-6. **Next: scaffold Phase 0** — Gradle multi-module + `spire-contract` (events/commands/decider/ports)
-   + thin gateway→orchestrator→worker path on Redpanda + the docker-compose dev env.
+5. Local dev: **DECIDED = docker-compose** (Redpanda + Postgres; Keycloak still unused — see D10).
+6. ✅ **Phase 0 scaffolded and long superseded** — Gradle multi-module, `spire-contract`, and the
+   gateway→orchestrator→worker path on Redpanda all shipped; there are now 13 modules and 29 migrations.
