@@ -18,6 +18,7 @@ import java.util.Set;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -196,6 +197,27 @@ class GitLabIssueContextProviderTest {
 
         assertEquals(ContribStatus.OK, contribution.status());
         assertEquals(1, contribution.items().size());
+    }
+
+    /**
+     * A URL names its group exactly, so it must be used as given rather than widened. Widening would
+     * try the parent of the linked group first, and if that parent had an epic with the same iid — they
+     * are scoped per group — the wrong epic would come back as a success with no error. Asserted on the
+     * parent receiving no request at all, because a wrong-epic bug looks identical in the result.
+     */
+    @Test
+    void usesTheGroupAnEpicUrlNamesRatherThanWideningToItsParent() {
+        json("/api/v4/groups/acme%2Ftools/epics/7", """
+                {"iid":7,"title":"The linked epic","state":"opened","description":"Exact group."}
+                """);
+
+        ContextContribution contribution = provider.contribute(request(
+                        Set.of("https://gitlab.example.invalid/groups/acme/tools/-/epics/7"), ScmType.GITLAB))
+                .toCompletableFuture().join();
+
+        assertEquals(1, contribution.items().size());
+        assertTrue(contribution.items().get(0).title().contains("The linked epic"));
+        server.verify(0, getRequestedFor(urlPathEqualTo("/api/v4/groups/acme/epics/7")));
     }
 
     @Test
