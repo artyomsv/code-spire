@@ -3687,6 +3687,24 @@ class WorkerContextReferencesTest {
 
     private final WorkerContextReferences references = new WorkerContextReferences();
 
+    /**
+     * Every source's extractor must be registered here, because a missing one contributes nothing and
+     * fails silently — the pipeline would simply never produce a candidate for it, with no error.
+     *
+     * <p>This asserts on the registry rather than on the union of what the extractors produce, because
+     * the union cannot discriminate between them: GitLab's patterns are supersets of GitHub's (its
+     * qualified form takes one *or more* slashes, so it also matches {@code acme/widgets#56}), and the
+     * Confluence extractor emits every {@code https://} URL it sees. So no input string is produced by
+     * only one source, and a union assertion would still pass with an extractor dropped.
+     */
+    @Test
+    void registersEverySourcesExtractor() {
+        assertEquals(
+                Set.of("JIRA", "CONFLUENCE", "GITHUB_ISSUES", "GITLAB_ISSUES"),
+                references.registeredSources());
+    }
+
+    /** And the union still has to actually work across the syntaxes those extractors own. */
     @Test
     void unionsEveryRegisteredSourcesReferencesFromOneText() {
         Set<String> found = references.referencesIn(
@@ -3709,7 +3727,7 @@ class WorkerContextReferencesTest {
 ./gradlew :spire-review-worker:test --tests '*WorkerContextReferencesTest*'
 ```
 
-Expected: FAIL — `#34`, `!90` and `&11` are absent; no extractor claims them yet.
+Expected: FAIL — `registeredSources()` does not compile yet, and `!90`/`&11` are absent because no extractor claims them.
 
 - [ ] **Step 3: Add the module dependencies**
 
@@ -3733,6 +3751,27 @@ import dev.codespire.context.gitlab.GitLabIssueReferenceSource;
     private final List<ContextReferenceSource> extractors =
             List.of(new JiraReferenceSource(), new ConfluenceReferenceSource(),
                     new GitHubIssueReferenceSource(), new GitLabIssueReferenceSource());
+```
+
+Then add this accessor beside `referencesIn`, so the registry itself is assertable:
+
+```java
+    /**
+     * The {@code source()} of every registered extractor.
+     *
+     * <p>Exists so a test can assert this root's contents directly. The union of extracted references
+     * cannot do that job: no input string is produced by only one source, because GitLab's patterns are
+     * supersets of GitHub's — its qualified form takes one *or more* slashes, so it also matches
+     * {@code acme/widgets#56} — and the Confluence extractor emits every {@code https://} URL it sees.
+     * Package-private, so it adds nothing to the class's public surface.
+     */
+    Set<String> registeredSources() {
+        Set<String> sources = new LinkedHashSet<>();
+        for (ContextReferenceSource extractor : extractors) {
+            sources.add(extractor.source());
+        }
+        return sources;
+    }
 ```
 
 - [ ] **Step 5: Run it and confirm it passes**
