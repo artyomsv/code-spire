@@ -3934,6 +3934,54 @@ In `ContextProviderResource.java`, widen `TYPES` (line 43):
             Set.of("jira", "confluence", "github-issues", "gitlab-issues");
 ```
 
+Add the bearer-only rule beside `TYPES`. The spec requires `basic` to be **rejected on save** — the
+`*Config` constructors also reject it, but they run in the worker at review time, so without this an
+operator can save a row the worker must then refuse, and the context step fails with no UI feedback:
+
+```java
+    /**
+     * Types whose API accepts only a bearer token. GitHub's basic auth is deprecated and a GitLab
+     * personal access token works on the OAuth-compliant {@code Authorization} header, so accepting
+     * {@code basic} here would only let an operator save something the worker has to refuse later —
+     * failing the context step with nothing on screen to explain why.
+     */
+    private static final Set<String> BEARER_ONLY_TYPES = Set.of("github-issues", "gitlab-issues");
+```
+
+and enforce it in the private `validate(ContextProviderInput in, boolean creating)`, immediately after
+the existing `AUTH_KINDS` check and **before** the "basic needs a username" check, so an unsupported
+combination is not first asked for a username it cannot use:
+
+```java
+        if (BEARER_ONLY_TYPES.contains(in.type()) && !"bearer".equals(in.authKind())) {
+            throw new BadRequestException("Context provider type '" + in.type()
+                    + "' requires authKind 'bearer' (a personal access token). Basic auth is not "
+                    + "supported for this type.");
+        }
+```
+
+Cover it in `ContextProviderResourceTest`, following that suite's existing REST-level pattern (see
+`rejectsAnUnsupportedType` and `basicAuthRequiresAUsername`) rather than reaching for the private
+method:
+
+```java
+    /**
+     * The spec requires basic auth to be refused when the row is SAVED, not merely when the worker
+     * later builds a client from it. Without this the operator gets no feedback at all: the save
+     * succeeds and the failure surfaces as a broken context step during a review.
+     */
+    @Test
+    void refusesBasicAuthForTheIssueTypes() {
+        for (String type : List.of("github-issues", "gitlab-issues")) {
+            var b = body("TEST-token");
+            b.put("type", type);
+            b.put("authKind", "basic");
+            given().contentType("application/json").body(b)
+                    .when().post("/api/context-providers").then().statusCode(400);
+        }
+    }
+```
+
 Add the shared guidance constant beside it:
 
 ```java
