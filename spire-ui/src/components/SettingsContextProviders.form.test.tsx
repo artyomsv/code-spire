@@ -42,4 +42,17 @@ describe('SettingsContextProviders — add-provider form', () => {
     expect(screen.getByRole('listbox')).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /^basic/i })).not.toBeInTheDocument();
   });
+
+  it('leaves auth alone when switching between types that permit the same kinds', async () => {
+    // Jira and Confluence both allow basic and bearer, so a switch between them must not coerce.
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
+
+    expect(await screen.findByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/basic/i);
+
+    fireEvent.click(screen.getByRole('combobox', { name: /^type$/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'confluence' }));
+
+    expect(screen.getByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/basic/i);
+  });
 });

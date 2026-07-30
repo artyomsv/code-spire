@@ -183,7 +183,7 @@ export default function SettingsContextProviders() {
       <div className="card">
         <div className="head">
           <h3>Context providers</h3>
-          <span className="k">Jira &amp; Confluence · enrich reviews with linked ticket &amp; page context</span>
+          <span className="k">Enrich reviews with the tickets, issues and pages a pull request references</span>
           <Tooltip label="Add provider" className="tt-push">
             <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add provider">
               <Plus size={15} />
@@ -194,8 +194,8 @@ export default function SettingsContextProviders() {
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
-            No context providers yet — add a Jira connection to pull a referenced ticket’s summary and description,
-            or a Confluence connection to pull linked pages, into the review prompt.
+            No context providers yet — connect an issue tracker or a documentation space, and the tickets,
+            issues and pages a pull request references get pulled into the review prompt.
           </div>
         ) : (
           <table className="prov-table">
