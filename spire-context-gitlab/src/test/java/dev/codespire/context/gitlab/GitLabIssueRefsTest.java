@@ -126,4 +126,43 @@ class GitLabIssueRefsTest {
 
         assertTrue(GitLabIssueRefs.allows(GitLabIssueRefs.parseProjectAllowList(""), "anyone/anything"));
     }
+
+    /**
+     * Every candidate must be resolvable. The two methods share the same pattern set today, so this
+     * holds by construction — the test exists to catch the two drifting apart later.
+     */
+    @Test
+    void everyCandidateItEmitsCanBeParsed() {
+        Set<String> found = GitLabIssueRefs.candidates(
+                "closes #12, follows !34, part of &7, see acme/tools/widgets#56 "
+                        + "and https://gitlab.example.invalid/acme/widgets/-/issues/78");
+        assertEquals(5, found.size());
+        for (String reference : found) {
+            assertTrue(GitLabIssueRefs.parse(reference).isPresent(), reference + " did not parse");
+        }
+    }
+
+    /** A group entry must not admit a differently-named group that merely shares a prefix. */
+    @Test
+    void doesNotTreatASharedPrefixAsAGroupMatch() {
+        Set<String> byGroup = GitLabIssueRefs.parseProjectAllowList("acme");
+        assertTrue(GitLabIssueRefs.allows(byGroup, "acme/widgets"));
+        assertFalse(GitLabIssueRefs.allows(byGroup, "acmecorp/widgets"));
+    }
+
+    /**
+     * When MAX_REFS truncates, the more specific form is the one worth keeping — which is the only
+     * thing the collection order in {@code candidates} decides. The lookbehinds, not the order, are
+     * what stop a bare pattern claiming a fragment of a qualified one.
+     */
+    @Test
+    void prefersTheQualifiedFormOverBareOnesWhenTheCapTruncates() {
+        StringBuilder text = new StringBuilder("acme/tools/widgets#5");
+        for (int i = 100; i < 130; i++) {
+            text.append(" #").append(i);
+        }
+        Set<String> found = GitLabIssueRefs.candidates(text.toString());
+        assertEquals(10, found.size());
+        assertTrue(found.contains("acme/tools/widgets#5"), "the qualified form must survive the cap");
+    }
 }
