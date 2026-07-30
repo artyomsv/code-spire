@@ -9,6 +9,12 @@ import dev.codespire.contract.port.ContextProvider;
 import dev.codespire.context.confluence.ConfluenceConfig;
 import dev.codespire.context.confluence.ConfluenceContextProvider;
 import dev.codespire.context.confluence.ConfluenceLinks;
+import dev.codespire.context.github.GitHubIssueConfig;
+import dev.codespire.context.github.GitHubIssueContextProvider;
+import dev.codespire.context.github.GitHubIssueRefs;
+import dev.codespire.context.gitlab.GitLabIssueConfig;
+import dev.codespire.context.gitlab.GitLabIssueContextProvider;
+import dev.codespire.context.gitlab.GitLabIssueRefs;
 import dev.codespire.context.jira.JiraConfig;
 import dev.codespire.context.jira.JiraContextProvider;
 import dev.codespire.context.jira.JiraTicketKeys;
@@ -51,6 +57,10 @@ public class WorkerContextClients {
             switch (cred.type()) {
                 case "jira" -> providers.add(new JiraContextProvider(jiraConfig(cred), mapper));
                 case "confluence" -> providers.add(new ConfluenceContextProvider(confluenceConfig(cred), mapper));
+                case "github-issues" ->
+                        providers.add(new GitHubIssueContextProvider(gitHubIssueConfig(cred), mapper));
+                case "gitlab-issues" ->
+                        providers.add(new GitLabIssueContextProvider(gitLabIssueConfig(cred), mapper));
                 default -> throw new IllegalStateException("Unsupported context provider type: " + cred.type());
             }
         }
@@ -79,5 +89,17 @@ public class WorkerContextClients {
         // projectKeys carries the optional space-key allow-list for Confluence (same generic registry column).
         return new ConfluenceConfig(cred.baseUrl(), cred.authKind(), cred.username(), cred.secret(),
                 ConfluenceLinks.parseSpaceKeys(cred.projectKeys()));
+    }
+
+    private static GitHubIssueConfig gitHubIssueConfig(ContextCredential cred) {
+        // projectKeys carries the optional owner/repo allow-list (same generic registry column).
+        return new GitHubIssueConfig(cred.baseUrl(), cred.authKind(), cred.secret(),
+                GitHubIssueRefs.parseRepoAllowList(cred.projectKeys()));
+    }
+
+    private static GitLabIssueConfig gitLabIssueConfig(ContextCredential cred) {
+        // projectKeys carries the optional group/project allow-list (same generic registry column).
+        return new GitLabIssueConfig(cred.baseUrl(), cred.authKind(), cred.secret(),
+                GitLabIssueRefs.parseProjectAllowList(cred.projectKeys()));
     }
 }

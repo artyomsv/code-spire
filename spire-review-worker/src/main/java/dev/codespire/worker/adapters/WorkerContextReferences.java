@@ -1,6 +1,8 @@
 package dev.codespire.worker.adapters;
 
 import dev.codespire.context.confluence.ConfluenceReferenceSource;
+import dev.codespire.context.github.GitHubIssueReferenceSource;
+import dev.codespire.context.gitlab.GitLabIssueReferenceSource;
 import dev.codespire.context.jira.JiraReferenceSource;
 import dev.codespire.contract.port.ContextReferenceSource;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -23,7 +25,8 @@ import java.util.Set;
 public class WorkerContextReferences {
 
     private final List<ContextReferenceSource> extractors =
-            List.of(new JiraReferenceSource(), new ConfluenceReferenceSource());
+            List.of(new JiraReferenceSource(), new ConfluenceReferenceSource(),
+                    new GitHubIssueReferenceSource(), new GitLabIssueReferenceSource());
 
     /** Every candidate reference any context source recognises in the given texts. */
     public Set<String> referencesIn(String... texts) {

@@ -31,6 +31,8 @@ dependencies {
     implementation(project(":spire-scm-gitlab"))
     implementation(project(":spire-context-jira"))
     implementation(project(":spire-context-confluence"))
+    implementation(project(":spire-context-github"))
+    implementation(project(":spire-context-gitlab"))
     implementation(project(":spire-llm"))
 
     implementation("io.quarkus:quarkus-jackson")
