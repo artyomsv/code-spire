@@ -3897,7 +3897,6 @@ particularly easy to satisfy by accident, because so many things return 400.
 3. **A qualified reference or URL previews an item** — for each of the two types, the happy path through the new branch.
 
 Behaviours 2 and 3 need a WireMock stub per type for the save-time credential ping and for the issue fetch. **Read `ContextKeyValidator.accountFrom(...)` to learn which JSON field the ping requires** rather than guessing, and stand up `github`/`gitlab` WireMock servers alongside the existing `jira` one following that suite's existing `@BeforeAll` setup. Use `TEST-token` secrets and `example.invalid` hosts.
-```
 
 - [ ] **Step 2: Run it and confirm it fails**
 
