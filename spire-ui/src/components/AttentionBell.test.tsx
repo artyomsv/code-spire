@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AttentionBell from './AttentionBell';
 import type { AttentionItem } from '../api';
+import { notifyAttentionChanged } from '../attentionSignal';
 
 const blocking: AttentionItem = {
   code: 'LLM_DEFAULT_MISSING',
@@ -46,6 +47,61 @@ describe('AttentionBell', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  /**
+   * Does the interval actually re-read? Asked because the panel twice appeared not to update on its
+   * own. If this passes, the polling mechanism is sound and any staleness an operator sees is about
+   * WHEN it re-reads, not whether.
+   */
+  it('re-reads both feeds on its own after the poll interval', async () => {
+    stubFeeds([], []);
+    renderBell();
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    const afterFirstLoad = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
+      afterFirstLoad,
+    );
+  });
+
+  /**
+   * The reason the poll alone is not enough: the operator presses Check on another page, it
+   * succeeds, and without this the row sits there for the rest of the interval — which reads as the
+   * panel being broken rather than late.
+   */
+  it('re-reads immediately when a mutation signals a change', async () => {
+    stubFeeds([], []);
+    renderBell();
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    const before = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    notifyAttentionChanged();
+
+    await waitFor(() =>
+      expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
+        before,
+      ),
+    );
+  });
+
+  /** Background tabs have their timers throttled, so returning to one must re-read rather than
+   *  trust that the interval kept firing. */
+  it('re-reads when the window regains focus', async () => {
+    stubFeeds([], []);
+    renderBell();
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    const before = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    window.dispatchEvent(new Event('focus'));
+
+    await waitFor(() =>
+      expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
+        before,
+      ),
+    );
   });
 
   it('counts every condition from both feeds', async () => {

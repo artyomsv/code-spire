@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchAttention, fetchWebhookAttention, type AttentionItem } from '../api';
+import { onAttentionChanged } from '../attentionSignal';
 
 /**
  * Conditions are derived on the server on every request, so there is nothing to subscribe to —
@@ -72,9 +73,23 @@ export function useAttention(): { items: AttentionItem[]; refresh: () => void } 
 
     void load();
     const timer = setInterval(() => void load(), POLL_MS);
+
+    // A mutation that could clear a row — a credential Check, a dead-letter replay — re-reads at
+    // once. Without this the operator fixes the cause and the row lingers for the rest of the
+    // interval, which reads as the panel being broken rather than merely late.
+    const unsubscribe = onAttentionChanged(() => void load());
+
+    // Browsers throttle timers hard in background tabs, so a panel left in an inactive tab can be
+    // arbitrarily stale by the time it is looked at again. Re-read on return rather than trusting
+    // that the interval kept running.
+    const onFocus = () => void load();
+    window.addEventListener('focus', onFocus);
+
     return () => {
       cancelled = true;
       clearInterval(timer);
+      unsubscribe();
+      window.removeEventListener('focus', onFocus);
     };
   }, [reloadCount]);
 
