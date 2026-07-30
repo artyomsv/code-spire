@@ -935,12 +935,35 @@ class PinnedJsonClientTest {
         assertTrue(thrown.getMessage().contains("non-public address refused"));
     }
 
+    /**
+     * A malformed Location must not escape as an unchecked exception from the transport.
+     * {@code URI.resolve("http://")} throws {@code IllegalArgumentException} before any host check can
+     * run, so this covers the parse guard, not the pin.
+     */
     @Test
-    void refusesARedirectWithNoHost() {
-        server.stubFor(get(urlPathEqualTo("/nohost")).willReturn(aResponse()
+    void refusesAnUnparseableRedirectTarget() {
+        server.stubFor(get(urlPathEqualTo("/malformed")).willReturn(aResponse()
                 .withStatus(302).withHeader("Location", "http://")));
 
-        assertThrows(TestApiException.class, () -> client.getJson("/nohost"));
+        TestApiException thrown =
+                assertThrows(TestApiException.class, () -> client.getJson("/malformed"));
+
+        assertTrue(thrown.getMessage().contains("unparseable redirect target refused"));
+    }
+
+    /**
+     * An opaque scheme resolves cleanly but carries no host, so it reaches the host check rather than
+     * the parse guard — the branch that refuses a redirect the pin cannot evaluate at all.
+     */
+    @Test
+    void refusesARedirectToASchemeWithNoHost() {
+        server.stubFor(get(urlPathEqualTo("/nohost")).willReturn(aResponse()
+                .withStatus(302).withHeader("Location", "mailto:evil@example.invalid")));
+
+        TestApiException thrown =
+                assertThrows(TestApiException.class, () -> client.getJson("/nohost"));
+
+        assertTrue(thrown.getMessage().contains("redirect without a host refused"));
     }
 
     /** A redirect loop must terminate rather than spin. */
@@ -1128,7 +1151,7 @@ public class PinnedJsonClient {
             if (status / 100 == 3) {
                 String location = response.headers().firstValue("Location")
                         .orElseThrow(() -> failures.create(status, method, path, null));
-                target = target.resolve(location);
+                target = redirectTarget(target, location, status, method, path);
                 requireSafeRedirectTarget(target, status, method, path);
                 continue;
             }
@@ -1161,6 +1184,21 @@ public class PinnedJsonClient {
 
     private static String describeType(String contentType) {
         return contentType == null || contentType.isBlank() ? "a non-JSON response" : contentType;
+    }
+
+    /**
+     * Resolve a {@code Location} header against the current target.
+     *
+     * <p>A malformed value ({@code Location: http://}) makes {@link URI#resolve} throw, which would
+     * otherwise escape this transport as an unchecked exception, past callers that only expect the
+     * adapter's own type. Refusing it here keeps every redirect failure one shape.
+     */
+    private URI redirectTarget(URI current, String location, int status, String method, String path) {
+        try {
+            return current.resolve(location);
+        } catch (IllegalArgumentException e) {
+            throw failures.create(status, method, path, "unparseable redirect target refused");
+        }
     }
 
     /**
@@ -1254,7 +1292,7 @@ public class PinnedJsonClient {
 ./gradlew :spire-http:test
 ```
 
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 8: Migrate `JiraClient` onto it**
 
