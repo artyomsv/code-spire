@@ -2116,8 +2116,14 @@ public class GitHubIssueContextProvider implements ContextProvider {
 
     private record Target(String owner, String repo, int number) {
 
+        /**
+         * De-dup key. Lower-cased because GitHub owners and repositories are case-insensitive, so
+         * a bare {@code #12} resolved against the review's own repo and a qualified
+         * {@code Acme/Widgets#12} naming the same issue must collapse to one fetch and one item —
+         * the same normalization {@link GitHubIssueRefs#allows} already applies.
+         */
         String key() {
-            return owner + "/" + repo + "#" + number;
+            return (owner + "/" + repo + "#" + number).toLowerCase(java.util.Locale.ROOT);
         }
 
         String path() {
@@ -3388,8 +3394,13 @@ public class GitLabIssueContextProvider implements ContextProvider {
      */
     private record Target(GitLabIssueRefs.Kind kind, String path, int number) {
 
+        /**
+         * De-dup key. Lower-cased for the same reason as the GitHub adapter's: project paths are
+         * case-insensitive, so one object referenced two ways must collapse to one fetch. The kind
+         * is part of the key because {@code #12} and {@code !12} are different objects.
+         */
         String key() {
-            return kind + ":" + path + "#" + number;
+            return (kind + ":" + path + "#" + number).toLowerCase(java.util.Locale.ROOT);
         }
     }
 
