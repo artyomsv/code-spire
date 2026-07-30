@@ -1,5 +1,7 @@
 package dev.codespire.contract.port;
 
+import java.util.Optional;
+
 /**
  * The SCM platforms the core understands. Each value knows its
  * {@code scm_provider.type} string ({@link #providerType()}), so the wire/enum
@@ -28,15 +30,15 @@ public enum ScmType {
      * names nothing we support. Empty is deliberately not a default: a caller that cannot identify
      * the platform must decline to act rather than assume one.
      */
-    public static java.util.Optional<ScmType> fromProviderType(String providerType) {
+    public static Optional<ScmType> fromProviderType(String providerType) {
         if (providerType == null || providerType.isBlank()) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         for (ScmType type : values()) {
             if (type.providerType.equals(providerType)) {
-                return java.util.Optional.of(type);
+                return Optional.of(type);
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 }

@@ -114,7 +114,12 @@ class OrchestratorChoreographyTest {
 
         // worker results drive the next commands
         produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_A, 1, List.of("java"), 100, false, Set.of()));
-        expectCommands(2, "GatherContext");
+        List<String> afterDiffFetched = expectCommands(2, "GatherContext");
+        // Task 1: the resolved-provider branch of ResultSaga's scmType lookup, over the real
+        // registerProvider() "bitbucket-cloud" row for this review's workspace — the unresolvable
+        // (null) branch is covered in isolation by ResultSagaCredentialTest.
+        assertTrue(afterDiffFetched.get(1).contains("\"scmType\":\"BITBUCKET_CLOUD\""),
+                "GatherContext must carry the review's resolved SCM platform: " + afterDiffFetched.get(1));
 
         produce("cs.results", new IntegrationEvent.ContextAssembled(REVIEW_ID, 77, COMMIT_A, null, Set.of("RULES"), Set.of()));
         expectCommands(3, "GenerateReview");

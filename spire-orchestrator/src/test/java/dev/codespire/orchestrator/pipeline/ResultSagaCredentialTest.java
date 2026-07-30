@@ -1,10 +1,14 @@
 package dev.codespire.orchestrator.pipeline;
 
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.ReviewIds;
+import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.orchestrator.context.WorkerContextCredentials;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
@@ -17,12 +21,16 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
@@ -71,6 +79,72 @@ class ResultSagaCredentialTest {
 
         assertEquals(0, registry.calls);
         assertNull(registry.lastDetail);
+    }
+
+    /**
+     * The other consumer of {@link ReviewProviderResolver} on this saga (Task 1): {@code GatherContext}
+     * carries the review's resolved SCM platform so a context provider can tell whether a repo-relative
+     * reference belongs to its host. A review whose provider cannot be resolved must fail closed to a
+     * null {@code scmType} rather than defaulting to a guess — the resolved-provider branch (a real
+     * {@code ScmType} reaching the emitted command) is covered end-to-end over a real broker in
+     * {@code OrchestratorChoreographyTest}, where a provider is actually registered.
+     */
+    @Test
+    void unresolvableProviderLeavesTheGatherContextsScmTypeNull() {
+        List<ActionCommand> emitted = new ArrayList<>();
+        ResultSaga saga = sagaForDiffFetched(emitted, Optional.empty());
+
+        saga.on(new DiffFetched(REVIEW_ID, 1, "abc123", 1, List.of("java"), 10, false, Set.of()));
+
+        assertEquals(1, emitted.size(), "one GatherContext command emitted");
+        var gatherContext = assertInstanceOf(ActionCommand.GatherContext.class, emitted.get(0));
+        assertNull(gatherContext.scmType(),
+                "an unresolvable provider must fail closed to null, never default to a platform");
+    }
+
+    /** Minimal {@link ResultSaga} wired for the DiffFetched -> GatherContext path only. */
+    private static ResultSaga sagaForDiffFetched(List<ActionCommand> emitted, Optional<ScmProvider> resolved) {
+        ResultSaga saga = new ResultSaga();
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.lifecycle = new ReviewLifecycleService() {
+            @Override
+            public ReviewState currentState(String reviewId) {
+                return new ReviewState(reviewId, REPO, 1L, ReviewState.Status.REVIEWING,
+                        "abc123", Set.of(), null, Map.of());
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail) {
+            }
+
+            @Override
+            public void updateStage(String reviewId, int stage) {
+            }
+        };
+        saga.commands = new CommandsEmitter() {
+            @Override
+            public void emit(ActionCommand command) {
+                emitted.add(command);
+            }
+        };
+        saga.workerContextCredentials = new WorkerContextCredentials() {
+            @Override
+            public Optional<String> packAll(String workspace) {
+                return Optional.empty();
+            }
+        };
+        saga.providers = new ReviewProviderResolver() {
+            @Override
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
+                return resolved;
+            }
+        };
+        return saga;
     }
 
     /**
