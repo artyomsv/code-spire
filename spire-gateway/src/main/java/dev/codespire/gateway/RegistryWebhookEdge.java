@@ -76,6 +76,7 @@ public class RegistryWebhookEdge {
         Resolved repo = found.get();
         if (!providerType.equals(repo.providerType())) {
             LOG.warnf("Webhook key is registered for provider type %s, not %s", repo.providerType(), providerType);
+            registry.recordRejection(key, "provider_mismatch");
             return Response.status(Response.Status.NOT_FOUND).build();
         }
 
@@ -83,6 +84,7 @@ public class RegistryWebhookEdge {
         ScmIngress ingress = ingressFactory.apply(repo.secret());
         if (!ingress.verifySignature(raw)) {
             LOG.warnf("Rejected %s webhook with missing/invalid signature", providerType);
+            registry.recordRejection(key, "bad_signature");
             return Response.status(Response.Status.UNAUTHORIZED).build();
         }
 
@@ -92,10 +94,13 @@ public class RegistryWebhookEdge {
         } catch (RuntimeException e) {
             // Authenticated but malformed/invalid payload — client error, not a 500.
             LOG.warnf(e, "%s webhook payload rejected", providerType);
+            registry.recordRejection(key, "malformed_payload");
             return Response.status(Response.Status.BAD_REQUEST).build();
         }
         if (events.isEmpty()) {
-            // ping / uninteresting action — accepted, nothing to publish.
+            // ping / uninteresting action — accepted, nothing to publish. The signature verified,
+            // so the registration is demonstrably healthy: clear any standing rejection.
+            registry.clearRejections(key);
             return Response.noContent().build();
         }
 
@@ -111,11 +116,17 @@ public class RegistryWebhookEdge {
             LOG.warnf("%s webhook event '%s' (repo %s) is outside the registered %s scope '%s'",
                     providerType, event.getClass().getSimpleName(),
                     eventRepo == null ? "?" : eventRepo.full(), repo.scope(), repo.target());
+            registry.recordRejection(key, "out_of_scope");
             return Response.status(Response.Status.BAD_REQUEST).build();
         }
 
         MDC.put("reviewId", EventKeys.of(events.getFirst()));
-        return publisher.publishAllAwait(events) ? Response.accepted().build() : Response.serverError().build();
+        if (!publisher.publishAllAwait(events)) {
+            return Response.serverError().build();
+        }
+        // A verified, in-scope, published delivery proves the registration works.
+        registry.clearRejections(key);
+        return Response.accepted().build();
     }
 
     private static RawWebhook rawFrom(HttpHeaders headers, byte[] body) {

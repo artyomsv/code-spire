@@ -65,6 +65,12 @@ public class ResultSaga {
     dev.codespire.orchestrator.provider.WorkerCredentials workerCredentials;
 
     @Inject
+    dev.codespire.orchestrator.provider.ReviewProviderResolver providers;
+
+    @Inject
+    dev.codespire.orchestrator.provider.ProviderRegistry providerRegistry;
+
+    @Inject
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
 
     @Inject
@@ -294,6 +300,11 @@ public class ResultSaga {
                         java.time.Instant.now().plus(delay));
                 timeline.record("result", "retry:" + e.phase(), e.reviewId(),
                         "retryable failure — auto-retry " + next + "/" + budget + " in " + humanDelay(delay));
+                // The retry is scheduled above — this review's own lifecycle handling is done. Recording
+                // the credential fact runs last, so a persistence failure here cannot swallow the retry.
+                if (e.credentialRejected()) {
+                    markCredentialRejected(e.reviewId());
+                }
                 return;
             }
         }
@@ -310,6 +321,26 @@ public class ResultSaga {
         projection.setError(e.reviewId(), e.error());
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
+        // Recording the credential fact runs last, so a persistence failure here cannot swallow the
+        // review's own terminal handling above.
+        if (e.credentialRejected()) {
+            markCredentialRejected(e.reviewId());
+        }
+    }
+
+    /**
+     * Turn one review's 401 into a standing fact about its provider, so the operator sees a
+     * credential to rotate instead of a review that failed for no visible reason.
+     *
+     * <p>The stored detail is a fixed string, never the provider's response body: a 401 body is a
+     * plausible place for a token to be echoed back, and this text is persisted and rendered.
+     */
+    private void markCredentialRejected(String reviewId) {
+        providers.resolveForReview(reviewId).ifPresentOrElse(
+                provider -> providerRegistry.recordCheck(provider.id(), false,
+                        "Authentication rejected (HTTP 401)"),
+                () -> LOG.warnf("Credential rejected for review %s but its provider could not be "
+                        + "resolved — not recording", reviewId));
     }
 
     /** "8s" / "2m 30s" — the note is read by an operator wondering why nothing is happening yet. */

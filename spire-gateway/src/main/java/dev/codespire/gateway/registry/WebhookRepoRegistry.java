@@ -37,6 +37,10 @@ public class WebhookRepoRegistry {
     @Inject
     EncryptionService encryption; // webhook keyset only — see GatewayEncryptionProducer
 
+    /** Both of this service's conditions derive from webhook_repo, so its writes are the push points. */
+    @Inject
+    dev.codespire.gateway.attention.WebhookAttentionBroadcaster attention;
+
     /** A resolved registration carrying the DECRYPTED secret — for edge verification. */
     public record Resolved(String providerType, String scope, String target, String secret) {
     }
@@ -165,6 +169,105 @@ public class WebhookRepoRegistry {
             return ps.executeUpdate() > 0;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to delete webhook repo " + id, e);
+        }
+    }
+
+    // ---- attention panel (rejection tracking) ------------------------------
+
+    /** A registration whose deliveries are being refused, for the attention panel. */
+    /**
+     * A registration whose deliveries are being refused. Carries {@code providerType} because a
+     * repo path alone cannot identify a registration: the same workspace name can be registered on
+     * two different providers, so an operator told only {@code owner/repo} would not know which
+     * provider's webhook settings to open.
+     */
+    public record Rejection(String id, String providerType, String target, String reason, int count) {
+    }
+
+    /** An enabled registration, identified the way an operator has to act on it. */
+    public record Registration(String id, String providerType, String target) {
+    }
+
+    /**
+     * Count one refused delivery against the registration this key resolves to. An unknown key
+     * matches no row and is silently ignored — there is nothing to attach a counter to, which is
+     * why a wrong URL stays a log-only condition.
+     *
+     * @param reason one of the closed neutral set; never an exception message
+     */
+    @Transactional
+    public void recordRejection(String webhookKey, String reason) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE webhook_repo
+                        SET rejection_count = rejection_count + 1,
+                            last_rejection_reason = ?,
+                            last_rejected_at = now()
+                      WHERE webhook_key = ?
+                     """)) {
+            ps.setString(1, reason);
+            ps.setString(2, webhookKey);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record a webhook rejection", e);
+        }
+        attention.refresh();
+    }
+
+    /**
+     * A verified delivery landed, so this registration is healthy again. Guarded on a non-zero
+     * count so the hot path does no write in the normal case.
+     */
+    @Transactional
+    public void clearRejections(String webhookKey) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE webhook_repo
+                        SET rejection_count = 0, last_rejection_reason = NULL, last_rejected_at = NULL
+                      WHERE webhook_key = ? AND rejection_count > 0
+                     """)) {
+            ps.setString(1, webhookKey);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to clear webhook rejections", e);
+        }
+        attention.refresh();
+    }
+
+    /** Enabled registrations currently refusing deliveries. */
+    public List<Rejection> rejecting() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT id, provider_type, target, last_rejection_reason, rejection_count FROM webhook_repo "
+                             + "WHERE enabled = TRUE AND rejection_count > 0 ORDER BY target");
+             ResultSet rs = ps.executeQuery()) {
+            List<Rejection> out = new ArrayList<>();
+            while (rs.next()) {
+                out.add(new Rejection(rs.getObject("id", UUID.class).toString(),
+                        rs.getString("provider_type"), rs.getString("target"),
+                        rs.getString("last_rejection_reason"), rs.getInt("rejection_count")));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list rejecting webhook repos", e);
+        }
+    }
+
+    /** Enabled registrations with no shared secret — they can never verify a delivery. */
+    public List<Registration> missingSecret() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT id, provider_type, target FROM webhook_repo WHERE enabled = TRUE "
+                             + "AND (webhook_secret IS NULL OR webhook_secret = '') ORDER BY target");
+             ResultSet rs = ps.executeQuery()) {
+            List<Registration> out = new ArrayList<>();
+            while (rs.next()) {
+                out.add(new Registration(rs.getObject("id", UUID.class).toString(),
+                        rs.getString("provider_type"), rs.getString("target")));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to list webhook repos without a secret", e);
         }
     }
 

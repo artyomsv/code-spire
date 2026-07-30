@@ -10,8 +10,10 @@ import {
   type ProviderView,
 } from '../api';
 import IconButton from './IconButton';
+import LastChecked from './LastCheckedBadge';
 import Select from './Select';
 import Tooltip from './Tooltip';
+import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
 // Options for the per-provider conversation-level override ('' = inherit the global default).
 const CONVERSATION_OPTIONS = ['', 'REPORT_ONLY', 'EXPLAIN', 'INTERACTIVE'] as const;
@@ -59,6 +61,8 @@ export default function SettingsProviders() {
 
   // null = form closed; a ProviderView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | ProviderView | null>(null);
+  // An attention row names one provider; land the operator on it, not just on this page.
+  useEditDeepLink(providers, setForm);
   const [confirmDelete, setConfirmDelete] = useState<ProviderView | null>(null);
 
   async function checkOne(id: string) {
@@ -163,6 +167,7 @@ export default function SettingsProviders() {
                   </td>
                   <td>
                     <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => void checkOne(p.id)} />
+                    <LastChecked item={p} />
                   </td>
                   <td className="cell-r mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
                     {p.authors.length}

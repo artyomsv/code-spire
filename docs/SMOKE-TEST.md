@@ -577,6 +577,28 @@ found three defects, all fixed with tests: a silent turn cap, GitLab's compare d
 files (which made every `STILL_OPEN` downgrade to `UNCHANGED` on that provider alone), and follow-up
 replies surveying findings that belonged to other threads.
 
+## Mode H — attention panel
+
+Each check should make a bell row appear, and undoing it should make the row disappear with no
+dismissal.
+
+1. **No usable default LLM provider.** Settings → LLM, disable the default provider. Expect a
+   red badge with `LLM_DEFAULT_MISSING`. Re-enable it; the row goes.
+2. **Rejected credential.** Settings → Providers, edit a provider's token to a wrong value and
+   press Check. Expect `CREDENTIAL_REJECTED` naming that provider. Restore the token and press
+   Check; the row goes.
+3. **Rejected webhook deliveries.** Change a registration's secret at the provider without
+   rotating it here, then push a commit. Expect `WEBHOOK_DELIVERIES_REJECTED` naming the repo.
+   Rotate the secret, re-save it at the provider and push again; the row goes on the next
+   verified delivery.
+4. **Stuck review.** Stop the review worker and push a commit. After
+   `SPIRE_ATTENTION_STUCK_MINUTES` expect `REVIEW_STUCK`. Restart the worker and let the review
+   finish; the row goes.
+5. **Unreachable gateway.** Stop the gateway container. Expect a blocking `GATEWAY_UNREACHABLE`
+   row **and** the orchestrator's own rows still listed. Restart it; the row goes.
+6. **Clean system.** With everything configured and healthy, expect **no badge at all** — not a
+   green tick.
+
 ## Context enrichment (Jira) — add-on to any mode
 
 Any of the review modes above pulls linked-Jira context into the prompt once a context provider is

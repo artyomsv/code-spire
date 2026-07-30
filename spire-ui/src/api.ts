@@ -251,6 +251,9 @@ export interface ProviderView {
   authors: string[];
   conversationLevel: string | null; // '' / null = inherit the global default
   createdAt: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
 export interface ProviderInput {
@@ -515,6 +518,9 @@ export interface LlmProviderView {
   enabled: boolean;
   isDefault: boolean;
   createdAt: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
 export interface LlmProviderInput {
@@ -566,6 +572,13 @@ export async function deleteLlmProvider(id: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
 }
 
+// Live connectivity check: probes the stored API key against the provider.
+export async function checkLlmProvider(id: string): Promise<{ ok: boolean; detail: string | null }> {
+  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  if (!res.ok) throw new Error(`LLM provider check failed: ${res.status}`);
+  return res.json();
+}
+
 // --- context providers (Jira, Confluence) --------------------------------------
 
 export type ContextType = 'jira' | 'confluence';
@@ -583,6 +596,9 @@ export interface ContextProviderView {
   enabled: boolean;
   isDefault: boolean;
   createdAt: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
 export interface ContextProviderInput {
@@ -761,6 +777,42 @@ export async function replayDlqEntry(id: string): Promise<DlqEntry> {
 export async function discardDlqEntry(id: string): Promise<void> {
   const res = await fetch(`/api/dlq/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to discard dead-letter entry');
+}
+
+// ---- attention (operator-facing conditions needing action) ----
+
+/** One operator-facing condition that is true right now. Mirrors the backend AttentionView. */
+export interface AttentionItem {
+  code: string;
+  severity: 'BLOCKING' | 'WARNING';
+  subject: string | null;
+  message: string;
+  action: string | null;
+  /**
+   * An API path to POST to acknowledge this row, or null when it is not dismissable. Only rows
+   * describing a past event no fix can clear carry one — a condition the operator can actually
+   * repair must not be silenceable, or a broken system could be made to look healthy.
+   */
+  dismiss: string | null;
+}
+
+/** Acknowledge one row. The server decides what that means; the UI just posts where it was told. */
+export async function dismissAttention(path: string): Promise<void> {
+  const res = await fetch(path, { method: 'POST' });
+  if (!res.ok) throw new Error(`Dismiss failed: ${res.status}`);
+}
+
+export async function fetchAttention(): Promise<AttentionItem[]> {
+  const res = await fetch('/api/attention');
+  if (!res.ok) throw new Error(`Attention request failed: ${res.status}`);
+  return res.json();
+}
+
+/** The gateway's own feed. Served by a different service, so it can fail independently. */
+export async function fetchWebhookAttention(): Promise<AttentionItem[]> {
+  const res = await fetch('/api/webhook-repos/attention');
+  if (!res.ok) throw new Error(`Webhook attention request failed: ${res.status}`);
+  return res.json();
 }
 
 // ---- prompts (per-kind system/body templates, with a locked suffix + variable palette) ----

@@ -132,6 +132,16 @@ spire:
     # public address, because create/update whoami()s it server-side. Fail-closed
     # here; only %dev/%test relax it for http://localhost WireMock SCMs.
     allow-insecure-provider-urls: false
+  attention:
+    # How long a review may sit without progressing before the panel calls it stalled. A review
+    # normally finishes in seconds, so 15 minutes of silence means the delivery path or a worker is
+    # broken. There is no companion window for failed reviews: a failure is acknowledged, not aged
+    # out, because a timer would retire one nobody ever saw.
+    stuck-minutes: ${SPIRE_ATTENTION_STUCK_MINUTES:15}
+    # How often the server re-evaluates for transitions no write announces (a review crossing the
+    # stuck threshold). Server-side and shared by every connection, and a push happens only when the
+    # condition set changed -- so an idle system is silent however many dashboards are open.
+    sweep-seconds: ${SPIRE_ATTENTION_SWEEP_SECONDS:10}
 
 # Dev: docker-compose Postgres + Redpanda. Credentials come from .env (Quarkus
 # loads it from the project root) — NO defaults for credentials, fail fast.

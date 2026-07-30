@@ -14,6 +14,7 @@ import dev.codespire.orchestrator.readmodel.ReviewDetail;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewSummary;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
@@ -105,6 +106,29 @@ public class ReviewsResource {
                                      @PathParam("pr") long pr) {
         boolean started = rerunService.rerun(workspace, slug, pr);
         return Map.of("reviewId", ReviewIds.reviewId(new RepoRef(workspace, slug), pr), "started", started);
+    }
+
+    /**
+     * Acknowledge a stuck or failed review so the attention panel stops raising a row for it.
+     *
+     * <p>The panel's other rows are not dismissable, because each describes a condition an operator
+     * can fix — silencing one would let a broken system look healthy. A review that already failed
+     * is different: it stays failed, so acknowledging is the only resolution there is.
+     *
+     * <p>Scoped to the state the operator saw, not to the review forever: a later failure on the
+     * same review raises the row again.
+     */
+    @POST
+    @Path("/{workspace}/{slug}/{pr}/attention-ack")
+    @Consumes(MediaType.WILDCARD) // no request body
+    public Response acknowledgeAttention(@PathParam("workspace") String workspace,
+                                         @PathParam("slug") String slug,
+                                         @PathParam("pr") long pr) {
+        if (projection.loadDetail(workspace, slug, pr).isEmpty()) {
+            throw new NotFoundException("No review for " + workspace + "/" + slug + "#" + pr);
+        }
+        projection.acknowledgeAttention(ReviewIds.reviewId(new RepoRef(workspace, slug), pr));
+        return Response.noContent().build();
     }
 
     /** Permanently delete a review and all of its data (row, timeline, event stream). */

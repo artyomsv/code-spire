@@ -18,6 +18,8 @@ import dev.codespire.scm.github.GitHubApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -115,10 +117,21 @@ class DiffWorkerTest {
 
     @Test
     void serverErrorIsRetryable() {
-        failure = new BitbucketApiException(503, "GET", "/diff");
-        worker.fetchDiff(COMMAND);
-        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, runDiffFetchFailing(503).getFirst());
         assertTrue(failed.retryable());
+    }
+
+    /** Arranges a diff-fetch failure at the given status and returns what DiffWorker emitted. */
+    private List<IntegrationEvent> runDiffFetchFailing(int status) {
+        return runDiffFetchFailing(new BitbucketApiException(status, "GET", "/diff"));
+    }
+
+    /** Sibling of the status-shaped helper above, for failures with no HTTP status at all
+     *  (a bare I/O failure never implements ScmApiException). */
+    private List<IntegrationEvent> runDiffFetchFailing(RuntimeException failureToThrow) {
+        failure = failureToThrow;
+        worker.fetchDiff(COMMAND);
+        return emitted;
     }
 
     @Test
@@ -169,5 +182,43 @@ class DiffWorkerTest {
         ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
         assertFalse(failed.retryable());
         assertTrue(failed.error().contains("too large to review"));
+    }
+
+    /**
+     * A real review rejected with a 401 is stronger evidence than any synthetic probe: it is
+     * the credential actually failing at the work it exists to do.
+     */
+    @Test
+    void a401WhileFetchingTheDiffMarksTheCredentialAsRejected() {
+        // Arrange the same way the existing retryable test does, but with a 401 failure.
+        List<IntegrationEvent> emitted = runDiffFetchFailing(401);
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.credentialRejected());
+        assertFalse(failed.retryable(), "a rejected credential cannot be fixed by retrying");
+    }
+
+    /** Everything else must leave the credential's standing alone. */
+    @Test
+    void a500WhileFetchingTheDiffDoesNotMarkTheCredential() {
+        List<IntegrationEvent> emitted = runDiffFetchFailing(500);
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertFalse(failed.credentialRejected());
+    }
+
+    /**
+     * A bare I/O failure carries no ScmApiException at all, so it falls to the ternary's
+     * else-branch in DiffWorker.fail — this pins that branch, which no other test exercised
+     * (every other retryable assertion here goes through an HTTP status instead).
+     */
+    @Test
+    void anIoFailureWhileFetchingTheDiffIsRetryable() {
+        List<IntegrationEvent> emitted =
+                runDiffFetchFailing(new UncheckedIOException(new IOException("connection reset")));
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.retryable(), "a transient I/O failure clears on retry (ADR-016)");
+        assertFalse(failed.credentialRejected());
     }
 }

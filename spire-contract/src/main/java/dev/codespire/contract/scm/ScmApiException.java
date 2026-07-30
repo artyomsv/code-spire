@@ -20,6 +20,18 @@ public interface ScmApiException {
     }
 
     /**
+     * The provider refused our credential outright — terminal until an operator rotates it,
+     * and worth telling the operator about rather than burying in a failed review.
+     *
+     * <p>Deliberately 401-only by default. At least one provider answers 403 for rate limiting
+     * as well as for permission denial, so treating 403 as a dead credential would report a
+     * throttled repo as a broken token. An adapter that can distinguish its own 403s overrides.
+     */
+    default boolean isUnauthorized() {
+        return status() == 401;
+    }
+
+    /**
      * The provider refused to produce the diff because it is too large — terminal, since
      * retrying cannot shrink the PR.
      *

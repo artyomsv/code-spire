@@ -15,6 +15,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Set;
@@ -26,6 +27,7 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmProviderResource {
 
+    private static final Logger LOG = Logger.getLogger(LlmProviderResource.class);
     private static final Set<String> TYPES = Set.of("openai", "anthropic", "gemini");
 
     @Inject
@@ -53,7 +55,11 @@ public class LlmProviderResource {
     public Response create(LlmProviderInput in) {
         validate(in, true);
         validator.ping(in.type(), in.baseUrl(), in.apiKey());
-        return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
+        LlmProviderView created = registry.create(in);
+        // validator.ping(...) just proved the key works; an apiKey is required to create
+        // (validate() above), so this call always re-validated it.
+        registry.recordCheck(UUID.fromString(created.id()), true, null);
+        return Response.status(Response.Status.CREATED).entity(created).build();
     }
 
     @PUT
@@ -61,11 +67,20 @@ public class LlmProviderResource {
     public LlmProviderView update(@PathParam("id") String id, LlmProviderInput in) {
         validate(in, false);
         // Validate the key only when a new one is supplied (blank = keep the stored key).
-        if (in.apiKey() != null && !in.apiKey().isBlank()) {
+        boolean rotatingKey = in.apiKey() != null && !in.apiKey().isBlank();
+        if (rotatingKey) {
             validator.ping(in.type(), in.baseUrl(), in.apiKey());
         }
-        return registry.update(uuid(id), in)
+        LlmProviderView updated = registry.update(uuid(id), in)
                 .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
+        // Only record when a key was actually supplied and pinged: that's the only case that
+        // re-validated the credential. Recording success unconditionally would silently clear a
+        // real prior rejection on an update that never touched the key at all (mirrors
+        // ProviderResource.update).
+        if (rotatingKey) {
+            registry.recordCheck(uuid(id), true, null);
+        }
+        return updated;
     }
 
     @PUT
@@ -82,6 +97,38 @@ public class LlmProviderResource {
             throw new NotFoundException("No LLM provider " + id);
         }
         return Response.noContent().build();
+    }
+
+    /**
+     * Live key check against the provider's stored credential, mirroring the SCM and context
+     * providers' Check buttons. Records the outcome so the attention panel can report a key the
+     * provider has started refusing. Never returns the key; only a safe category of the failure.
+     */
+    @POST
+    @Path("/{id}/check")
+    @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
+    public CheckResult check(@PathParam("id") String id) {
+        LlmProviderConfig config = registry.resolveById(uuid(id))
+                .orElseThrow(() -> new NotFoundException("No LLM provider " + id));
+        LlmKeyValidator.CheckOutcome outcome =
+                validator.check(config.type(), config.baseUrl(), config.apiKey());
+        if (outcome.ok()) {
+            registry.recordCheck(config.id(), true, null);
+        } else if (outcome.isRejected()) {
+            // An unreachable provider (status 0) or any other non-auth failure (5xx, an unexpected
+            // status) is inconclusive, not a rejected key — leave the stored last_check_ok untouched
+            // so a transient outage cannot light up the row, and fixing the network can actually
+            // clear it.
+            registry.recordCheck(config.id(), false, outcome.detail());
+        }
+        if (!outcome.ok()) {
+            LOG.warnf("LLM provider %s (%s) key check failed: %s", id, config.type(), outcome.detail());
+        }
+        return new CheckResult(outcome.ok(), outcome.detail());
+    }
+
+    /** Result of {@link #check}: a safe {@code detail} on failure, null on success. */
+    public record CheckResult(boolean ok, String detail) {
     }
 
     private void validate(LlmProviderInput in, boolean creating) {

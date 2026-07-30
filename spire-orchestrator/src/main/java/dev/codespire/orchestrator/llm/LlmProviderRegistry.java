@@ -31,6 +31,10 @@ public class LlmProviderRegistry {
     @Inject
     EncryptionService encryption;
 
+    /** A panel row derives from last_check_ok, so recording one is exactly when to re-push. */
+    @Inject
+    dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
+
     // ---- reads (API) -------------------------------------------------------
 
     public List<LlmProviderView> list() {
@@ -141,6 +145,7 @@ public class LlmProviderRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to set default LLM provider " + id, e);
         }
+        attention.refresh();
         return get(id);
     }
 
@@ -155,6 +160,28 @@ public class LlmProviderRegistry {
         }
     }
 
+    /**
+     * Record the outcome of verifying this provider's credential. A passing check nulls the
+     * stored error, so a stale message never outlives the failure it described.
+     *
+     * @param detail a safe, non-echoing reason on failure; null on success
+     */
+    @Transactional
+    public void recordCheck(UUID id, boolean ok, String detail) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE llm_provider SET last_check_at = now(), last_check_ok = ?, "
+                             + "last_check_error = ? WHERE id = ?")) {
+            ps.setBoolean(1, ok);
+            ps.setString(2, ok ? null : detail);
+            ps.setObject(3, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record the credential check for " + id, e);
+        }
+        attention.refresh();
+    }
+
     // ---- resolution (internal — carries the decrypted key) -----------------
 
     /** The global default, enabled provider with its key decrypted; empty when none is set. */
@@ -167,6 +194,19 @@ public class LlmProviderRegistry {
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve the default LLM provider", e);
+        }
+    }
+
+    /** One provider with its key decrypted, for a re-check. Empty when unknown. */
+    public Optional<LlmProviderConfig> resolveById(UUID id) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to resolve LLM provider " + id, e);
         }
     }
 
@@ -189,7 +229,11 @@ public class LlmProviderRegistry {
                 rs.getString("model"), rs.getDouble("temperature"), intOrNull(rs, "max_tokens"),
                 key != null && !key.isBlank(),
                 rs.getBoolean("enabled"), rs.getBoolean("is_default"),
-                rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getTimestamp("last_check_at") == null
+                        ? null : rs.getTimestamp("last_check_at").toInstant(),
+                rs.getObject("last_check_ok", Boolean.class),
+                rs.getString("last_check_error"));
     }
 
     private void clearDefault(Connection c) throws SQLException {

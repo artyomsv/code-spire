@@ -1,12 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import SettingsWebhookRepos from './SettingsWebhookRepos';
+import { MemoryRouter } from 'react-router-dom';
 import * as api from '../api';
+
+/**
+ * The page reads `?edit=` to deep-link an attention row to one registration, so it needs router
+ * context — as it always has in the app, where it is rendered inside a route.
+ */
+const renderPage = () => render(<MemoryRouter><SettingsWebhookRepos /></MemoryRouter>);
 
 const provider = (over: Partial<api.ProviderView>): api.ProviderView => ({
   id: 'p1', name: 'Acme Bot', type: 'github', baseUrl: 'https://api.github.com', workspace: 'acme',
   authKind: 'bearer', authUsername: null, hasSecret: true, botAccountId: 'b1', enabled: true,
-  authors: [], conversationLevel: null, createdAt: '2026-07-23T00:00:00Z', ...over,
+  authors: [], conversationLevel: null, createdAt: '2026-07-23T00:00:00Z',
+  lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...over,
 });
 
 describe('WebhookRepoFormModal — provider picker', () => {
@@ -19,7 +27,7 @@ describe('WebhookRepoFormModal — provider picker', () => {
   });
 
   it('lists registered providers and fixes the owner for repo scope', async () => {
-    render(<SettingsWebhookRepos />);
+    renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
     // open the provider dropdown, then assert both are offered
     fireEvent.click(await screen.findByRole('combobox', { name: /provider/i }));
@@ -30,14 +38,14 @@ describe('WebhookRepoFormModal — provider picker', () => {
 
   it('shows an empty state when no providers are registered', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
-    render(<SettingsWebhookRepos />);
+    renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
     await waitFor(() => expect(screen.getByText(/register a provider first/i)).toBeInTheDocument());
   });
 
   it('verifies the repository via the selected provider', async () => {
     const spy = vi.spyOn(api, 'verifyRepo').mockResolvedValue({ ok: true, detail: null });
-    render(<SettingsWebhookRepos />);
+    renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
     await screen.findByText('acme/');
     fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets' } });
@@ -51,7 +59,7 @@ describe('WebhookRepoFormModal — provider picker', () => {
       ok: false,
       detail: 'Repository not found, or the token cannot see it (HTTP 404).',
     });
-    render(<SettingsWebhookRepos />);
+    renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
     await screen.findByText('acme/');
     fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets' } });
@@ -67,7 +75,7 @@ describe('WebhookRepoFormModal — provider picker', () => {
       resolveVerify = resolve;
     });
     vi.spyOn(api, 'verifyRepo').mockReturnValue(pending);
-    render(<SettingsWebhookRepos />);
+    renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
     await screen.findByText('acme/');
     fireEvent.change(screen.getByPlaceholderText('repo-name'), { target: { value: 'widgets' } });

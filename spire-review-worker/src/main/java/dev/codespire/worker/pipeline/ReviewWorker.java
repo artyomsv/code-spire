@@ -173,7 +173,7 @@ public class ReviewWorker {
             }
             LOG.warnf(cause, "GenerateReview failed for %s", command.reviewId());
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "generate",
-                    cause.getMessage(), isRetryable(cause), command.attempt()));
+                    cause.getMessage(), isRetryable(cause), command.attempt(), isCredentialRejected(cause)));
         }
     }
 
@@ -588,7 +588,7 @@ public class ReviewWorker {
             Throwable cause = unwrap(e);
             LOG.warnf(cause, "PostComments failed for %s", command.reviewId());
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
-                    cause.getMessage(), isRetryable(cause), 1));
+                    cause.getMessage(), isRetryable(cause), 1, isCredentialRejected(cause)));
         }
     }
 
@@ -843,7 +843,7 @@ public class ReviewWorker {
                     Throwable cause = unwrap(e);
                     LOG.warnf(cause, "Summary post failed for %s", command.reviewId());
                     results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
-                            cause.getMessage(), isRetryable(cause), 1));
+                            cause.getMessage(), isRetryable(cause), 1, isCredentialRejected(cause)));
                     yield null;
                 }
             }
@@ -943,6 +943,19 @@ public class ReviewWorker {
             if (t instanceof UncheckedIOException || t instanceof java.io.IOException
                     || t instanceof java.util.concurrent.TimeoutException
                     || isLangChain4jRetriable(t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The provider refused the credential. Walks the cause chain for the same reason
+     * {@link #isRetryable} does: an adapter failure can arrive wrapped by the LLM client.
+     */
+    private static boolean isCredentialRejected(Throwable cause) {
+        for (Throwable t = cause; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof ScmApiException api && api.isUnauthorized()) {
                 return true;
             }
         }

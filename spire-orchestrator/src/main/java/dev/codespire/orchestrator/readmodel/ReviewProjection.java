@@ -12,6 +12,7 @@ import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -69,6 +70,10 @@ public class ReviewProjection {
 
     @Inject
     EncryptionService encryption;
+
+    /** No cycle: the broadcaster reads conditions through its own queries, never through here. */
+    @Inject
+    AttentionBroadcaster attention;
 
     // ---- writes (called by the sagas) --------------------------------------
 
@@ -183,6 +188,21 @@ public class ReviewProjection {
             ps.setString(1, note);
             ps.setString(2, reviewId);
         });
+    }
+
+    /**
+     * The operator acknowledged this review's current stuck/failed state, so the attention panel
+     * stops raising a row for it. A later failure raises it again, because the panel compares this
+     * against {@code updated_at}.
+     *
+     * <p>Deliberately does NOT bump {@code updated_at}, unlike every other write here. The panel's
+     * predicate is {@code updated_at > attention_ack_at}; bumping both would leave them equal and
+     * make the acknowledgement a no-op — or, worse, race into re-raising the row it just dismissed.
+     */
+    public void acknowledgeAttention(String reviewId) {
+        update("UPDATE review_status SET attention_ack_at = now() WHERE review_id = ?",
+                ps -> ps.setString(1, reviewId));
+        attention.refresh();
     }
 
     /**
@@ -1078,6 +1098,12 @@ public class ReviewProjection {
     // ---- broadcast ---------------------------------------------------------
 
     private void broadcast(String reviewId) {
+        // Every review write funnels through here, so it is the one place the attention panel needs
+        // to learn that a review's status changed — a failure appearing, or a stall resolving. The
+        // broadcaster pushes only if the condition set actually differs, so this is cheap on the
+        // writes that change nothing a panel row depends on.
+        attention.refresh();
+
         ReviewSummary summary;
         try (Connection c = dataSource.getConnection()) {
             ReviewRow row = loadRow(c, reviewId);

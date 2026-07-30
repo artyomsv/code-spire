@@ -977,6 +977,16 @@
   .conn-detail { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.4; color: var(--crit);
     max-width: 260px; white-space: normal; }
 
+  /* Last credential-check standing, shown beside a provider's Check control. */
+  .last-checked {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  .last-checked.failed {
+    color: var(--crit);
+  }
+
   /* Context preview (Settings -> Context -> Test) */
   .ctx-preview { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
   .ctx-preview-meta { display: flex; align-items: center; gap: 10px; }
@@ -1052,3 +1062,162 @@
   }
   .prompt-tag.is-custom { color: var(--iris); border-color: var(--iris); background: var(--iris-soft); }
   .prompt-back { margin-bottom: 12px; }
+
+  /* Attention bell. The count badge is the only always-visible signal, so it must read at a
+     glance without relying on colour alone -- the panel repeats the severity as an icon. */
+  .attention {
+    position: relative;
+  }
+
+  .attention-count {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 15px;
+    padding: 0 3px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 15px;
+    text-align: center;
+    color: #fff;
+  }
+
+  .attention-count.blocking {
+    background: var(--crit);
+  }
+
+  .attention-count.warning {
+    background: var(--warn);
+  }
+
+  .attention-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    width: min(380px, calc(100vw - 32px));
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
+  }
+
+  .attention-empty {
+    margin: 0;
+    padding: 10px;
+    color: var(--text-2);
+    font-size: 12px;
+  }
+
+  .attention-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .attention-row {
+    display: flex;
+    gap: 8px;
+    padding: 9px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .attention-row:last-child {
+    border-bottom: none;
+  }
+
+  .attention-row.blocking .attention-icon {
+    color: var(--crit);
+  }
+
+  .attention-row.warning .attention-icon {
+    color: var(--warn);
+  }
+
+  .attention-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .attention-subject {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+
+  .attention-message {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  /* The row's one action, so it has to read as clickable at rest — the global reset strips link
+     colour and underline, which left this looking like a third line of prose that only revealed
+     itself on hover. Underlined and accented like the app's other links, plus an arrow, so the
+     affordance survives greyscale and does not depend on colour alone. */
+  .attention-action {
+    align-self: flex-start;
+    margin-top: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--iris);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .attention-action::after {
+    content: ' \2192';
+    text-decoration: none;
+  }
+
+  .attention-action:hover {
+    color: var(--iris-ink);
+  }
+
+  .attention-action:focus-visible {
+    outline: 2px solid var(--iris);
+    outline-offset: 2px;
+  }
+
+  .attention-row-actions {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-top: 3px;
+  }
+
+  .attention-row-actions .attention-action {
+    margin-top: 0;
+  }
+
+  /* Deliberately quieter than the action link: acknowledging is the fallback for a past event that
+     cannot be fixed, not the thing we want the operator reaching for first. */
+  .attention-dismiss {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 11px;
+    color: var(--text-3);
+    cursor: pointer;
+    border-radius: 3px;
+  }
+
+  .attention-dismiss:hover {
+    color: var(--text-2);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .attention-dismiss:focus-visible {
+    outline: 2px solid var(--iris);
+    outline-offset: 2px;
+  }

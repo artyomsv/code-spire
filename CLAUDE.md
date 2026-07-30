@@ -289,6 +289,28 @@ The design is fully specified in `docs/` — **treat those files as the source o
   own prompts with injection fencing upstream lacks, plus `RECONCILE`/`FOLLOWUP` kinds a single-shot
   reviewer has no counterpart for; and no architectural correspondence at all). Cite §4 rather than
   re-deriving it. Open item: the name is not trademarked, and no licence stops a fork from using it.
+- **Operator attention panel (2026-07-27):** a topbar bell in `spire-ui` whose every row is a
+  condition true *right now*, derived on demand — nothing stored, nothing to dismiss, so fixing
+  the cause removes the row. Two same-shape feeds (`AttentionView` in `spire-contract`) merged
+  client-side: `GET /api/attention` (orchestrator — no usable default LLM provider, no SCM
+  provider, unresolved bot identity, rejected credential, stuck/failed reviews, pending DLQ) and
+  `GET /api/webhook-repos/attention` (gateway — registrations with no secret or refusing
+  deliveries). **No new topic and no non-`reviewId` message class:** most of the catalog is
+  *state*, not events, so each service answers for its own schema over the HTTP surface it
+  already has. Credential health rides on work already happening, but not identically per
+  registry: the SCM and context registries record a check both on save and on their own Check
+  button, plus (SCM only) from a real review's 401 (new neutral `ScmApiException.isUnauthorized()`,
+  **401-only** because one provider overloads 403 for rate limiting; carried by
+  `ReviewFailed.credentialRejected`). `spire-llm` wraps LangChain4j's untyped runtime exceptions,
+  not `ScmApiException`, so a review's LLM 401 can never mark its provider that way, and its save
+  path validates synchronously (rejects a bad key up front) without persisting a check record —
+  the new `llm_provider` Check endpoint is the *only* path that ever records a verified LLM
+  credential. Gateway rejections are state on `webhook_repo` (V2) that a verified delivery clears,
+  so the row self-clears when the secret is rotated. V28 adds three-valued `last_check_ok` (NULL
+  never checked / TRUE passed / FALSE rejected) to all three registries. Deliberately excluded:
+  `CREDENTIAL_UNVERIFIED` as a row (wallpaper — it lives inline on the settings pages), per-review
+  facts like the turn cap, and dead-tunnel detection (absence of traffic is indistinguishable from
+  a quiet afternoon; `REVIEW_STUCK` is the honest proxy).
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.
