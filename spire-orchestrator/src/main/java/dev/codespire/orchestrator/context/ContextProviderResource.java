@@ -63,9 +63,15 @@ public class ContextProviderResource {
     /**
      * Preview resolves one reference with no pull request behind it, so a bare {@code #123} has no
      * repository to belong to. Saying which two inputs DO work turns a dead end into a next step.
+     * Per-type wording: GitHub operators think in repositories, GitLab operators in projects — using
+     * one vocabulary for both would hand a GitLab operator the wrong noun and the wrong example.
      */
-    static final String BARE_REFERENCE_GUIDANCE =
+    static final String GITHUB_BARE_REFERENCE_GUIDANCE =
             "A bare #123 needs a repository — enter the qualified form (owner/repo#123) or paste the "
+                    + "issue URL.";
+
+    static final String GITLAB_BARE_REFERENCE_GUIDANCE =
+            "A bare #123 needs a project — enter the qualified form (group/project#123) or paste the "
                     + "issue URL.";
 
     @Inject
@@ -245,7 +251,7 @@ public class ContextProviderResource {
             return new PreviewResult(List.of(), "EMPTY", List.of(),
                     references.isEmpty()
                             ? "No issue reference found in the input. Enter owner/repo#123 or paste an issue URL."
-                            : BARE_REFERENCE_GUIDANCE);
+                            : GITHUB_BARE_REFERENCE_GUIDANCE);
         }
         ContextProvider provider = new GitHubIssueContextProvider(
                 new GitHubIssueConfig(cfg.baseUrl(), cfg.authKind(), cfg.secret(),
@@ -270,7 +276,7 @@ public class ContextProviderResource {
             return new PreviewResult(List.of(), "EMPTY", List.of(),
                     references.isEmpty()
                             ? "No reference found in the input. Enter group/project#123 or paste an issue URL."
-                            : BARE_REFERENCE_GUIDANCE);
+                            : GITLAB_BARE_REFERENCE_GUIDANCE);
         }
         ContextProvider provider = new GitLabIssueContextProvider(
                 new GitLabIssueConfig(cfg.baseUrl(), cfg.authKind(), cfg.secret(),

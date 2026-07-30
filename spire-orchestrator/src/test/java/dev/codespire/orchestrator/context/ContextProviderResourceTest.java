@@ -537,7 +537,7 @@ class ContextProviderResourceTest {
                 .when().post("/api/context-providers/" + id + "/preview")
                 .then().statusCode(200)
                 .body("status", is("EMPTY"))
-                .body("detail", containsString("owner/repo#123"));
+                .body("detail", containsString("group/project#123"));
     }
 
     @Test
