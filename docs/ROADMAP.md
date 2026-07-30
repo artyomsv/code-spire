@@ -181,6 +181,15 @@ down is the original design-time roadmap (kept for reference).
   overloads 403 for rate limiting). Stuck/failed reviews are per-review, navigable and dismissable
   (V29) — the one place where a row describes a past event no repair can clear. Verified live on a real
   GitHub PR incl. self-clearing on the next verified delivery. Merged as PR #2.
+- **GitHub Issues + GitLab Issues context providers (2026-07-30)**: closes item 14, the last unbuilt
+  ticket-reference source. Two new Apache-2.0 modules (`spire-context-github`, `spire-context-gitlab`)
+  resolve issues, pull/merge requests and GitLab epics into `ContextItem`s (kinds `ISSUE`/
+  `PULL_REQUEST`/`EPIC`), gated by a new `ScmType` on `GatherContext`/`ContextRequest` so a
+  repo-relative `#123` cannot resolve against a same-named repository on the wrong platform. Ahead of
+  the two adapters, the pinned-redirect SSRF-guarded HTTP client Jira and Confluence each carried a
+  copy of moved into a new **fifth Apache-2.0 module, `spire-http`**. See CLAUDE.md for the full
+  write-up and test totals; SMOKE-TEST.md **Mode I** covers live verification across all four
+  provider types, including the cross-platform negative pass.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -257,13 +266,28 @@ down is the original design-time roadmap (kept for reference).
     that did not churn finding identity. Three defects fixed — GitLab's compare diff parsing to zero
     files (reconciliation was inert on GitLab while *reading* correctly, so the notes looked right), the
     silent turn cap, and over-broad follow-up replies.
-14. **Ticket-reference context providers: GitHub Issues + GitLab Issues** · M. Extend the proven
-    ContextProvider SPI (Jira/Confluence precedent — zero core changes expected): resolve issue
-    references from PR title/branch/description (`#123`, `GH-123`, `org/repo#123`, GitLab `#123` /
-    cross-project refs) into `ContextItem`s via the respective issue APIs, reusing the SCM registry
-    credentials where the provider type matches. Same encrypted registry + Settings → Context +
-    preview/connectivity-check pattern. Rounds out "reviews understand the ticket" across all
-    supported platforms.
+14. ✅ **Ticket-reference context providers: GitHub Issues + GitLab Issues** — **delivered
+    2026-07-30** · M. Two new Apache-2.0 modules, `spire-context-github` and `spire-context-gitlab`,
+    extend the proven ContextProvider SPI to issues, pull/merge requests and (GitLab) epics.
+    Reference extraction is per-platform grammar (`GitHubIssueRefs`/`GitLabIssueRefs`): GitHub's bare
+    `#123`, qualified `owner/repo#123`, and issue/PR URLs; GitLab's three sigils (`#123` issue, `!123`
+    merge request, `&123` epic), its multi-segment qualified `group/subgroup/project#123`, and their
+    URL forms. A bare reference is repository-relative, which only the new `ScmType` on
+    `GatherContext`/`ContextRequest` makes safe: the same `workspace/slug` routinely exists on two
+    platforms, so without knowing which platform the review actually runs on, a bare `#123` on a
+    GitLab MR could silently resolve against a same-named GitHub repo. The gate is per-*reference*,
+    not per-provider — a qualified reference or URL names its own repository and needs no platform
+    match, only a bare one does. `ContextItem` gained three neutral kinds, `ISSUE` / `PULL_REQUEST` /
+    `EPIC` (GitLab's own term "merge request" stays out of core's vocabulary). GitLab epics are a
+    Premium feature; a free-tier instance's 403/404 skips just that reference, not the whole
+    contribution. Both providers reuse the registry's generic `projectKeys` column as an owner/repo
+    (GitHub) or group/project (GitLab) allow-list — no migration. Both reject `basic` auth **on
+    save** (bearer-only, `BEARER_ONLY_TYPES`); Check hits `/user` (GitHub) and `/api/v4/user`
+    (GitLab); Preview rejects a bare reference with actionable guidance instead of a silent empty
+    result. Ahead of these two adapters, the pinned-redirect SSRF-guarded HTTP client Jira and
+    Confluence each carried a copy of was extracted into a new **fifth Apache-2.0 module,
+    `spire-http`** — one home for the guard instead of four near-identical copies, so a future fix
+    to it lands once. See CLAUDE.md for the test totals.
 15. ✅ **Prompt management (operator-controlled prompts)** — **delivered 2026-07-21..23** · L. Settings →
     **Prompts** over DB-backed versioned templates (V23 `prompt_template`) seeded from the built-in
     `PromptCatalog` with reset-to-default; the prompt builders became slot/template-driven, and
@@ -294,16 +318,16 @@ down is the original design-time roadmap (kept for reference).
 
 ### What is actually left
 
-**Every numbered item in A, B, C and E is now closed** (1–9, 11, 13, 15). The product loop —
+**Every numbered item in A, B, C and E is now closed** (1–9, 11, 13, 14, 15). The product loop —
 webhook → diff → context → review → conversation → reconciliation — is complete and live-verified on
-GitHub, GitLab **and** Bitbucket, with operator-editable prompts and an attention panel over its health.
+GitHub, GitLab **and** Bitbucket, with operator-editable prompts and an attention panel over its health,
+and reviews now understand a linked issue/PR/epic on every supported platform.
 
 Open, by nature of the work rather than by section:
 
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D10** | **OIDC on the dashboard** | M | The UI and every REST/WS endpoint are **unauthenticated**. This is the one hard gate before the app is reachable by anyone but its operator — including a LAN or tunnel deployment. Highest-priority open item for that reason alone. |
-| **E14** | GitHub + GitLab Issues context providers | M | Rounds out "reviews understand the ticket" for teams not on Jira. The SPI is proven generic across two sources; expect zero core changes, and `ContextReferenceSource` now exists for the extraction half. |
 | **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
 | **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
@@ -320,8 +344,8 @@ in CLAUDE.md (SmallRye Fault Tolerance call-level retry budgets; a cost table fo
 `ModelUsage.costMillicents`).
 
 **Suggested order:** **D10 (OIDC)** first if this is ever to run anywhere but a single operator's machine —
-everything else is a feature on an open door. Otherwise **E14** is the cheapest real user-visible gain,
-and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs.
+everything else is a feature on an open door. Otherwise **E16** is the cheapest remaining user-visible
+gain, and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs.
 Operator decides.
 
 ---

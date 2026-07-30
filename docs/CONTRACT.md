@@ -61,7 +61,7 @@ Every event (integration or domain) is wrapped:
 | `ManualCommandReceived` | `spire-gateway` | repo, prId, command(`review`/…), args, author{providerUserId,username} — parsed from a `/command` PR comment; the saga maps `review` → `RequestReview{force=true}` |
 | `PushReceived` *(P3)* | `spire-gateway` | repo, ref, commits[] |
 | `DiffFetched` | `spire-review-worker` (via `DiffSource`) | reviewId, prId, commit, changedFiles, languages[], sizeBytes, truncated — **metadata only; no diff content** (deliberate two-fetch: content is re-fetched by commit at generate time; a 404 on re-fetch means the commit was force-pushed away → treat as superseded) |
-| `ContextRequested` | `spire-context-worker` | reviewId, repo, prId, commit, hints{ticketKeys,links}, **expectedSources[]** — fan-out signal each `ContextProvider` subscribes to (§8) |
+| `ContextRequested` | `spire-context-worker` | reviewId, repo, prId, commit, **references[]**, **scmType**, **expectedSources[]** — fan-out signal each `ContextProvider` subscribes to (§8) |
 | `ContextContributed` | each `ContextProvider` | reviewId, source(`JIRA`/`CONFLUENCE`/`RULES`/`RAG`/`MEMORY`), status(`OK`/`EMPTY`/`ERROR`), items[], latencyMs |
 | `ContextAssembled` | aggregator | reviewId, prId, commit, contextRef, contributingSources[], missingSources[] |
 | `ReviewGenerated` | `spire-review-worker` (via `LlmProvider`) | reviewId, prId, commit, findings[] (inline `ReviewResult`, small), summary, model, tokensIn, tokensOut, costMillicents, verdicts[]? (reconciliation verdicts — ADR-019), reconcileUsage? (reconcile LLM call usage — ADR-019) |
@@ -94,7 +94,7 @@ Every event (integration or domain) is wrapped:
 | Command | Handler | Payload |
 |---|---|---|
 | `FetchDiff` | `spire-review-worker` | reviewId, repo, prId, commit |
-| `GatherContext` | `spire-context-worker` (fan-out) | reviewId, repo, prId, commit, hints{ticketKeys,links} |
+| `GatherContext` | `spire-context-worker` (fan-out) | reviewId, repo, prId, commit, **references** (`Set<String>`), contextCredential, **scmType** — the platform the review runs on, so a repo-relative reference (an issue number) is not resolved against the wrong host's same-named repo |
 | `GenerateReview` | `spire-review-worker` | reviewId, prId, commit, contextRef, attempt, providerOverride? (set by the fallback saga on retry; worker re-fetches the diff by commit), priorRun? (prior posted run's findings — ADR-019) |
 | `PostComments` | `spire-review-worker` | reviewId, repo, prId, commit, findings[] (inline — same `ReviewResult` as `ReviewGenerated`; findings are not stored as blobs, ADR-011), verdicts[]? (follow-up reconciliation verdicts — ADR-019), priorSummaryRef? (summary comment to update in place on follow-up review) |
 | `AnswerFollowUp` | `spire-review-worker` | reviewId, repo, prId, threadRef, question — the worker fetches the thread history from the SCM on demand (no blob; same re-fetch philosophy as diffs) |

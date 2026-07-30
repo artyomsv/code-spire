@@ -311,6 +311,45 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `CREDENTIAL_UNVERIFIED` as a row (wallpaper — it lives inline on the settings pages), per-review
   facts like the turn cap, and dead-tunnel detection (absence of traffic is indistinguishable from
   a quiet afternoon; `REVIEW_STUCK` is the honest proxy).
+- **GitHub Issues + GitLab Issues context providers (2026-07-30):** the ContextProvider SPI's
+  Jira/Confluence precedent proven a second time over — two new Apache-2.0 modules,
+  `spire-context-github` and `spire-context-gitlab`, resolve a PR/MR's referenced issues, pull/merge
+  requests and (GitLab) epics into `ContextItem`s. Closes ROADMAP item 14. Each platform gets its own
+  reference grammar (`GitHubIssueRefs`/`GitLabIssueRefs`, the counterpart to `JiraTicketKeys`): GitHub's
+  bare `#123`, qualified `owner/repo#123`, and issue/pull-request URLs; GitLab's three sigils (`#123`
+  issue, `!123` merge request, `&123` epic), its multi-segment qualified `group/subgroup/project#123`
+  (namespaces nest, unlike GitHub's flat `owner/repo`), and their URL forms including a group-scoped
+  epic URL. A bare reference is **repository-relative**, and that is only safe to resolve with a new
+  `ScmType` carried onto `GatherContext`/`ContextRequest`: the same `workspace/slug` routinely exists on
+  two platforms, so a bare `#123` on a GitLab MR must not silently resolve against a same-named GitHub
+  repository just because both are registered. The gate is per-*reference*, not per-provider — a
+  qualified reference or a URL names its own repository and needs no platform match, only a bare one
+  does (both providers' tests assert this distinction directly). `ContextItem` gained three neutral
+  kinds, `ISSUE` / `PULL_REQUEST` / `EPIC` (GitLab's own term "merge request" stays out of core's
+  vocabulary, matching the house style already set by `RULE`/`CODE_SNIPPET`). GitLab epics are a
+  Premium-tier feature; on a free-tier instance the fetch tries the nearest ancestor group outward and
+  a 403/404 skips just that one reference, not the whole contribution — an operator without epic
+  access still gets their issue and MR context. Both providers reuse the registry's generic
+  `projectKeys` column as an owner/repo or group/project allow-list (no migration), reject `basic` auth
+  **on save** (`BEARER_ONLY_TYPES` — both APIs are bearer-token-only), Check against `/user` and
+  `/api/v4/user`, and Preview rejects a bare reference with actionable guidance instead of a silent
+  empty result. Ahead of the two adapters, the pinned-redirect SSRF-guarded HTTP client that Jira and
+  Confluence each carried its own copy of was extracted into a new **fifth Apache-2.0 module,
+  `spire-http`** (`PinnedJsonClient`), so the guard has one home instead of four near-identical copies
+  once these two providers landed; Jira and Confluence were migrated onto it in the same pass, and no
+  techdebt entry was needed for the duplication it would otherwise have left. `spire-arch`'s
+  provider-neutrality allowlist needed **no new entries** — the existing composition-root exemptions
+  already covered the new types. The live-verification runbook's original plan called for opening
+  "the review's LLM call record" to confirm a context item reached the model — no such record
+  exists (`review_llm_call` stores only token counts/cost; the rendered prompt is never logged or
+  persisted anywhere). The permanent replacement is a worker-level seam test,
+  `ReviewWorkerTest.assembledContextReachesThePromptSentToTheModel`, which fakes a `BlobStore`
+  holding an `AssembledContext` and asserts the captured `Prompt` handed to the LLM client contains
+  the context item's title and body; confirmed to discriminate (fails when `contextRef` is null).
+  The gap itself is tracked as tech debt, not just worked around
+  (`techdebt/spire-review-worker/2-2-no-visibility-into-rendered-llm-prompt.md`). 948 Java tests
+  green across 114 suites; 152 `spire-ui` vitest tests across 26 files; `tsc --noEmit` silent.
+  Runbook: SMOKE-TEST.md **Mode I**.
 - **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
   in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
   (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.

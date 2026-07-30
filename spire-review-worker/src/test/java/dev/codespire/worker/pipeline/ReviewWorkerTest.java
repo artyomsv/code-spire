@@ -13,11 +13,14 @@ import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.worker.adapters.WorkerLlmProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
+import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.port.ThreadSource;
+import dev.codespire.contract.review.AssembledContext;
+import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.LineRange;
@@ -47,6 +50,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -482,6 +486,35 @@ class ReviewWorkerTest {
         assertEquals(1, llmCalls.size(), "no second paid LLM call");
         ReviewGenerated replayed = assertInstanceOf(ReviewGenerated.class, emitted.getLast());
         assertEquals(first.result(), replayed.result(), "redelivery converges on the persisted result");
+    }
+
+    /**
+     * The dashboard timeline showing {@code ContextRequested -> ContextContributed ->
+     * ContextAssembled} only proves a context blob was persisted — {@link ReviewWorker#loadContext}
+     * reads that blob and {@link dev.codespire.llm.ReviewPromptBuilder} renders it into the prompt
+     * as a SEPARATE step, so "assembled" and "reached the model" can diverge (a bug in either half
+     * leaves the other looking healthy). No screen shows the rendered prompt for a real review — the
+     * worker never logs or persists it (see the techdebt entry) — so this is the one place that
+     * proves the final hop.
+     */
+    @Test
+    void assembledContextReachesThePromptSentToTheModel() throws Exception {
+        ContextItem item = new ContextItem("ISSUE", "Ticket-shaped title #42",
+                "A distinctive body fragment that only the assembled context could have supplied.",
+                "https://example.invalid/issues/42");
+        AssembledContext assembled = new AssembledContext("ctx-1", List.of(item),
+                Set.of("GITHUB_ISSUES"), Set.of());
+        InMemoryBlobStore blobs = new InMemoryBlobStore();
+        BlobStore.BlobRef ref = blobs.put(BlobStore.Kind.CONTEXT, REVIEW_ID,
+                new ObjectMapper().writeValueAsBytes(assembled));
+        worker.blobStore = blobs;
+
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, ref.key(), 1, null, null, null));
+
+        assertEquals(1, llmCalls.size());
+        String userPrompt = llmCalls.get(0).user();
+        assertTrue(userPrompt.contains(item.title()), "context item title must reach the rendered prompt");
+        assertTrue(userPrompt.contains(item.body()), "context item body must reach the rendered prompt");
     }
 
     @Test
@@ -941,6 +974,34 @@ class ReviewWorkerTest {
         public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
             return new ThreadTranscript(thread, "src/Demo.java", 5, COMMIT,
                     List.of(new ThreadMessage("author", "please fix this", false)));
+        }
+    }
+
+    /**
+     * In-memory {@link BlobStore} for the context-blob test. No encryption here — that lives in the
+     * real adapter (Tink, AAD=reviewId) and is transparent to {@link ReviewWorker}, which only ever
+     * sees plaintext bytes in and out of the port.
+     */
+    private static final class InMemoryBlobStore implements BlobStore {
+
+        private final Map<String, byte[]> blobs = new HashMap<>();
+        private int ids = 1;
+
+        @Override
+        public BlobRef put(Kind kind, String reviewId, byte[] plaintext) {
+            String key = kind + ":" + reviewId + ":" + ids++;
+            blobs.put(key, plaintext);
+            return new BlobRef(key);
+        }
+
+        @Override
+        public byte[] get(BlobRef ref) {
+            return blobs.get(ref.key());
+        }
+
+        @Override
+        public void delete(BlobRef ref) {
+            blobs.remove(ref.key());
         }
     }
 

@@ -1,9 +1,11 @@
 # Smoke Test Runbook
 
-Six modes: **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
+**A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
 **C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
 PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via
-webhook (Tailscale Funnel). Do A first — it validates your local stack in ~2 minutes.
+webhook (Tailscale Funnel); **G** provider-parity regression script (run the same scenarios on every
+SCM); **H** the attention panel; **I** context provisioning across every provider type. Do A first —
+it validates your local stack in ~2 minutes.
 
 Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
 
@@ -599,31 +601,75 @@ dismissal.
 6. **Clean system.** With everything configured and healthy, expect **no badge at all** — not a
    green tick.
 
-## Context enrichment (Jira) — add-on to any mode
+## Mode I — context provisioning across every provider type
 
-Any of the review modes above pulls linked-Jira context into the prompt once a context provider is
-registered. It is additive: no provider registered → reviews run exactly as before (empty context).
+Any of the review modes above pulls linked context into the prompt once a context provider is
+registered — additive, so no provider registered means reviews run exactly as before (empty
+context). This mode proves that provisioning works during a real review, against a real instance,
+for all four provider types: Jira, Confluence, GitHub Issues, GitLab Issues. Code-complete plus
+WireMock is not the bar for the two newest ones — this is their first contact with a real host.
 
-1. **Register the provider:** Settings → **Context** → Add provider (or
-   `POST /api/context-providers`): `type=jira`, `baseUrl=https://<your-site>.atlassian.net`,
-   `authKind=basic`, `username=<account-email>`, `secret=<API token>`. Optionally set **project keys**
-   (`ACME`) so only that project's keys are looked up (and a bare ticket number resolves in the
-   test box). Save validates the credential against `GET /rest/api/2/myself` — a bad token is a 400 up
-   front. The row shows a live **Connection** indicator; set it as the default.
-2. **Test it (no PR needed):** Settings → Context → **Test**, enter a ticket number/key (or a PR title)
-   → the tool resolves the key with the configured pattern, fetches it live, and previews the exact
-   `ContextItem` a review would inject (`POST /api/context-providers/{id}/preview`).
-3. **Reference a ticket:** open a PR/MR whose title or source branch contains a real issue key
-   (`PROJ-123`), then Register it (Mode C/D) or let a webhook fire.
-4. **Verify:** the review timeline shows `ContextRequested → ContextContributed(JIRA) → ContextAssembled`;
-   the posted review reflects the ticket's intent. Under the hood the assembled context is stored
-   encrypted in `worker.context_blob` (keyed by `review_id`) and referenced by the `GenerateReview`
-   `contextRef`. Deleting or re-running the review clears its blob (no orphans).
+**Setup.** In Settings → **Context** register one provider per type you can reach, each with its own
+token:
+- **Jira:** `type=jira`, `baseUrl=https://<your-site>.atlassian.net`, `authKind=basic`,
+  `username=<account-email>`, `secret=<API token>` (self-managed Data Center: `authKind=bearer` with
+  a PAT instead). Optionally set **project keys** (`ACME`) so a bare ticket number resolves.
+- **Confluence:** same shape as Jira, `type=confluence`; optionally set space keys.
+- **GitHub Issues:** `type=github-issues`, `baseUrl=https://api.github.com` (or a GitHub Enterprise
+  Server `/api/v3` root), `authKind=bearer`, `secret=<PAT that can read issues>`. Optionally set an
+  owner/`owner/repo` allow-list.
+- **GitLab Issues:** `type=gitlab-issues`, `baseUrl=https://gitlab.com` (or a self-managed host),
+  `authKind=bearer`, `secret=<PAT with the read_api scope>`. Optionally set a group/`group/project`
+  allow-list.
 
-A typo'd or unreachable key is skipped (not fatal); an auth failure records an `ERROR` contribution and
-the review still runs without context. Self-managed Jira (Data Center): use `authKind=bearer` with a PAT.
+Save validates each credential up front (a bad token is a 400, not a silent save). Run each row's
+**Check** — all must show the token owner. Run each row's **Test** with a *qualified* reference
+(`owner/repo#123`, `group/project#123`, `PROJ-123`, a Confluence page URL) or a full issue/page
+URL — Test has no PR/MR behind it, so a **bare** `#123`/`!123`/`&123` has no repository to resolve
+against and only returns the actionable guidance message, not a result.
+
+**Per provider type, in a real PR/MR:**
+
+1. Open a real PR/MR whose title or description references a real issue in that system — a Jira key,
+   a Confluence page URL, a bare `#123`/`!123`/`&123` (in the review's own repository/project), or the
+   qualified `owner/repo#123` / `group/subgroup/project#123` form.
+2. On the review's detail page, confirm the timeline shows `ContextRequested`, then
+   `ContextContributed` naming the source with status `OK` and a non-zero item count, then
+   `ContextAssembled`. This establishes resolution, credentials, and assembly against a real
+   instance — everything up to the persisted blob.
+3. Separately, run that provider's **Test** (Settings → Context) against the same reference and
+   confirm it returns the real `ContextItem` (kind, title, body, uri) a review would have injected —
+   for GitLab, try an epic (`&7`) too if the instance is Premium-tier; a free-tier instance skips it
+   (403/404) rather than failing the whole contribution.
+4. **What steps 2–3 do NOT establish: whether that item's text ever reached the model.** Assembly
+   persists a blob; the prompt is built from it as a separate step
+   (`ReviewWorker.loadContext` → `ReviewPromptBuilder.build`), and no screen shows the rendered
+   prompt for a real review — it is never logged or persisted anywhere (see
+   `techdebt/spire-review-worker/2-2-no-visibility-into-rendered-llm-prompt.md`). That final hop is
+   covered instead by a permanent CI test,
+   `ReviewWorkerTest.assembledContextReachesThePromptSentToTheModel`, which captures the exact
+   `Prompt` handed to the LLM client and asserts a context item's title and body are inside it — do
+   not go looking for a "prompt" screen in the UI; there isn't one, by design (the raw request can
+   carry retrieved source text, and logging it in plaintext was rejected as a bigger exposure than
+   not having the view at all).
+5. Note whether the review's output shows awareness of the context. This is a weak signal — record
+   it as an observation, never as proof of anything steps 2–3 didn't already establish.
+
+**Negative pass — the cross-platform `ScmType` guard.** With a GitHub Issues provider enabled, run a
+review on a **GitLab or Bitbucket** PR whose description contains a bare `#123` that also exists as a
+real issue in a same-named repository on GitHub. Expect: the timeline shows no
+`ContextContributed(GITHUB_ISSUES)` row at all (or one with zero items) — the review's own `ScmType`
+(GitLab/Bitbucket) fails the bare reference's platform check before GitHub is ever queried. This is a
+**live-review-only** check: a provider's **Test** button always resolves a bare reference against its
+own configured platform (there is no review behind a Test call for it to disagree with), so Test
+cannot exercise this guard — only a real review, on a real PR/MR of the *other* platform, can. A
+resolved GitHub issue showing up here is the cross-wiring defect the `ScmType` guard exists to
+prevent — stop and report it.
+
+**Real data only.** Use real issues in real repositories/projects. Do not create issues, pages, or PRs
+whose only purpose is to make this pass.
 
 ### Cleanup
 
-Remove the provider in Settings → Context (or `DELETE /api/context-providers/{id}`). Any context blobs
-vanish with their reviews — no separate cleanup.
+Remove any provider added only for this pass in Settings → Context (or
+`DELETE /api/context-providers/{id}`). Context blobs vanish with their reviews — no separate cleanup.
