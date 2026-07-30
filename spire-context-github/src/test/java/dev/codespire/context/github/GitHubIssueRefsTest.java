@@ -30,6 +30,16 @@ class GitHubIssueRefsTest {
         assertTrue(GitHubIssueRefs.candidates("http://x/y#3").isEmpty());
     }
 
+    /**
+     * An HTML decimal character reference must not read as an issue. Unlike the accepted
+     * {@code #123456} colour noise, this one does not merely 404: {@code #39} routinely exists as a
+     * real issue, so a false hit here resolves against the wrong issue instead of failing loudly.
+     */
+    @Test
+    void ignoresAnHtmlEntityReference() {
+        assertTrue(GitHubIssueRefs.candidates("it&#39;s broken").isEmpty());
+    }
+
     /** The qualified form must win outright: it must not also yield a bare '#123'. */
     @Test
     void findsAQualifiedReferenceWithoutAlsoYieldingTheBareForm() {

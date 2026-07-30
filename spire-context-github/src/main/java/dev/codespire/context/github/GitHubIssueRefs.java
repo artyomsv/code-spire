@@ -24,19 +24,25 @@ import java.util.regex.Pattern;
 public final class GitHubIssueRefs {
 
     /**
-     * Not preceded by a word character, '/' or '-', so an anchor ({@code page#3}), a path fragment
-     * and a hyphenated token do not read as references — while {@code fixes #3} and {@code (#3)} do.
+     * Not preceded by a word character, '/', '&amp;' or '-', so an anchor ({@code page#3}), a path
+     * fragment and a hyphenated token do not read as references — while {@code fixes #3} and
+     * {@code (#3)} do. The '&amp;' exclusion guards against HTML decimal character references:
+     * {@code it&#39;s} must not yield {@code #39}. Unlike the accepted {@code #123456} colour noise,
+     * an entity reference does not merely cost a 404 — {@code &#39;} {@code &#34;} {@code &#60;}
+     * {@code &#62;} are all small numbers that exist as real issues in most repositories, so a false
+     * hit here resolves successfully against the wrong issue.
      */
-    private static final Pattern BARE = Pattern.compile("(?<![\\w/-])#(\\d{1,7})\\b");
+    private static final Pattern BARE = Pattern.compile("(?<![\\w/&-])#(\\d{1,7})\\b");
 
     /**
      * Exactly one slash: {@code owner/repo} is the whole of a GitHub namespace.
      *
      * <p>Not preceded by {@code /}, because a URL fragment is not a reference: without the guard,
-     * {@code http://x/y#3} yields the false candidate {@code x/y#3}. The URL pattern above claims real
-     * issue and pull-request links first, so anything reaching here with a slash in front of it is a
-     * path or an anchor. A leading {@code :} is deliberately still allowed, so {@code ref:acme/repo#12}
-     * extracts — narrowing that too would cost recall the design does not want to lose.
+     * {@code http://x/y#3} yields the false candidate {@code x/y#3}. The {@code (?<!/)} lookbehind
+     * alone rejects it — this pattern and {@link #URL} below are independent matchers run over the
+     * same text, not a pipeline where one claims text before the other runs. A leading {@code :} is
+     * deliberately still allowed, so {@code ref:acme/repo#12} extracts — narrowing that too would cost
+     * recall the design does not want to lose.
      */
     private static final Pattern QUALIFIED =
             Pattern.compile("(?<!/)\\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
