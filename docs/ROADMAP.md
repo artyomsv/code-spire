@@ -187,9 +187,10 @@ down is the original design-time roadmap (kept for reference).
   `PULL_REQUEST`/`EPIC`), gated by a new `ScmType` on `GatherContext`/`ContextRequest` so a
   repo-relative `#123` cannot resolve against a same-named repository on the wrong platform. Ahead of
   the two adapters, the pinned-redirect SSRF-guarded HTTP client Jira and Confluence each carried a
-  copy of moved into a new **fifth Apache-2.0 module, `spire-http`**. See CLAUDE.md for the full
-  write-up and test totals; SMOKE-TEST.md **Mode I** covers live verification across all four
-  provider types, including the cross-platform negative pass.
+  copy of moved into a new Apache-2.0 module, `spire-http` — one of three Apache-2.0 modules this
+  branch adds (with `spire-context-github`/`spire-context-gitlab`), bringing the total to thirteen
+  per `LICENSING.md`. See CLAUDE.md for the full write-up and test totals; SMOKE-TEST.md **Mode I**
+  covers live verification across all four provider types, including the cross-platform negative pass.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -285,9 +286,10 @@ down is the original design-time roadmap (kept for reference).
     save** (bearer-only, `BEARER_ONLY_TYPES`); Check hits `/user` (GitHub) and `/api/v4/user`
     (GitLab); Preview rejects a bare reference with actionable guidance instead of a silent empty
     result. Ahead of these two adapters, the pinned-redirect SSRF-guarded HTTP client Jira and
-    Confluence each carried a copy of was extracted into a new **fifth Apache-2.0 module,
-    `spire-http`** — one home for the guard instead of four near-identical copies, so a future fix
-    to it lands once. See CLAUDE.md for the test totals.
+    Confluence each carried a copy of was extracted into a new Apache-2.0 module, `spire-http` — one
+    of three Apache-2.0 modules this branch adds (with `spire-context-github`/`spire-context-gitlab`),
+    bringing the total to thirteen per `LICENSING.md`. One home for the guard instead of four
+    near-identical copies, so a future fix to it lands once. See CLAUDE.md for the test totals.
 15. ✅ **Prompt management (operator-controlled prompts)** — **delivered 2026-07-21..23** · L. Settings →
     **Prompts** over DB-backed versioned templates (V23 `prompt_template`) seeded from the built-in
     `PromptCatalog` with reset-to-default; the prompt builders became slot/template-driven, and

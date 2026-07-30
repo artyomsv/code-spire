@@ -660,9 +660,11 @@ review on a **GitLab or Bitbucket** PR whose description contains a bare `#123` 
 real issue in a same-named repository on GitHub. Expect: the timeline shows no
 `ContextContributed(GITHUB_ISSUES)` row at all (or one with zero items) — the review's own `ScmType`
 (GitLab/Bitbucket) fails the bare reference's platform check before GitHub is ever queried. This is a
-**live-review-only** check: a provider's **Test** button always resolves a bare reference against its
-own configured platform (there is no review behind a Test call for it to disagree with), so Test
-cannot exercise this guard — only a real review, on a real PR/MR of the *other* platform, can. A
+**live-review-only** check: per the setup note above, a provider's **Test** button never attempts to
+resolve a bare reference at all — it has no PR/MR behind it, so a bare `#123`/`!123`/`&123` short-
+circuits to the guidance message before any provider is even constructed. With no in-Test resolution
+attempt, there is nothing for the `ScmType` guard to agree or disagree with, so Test cannot exercise
+this guard for that reason — only a real review, on a real PR/MR of the *other* platform, can. A
 resolved GitHub issue showing up here is the cross-wiring defect the `ScmType` guard exists to
 prevent — stop and report it.
 

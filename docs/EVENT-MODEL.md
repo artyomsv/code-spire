@@ -73,6 +73,10 @@
 - **Plugins (`ContextProvider`, each independent, parallel):**
   - Jira: parse ticket key from branch/description → fetch issue → `ContextContributed{source=JIRA}`.
   - Confluence: resolve links in description → fetch pages → `ContextContributed{source=CONFLUENCE}`.
+  - GitHub Issues: parse issue/PR reference from title/branch/description → fetch via the GitHub API
+    → `ContextContributed{source=GITHUB_ISSUES}`.
+  - GitLab Issues: parse issue/MR/epic reference → fetch via the GitLab API →
+    `ContextContributed{source=GITLAB_ISSUES}`.
   - Rules: load `.codespire` repo rules → `ContextContributed{source=RULES}`.
   - RAG (later): retrieve repo snippets → `ContextContributed{source=RAG}`.
 - **Aggregator (View + completeness policy):** collects `ContextContributed` for `prId` until the

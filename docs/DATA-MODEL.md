@@ -60,7 +60,7 @@ record ReviewResult(List<Finding> findings, String summary, ModelUsage usage)   
 Context:
 ```java
 enum   ContribStatus { OK, EMPTY, ERROR }
-record ContextItem(String kind, String title, String body, String uri)     // kind: JIRA_TICKET|CONFLUENCE_PAGE|RULE|CODE_SNIPPET|MEMORY_NOTE
+record ContextItem(String kind, String title, String body, String uri)     // kind: JIRA_TICKET|CONFLUENCE_PAGE|ISSUE|PULL_REQUEST|EPIC|RULE|CODE_SNIPPET|MEMORY_NOTE
 record ContextRequest(String reviewId, RepoRef repo, long prId, String commit,
                       Set<String> ticketKeys, List<String> links, Set<String> expectedSources)
 record ContextContribution(String source, ContribStatus status, List<ContextItem> items, long latencyMs)

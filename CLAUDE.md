@@ -334,10 +334,13 @@ The design is fully specified in `docs/` — **treat those files as the source o
   **on save** (`BEARER_ONLY_TYPES` — both APIs are bearer-token-only), Check against `/user` and
   `/api/v4/user`, and Preview rejects a bare reference with actionable guidance instead of a silent
   empty result. Ahead of the two adapters, the pinned-redirect SSRF-guarded HTTP client that Jira and
-  Confluence each carried its own copy of was extracted into a new **fifth Apache-2.0 module,
-  `spire-http`** (`PinnedJsonClient`), so the guard has one home instead of four near-identical copies
-  once these two providers landed; Jira and Confluence were migrated onto it in the same pass, and no
-  techdebt entry was needed for the duplication it would otherwise have left. `spire-arch`'s
+  Confluence each carried its own copy of was extracted into a new Apache-2.0 module, `spire-http`
+  (`PinnedJsonClient`) — one of three Apache-2.0 modules this branch adds (with
+  `spire-context-github`/`spire-context-gitlab`), bringing the total to thirteen per `LICENSING.md` —
+  so the guard has one home for the context adapters instead of four near-identical copies once these
+  two providers landed; Jira and Confluence were migrated onto it in the same pass. The three SCM
+  clients (Bitbucket/GitHub/GitLab) still carry their own unguarded copy of the redirect-resolve —
+  tracked as tech debt (`techdebt/global/`), not silently left undocumented. `spire-arch`'s
   provider-neutrality allowlist needed **no new entries** — the existing composition-root exemptions
   already covered the new types. The live-verification runbook's original plan called for opening
   "the review's LLM call record" to confirm a context item reached the model — no such record
