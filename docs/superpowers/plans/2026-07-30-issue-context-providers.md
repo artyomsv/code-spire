@@ -689,7 +689,7 @@ public final class GitHubIssueRefs {
 ./gradlew :spire-context-github:test
 ```
 
-Expected: PASS, 11 tests.
+Expected: PASS, 13 tests. (The brief lists 11; the task's fix round added two more — a colon-recall test and a candidates/parse round-trip test.)
 
 - [ ] **Step 6: Commit**
 
@@ -1698,7 +1698,7 @@ would lose it silently with every other test still green.
 ./gradlew :spire-context-github:test
 ```
 
-Expected: PASS, 18 tests (11 from Task 2 + 7 here).
+Expected: PASS, 19 tests (13 from Task 2 + 6 here).
 
 - [ ] **Step 7: Commit**
 
@@ -2242,7 +2242,7 @@ public class GitHubIssueContextProvider implements ContextProvider {
 ./gradlew :spire-context-github:test
 ```
 
-Expected: PASS, 29 tests.
+Expected: PASS, 30 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2684,7 +2684,7 @@ public final class GitLabIssueRefs {
 ./gradlew :spire-context-gitlab:test
 ```
 
-Expected: PASS, 10 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2992,7 +2992,7 @@ routes through the shared guard, which no `spire-http` test can check.
 ./gradlew :spire-context-gitlab:test
 ```
 
-Expected: PASS, 17 tests (10 from Task 6 + 7 here).
+Expected: PASS, 19 tests (12 from Task 6 + 7 here).
 
 - [ ] **Step 7: Commit**
 
@@ -3561,7 +3561,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
 ./gradlew :spire-context-gitlab:test
 ```
 
-Expected: PASS, 28 tests.
+Expected: PASS, 30 tests.
 
 - [ ] **Step 6: Commit**
 
