@@ -15,8 +15,8 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * Read-only JSON over HTTP against one pinned API host — the shared transport every context and SCM
- * adapter builds on.
+ * Read-only JSON over HTTP against one pinned API host — the shared transport every context adapter
+ * builds on.
  *
  * <p>Redirects are followed MANUALLY with host pinning: the bot's Authorization header is only ever
  * sent to the configured API host, never to a cross-host redirect target, and a cross-host hop into

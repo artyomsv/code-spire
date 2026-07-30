@@ -1,6 +1,8 @@
-// Shared read-only JSON-over-HTTP client for the context and SCM adapters: one home for the
-// host-pinned manual redirect handling and the private-address (SSRF) guard, so a fix to either
-// lands once. Framework-free and domain-free — depends on Jackson and nothing in this repo.
+// Shared read-only JSON-over-HTTP client for the context adapters: one home for the host-pinned
+// manual redirect handling and the private-address (SSRF) guard, so a fix to either lands once.
+// Framework-free and domain-free — depends on Jackson and nothing in this repo. The three SCM
+// clients still carry their own copy of this logic (techdebt/global/); this module is not yet
+// their transport too.
 plugins {
     `java-library`
 }

@@ -19,7 +19,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-scm-bitbucket` | Apache-2.0 | Reference SCM adapter — the worked example a plugin author copies. |
 | `spire-scm-github` | Apache-2.0 | Same. |
 | `spire-scm-gitlab` | Apache-2.0 | Same. |
-| `spire-http` | Apache-2.0 | Shared pinned-redirect JSON client every adapter builds on. No product value on its own. |
+| `spire-http` | Apache-2.0 | Shared pinned-redirect JSON client every context adapter builds on. No product value on its own. |
 | `spire-context-jira` | Apache-2.0 | Reference context provider. |
 | `spire-context-confluence` | Apache-2.0 | Same. |
 | `spire-context-github` | Apache-2.0 | Same. |
