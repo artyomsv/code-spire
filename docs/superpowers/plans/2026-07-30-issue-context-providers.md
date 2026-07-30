@@ -596,7 +596,9 @@ public final class GitHubIssueRefs {
             if (text == null || text.isBlank()) {
                 continue;
             }
-            // URL and qualified first: both contain a '#' or a path the bare pattern must not re-claim.
+            // Richer forms first. The lookbehinds are what stop a bare pattern re-claiming a
+            // fragment of a URL or qualified match; this order decides only which survives when
+            // MAX_REFS truncates, and the more specific form is the better one to keep.
             collect(URL.matcher(text), found);
             collect(QUALIFIED.matcher(text), found);
             collect(BARE.matcher(text), found);
@@ -2557,7 +2559,9 @@ public final class GitLabIssueRefs {
             if (text == null || text.isBlank()) {
                 continue;
             }
-            // URLs and the qualified form first: both contain a sigil the bare patterns must not re-claim.
+            // Richer forms first. The lookbehinds are what stop a bare pattern re-claiming a
+            // fragment of a URL or qualified match; this order decides only which survives when
+            // MAX_REFS truncates, and the more specific form is the better one to keep.
             collect(URL_EPIC.matcher(text), found);
             collect(URL_MERGE_REQUEST.matcher(text), found);
             collect(URL_ISSUE.matcher(text), found);
