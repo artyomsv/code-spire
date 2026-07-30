@@ -78,7 +78,13 @@ cross-provider resolution bug fixed on 2026-07-25, whose fix was to disambiguate
 stored `provider_type`.
 
 **Guard 1 — `ScmType` on the request (mandatory).** Add `ScmType scmType` to `GatherContext` and
-`ContextRequest`. A repo-relative provider's `supports()` returns false unless it matches its own axis.
+`ContextRequest`.
+
+The gate is **per reference, not per provider**. A *bare* `#123` borrows the review's own repository,
+so it resolves only when `scmType` matches the provider's own axis. A *qualified* `owner/repo#123` or
+a full URL names its repository outright and needs no gate — an author who writes `acme/widgets#12` on
+a Bitbucket PR meant that GitHub issue, and refusing it would discard context they deliberately
+supplied.
 
 `ResultSaga` builds `GatherContext` on `DiffFetched` (line ~122) and reads the type from the existing
 `ReviewProviderResolver.resolveForReview(reviewId)` — the same shared path introduced by the 2026-07-25
@@ -265,9 +271,11 @@ refs, and both URL shapes on a self-hosted host.
 401 producing an `ERROR` contribution, and the epic parent-then-top-level group fallback.
 
 **The cross-wire regression test** — the reason `ScmType` exists on the request. A GitHub-Issues
-provider given a request whose `scmType` is Bitbucket must report `supports() == false` and issue
-**zero** HTTP calls. Asserted on the WireMock server having received no requests, not merely on an
-empty contribution, so a provider that fetched and then discarded would still fail.
+provider given a **bare** `#123` and a request whose `scmType` is Bitbucket must report
+`supports() == false` and issue **zero** HTTP calls. Asserted on the WireMock server having received
+no requests, not merely on an empty contribution, so a provider that fetched and then discarded would
+still fail. Its companion asserts the other half of the rule: the same provider given a *qualified*
+reference on a Bitbucket review **does** resolve it.
 
 **`spire-arch` stays green** with no allowlist change. Its scan asserts it reached every core module,
 so new modules outside core cannot silently weaken it.
