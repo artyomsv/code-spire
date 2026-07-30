@@ -3868,15 +3868,29 @@ Five behaviours, all at REST level:
      */
     @Test
     void refusesBasicAuthForTheIssueTypes() {
-        for (String type : java.util.List.of("github-issues", "gitlab-issues")) {
-            var b = body("TEST-token");
-            b.put("type", type);
-            b.put("authKind", "basic");
-            given().contentType("application/json").body(b)
-                    .when().post("/api/context-providers").then().statusCode(400);
-        }
+        var githubBasic = githubBody("TEST-token");
+        githubBasic.put("authKind", "basic");
+        githubBasic.put("username", "bot@acme.com");
+        given().contentType("application/json").body(githubBasic)
+                .when().post("/api/context-providers").then().statusCode(400);
+
+        var gitlabBasic = gitlabBody("TEST-token");
+        gitlabBasic.put("authKind", "basic");
+        gitlabBasic.put("username", "bot@acme.com");
+        given().contentType("application/json").body(gitlabBasic)
+                .when().post("/api/context-providers").then().statusCode(400);
     }
 ```
+
+**Each half must use its own type's body helper, pointed at that type's own WireMock stub, and must
+supply a `username`.** An earlier draft looped over both types while reusing the Jira `body(...)`
+helper — so `baseUrl` pointed at the Jira stub, which has no `/user` or `/api/v4/user` route, and the
+save returned 400 from an unrelated ping 404 *whether or not the guard existed*. It also omitted
+`username`, which basic auth requires, giving a second unrelated reason to 400. Both made the test
+vacuous while it looked like it was passing.
+
+**Verify this one by disabling the guard and watching it fail.** A test asserting a 400 is
+particularly easy to satisfy by accident, because so many things return 400.
 
 2. **A bare reference previews as `EMPTY` with a non-null `detail`** — for each of the two types. This is what proves `BARE_REFERENCE_GUIDANCE` is actually returned under the bare-only condition.
 
