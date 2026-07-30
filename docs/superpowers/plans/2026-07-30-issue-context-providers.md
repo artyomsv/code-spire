@@ -3843,7 +3843,7 @@ git commit -m "Register the issue context providers with the worker"
 - Modify: `spire-orchestrator/build.gradle.kts`
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextKeyValidator.java:107-111`
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextProviderResource.java:43,160-165`
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/context/IssueContextPreviewTest.java` (create)
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/context/ContextProviderResourceTest.java` (extend — REST level, not a new grammar-only test)
 
 **Interfaces:**
 - Consumes: both providers and both `*Refs` (Tasks 2, 5, 6, 8).
@@ -3851,56 +3851,47 @@ git commit -m "Register the issue context providers with the worker"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `spire-orchestrator/src/test/java/dev/codespire/orchestrator/context/IssueContextPreviewTest.java`:
+Add REST-level coverage to the **existing** `spire-orchestrator/src/test/java/dev/codespire/orchestrator/context/ContextProviderResourceTest.java`, following that suite's own pattern (`previewResolvesABareNumberViaProjectKeysAndReturnsTheItem`, `previewIsEmptyForABareNumberWithoutProjectKeys`): create the provider via `POST /api/context-providers`, then `POST /api/context-providers/{id}/preview`.
+
+**Do not create a separate `IssueContextPreviewTest` that calls the grammars directly.** An earlier draft of this plan did, and it was worthless: two of its three tests duplicated assertions already in `GitHubIssueRefsTest`, and the third asserted the guidance constant's *content* without ever showing it was *returned*. None of them touched `ContextProviderResource`, so the preview branching this task ships was untested while the suite stayed green. If a test does not import or invoke the class under test, it is not covering it.
+
+Five behaviours, all at REST level:
+
+1. **`basic` is refused on save for both new types** — the spec requires rejection at save, and the credential ping can otherwise *succeed*, because GitHub accepts a PAT as a Basic-auth password:
 
 ```java
-package dev.codespire.orchestrator.context;
-
-import dev.codespire.context.github.GitHubIssueRefs;
-import dev.codespire.context.gitlab.GitLabIssueRefs;
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-/**
- * Preview has no pull request, so it has no repository to resolve a bare reference against. The
- * operator must be told that in a way that says what to type instead — an empty result would read as
- * "the integration is broken" when the input was simply under-specified.
- */
-class IssueContextPreviewTest {
-
+    /**
+     * The spec requires basic auth to be refused when the row is SAVED, not merely when the worker
+     * later builds a client from it. Without this the operator gets no feedback at all: the save
+     * succeeds — the ping can even pass — and the failure surfaces later as a broken context step or
+     * a raw 500 from preview.
+     */
     @Test
-    void aBareReferenceCannotBeResolvedWithoutARepository() {
-        assertTrue(GitHubIssueRefs.parse("#123").orElseThrow().isRepoRelative());
-        assertTrue(GitLabIssueRefs.parse("#123").orElseThrow().isProjectRelative());
+    void refusesBasicAuthForTheIssueTypes() {
+        for (String type : java.util.List.of("github-issues", "gitlab-issues")) {
+            var b = body("TEST-token");
+            b.put("type", type);
+            b.put("authKind", "basic");
+            given().contentType("application/json").body(b)
+                    .when().post("/api/context-providers").then().statusCode(400);
+        }
     }
+```
 
-    @Test
-    void aQualifiedReferenceOrUrlCarriesItsOwnRepository() {
-        assertEquals("acme", GitHubIssueRefs.parse("acme/widgets#1").orElseThrow().owner());
-        assertEquals("acme/tools/widgets",
-                GitLabIssueRefs.parse("acme/tools/widgets#1").orElseThrow().projectPath());
-        assertEquals("widgets",
-                GitHubIssueRefs.parse("https://github.com/acme/widgets/issues/1").orElseThrow().repo());
-    }
+2. **A bare reference previews as `EMPTY` with a non-null `detail`** — for each of the two types. This is what proves `BARE_REFERENCE_GUIDANCE` is actually returned under the bare-only condition.
 
-    @Test
-    void theBareReferenceGuidanceNamesBothWaysToFixTheInput() {
-        String guidance = ContextProviderResource.BARE_REFERENCE_GUIDANCE;
-        assertTrue(guidance.contains("owner/repo#123"), "the qualified form");
-        assertTrue(guidance.toLowerCase().contains("url"), "or pasting the URL");
-    }
-}
+3. **A qualified reference or URL previews an item** — for each of the two types, the happy path through the new branch.
+
+Behaviours 2 and 3 need a WireMock stub per type for the save-time credential ping and for the issue fetch. **Read `ContextKeyValidator.accountFrom(...)` to learn which JSON field the ping requires** rather than guessing, and stand up `github`/`gitlab` WireMock servers alongside the existing `jira` one following that suite's existing `@BeforeAll` setup. Use `TEST-token` secrets and `example.invalid` hosts.
 ```
 
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-./gradlew :spire-orchestrator:test --tests '*IssueContextPreviewTest*'
+./gradlew :spire-orchestrator:test --tests '*ContextProviderResourceTest*'
 ```
 
-Expected: compile failure — `cannot find symbol: variable BARE_REFERENCE_GUIDANCE`.
+Expected: FAIL — `refusesBasicAuthForTheIssueTypes` gets 201 instead of 400 (no per-type rule yet), and the preview tests get 400 on save because `TYPES` does not accept the new types.
 
 - [ ] **Step 3: Add the module dependencies**
 
@@ -4070,10 +4061,10 @@ Replace the `null` placeholders Task 1 Step 9 left in `previewJira`/`previewConf
 - [ ] **Step 6: Run it and confirm it passes**
 
 ```bash
-./gradlew :spire-orchestrator:test --tests '*IssueContextPreviewTest*'
+./gradlew :spire-orchestrator:test --tests '*ContextProviderResourceTest*'
 ```
 
-Expected: PASS, 3 tests.
+Expected: PASS — the five new cases plus the suite's existing tests.
 
 - [ ] **Step 7: Run the orchestrator suite and the neutrality check**
 
@@ -4349,7 +4340,8 @@ rather than reporting a pass.
 | All reference forms: bare, qualified, URL, `!` MR, `&` epic | 2, 6 |
 | PR/MR resolved and labelled, not filtered | 5, 8 |
 | Cross-form duplicates handled by the existing `uri()` dedup | 5, 8 (per-provider `key()` dedup) + existing `ContextWorker` |
-| Own token; `basic` rejected on save | 4, 7 (config validation) |
+| Own token in the context registry | 4, 7 (config records) |
+| `basic` rejected **on save** | 10 (`BEARER_ONLY_TYPES` in `validate`). Note the *where*: tasks 4 and 7 also reject it, but in the worker at review time — that does not satisfy "on save", and mapping this row to them was how the requirement first reached no task at all. |
 | Comments/notes, last 5, 500 chars; description clipped at 4,000 | 5, 8 |
 | `MAX_REFERENCES` = 10 | 2, 5, 6, 8 |
 | 404 skip; 401/403 ERROR; epic 403/404 skips only that reference | 5, 8 |
