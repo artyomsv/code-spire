@@ -19,7 +19,7 @@ import Tooltip from './Tooltip';
 import Select from './Select';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
-const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence'];
+export const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence', 'github-issues', 'gitlab-issues'];
 
 /** Per-type form and preview copy — Jira resolves ticket keys, Confluence resolves page links. */
 interface TypeCopy {
@@ -32,9 +32,12 @@ interface TypeCopy {
   previewLabel: string;
   previewPlaceholder: (projectKeys: string | null) => string;
   previewHint: string;
+  // Auth kinds the backend accepts for this type — GitHub's basic auth is deprecated and a
+  // GitLab PAT is bearer-only, so those two types permit only 'bearer'.
+  authKinds: ContextAuthKind[];
 }
 
-const TYPE_COPY: Record<ContextType, TypeCopy> = {
+export const TYPE_COPY: Record<ContextType, TypeCopy> = {
   jira: {
     namePlaceholder: 'Acme Jira',
     baseUrlPlaceholder: 'https://acme.atlassian.net',
@@ -51,6 +54,7 @@ const TYPE_COPY: Record<ContextType, TypeCopy> = {
         : 'a full ticket key (PROJ-123) or a PR title',
     previewHint:
       'Resolves the key with this provider’s pattern, fetches it live, and shows exactly what a review would inject.',
+    authKinds: ['basic', 'bearer'],
   },
   confluence: {
     namePlaceholder: 'Acme Confluence',
@@ -64,6 +68,43 @@ const TYPE_COPY: Record<ContextType, TypeCopy> = {
     previewLabel: 'Page URL or id',
     previewPlaceholder: () => 'a page URL (…/pages/12345/…) or a bare page id',
     previewHint: 'Fetches the linked page live and shows exactly what a review would inject.',
+    authKinds: ['basic', 'bearer'],
+  },
+  'github-issues': {
+    namePlaceholder: 'Acme GitHub issues',
+    baseUrlPlaceholder: 'https://api.github.com',
+    baseUrlHint:
+      'The API root — https://api.github.com for github.com, or https://your-host/api/v3 for ' +
+      'Enterprise Server. Needs a token that can read issues.',
+    narrowLabel: 'Owner/repo allow-list',
+    narrowPlaceholder: 'acme, acme/widgets',
+    narrowHint:
+      'Optional: only these repositories are looked up. An owner (acme) covers everything under it; ' +
+      'acme/widgets matches one repository. Leave blank to accept any repository on this host.',
+    previewLabel: 'Issue reference',
+    previewPlaceholder: () => 'a qualified reference (acme/widgets#123) or an issue URL',
+    previewHint:
+      'A bare #123 only means something inside a pull request, so the test box needs the repository ' +
+      'named — in the reference or in a pasted URL.',
+    authKinds: ['bearer'],
+  },
+  'gitlab-issues': {
+    namePlaceholder: 'Acme GitLab issues',
+    baseUrlPlaceholder: 'https://gitlab.com',
+    baseUrlHint:
+      'Your instance root, with no /api/v4 suffix — the client appends the API paths. Needs a token ' +
+      'with read_api scope.',
+    narrowLabel: 'Group/project allow-list',
+    narrowPlaceholder: 'acme, acme/tools/widgets',
+    narrowHint:
+      'Optional: only these projects are looked up. A group (acme) covers every project beneath it. ' +
+      'Leave blank to accept any project on this host.',
+    previewLabel: 'Issue reference',
+    previewPlaceholder: () => 'a qualified reference (acme/widgets#123) or an issue URL',
+    previewHint:
+      'Resolves issues (#12), merge requests (!34) and epics (&7). A bare reference needs the project ' +
+      'named here, since the test box has no merge request behind it.',
+    authKinds: ['bearer'],
   },
 };
 
@@ -345,7 +386,15 @@ function ContextProviderForm({
                 ariaLabel="Type"
                 value={type}
                 options={CONTEXT_TYPES.map((t) => ({ value: t, label: t }))}
-                onChange={(v) => setType(v as ContextType)}
+                onChange={(v) => {
+                  const nextType = v as ContextType;
+                  setType(nextType);
+                  // The new type may not permit the currently-selected auth kind (e.g. GitHub
+                  // Issues is bearer-only) — coerce it rather than let the form offer a save the
+                  // backend will reject.
+                  const permitted = TYPE_COPY[nextType].authKinds;
+                  if (!permitted.includes(authKind)) setAuthKind(permitted[0]);
+                }}
               />
             </label>
             <label className="field">
@@ -355,8 +404,8 @@ function ContextProviderForm({
                 value={authKind}
                 options={[
                   { value: 'basic', label: 'basic · email + API token (Cloud)' },
-                  { value: 'bearer', label: 'bearer · personal access token (Data Center)' },
-                ]}
+                  { value: 'bearer', label: 'bearer · personal access token' },
+                ].filter((o) => copy.authKinds.includes(o.value as ContextAuthKind))}
                 onChange={(v) => setAuthKind(v as ContextAuthKind)}
               />
             </label>

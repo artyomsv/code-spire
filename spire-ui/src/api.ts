@@ -581,7 +581,7 @@ export async function checkLlmProvider(id: string): Promise<{ ok: boolean; detai
 
 // --- context providers (Jira, Confluence) --------------------------------------
 
-export type ContextType = 'jira' | 'confluence';
+export type ContextType = 'jira' | 'confluence' | 'github-issues' | 'gitlab-issues';
 export type ContextAuthKind = 'basic' | 'bearer';
 
 export interface ContextProviderView {
