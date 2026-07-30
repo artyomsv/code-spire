@@ -97,7 +97,7 @@ class WorkerPipelineTest {
     void gatherContextAssemblesAnEmptyContextWhenNoProviderConfigured() throws Exception {
         // No context credential on the command (none registered) -> the aggregator fans out to
         // zero providers: Requested then Assembled, no Contributed, and no blob persisted.
-        sendCommand(new ActionCommand.GatherContext(REVIEW_ID, REPO, 42, COMMIT, Set.of(), null));
+        sendCommand(new ActionCommand.GatherContext(REVIEW_ID, REPO, 42, COMMIT, Set.of(), null, null));
         List<String> results = consumeResults(3); // 1 prior + 2 new
         assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextRequested\"")));
         assertTrue(results.stream().anyMatch(v -> v.contains("\"type\":\"ContextAssembled\"")));

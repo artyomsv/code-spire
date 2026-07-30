@@ -203,7 +203,7 @@ public class ContextWorker {
     private static ContextRequest request(GatherContext command, Set<String> references,
                                           Set<String> expected) {
         return new ContextRequest(command.reviewId(), command.repo(), command.prId(), command.commit(),
-                references, expected);
+                references, expected, command.scmType());
     }
 
     /** All retrieved text this round (title + body + uri of OK items) — the corpus the next level mines. */

@@ -176,8 +176,10 @@ public class ContextProviderResource {
         }
         ContextProvider provider = new JiraContextProvider(
                 new JiraConfig(cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret(), projectKeys), mapper);
+        // scmType is irrelevant here: a Jira issue key is globally unique within the site, not
+        // repo-relative, so the review's platform has nothing to disambiguate.
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                keys, Set.of());
+                keys, Set.of(), null);
         return runPreview(cfg, provider, req, List.copyOf(keys),
                 "Jira did not return the ticket(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
@@ -197,8 +199,10 @@ public class ContextProviderResource {
         String siteBase = cfg.baseUrl().replaceAll("/$", "");
         List<String> links = pageIds.stream()
                 .map(pid -> siteBase + "/pages/viewpage.action?pageId=" + pid).toList();
+        // scmType is irrelevant here: a Confluence page id is globally unique on its host, not
+        // repo-relative, so the review's platform has nothing to disambiguate.
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                Set.copyOf(links), Set.of());
+                Set.copyOf(links), Set.of(), null);
         return runPreview(cfg, provider, req, List.copyOf(pageIds),
                 "Confluence did not return the page(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",

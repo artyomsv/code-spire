@@ -13,6 +13,7 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewState;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
@@ -119,9 +120,15 @@ public class ResultSaga {
                 // in which case the worker assembles an empty context (the review still runs).
                 String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
                 String contextCred = workerContextCredentials.packAll(workspace).orElse(null);
+                // Which platform this review runs on, from the same resolver the credential path and
+                // the conversation saga use — one answer to "which SCM is this review on". Null when
+                // unresolvable, which makes repo-relative context providers decline rather than guess.
+                ScmType scmType = providers.resolveForReview(e.reviewId())
+                        .flatMap(p -> ScmType.fromProviderType(p.type()))
+                        .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.references() == null ? Set.of() : e.references(), contextCred));
+                        e.references() == null ? Set.of() : e.references(), contextCred, scmType));
             });
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");

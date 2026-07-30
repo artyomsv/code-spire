@@ -3,6 +3,7 @@ package dev.codespire.contract.command;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.llm.PromptTemplate;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
@@ -74,9 +75,15 @@ public sealed interface ActionCommand {
                      String scmCredential) implements ActionCommand {
     }
 
+    /**
+     * {@code scmType} is the platform the review runs on, so a context provider can tell whether a
+     * repo-relative reference (an issue number) belongs to its own host. Null when the review's
+     * provider could not be resolved; a provider that needs it then contributes nothing.
+     */
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
                          Set<String> references,
-                         String contextCredential) implements ActionCommand {
+                         String contextCredential,
+                         ScmType scmType) implements ActionCommand {
     }
 
     /**
