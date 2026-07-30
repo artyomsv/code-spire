@@ -29,6 +29,8 @@ dependencies {
     implementation(project(":spire-scm-gitlab")) // read-only: fetch PR metadata for manual register
     implementation(project(":spire-context-jira")) // context preview: resolve a ticket for the Settings test
     implementation(project(":spire-context-confluence")) // context preview: resolve a page for the Settings test
+    implementation(project(":spire-context-github")) // context preview: resolve an issue/PR for the Settings test
+    implementation(project(":spire-context-gitlab")) // context preview: resolve an issue/MR/epic for the Settings test
 
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-websockets-next")

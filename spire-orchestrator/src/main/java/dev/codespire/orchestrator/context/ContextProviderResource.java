@@ -4,10 +4,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.context.confluence.ConfluenceConfig;
 import dev.codespire.context.confluence.ConfluenceContextProvider;
 import dev.codespire.context.confluence.ConfluenceLinks;
+import dev.codespire.context.github.GitHubIssueConfig;
+import dev.codespire.context.github.GitHubIssueContextProvider;
+import dev.codespire.context.github.GitHubIssueRefs;
+import dev.codespire.context.gitlab.GitLabIssueConfig;
+import dev.codespire.context.gitlab.GitLabIssueContextProvider;
+import dev.codespire.context.gitlab.GitLabIssueRefs;
 import dev.codespire.context.jira.JiraConfig;
 import dev.codespire.context.jira.JiraContextProvider;
 import dev.codespire.context.jira.JiraTicketKeys;
 import dev.codespire.contract.port.ContextProvider;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
@@ -40,8 +47,17 @@ import java.util.UUID;
 public class ContextProviderResource {
 
     private static final Logger LOG = Logger.getLogger(ContextProviderResource.class);
-    private static final Set<String> TYPES = Set.of("jira", "confluence");
+    private static final Set<String> TYPES =
+            Set.of("jira", "confluence", "github-issues", "gitlab-issues");
     private static final Set<String> AUTH_KINDS = Set.of("basic", "bearer");
+
+    /**
+     * Preview resolves one reference with no pull request behind it, so a bare {@code #123} has no
+     * repository to belong to. Saying which two inputs DO work turns a dead end into a next step.
+     */
+    static final String BARE_REFERENCE_GUIDANCE =
+            "A bare #123 needs a repository — enter the qualified form (owner/repo#123) or paste the "
+                    + "issue URL.";
 
     @Inject
     ContextProviderRegistry registry;
@@ -160,6 +176,8 @@ public class ContextProviderResource {
         return switch (cfg.type()) {
             case "jira" -> previewJira(cfg, body.text());
             case "confluence" -> previewConfluence(cfg, body.text());
+            case "github-issues" -> previewGitHubIssues(cfg, body.text());
+            case "gitlab-issues" -> previewGitLabIssues(cfg, body.text());
             default -> throw new BadRequestException("Preview is not supported for type '" + cfg.type() + "'");
         };
     }
@@ -176,8 +194,7 @@ public class ContextProviderResource {
         }
         ContextProvider provider = new JiraContextProvider(
                 new JiraConfig(cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret(), projectKeys), mapper);
-        // scmType is irrelevant here: a Jira issue key is globally unique within the site, not
-        // repo-relative, so the review's platform has nothing to disambiguate.
+        // Jira keys are globally unique within a site, so the review's platform is irrelevant here.
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
                 keys, Set.of(), null);
         return runPreview(cfg, provider, req, List.copyOf(keys),
@@ -207,6 +224,54 @@ public class ContextProviderResource {
                 "Confluence did not return the page(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
                 "Could not reach Confluence to resolve the page(s).");
+    }
+
+    private PreviewResult previewGitHubIssues(ContextProviderConfig cfg, String text) {
+        Set<String> references = GitHubIssueRefs.candidates(text);
+        boolean anyQualified = references.stream()
+                .map(GitHubIssueRefs::parse)
+                .flatMap(java.util.Optional::stream)
+                .anyMatch(ref -> !ref.isRepoRelative());
+        if (!anyQualified) {
+            return new PreviewResult(List.of(), "EMPTY", List.of(),
+                    references.isEmpty()
+                            ? "No issue reference found in the input. Enter owner/repo#123 or paste an issue URL."
+                            : BARE_REFERENCE_GUIDANCE);
+        }
+        ContextProvider provider = new GitHubIssueContextProvider(
+                new GitHubIssueConfig(cfg.baseUrl(), cfg.authKind(), cfg.secret(),
+                        GitHubIssueRefs.parseRepoAllowList(cfg.projectKeys())), mapper);
+        // The operator is explicitly testing THIS provider, so the request states its own platform —
+        // a preview with a null platform would make every repo-relative reference decline.
+        ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
+                references, Set.of(), ScmType.GITHUB);
+        return runPreview(cfg, provider, req, List.copyOf(references),
+                "GitHub did not return the issue as JSON — run the connection check; the token is likely "
+                        + "being redirected to a sign-in page (wrong base URL, or the token cannot read issues).",
+                "Could not reach GitHub to resolve the reference(s).");
+    }
+
+    private PreviewResult previewGitLabIssues(ContextProviderConfig cfg, String text) {
+        Set<String> references = GitLabIssueRefs.candidates(text);
+        boolean anyQualified = references.stream()
+                .map(GitLabIssueRefs::parse)
+                .flatMap(java.util.Optional::stream)
+                .anyMatch(ref -> !ref.isProjectRelative());
+        if (!anyQualified) {
+            return new PreviewResult(List.of(), "EMPTY", List.of(),
+                    references.isEmpty()
+                            ? "No reference found in the input. Enter group/project#123 or paste an issue URL."
+                            : BARE_REFERENCE_GUIDANCE);
+        }
+        ContextProvider provider = new GitLabIssueContextProvider(
+                new GitLabIssueConfig(cfg.baseUrl(), cfg.authKind(), cfg.secret(),
+                        GitLabIssueRefs.parseProjectAllowList(cfg.projectKeys())), mapper);
+        ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
+                references, Set.of(), ScmType.GITLAB);
+        return runPreview(cfg, provider, req, List.copyOf(references),
+                "GitLab did not return the issue as JSON — run the connection check; the token is likely "
+                        + "being redirected to a sign-in page (wrong base URL, or the token lacks read_api).",
+                "Could not reach GitLab to resolve the reference(s).");
     }
 
     /** Run a provider's {@code contribute} for a preview and map its outcome to a {@link PreviewResult}. */

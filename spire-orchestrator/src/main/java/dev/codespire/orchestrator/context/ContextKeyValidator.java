@@ -107,6 +107,8 @@ public class ContextKeyValidator {
         String whoAmI = switch (type) {
             case "jira" -> "/rest/api/2/myself";
             case "confluence" -> "/rest/api/user/current";
+            case "github-issues" -> "/user";
+            case "gitlab-issues" -> "/api/v4/user";
             default -> throw new BadRequestException("Unsupported context provider type '" + type + "'");
         };
         URI uri = URI.create(trimTrailingSlash(baseUrl) + whoAmI);
