@@ -3194,6 +3194,27 @@ class GitLabIssueContextProviderTest {
     }
 
     /**
+     * A URL names its group exactly, so it must be used as given rather than widened. Widening would
+     * try the parent of the linked group first, and if that parent had an epic with the same iid — they
+     * are scoped per group — the wrong epic would come back as a success with no error. Asserted on the
+     * parent receiving no request at all, because a wrong-epic bug looks identical in the result.
+     */
+    @Test
+    void usesTheGroupAnEpicUrlNamesRatherThanWideningToItsParent() {
+        json("/api/v4/groups/acme%2Ftools/epics/7", """
+                {"iid":7,"title":"The linked epic","state":"opened","description":"Exact group."}
+                """);
+
+        ContextContribution contribution = provider.contribute(request(
+                        Set.of("https://gitlab.example.invalid/groups/acme/tools/-/epics/7"), ScmType.GITLAB))
+                .toCompletableFuture().join();
+
+        assertEquals(1, contribution.items().size());
+        assertTrue(contribution.items().get(0).title().contains("The linked epic"));
+        server.verify(0, getRequestedFor(urlPathEqualTo("/api/v4/groups/acme/epics/7")));
+    }
+
+    /**
      * Epics are a GitLab Premium feature, so a free-tier instance answers 403. That must cost the
      * epic only — an operator who cannot read epics must still get their issue context.
      */
@@ -3389,7 +3410,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
         return GitLabIssueRefs.parse(reference).flatMap(ref -> {
             if (!ref.isProjectRelative()) {
                 return GitLabIssueRefs.allows(projectAllowList, ref.projectPath())
-                        ? Optional.of(Target.of(ref.kind(), ref.projectPath(), ref.number()))
+                        ? Optional.of(Target.of(ref.kind(), ref.projectPath(), ref.number(), false))
                         : Optional.empty();
             }
             RepoRef repo = request.repo();
@@ -3397,7 +3418,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
                 return Optional.empty();
             }
             return GitLabIssueRefs.allows(projectAllowList, repo.full())
-                    ? Optional.of(Target.of(ref.kind(), repo.full(), ref.number()))
+                    ? Optional.of(Target.of(ref.kind(), repo.full(), ref.number(), true))
                     : Optional.empty();
         });
     }
@@ -3406,7 +3427,13 @@ public class GitLabIssueContextProvider implements ContextProvider {
      * {@code path} is the project or group path an epic URL already named; for a project-relative
      * epic it is the project, whose ancestor groups the fetch tries in turn.
      */
-    private record Target(GitLabIssueRefs.Kind kind, String path, int number) {
+    /**
+     * @param pathIsAmbiguous whether {@code path} came from a project-relative reference. It matters
+     *                        only for epics: a project path does not say which ancestor group owns an
+     *                        epic, so that case must search outwards, whereas a URL names its group
+     *                        exactly and must be used as given.
+     */
+    private record Target(GitLabIssueRefs.Kind kind, String path, int number, boolean pathIsAmbiguous) {
 
         /**
          * The project or group path is normalized to lower case here, at the single point every
@@ -3415,13 +3442,14 @@ public class GitLabIssueContextProvider implements ContextProvider {
          * prose can carry any casing, and normalizing only the key would leave the fetch path to
          * whichever reference resolved first.
          */
-        static Target of(GitLabIssueRefs.Kind kind, String path, int number) {
-            return new Target(kind, path.toLowerCase(Locale.ROOT), number);
+        static Target of(GitLabIssueRefs.Kind kind, String path, int number, boolean pathIsAmbiguous) {
+            return new Target(kind, path.toLowerCase(Locale.ROOT), number, pathIsAmbiguous);
         }
 
         /**
          * De-dup key. The kind is part of it because {@code #12}, {@code !12} and {@code &12} are
-         * three different objects that share a number.
+         * three different objects that share a number. {@code pathIsAmbiguous} is deliberately NOT
+         * part of it: the same epic reached by a bare reference and by its URL is one epic.
          */
         String key() {
             return kind + ":" + path + "#" + number;
@@ -3478,13 +3506,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
      * their issue context. An epic has no notes endpoint in this flow — the description is the value.
      */
     private Optional<ContextItem> fetchEpic(Target target) {
-        List<String> groups = new ArrayList<>();
-        if (target.path().contains("/")) {
-            groups.addAll(GitLabIssueRefs.ancestorGroups(target.path()));
-        }
-        // An epic URL names its group directly, so that path is itself a candidate.
-        groups.add(target.path());
-        for (String group : groups) {
+        for (String group : epicGroupCandidates(target)) {
             try {
                 JsonNode epic = client.getJson(
                         "/api/v4/groups/" + GitLabIssueClient.encodePath(group) + "/epics/" + target.number());
@@ -3497,6 +3519,28 @@ public class GitLabIssueContextProvider implements ContextProvider {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * The groups to try for an epic, in order.
+     *
+     * <p>A project-relative {@code &7} does not say which ancestor group owns the epic, so search
+     * outwards from the nearest — epic iids are scoped per group, so 7 can exist in both
+     * {@code acme/tools} and {@code acme}, and a developer in {@code acme/tools/widgets} almost
+     * always means the closer one. The project path itself goes last: a project is not a group, so
+     * it only ever resolves for a single-segment path with no ancestors to search.
+     *
+     * <p>A URL names its group exactly, so it is the only candidate. Widening there would try the
+     * parent of the group the author linked, and if that parent also had an epic with the same iid
+     * the wrong epic would be returned as a success, with no error anywhere.
+     */
+    private static List<String> epicGroupCandidates(Target target) {
+        if (!target.pathIsAmbiguous()) {
+            return List.of(target.path());
+        }
+        List<String> groups = new ArrayList<>(GitLabIssueRefs.ancestorGroups(target.path()));
+        groups.add(target.path());
+        return groups;
     }
 
     /** State plus labels, then the description — the same head shape every kind renders. */
