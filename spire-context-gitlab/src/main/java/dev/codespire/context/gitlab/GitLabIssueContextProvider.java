@@ -250,6 +250,15 @@ public class GitLabIssueContextProvider implements ContextProvider {
      * ContextWorker}) would otherwise present a bare {@code #12}/{@code !34}/{@code &7} as fresh and
      * resolve it against the review's own project — wrong whenever the target project differs. A
      * qualified rendering normalizes back into the already-seen set instead.
+     *
+     * <p><b>Note the two forms are safe for different reasons.</b> A qualified issue reference
+     * ({@code group/project#12}) round-trips: {@link GitLabIssueRefs} recognises it, so it normalizes
+     * to what {@code seen} already holds. A qualified merge request or epic ({@code group/project!34},
+     * {@code group/project&7}) does not — there is no qualified prose grammar for {@code !} or
+     * {@code &}, only the bare and URL forms — so it is simply never extracted. Both reach the same
+     * outcome today, but the second rests on a grammar that does not exist: adding a qualified
+     * {@code !}/{@code &} pattern would make these titles round-trip as fresh references again, so
+     * that change must come with a normalization that maps them into the seen set.
      */
     private static ContextItem item(Target target, String kind, String sigil, JsonNode object,
                                     StringBuilder body) {
