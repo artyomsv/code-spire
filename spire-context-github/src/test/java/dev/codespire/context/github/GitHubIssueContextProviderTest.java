@@ -57,12 +57,20 @@ class GitHubIssueContextProviderTest {
     }
 
     private static void stubIssue(int number, String body) {
-        server.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/" + number))
-                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(body)));
+        stubIssueAt("acme", "widgets", number, body);
     }
 
     private static void stubNoComments(int number) {
-        server.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/" + number + "/comments"))
+        stubNoCommentsAt("acme", "widgets", number);
+    }
+
+    private static void stubIssueAt(String owner, String repo, int number, String body) {
+        server.stubFor(get(urlPathEqualTo("/repos/" + owner + "/" + repo + "/issues/" + number))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(body)));
+    }
+
+    private static void stubNoCommentsAt(String owner, String repo, int number) {
+        server.stubFor(get(urlPathEqualTo("/repos/" + owner + "/" + repo + "/issues/" + number + "/comments"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("[]")));
     }
 
@@ -250,6 +258,47 @@ class GitHubIssueContextProviderTest {
 
         assertEquals(ContribStatus.OK, contribution.status());
         assertTrue(contribution.items().get(0).body().contains("Body present"));
+    }
+
+    /**
+     * Guards {@code ContextWorker}'s level-2 re-mining: a cross-repo item's title must not read as a
+     * bare, repo-relative reference on the next pass, or it would resolve against the review's own
+     * repository ("acme/widgets") instead of the repository it actually names. The round-trip through
+     * {@code candidates()}/{@code parse()} is the cleanest proof — it shows what the NEXT fetch round
+     * would actually see, not just that the string looks qualified.
+     */
+    @Test
+    void rendersACrossRepoTitleSoItDoesNotReMineAsABareReference() {
+        stubIssueAt("other", "thing", 9,
+                "{\"number\":9,\"title\":\"Elsewhere\",\"body\":\"Lives in another repo.\"}");
+        stubNoCommentsAt("other", "thing", 9);
+
+        ContextContribution contribution = provider
+                .contribute(request(Set.of("other/thing#9"), ScmType.GITHUB))
+                .toCompletableFuture().join();
+
+        ContextItem item = contribution.items().get(0);
+        assertTrue(item.title().startsWith("other/thing#9"), item.title());
+
+        Set<String> reExtracted = GitHubIssueRefs.candidates(item.title());
+        assertEquals(Set.of("other/thing#9"), reExtracted, "must not also surface a bare '#9'");
+        GitHubIssueRefs.Ref reparsed = GitHubIssueRefs.parse(reExtracted.iterator().next()).orElseThrow();
+        assertFalse(reparsed.isRepoRelative());
+        assertEquals("other", reparsed.owner());
+        assertEquals("thing", reparsed.repo());
+    }
+
+    /** The companion case: a target that IS the review's own repository keeps the bare, shorter form. */
+    @Test
+    void keepsTheBareTitleForATargetThatIsTheReviewsOwnRepo() {
+        stubIssue(12, "{\"number\":12,\"title\":\"Home\",\"body\":\"Own repo.\"}");
+        stubNoComments(12);
+
+        ContextContribution contribution = provider
+                .contribute(request(Set.of("acme/widgets#12"), ScmType.GITHUB))
+                .toCompletableFuture().join();
+
+        assertEquals("#12 — Home", contribution.items().get(0).title());
     }
 
     @Test

@@ -174,7 +174,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
         }
         StringBuilder body = renderHead(object);
         appendRecentNotes(body, base + "/notes");
-        return Optional.of(item(kind, sigil, target.number(), object, body));
+        return Optional.of(item(target, kind, sigil, object, body));
     }
 
     /**
@@ -190,7 +190,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
             try {
                 JsonNode epic = client.getJson(
                         "/api/v4/groups/" + GitLabIssueClient.encodePath(group) + "/epics/" + target.number());
-                return Optional.of(item(KIND_EPIC, "&", target.number(), epic, renderHead(epic)));
+                return Optional.of(item(target, KIND_EPIC, "&", epic, renderHead(epic)));
             } catch (GitLabIssueApiException e) {
                 if (e.status() == 404 || e.status() == 403) {
                     continue; // wrong group, or epics not available on this tier
@@ -240,11 +240,24 @@ public class GitLabIssueContextProvider implements ContextProvider {
         return body;
     }
 
-    private static ContextItem item(String kind, String sigil, int number, JsonNode object,
+    /**
+     * {@code target.pathIsAmbiguous()} is exactly "the reference did not name its own project or
+     * group" — a bare reference borrowing {@code request.repo()}. When it is false, the reference
+     * already named its project/group explicitly, so the rendered title leads with that qualified
+     * form rather than the bare sigil.
+     *
+     * <p>This matters because a title re-mined at level 2 of the two-level fetch ({@code
+     * ContextWorker}) would otherwise present a bare {@code #12}/{@code !34}/{@code &7} as fresh and
+     * resolve it against the review's own project — wrong whenever the target project differs. A
+     * qualified rendering normalizes back into the already-seen set instead.
+     */
+    private static ContextItem item(Target target, String kind, String sigil, JsonNode object,
                                     StringBuilder body) {
         String title = object.path("title").asText("");
         String uri = object.path("web_url").asText("");
-        return new ContextItem(kind, sigil + number + (title.isBlank() ? "" : " — " + title),
+        String ref = target.pathIsAmbiguous() ? sigil + target.number()
+                : target.path() + sigil + target.number();
+        return new ContextItem(kind, ref + (title.isBlank() ? "" : " — " + title),
                 body.toString().strip(), uri.isBlank() ? null : uri);
     }
 

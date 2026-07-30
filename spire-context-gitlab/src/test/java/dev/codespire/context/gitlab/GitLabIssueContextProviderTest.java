@@ -220,6 +220,87 @@ class GitLabIssueContextProviderTest {
         server.verify(0, getRequestedFor(urlPathEqualTo("/api/v4/groups/acme/epics/7")));
     }
 
+    /**
+     * Guards {@code ContextWorker}'s level-2 re-mining: a cross-project item's title must not read as
+     * a bare, project-relative reference on the next pass, or it would resolve against the review's
+     * own project ("acme/tools/widgets") instead of the project it actually names. The round-trip
+     * through {@code candidates()}/{@code parse()} shows what the NEXT fetch round would see.
+     */
+    @Test
+    void rendersACrossProjectIssueTitleSoItDoesNotReMineAsABareReference() {
+        json("/api/v4/projects/other%2Fproj/issues/9", """
+                {"iid":9,"title":"Elsewhere","description":"Lives in another project."}
+                """);
+        json("/api/v4/projects/other%2Fproj/issues/9/notes", "[]");
+
+        ContextContribution contribution = provider
+                .contribute(request(Set.of("other/proj#9"), ScmType.GITLAB))
+                .toCompletableFuture().join();
+
+        ContextItem item = contribution.items().get(0);
+        assertTrue(item.title().startsWith("other/proj#9"), item.title());
+
+        Set<String> reExtracted = GitLabIssueRefs.candidates(item.title());
+        assertEquals(Set.of("other/proj#9"), reExtracted, "must not also surface a bare '#9'");
+        GitLabIssueRefs.Ref reparsed = GitLabIssueRefs.parse(reExtracted.iterator().next()).orElseThrow();
+        assertFalse(reparsed.isProjectRelative());
+        assertEquals("other/proj", reparsed.projectPath());
+    }
+
+    /**
+     * The companion case: a bare, project-relative reference keeps the bare, shorter title form.
+     * Note the asymmetry with the GitHub provider: here the trigger is purely syntactic
+     * ({@code pathIsAmbiguous}, i.e. whether the reference was bare or self-naming) rather than a
+     * value comparison against {@code request.repo()} — so a reference that explicitly spells out the
+     * review's own project (e.g. {@code acme/tools/widgets#12}) still renders qualified, not bare.
+     * That is intentional: the discriminator already exists on {@link Target} and needs no re-derivation.
+     */
+    @Test
+    void keepsTheBareTitleForAProjectRelativeReference() {
+        json("/api/v4/projects/" + ENCODED + "/issues/12", """
+                {"iid":12,"title":"Home","description":"Own project."}
+                """);
+        json("/api/v4/projects/" + ENCODED + "/issues/12/notes", "[]");
+
+        ContextContribution contribution = provider
+                .contribute(request(Set.of("#12"), ScmType.GITLAB))
+                .toCompletableFuture().join();
+
+        assertEquals("#12 — Home", contribution.items().get(0).title());
+    }
+
+    /**
+     * Unlike issues, merge requests and epics have no qualified prose grammar in {@code
+     * GitLabIssueRefs} — only bare ({@code !34}, {@code &7}) and URL forms — so a cross-project
+     * reference can only be given here as a URL. The qualified title this provider renders
+     * ({@code other/proj!34}, {@code other/group&7}) therefore does not round-trip through
+     * candidates()/parse() the way the issue case does: it is not extracted as anything at all,
+     * because the bare patterns require no preceding word character and the qualifying path violates
+     * that. Still safe — nothing is re-mined — just via omission rather than requalification.
+     */
+    @Test
+    void crossProjectMergeRequestAndEpicTitlesDoNotReExtractAtAll() {
+        json("/api/v4/projects/other%2Fproj/merge_requests/34", """
+                {"iid":34,"title":"Elsewhere MR","description":"Lives in another project."}
+                """);
+        json("/api/v4/projects/other%2Fproj/merge_requests/34/notes", "[]");
+        json("/api/v4/groups/other%2Fgroup/epics/7", """
+                {"iid":7,"title":"Elsewhere epic","description":"Lives in another group."}
+                """);
+
+        ContextContribution contribution = provider.contribute(request(Set.of(
+                        "https://gitlab.example.invalid/other/proj/-/merge_requests/34",
+                        "https://gitlab.example.invalid/groups/other/group/-/epics/7"), ScmType.GITLAB))
+                .toCompletableFuture().join();
+
+        assertEquals(2, contribution.items().size());
+        for (ContextItem item : contribution.items()) {
+            assertTrue(GitLabIssueRefs.candidates(item.title()).isEmpty(), item.title());
+        }
+        assertTrue(contribution.items().stream().anyMatch(i -> i.title().startsWith("other/proj!34")));
+        assertTrue(contribution.items().stream().anyMatch(i -> i.title().startsWith("other/group&7")));
+    }
+
     @Test
     void reportsItsSourceUnderTheNameTheAggregatorMerges() {
         assertEquals("GITLAB_ISSUES", provider.source());

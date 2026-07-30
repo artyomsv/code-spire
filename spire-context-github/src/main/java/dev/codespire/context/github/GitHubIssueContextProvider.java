@@ -142,7 +142,7 @@ public class GitHubIssueContextProvider implements ContextProvider {
         List<ContextItem> items = new ArrayList<>();
         try {
             for (Target target : resolvable(request)) {
-                resolveItem(target).ifPresent(items::add);
+                resolveItem(target, request).ifPresent(items::add);
             }
         } catch (GitHubIssueApiException e) {
             // Auth/config failure applies to every reference — record ERROR, don't abort the review.
@@ -153,7 +153,7 @@ public class GitHubIssueContextProvider implements ContextProvider {
     }
 
     /** @return the issue or pull request as a ContextItem, or empty when it does not resolve (404). */
-    private Optional<ContextItem> resolveItem(Target target) {
+    private Optional<ContextItem> resolveItem(Target target, ContextRequest request) {
         JsonNode issue;
         try {
             issue = client.getJson(target.path());
@@ -180,11 +180,35 @@ public class GitHubIssueContextProvider implements ContextProvider {
         }
         appendRecentComments(rendered, target);
 
-        String title = "#" + target.number()
-                + (issue.path("title").asText("").isBlank() ? "" : " — " + issue.path("title").asText());
+        String title = renderTitle(target, request, issue.path("title").asText(""));
         String uri = issue.path("html_url").asText("");
         return Optional.of(new ContextItem(isPullRequest ? KIND_PULL_REQUEST : KIND_ISSUE,
                 title, rendered.toString().strip(), uri.isBlank() ? null : uri));
+    }
+
+    /**
+     * Renders the reference form a title leads with. A bare {@code #123} is only unambiguous while it
+     * is read inside the repository it names — if this item's title is later re-mined for references
+     * (level 2 of the two-level fetch, {@code ContextWorker}), a bare {@code #123} would resolve
+     * against the review's own repository, which is wrong whenever the target repository differs.
+     * Rendering the qualified form here means re-extraction sees {@code acme/other#123}, which
+     * normalizes into the already-seen set instead of being mistaken for a fresh, repo-relative
+     * reference.
+     */
+    private static String renderTitle(Target target, ContextRequest request, String rawTitle) {
+        String suffix = rawTitle.isBlank() ? "" : " — " + rawTitle;
+        return (isOwnRepo(target, request) ? "#" + target.number()
+                : target.owner() + "/" + target.repo() + "#" + target.number()) + suffix;
+    }
+
+    /** Case-insensitive: {@link Target#of} already lower-cases, {@link RepoRef} does not. */
+    private static boolean isOwnRepo(Target target, ContextRequest request) {
+        RepoRef repo = request.repo();
+        if (repo == null) {
+            return false;
+        }
+        return target.owner().equals(repo.workspace().toLowerCase(Locale.ROOT))
+                && target.repo().equals(repo.slug().toLowerCase(Locale.ROOT));
     }
 
     private static String labelsOf(JsonNode issue) {
