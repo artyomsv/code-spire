@@ -2014,6 +2014,7 @@ import dev.codespire.contract.scm.RepoRef;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -2117,13 +2118,21 @@ public class GitHubIssueContextProvider implements ContextProvider {
     private record Target(String owner, String repo, int number) {
 
         /**
-         * De-dup key. Lower-cased because GitHub owners and repositories are case-insensitive, so
-         * a bare {@code #12} resolved against the review's own repo and a qualified
-         * {@code Acme/Widgets#12} naming the same issue must collapse to one fetch and one item —
-         * the same normalization {@link GitHubIssueRefs#allows} already applies.
+         * Owner and repository are normalized to lower case here, at the single point every
+         * {@link Target} is built, because GitHub treats them case-insensitively.
+         *
+         * <p>Normalizing only {@link #key()} is not enough: de-dup would pick one survivor, but that
+         * survivor's casing — which {@link #path()} uses to build the fetch URL — would be whichever
+         * reference happened to resolve first, i.e. arbitrary and dependent on set iteration order.
+         * Canonicalizing at construction keeps the key and the path in agreement.
          */
+        static Target of(String owner, String repo, int number) {
+            return new Target(owner.toLowerCase(Locale.ROOT), repo.toLowerCase(Locale.ROOT), number);
+        }
+
+        /** De-dup key: one issue referenced two ways (case or form) must cost one fetch, one item. */
         String key() {
-            return (owner + "/" + repo + "#" + number).toLowerCase(java.util.Locale.ROOT);
+            return owner + "/" + repo + "#" + number;
         }
 
         String path() {
@@ -3298,6 +3307,7 @@ import dev.codespire.contract.scm.RepoRef;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -3375,7 +3385,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
         return GitLabIssueRefs.parse(reference).flatMap(ref -> {
             if (!ref.isProjectRelative()) {
                 return GitLabIssueRefs.allows(projectAllowList, ref.projectPath())
-                        ? Optional.of(new Target(ref.kind(), ref.projectPath(), ref.number()))
+                        ? Optional.of(Target.of(ref.kind(), ref.projectPath(), ref.number()))
                         : Optional.empty();
             }
             RepoRef repo = request.repo();
@@ -3383,7 +3393,7 @@ public class GitLabIssueContextProvider implements ContextProvider {
                 return Optional.empty();
             }
             return GitLabIssueRefs.allows(projectAllowList, repo.full())
-                    ? Optional.of(new Target(ref.kind(), repo.full(), ref.number()))
+                    ? Optional.of(Target.of(ref.kind(), repo.full(), ref.number()))
                     : Optional.empty();
         });
     }
@@ -3395,12 +3405,22 @@ public class GitLabIssueContextProvider implements ContextProvider {
     private record Target(GitLabIssueRefs.Kind kind, String path, int number) {
 
         /**
-         * De-dup key. Lower-cased for the same reason as the GitHub adapter's: project paths are
-         * case-insensitive, so one object referenced two ways must collapse to one fetch. The kind
-         * is part of the key because {@code #12} and {@code !12} are different objects.
+         * The project or group path is normalized to lower case here, at the single point every
+         * {@link Target} is built — the same reasoning as the GitHub adapter's. GitLab forbids upper
+         * case in a namespace path, so this cannot mangle a real project, but a reference written in
+         * prose can carry any casing, and normalizing only the key would leave the fetch path to
+         * whichever reference resolved first.
+         */
+        static Target of(GitLabIssueRefs.Kind kind, String path, int number) {
+            return new Target(kind, path.toLowerCase(Locale.ROOT), number);
+        }
+
+        /**
+         * De-dup key. The kind is part of it because {@code #12}, {@code !12} and {@code &12} are
+         * three different objects that share a number.
          */
         String key() {
-            return (kind + ":" + path + "#" + number).toLowerCase(java.util.Locale.ROOT);
+            return kind + ":" + path + "#" + number;
         }
     }
 
