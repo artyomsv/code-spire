@@ -24,6 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The shared guard's own tests. Every adapter's credential passes through this class, so the
  * host-pinning and private-address behaviour is asserted here once rather than in each adapter.
+ *
+ * <p><b>Not covered here:</b> scheme-default port normalization — an explicit {@code :443} on an
+ * https base URL matching a redirect target with no explicit port, or the reverse — cannot be
+ * exercised over the plain-HTTP loopback WireMock gives these tests; a genuine case needs a real TLS
+ * listener. That behaviour ({@link PinnedJsonClient} effective-port comparison) rests on code
+ * inspection rather than a running test.
  */
 class PinnedJsonClientTest {
 
@@ -170,27 +176,31 @@ class PinnedJsonClientTest {
     }
 
     /**
-     * The pin itself: a cross-host hop that IS public must still not carry the credential. WireMock
-     * answers on 127.0.0.1, so this uses the loopback alias `localhost.` — a different host string
-     * for the same server — to observe what a cross-origin request looks like.
+     * The pin itself: a redirect that changes ORIGIN — same host, different port, so
+     * {@code sameOrigin} is false — must not carry the credential to the new origin, even though the
+     * cross-host SSRF check in {@code requireSafeRedirectTarget} does not intervene (the host is
+     * unchanged, so that guard returns early and lets the hop through). Two real WireMock servers
+     * make the difference observable directly: server A gets the credential on the initial request,
+     * server B — the redirect target — must not.
      */
     @Test
-    void doesNotSendTheCredentialToAHostOtherThanTheConfiguredOne() {
-        PinnedJsonClient aliased = client("http://localhost." + ":" + server.port());
-        server.stubFor(get(urlPathEqualTo("/thing")).willReturn(aResponse()
-                .withHeader("Content-Type", "application/json").withBody("{\"ok\":true}")));
+    void doesNotSendTheCredentialAcrossAPortChangingRedirect() {
+        WireMockServer other = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        other.start();
+        try {
+            server.stubFor(get(urlPathEqualTo("/thing")).willReturn(aResponse().withStatus(302)
+                    .withHeader("Location", "http://localhost:" + other.port() + "/thing")));
+            other.stubFor(get(urlPathEqualTo("/thing")).willReturn(aResponse()
+                    .withHeader("Content-Type", "application/json").withBody("{\"ok\":true}")));
 
-        aliased.getJson("/thing");
+            assertTrue(client.getJson("/thing").path("ok").asBoolean());
 
-        server.verify(getRequestedFor(urlPathEqualTo("/thing"))
-                .withHeader("Authorization", equalTo("Bearer TEST-token")));
-    }
-
-    /** A port written explicitly must count as the same origin as the scheme default. */
-    @Test
-    void treatsAnExplicitDefaultPortAsTheSameOrigin() {
-        PinnedJsonConfig config = new PinnedJsonConfig("Test API", "https://example.invalid:443",
-                "Bearer TEST-token", Map.of(), "hint");
-        assertEquals("https://example.invalid:443", config.baseUrl());
+            server.verify(getRequestedFor(urlPathEqualTo("/thing"))
+                    .withHeader("Authorization", equalTo("Bearer TEST-token")));
+            other.verify(getRequestedFor(urlPathEqualTo("/thing"))
+                    .withHeader("Authorization", absent()));
+        } finally {
+            other.stop();
+        }
     }
 }
