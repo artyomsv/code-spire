@@ -552,9 +552,17 @@ public final class GitHubIssueRefs {
      */
     private static final Pattern BARE = Pattern.compile("(?<![\\w/-])#(\\d{1,7})\\b");
 
-    /** Exactly one slash: {@code owner/repo} is the whole of a GitHub namespace. */
+    /**
+     * Exactly one slash: {@code owner/repo} is the whole of a GitHub namespace.
+     *
+     * <p>Not preceded by {@code /}, because a URL fragment is not a reference: without the guard,
+     * {@code http://x/y#3} yields the false candidate {@code x/y#3}. The URL pattern above claims real
+     * issue and pull-request links first, so anything reaching here with a slash in front of it is a
+     * path or an anchor. A leading {@code :} is deliberately still allowed, so {@code ref:acme/repo#12}
+     * extracts — narrowing that too would cost recall the design does not want to lose.
+     */
     private static final Pattern QUALIFIED =
-            Pattern.compile("\\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
+            Pattern.compile("(?<!/)\\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
 
     /**
      * Matched on the path, not the host, so github.com and a GitHub Enterprise host are covered by
@@ -2314,6 +2322,22 @@ class GitLabIssueRefsTest {
         assertTrue(GitLabIssueRefs.candidates("abc#1 x!2 y&3").isEmpty());
     }
 
+    /**
+     * A URL fragment is not a qualified reference. Without the {@code (?<!/)} guard on the qualified
+     * pattern, {@code http://x/y#3} yields the false candidate {@code x/y#3} — the GitHub adapter's
+     * equivalent test caught exactly that, and this grammar has the same shape.
+     */
+    @Test
+    void ignoresAQualifiedLookAlikeInsideAUrlFragment() {
+        assertTrue(GitLabIssueRefs.candidates("http://x/y#3").isEmpty());
+    }
+
+    /** But a colon before a qualified reference is prose, not a URL — it must still extract. */
+    @Test
+    void stillFindsAQualifiedReferenceAfterAColon() {
+        assertEquals(Set.of("acme/widgets#12"), GitLabIssueRefs.candidates("ref:acme/widgets#12"));
+    }
+
     /** Nested groups are the normal case on GitLab, so the qualified form must accept many slashes. */
     @Test
     void parsesAQualifiedReferenceAcrossNestedGroups() {
@@ -2438,9 +2462,15 @@ public final class GitLabIssueRefs {
     private static final Pattern BARE_MERGE_REQUEST = Pattern.compile("(?<![\\w/#&-])!(\\d{1,7})\\b");
     private static final Pattern BARE_EPIC = Pattern.compile("(?<![\\w/#!-])&(\\d{1,7})\\b");
 
-    /** One or more slashes: GitLab namespaces nest arbitrarily deep. */
+    /**
+     * One or more slashes: GitLab namespaces nest arbitrarily deep.
+     *
+     * <p>Not preceded by {@code /}, for the same reason as the GitHub adapter's equivalent: without the
+     * guard, {@code http://x/y#3} yields the false candidate {@code x/y#3}. A leading {@code :} stays
+     * allowed so {@code ref:acme/proj#12} extracts.
+     */
     private static final Pattern QUALIFIED_ISSUE =
-            Pattern.compile("\\b((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
+            Pattern.compile("(?<!/)\\b((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
 
     // Matched on the path, so gitlab.com and a self-managed host share one pattern each.
     private static final Pattern URL_ISSUE =
