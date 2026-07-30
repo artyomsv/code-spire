@@ -22,8 +22,23 @@ const FEEDS = [
 type FeedKey = (typeof FEEDS)[number]['key'];
 
 /**
- * Synthesized when a feed's socket is not open. A closed socket is a better signal than a failed
- * request was: it is known the instant the connection drops rather than at the next poll.
+ * What a feed is currently telling us.
+ *
+ * <p>{@code connecting} exists to keep "not yet known" distinct from "known bad". Collapsing the two
+ * made every page load flash a red badge claiming both services were unreachable, for as long as the
+ * sockets took to open — a false BLOCKING alarm on every refresh, and an indefinite one had a service
+ * been slow. A feed that has not answered yet contributes nothing, because nothing has been
+ * established about it.
+ */
+type FeedState =
+  | { status: 'connecting' }
+  | { status: 'live'; rows: AttentionItem[] }
+  | { status: 'down' };
+
+/**
+ * Synthesized once a feed's socket has actually failed — never merely because it has not answered
+ * yet. A closed socket is a better signal than a failed request was: it is known the instant the
+ * connection drops rather than at the next poll.
  */
 const UNAVAILABLE: Record<FeedKey, AttentionItem> = {
   gateway: {
@@ -74,7 +89,10 @@ function isAttentionItem(value: unknown): value is AttentionItem {
  * evaluated.
  */
 export function useAttention(): { items: AttentionItem[] } {
-  const [rowsByFeed, setRowsByFeed] = useState<Partial<Record<FeedKey, AttentionItem[]>>>({});
+  const [feeds, setFeeds] = useState<Record<FeedKey, FeedState>>({
+    orchestrator: { status: 'connecting' },
+    gateway: { status: 'connecting' },
+  });
 
   useEffect(() => {
     let closed = false;
@@ -95,18 +113,15 @@ export function useAttention(): { items: AttentionItem[] } {
           return; // a malformed frame must not blank a feed that was working
         }
         if (!Array.isArray(data)) return;
-        setRowsByFeed((prev) => ({ ...prev, [key]: data.filter(isAttentionItem) }));
+        setFeeds((prev) => ({ ...prev, [key]: { status: 'live', rows: data.filter(isAttentionItem) } }));
       };
 
       // Drop this feed's rows rather than leaving stale ones on screen: while the socket is down we
-      // do not know what it would say, and the synthesized row states exactly that.
+      // do not know what it would say, and the synthesized row states exactly that. Reaching 'down'
+      // requires an actual close or error — never merely a socket that has yet to open.
       const onGone = () => {
         if (closed) return;
-        setRowsByFeed((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
+        setFeeds((prev) => ({ ...prev, [key]: { status: 'down' } }));
         timers.push(setTimeout(() => connect({ key, path }), RECONNECT_MS));
       };
       ws.onclose = onGone;
@@ -122,9 +137,19 @@ export function useAttention(): { items: AttentionItem[] } {
     };
   }, []);
 
-  const items = FEEDS.flatMap(({ key }) => rowsByFeed[key] ?? [UNAVAILABLE[key]]).sort(
-    bySeverityThenCode,
-  );
+  const items = FEEDS.flatMap(({ key }) => {
+    const feed = feeds[key];
+    switch (feed.status) {
+      case 'live':
+        return feed.rows;
+      case 'down':
+        return [UNAVAILABLE[key]];
+      case 'connecting':
+        // Nothing has been established yet, so claim nothing. Reporting the feed as unreachable here
+        // would raise a blocking alarm about a socket that is merely still opening.
+        return [];
+    }
+  }).sort(bySeverityThenCode);
 
   return { items };
 }

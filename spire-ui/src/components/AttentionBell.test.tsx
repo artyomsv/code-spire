@@ -93,6 +93,37 @@ describe('AttentionBell', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  /**
+   * A socket that has not answered yet is not a socket that has failed. Treating the two alike made
+   * every page load flash "2" in blocking red — one synthesized row per feed — until the sockets
+   * opened, and would have shown it indefinitely had a service been slow to accept. Nothing has been
+   * established before the first frame, so the panel must claim nothing.
+   */
+  it('shows no badge while the sockets are still connecting', async () => {
+    renderBell();
+    await waitFor(() => expect(FakeSocket.open.size).toBe(2));
+
+    // Both sockets open, neither has delivered a frame — the exact moment that used to show a
+    // false blocking alarm.
+    expect(screen.queryByTestId('attention-count')).toBeNull();
+    expect(screen.getByTestId('attention-toggle')).toHaveAttribute(
+      'aria-label',
+      'Nothing needs attention',
+    );
+  });
+
+  /** But a socket that genuinely fails before ever delivering must still raise its row. */
+  it('reports a feed that fails before its first frame', async () => {
+    renderBell();
+    await waitFor(() => expect(FakeSocket.open.size).toBe(2));
+    FakeSocket.push(ORCHESTRATOR, []);
+
+    FakeSocket.drop(GATEWAY);
+
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
+    expect(screen.getByTestId('attention-count').className).toContain('blocking');
+  });
+
   /** Pushed, not polled: no request is made to read conditions. */
   it('opens a socket per service and fetches nothing to read them', async () => {
     await renderWithFeeds([blocking], [warning]);
