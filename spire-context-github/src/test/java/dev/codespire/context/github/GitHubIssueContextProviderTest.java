@@ -19,6 +19,7 @@ import java.util.Set;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -102,6 +103,47 @@ class GitHubIssueContextProviderTest {
     @Test
     void ignoresReferencesBelongingToAnotherSource() {
         assertFalse(provider.supports(request(Set.of("PROJ-123"), ScmType.GITHUB)));
+    }
+
+    /**
+     * One issue referenced two ways must cost one fetch and yield one item. Owners and repositories
+     * are case-insensitive on GitHub, so the differently-cased qualified form names the same issue as
+     * the bare one.
+     */
+    @Test
+    void collapsesTheSameIssueReferencedTwoWaysIntoOneFetch() {
+        stubIssue(12, "{\"number\":12,\"title\":\"Only once\",\"body\":\"One issue.\"}");
+        stubNoComments(12);
+
+        ContextContribution contribution = provider
+                .contribute(request(Set.of("#12", "Acme/Widgets#12"), ScmType.GITHUB))
+                .toCompletableFuture().join();
+
+        assertEquals(1, contribution.items().size(), "one issue, one item");
+        assertEquals(1, server.getServeEvents().getServeEvents().stream()
+                .filter(e -> e.getRequest().getUrl().equals("/repos/acme/widgets/issues/12"))
+                .count(), "one issue referenced twice must not be fetched twice");
+    }
+
+    /**
+     * The gate is per reference, not per provider: on a review hosted elsewhere, the bare form is
+     * unresolvable (its repository would be the wrong host's) while the qualified form names its own
+     * repository and must still resolve. One request carrying both proves the distinction.
+     */
+    @Test
+    void gatesTheBareReferenceButNotTheQualifiedOneInTheSameRequest() {
+        server.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/12")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"number\":12,\"title\":\"Qualified\",\"body\":\"Named its own repo.\"}")));
+        stubNoComments(12);
+
+        ContextContribution contribution = provider
+                .contribute(request(Set.of("#99", "acme/widgets#12"), ScmType.BITBUCKET_CLOUD))
+                .toCompletableFuture().join();
+
+        assertEquals(1, contribution.items().size(), "only the qualified reference resolves");
+        assertTrue(contribution.items().get(0).title().contains("#12"));
+        server.verify(0, getRequestedFor(urlPathEqualTo("/repos/acme/widgets/issues/99")));
     }
 
     @Test

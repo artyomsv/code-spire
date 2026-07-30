@@ -13,6 +13,7 @@ import dev.codespire.contract.scm.RepoRef;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -99,7 +100,7 @@ public class GitHubIssueContextProvider implements ContextProvider {
         return GitHubIssueRefs.parse(reference).flatMap(ref -> {
             if (!ref.isRepoRelative()) {
                 return GitHubIssueRefs.allows(repoAllowList, ref.owner(), ref.repo())
-                        ? Optional.of(new Target(ref.owner(), ref.repo(), ref.number()))
+                        ? Optional.of(Target.of(ref.owner(), ref.repo(), ref.number()))
                         : Optional.empty();
             }
             RepoRef repo = request.repo();
@@ -107,13 +108,26 @@ public class GitHubIssueContextProvider implements ContextProvider {
                 return Optional.empty();
             }
             return GitHubIssueRefs.allows(repoAllowList, repo.workspace(), repo.slug())
-                    ? Optional.of(new Target(repo.workspace(), repo.slug(), ref.number()))
+                    ? Optional.of(Target.of(repo.workspace(), repo.slug(), ref.number()))
                     : Optional.empty();
         });
     }
 
     private record Target(String owner, String repo, int number) {
 
+        /**
+         * Owner and repository are normalized to lower case here, at the single point every
+         * {@link Target} is built, because GitHub treats them case-insensitively. Without this, a
+         * bare {@code #12} (borrowing the review's own, already-lower-case repo) and a differently
+         * cased qualified {@code Acme/Widgets#12} would still dedupe under {@link #key()} but leave
+         * the *surviving* instance's casing to whichever reference happened to resolve first — an
+         * arbitrary, iteration-order-dependent fetch target instead of one canonical repository.
+         */
+        static Target of(String owner, String repo, int number) {
+            return new Target(owner.toLowerCase(Locale.ROOT), repo.toLowerCase(Locale.ROOT), number);
+        }
+
+        /** De-dup key: one issue referenced two ways (case or form) must cost one fetch, one item. */
         String key() {
             return owner + "/" + repo + "#" + number;
         }
