@@ -10,10 +10,6 @@ public class JiraApiException extends RuntimeException {
 
     private final int status;
 
-    public JiraApiException(int status, String method, String path) {
-        this(status, method, path, null);
-    }
-
     /** {@code detail} is a truncated, secret-free response-body snippet or guard reason. */
     public JiraApiException(int status, String method, String path, String detail) {
         super("Jira API " + method + " " + path + " failed with HTTP " + status

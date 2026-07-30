@@ -11,10 +11,6 @@ public class GitHubIssueApiException extends RuntimeException {
 
     private final int status;
 
-    public GitHubIssueApiException(int status, String method, String path) {
-        this(status, method, path, null);
-    }
-
     /** {@code detail} is a truncated, secret-free snippet — discarded entirely for auth statuses. */
     public GitHubIssueApiException(int status, String method, String path, String detail) {
         super("GitHub API " + method + " " + path + " failed with HTTP " + status

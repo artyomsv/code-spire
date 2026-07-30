@@ -10,10 +10,6 @@ public class ConfluenceApiException extends RuntimeException {
 
     private final int status;
 
-    public ConfluenceApiException(int status, String method, String path) {
-        this(status, method, path, null);
-    }
-
     /** {@code detail} is a truncated, secret-free response-body snippet or guard reason. */
     public ConfluenceApiException(int status, String method, String path, String detail) {
         super("Confluence API " + method + " " + path + " failed with HTTP " + status

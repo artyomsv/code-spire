@@ -12,10 +12,6 @@ public class GitLabIssueApiException extends RuntimeException {
 
     private final int status;
 
-    public GitLabIssueApiException(int status, String method, String path) {
-        this(status, method, path, null);
-    }
-
     /** {@code detail} is a truncated, secret-free snippet — discarded entirely for auth statuses. */
     public GitLabIssueApiException(int status, String method, String path, String detail) {
         super("GitLab API " + method + " " + path + " failed with HTTP " + status
