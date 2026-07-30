@@ -31,6 +31,10 @@ public class LlmProviderRegistry {
     @Inject
     EncryptionService encryption;
 
+    /** A panel row derives from last_check_ok, so recording one is exactly when to re-push. */
+    @Inject
+    dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
+
     // ---- reads (API) -------------------------------------------------------
 
     public List<LlmProviderView> list() {
@@ -141,6 +145,7 @@ public class LlmProviderRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to set default LLM provider " + id, e);
         }
+        attention.refresh();
         return get(id);
     }
 
@@ -174,6 +179,7 @@ public class LlmProviderRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record the credential check for " + id, e);
         }
+        attention.refresh();
     }
 
     // ---- resolution (internal — carries the decrypted key) -----------------

@@ -1,4 +1,3 @@
-import { notifyAttentionChanged } from './attentionSignal';
 export type ReviewStatus =
   | 'reviewing'
   | 'completed'
@@ -337,7 +336,6 @@ export interface ProviderCheck {
 export async function checkProvider(id: string): Promise<ProviderCheck> {
   const res = await fetch(`/api/providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) await throwResponse(res, 'Failed to check provider');
-  notifyAttentionChanged();
   return res.json();
 }
 
@@ -578,7 +576,6 @@ export async function deleteLlmProvider(id: string): Promise<void> {
 export async function checkLlmProvider(id: string): Promise<{ ok: boolean; detail: string | null }> {
   const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) throw new Error(`LLM provider check failed: ${res.status}`);
-  notifyAttentionChanged();
   return res.json();
 }
 
@@ -682,7 +679,6 @@ export interface ContextProviderCheck {
 export async function checkContextProvider(id: string): Promise<ContextProviderCheck> {
   const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) await throwResponse(res, 'Failed to check context provider');
-  notifyAttentionChanged();
   return res.json();
 }
 
@@ -774,7 +770,6 @@ export async function getDlqEntries(pending = true): Promise<DlqEntry[]> {
 export async function replayDlqEntry(id: string): Promise<DlqEntry> {
   const res = await fetch(`/api/dlq/${encodeURIComponent(id)}/replay`, { method: 'POST' });
   if (!res.ok) return throwResponse(res, 'Failed to replay dead-letter entry');
-  notifyAttentionChanged();
   return res.json();
 }
 
@@ -782,7 +777,6 @@ export async function replayDlqEntry(id: string): Promise<DlqEntry> {
 export async function discardDlqEntry(id: string): Promise<void> {
   const res = await fetch(`/api/dlq/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to discard dead-letter entry');
-  notifyAttentionChanged();
 }
 
 // ---- attention (operator-facing conditions needing action) ----

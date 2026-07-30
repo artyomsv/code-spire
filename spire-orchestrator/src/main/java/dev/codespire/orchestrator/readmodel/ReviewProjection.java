@@ -12,6 +12,7 @@ import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -69,6 +70,10 @@ public class ReviewProjection {
 
     @Inject
     EncryptionService encryption;
+
+    /** No cycle: the broadcaster reads conditions through its own queries, never through here. */
+    @Inject
+    AttentionBroadcaster attention;
 
     // ---- writes (called by the sagas) --------------------------------------
 
@@ -197,6 +202,7 @@ public class ReviewProjection {
     public void acknowledgeAttention(String reviewId) {
         update("UPDATE review_status SET attention_ack_at = now() WHERE review_id = ?",
                 ps -> ps.setString(1, reviewId));
+        attention.refresh();
     }
 
     /**
@@ -1092,6 +1098,12 @@ public class ReviewProjection {
     // ---- broadcast ---------------------------------------------------------
 
     private void broadcast(String reviewId) {
+        // Every review write funnels through here, so it is the one place the attention panel needs
+        // to learn that a review's status changed — a failure appearing, or a stall resolving. The
+        // broadcaster pushes only if the condition set actually differs, so this is cheap on the
+        // writes that change nothing a panel row depends on.
+        attention.refresh();
+
         ReviewSummary summary;
         try (Connection c = dataSource.getConnection()) {
             ReviewRow row = loadRow(c, reviewId);

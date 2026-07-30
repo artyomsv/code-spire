@@ -7,6 +7,7 @@ import react from '@vitejs/plugin-react';
 const orchestrator = process.env.ORCHESTRATOR_URL ?? 'http://localhost:34080';
 const gateway = process.env.GATEWAY_URL ?? 'http://localhost:34081';
 const orchestratorWs = process.env.ORCHESTRATOR_WS_URL ?? 'ws://localhost:34080';
+const gatewayWs = process.env.GATEWAY_WS_URL ?? 'ws://localhost:34081';
 
 export default defineConfig({
   plugins: [react()],
@@ -25,6 +26,9 @@ export default defineConfig({
       // /api, so it must be listed first. Everything else /api -> orchestrator.
       '/api/webhook-repos': { target: gateway, changeOrigin: true },
       '/api': { target: orchestrator, changeOrigin: true },
+      // The gateway pushes its own conditions, so the browser holds two attention sockets on one
+      // origin. More specific than /ws, so it must be listed first — same reason as webhook-repos.
+      '/ws/webhook-attention': { target: gatewayWs, ws: true },
       '/ws': { target: orchestratorWs, ws: true },
     },
   },

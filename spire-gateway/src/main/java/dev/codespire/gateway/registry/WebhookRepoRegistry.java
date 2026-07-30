@@ -37,6 +37,10 @@ public class WebhookRepoRegistry {
     @Inject
     EncryptionService encryption; // webhook keyset only — see GatewayEncryptionProducer
 
+    /** Both of this service's conditions derive from webhook_repo, so its writes are the push points. */
+    @Inject
+    dev.codespire.gateway.attention.WebhookAttentionBroadcaster attention;
+
     /** A resolved registration carrying the DECRYPTED secret — for edge verification. */
     public record Resolved(String providerType, String scope, String target, String secret) {
     }
@@ -207,6 +211,7 @@ public class WebhookRepoRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record a webhook rejection", e);
         }
+        attention.refresh();
     }
 
     /**
@@ -226,6 +231,7 @@ public class WebhookRepoRegistry {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to clear webhook rejections", e);
         }
+        attention.refresh();
     }
 
     /** Enabled registrations currently refusing deliveries. */

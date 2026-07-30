@@ -153,6 +153,7 @@ services:
       ORCHESTRATOR_URL: http://orchestrator:39280
       GATEWAY_URL: http://gateway:39281
       ORCHESTRATOR_WS_URL: ws://orchestrator:39280
+      GATEWAY_WS_URL: ws://gateway:39281
       # Synced source needs polling to be seen reliably inside the container.
       VITE_USE_POLLING: "true"
       # Node inspector for the dev-server process (avoids the forbidden 9229).

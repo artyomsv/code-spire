@@ -28,23 +28,27 @@ function actionLabel(action: string): string {
 }
 
 /**
- * Conditions needing the operator's attention. There is no dismiss action anywhere: every row
- * is a query result, so fixing the cause is what removes it. Zero conditions renders NO badge
- * rather than a green tick — the panel only knows about conditions it checks, so "all clear"
- * would be a claim it cannot make.
+ * Conditions needing the operator's attention, pushed by each service as they change.
+ *
+ * <p>Almost every row is a derived condition with no dismiss: fixing the cause is what removes it,
+ * and offering to silence something repairable would let a broken system look healthy. The exception
+ * is a stuck or failed review — a past event no repair can clear — which is why only those rows carry
+ * a `dismiss` and the server decides which ones do.
+ *
+ * <p>Zero conditions renders NO badge rather than a green tick. The panel only knows about the
+ * conditions it checks, so "all clear" is a claim it cannot make.
  */
 export default function AttentionBell() {
-  const { items, refresh } = useAttention();
+  const { items } = useAttention();
   const [open, setOpen] = useState(false);
 
   /**
-   * Refreshes rather than removing the row locally: the server decides whether the condition still
-   * holds, so re-reading keeps the panel a view of real state instead of a list the UI edits. A
-   * failed dismiss therefore leaves the row visible, which is the honest outcome.
+   * No local removal and no refetch: acknowledging is a server-side state change, and the server
+   * pushes the new condition list down the socket. What the operator sees is therefore always what
+   * the server believes, and a failed dismiss leaves the row visible -- the honest outcome.
    */
-  const dismiss = async (path: string) => {
-    await dismissAttention(path);
-    refresh();
+  const dismiss = (path: string) => {
+    void dismissAttention(path);
   };
 
   const blocking = items.some((item) => item.severity === 'BLOCKING');

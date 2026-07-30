@@ -29,6 +29,10 @@ dependencies {
     implementation(project(":spire-encryption")) // decrypts per-repo webhook secrets (webhook keyset only)
 
     implementation("io.quarkus:quarkus-rest-jackson")
+    // Pushes this service's attention conditions to spire-ui. Needed here rather than aggregated by
+    // the orchestrator because webhook_repo is the gateway's own schema and neither service reads the
+    // other's — the alternative was a bus message, which would put a non-reviewId class on cs.*.
+    implementation("io.quarkus:quarkus-websockets-next")
     implementation("io.quarkus:quarkus-messaging-kafka")
     implementation("io.quarkus:quarkus-config-yaml")
     implementation("io.quarkus:quarkus-smallrye-health")

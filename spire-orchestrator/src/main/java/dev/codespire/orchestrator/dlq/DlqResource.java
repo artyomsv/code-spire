@@ -31,6 +31,10 @@ public class DlqResource {
     @Inject
     DlqReplayProducer replayProducer;
 
+    /** DLQ_PENDING derives from the pending count, so replay and discard both change it. */
+    @Inject
+    dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
+
     @GET
     public List<DlqEntry> list(@QueryParam("pending") @DefaultValue("true") boolean pending) {
         return repository.list(pending);
@@ -48,6 +52,7 @@ public class DlqResource {
         }
         replayProducer.publish(entry.originalTopic(), entry.kafkaKey(), entry.payload());
         repository.markReplayed(uuid);
+        attention.refresh();
         return repository.get(uuid).orElseThrow();
     }
 
@@ -57,6 +62,7 @@ public class DlqResource {
         if (!repository.markDiscarded(uuid(id))) {
             throw new NotFoundException("No dead-letter entry " + id);
         }
+        attention.refresh();
         return Response.noContent().build();
     }
 

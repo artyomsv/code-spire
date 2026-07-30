@@ -3,7 +3,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AttentionBell from './AttentionBell';
 import type { AttentionItem } from '../api';
-import { notifyAttentionChanged } from '../attentionSignal';
 
 const blocking: AttentionItem = {
   code: 'LLM_DEFAULT_MISSING',
@@ -23,17 +22,53 @@ const warning: AttentionItem = {
   dismiss: null,
 };
 
-/** Serve the orchestrator feed and the gateway feed independently, as the hook fetches them. */
-function stubFeeds(orchestrator: AttentionItem[] | Error, gateway: AttentionItem[] | Error) {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((url: string) => {
-      const body = url.includes('webhook-repos') ? gateway : orchestrator;
-      if (body instanceof Error) return Promise.reject(body);
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
-    }),
-  );
+const failed: AttentionItem = {
+  code: 'REVIEW_FAILED',
+  severity: 'WARNING',
+  subject: 'TEST-WS/TEST-REPO#1',
+  message: 'This review failed.',
+  action: '/r/TEST-WS/TEST-REPO/1',
+  dismiss: '/api/reviews/TEST-WS/TEST-REPO/1/attention-ack',
+};
+
+/**
+ * A stand-in for the browser's WebSocket, keyed by the path it was opened on, so a test can push a
+ * frame down one feed and leave the other alone — the merge behaviour depends on the two being
+ * independent.
+ */
+class FakeSocket {
+  static open = new Map<string, FakeSocket>();
+
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  closed = false;
+
+  constructor(public url: string) {
+    FakeSocket.open.set(FakeSocket.pathOf(url), this);
+  }
+
+  close() {
+    this.closed = true;
+    this.onclose?.();
+  }
+
+  static pathOf(url: string): string {
+    return new URL(url).pathname;
+  }
+
+  /** Deliver a condition list, as the server does on connect and on every change. */
+  static push(path: string, rows: AttentionItem[]) {
+    FakeSocket.open.get(path)?.onmessage?.({ data: JSON.stringify(rows) });
+  }
+
+  static drop(path: string) {
+    FakeSocket.open.get(path)?.onclose?.();
+  }
 }
+
+const ORCHESTRATOR = '/ws/attention';
+const GATEWAY = '/ws/webhook-attention';
 
 const renderBell = () =>
   render(
@@ -42,96 +77,58 @@ const renderBell = () =>
     </MemoryRouter>,
   );
 
+/** Both feeds connected and reporting, which is the precondition for most assertions below. */
+async function renderWithFeeds(orchestrator: AttentionItem[], gateway: AttentionItem[]) {
+  renderBell();
+  await waitFor(() => expect(FakeSocket.open.size).toBe(2));
+  FakeSocket.push(ORCHESTRATOR, orchestrator);
+  FakeSocket.push(GATEWAY, gateway);
+}
+
 describe('AttentionBell', () => {
-  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
+  beforeEach(() => {
+    FakeSocket.open.clear();
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
   });
+  afterEach(() => vi.unstubAllGlobals());
 
-  /**
-   * Does the interval actually re-read? Asked because the panel twice appeared not to update on its
-   * own. If this passes, the polling mechanism is sound and any staleness an operator sees is about
-   * WHEN it re-reads, not whether.
-   */
-  it('re-reads both feeds on its own after the poll interval', async () => {
-    stubFeeds([], []);
-    renderBell();
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
-    const afterFirstLoad = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-
-    await vi.advanceTimersByTimeAsync(31_000);
-
-    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
-      afterFirstLoad,
-    );
-  });
-
-  /**
-   * The reason the poll alone is not enough: the operator presses Check on another page, it
-   * succeeds, and without this the row sits there for the rest of the interval — which reads as the
-   * panel being broken rather than late.
-   */
-  it('re-reads immediately when a mutation signals a change', async () => {
-    stubFeeds([], []);
-    renderBell();
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
-    const before = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-
-    notifyAttentionChanged();
-
-    await waitFor(() =>
-      expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
-        before,
-      ),
-    );
-  });
-
-  /** Background tabs have their timers throttled, so returning to one must re-read rather than
-   *  trust that the interval kept firing. */
-  it('re-reads when the window regains focus', async () => {
-    stubFeeds([], []);
-    renderBell();
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
-    const before = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-
-    window.dispatchEvent(new Event('focus'));
-
-    await waitFor(() =>
-      expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
-        before,
-      ),
-    );
-  });
-
-  it('counts every condition from both feeds', async () => {
-    stubFeeds([blocking], [warning]);
-    renderBell();
+  /** Pushed, not polled: no request is made to read conditions. */
+  it('opens a socket per service and fetches nothing to read them', async () => {
+    await renderWithFeeds([blocking], [warning]);
     await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
+    expect(FakeSocket.open.has(ORCHESTRATOR)).toBe(true);
+    expect(FakeSocket.open.has(GATEWAY)).toBe(true);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  /** A later frame replaces that feed's rows, which is how a fixed condition disappears. */
+  it('replaces a feed’s rows when a new list arrives', async () => {
+    await renderWithFeeds([blocking], []);
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
+
+    FakeSocket.push(ORCHESTRATOR, []);
+
+    await waitFor(() => expect(screen.queryByTestId('attention-count')).toBeNull());
   });
 
   /** A green tick would be a claim the panel cannot make: it only knows what it checks. */
   it('renders no badge when nothing needs attention', async () => {
-    stubFeeds([], []);
-    renderBell();
+    await renderWithFeeds([], []);
     await waitFor(() => expect(screen.queryByTestId('attention-count')).toBeNull());
   });
 
-  /** The accessible name must carry the count, not just the fact -- a screen-reader user
-   *  should not be told the opposite of what a sighted user sees on the badge. */
   it('gives the toggle button an accessible name that reflects the count', async () => {
-    stubFeeds([], []);
-    const { unmount } = renderBell();
+    await renderWithFeeds([], []);
     await waitFor(() =>
       expect(screen.getByTestId('attention-toggle')).toHaveAttribute(
         'aria-label',
         'Nothing needs attention',
       ),
     );
-    unmount();
 
-    stubFeeds([blocking], [warning]);
-    renderBell();
+    FakeSocket.push(ORCHESTRATOR, [blocking, warning]);
+
     await waitFor(() =>
       expect(screen.getByTestId('attention-toggle')).toHaveAttribute(
         'aria-label',
@@ -141,138 +138,57 @@ describe('AttentionBell', () => {
   });
 
   it('takes its colour from the most severe condition present', async () => {
-    stubFeeds([blocking], [warning]);
-    renderBell();
+    await renderWithFeeds([blocking], [warning]);
     await waitFor(() =>
       expect(screen.getByTestId('attention-count').className).toContain('blocking'),
     );
   });
 
   it('is a warning when no blocker is present', async () => {
-    stubFeeds([warning], []);
-    renderBell();
+    await renderWithFeeds([warning], []);
     await waitFor(() =>
       expect(screen.getByTestId('attention-count').className).toContain('warning'),
     );
   });
 
-  /** An unreachable gateway means no webhook is arriving at all — strictly blocking. */
-  it('reports an unreachable gateway without losing the other feed', async () => {
-    stubFeeds([warning], new Error('connection refused'));
-    renderBell();
+  /**
+   * A dropped socket is not silence. Contributing nothing would render an empty panel — a claim of
+   * "all clear" about conditions nobody evaluated — so the feed's absence becomes its own row while
+   * the other feed keeps reporting.
+   */
+  it('reports a dropped gateway socket without losing the other feed', async () => {
+    await renderWithFeeds([warning], []);
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
+
+    FakeSocket.drop(GATEWAY);
+
     await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
     expect(screen.getByTestId('attention-count').className).toContain('blocking');
   });
 
-  /** The mirror case: the orchestrator's own feed can fail on its own (a DB blip) while the app
-   *  is otherwise up. Losing its rows silently would render an empty panel — a claim of
-   *  "all clear" the app never actually evaluated. */
-  it('reports its own feed failing without losing the gateway rows', async () => {
-    stubFeeds(new Error('pool exhausted'), [warning]);
-    renderBell();
+  /** The mirror case, which is the one an earlier version of this panel got wrong. */
+  it('reports a dropped orchestrator socket without losing the gateway rows', async () => {
+    await renderWithFeeds([], [warning]);
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
+
+    FakeSocket.drop(ORCHESTRATOR);
+
     await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
     expect(screen.getByTestId('attention-count').className).toContain('blocking');
   });
 
-  /**
-   * Only a row describing a past event no fix can clear carries a dismiss. A condition the operator
-   * can actually repair must never be silenceable, or a broken system could be made to look healthy
-   * — so the absence of the control on those rows is the behaviour under test, not an omission.
-   */
-  it('offers dismiss only on rows that carry one', async () => {
-    const failed: AttentionItem = {
-      code: 'REVIEW_FAILED',
-      severity: 'WARNING',
-      subject: 'TEST-WS/TEST-REPO#1',
-      message: 'This review failed.',
-      action: '/r/TEST-WS/TEST-REPO/1',
-      dismiss: '/api/reviews/TEST-WS/TEST-REPO/1/attention-ack',
-    };
-    stubFeeds([blocking, failed], []);
-    renderBell();
-    await waitFor(() => screen.getByTestId('attention-count'));
-    screen.getByTestId('attention-toggle').click();
-    await waitFor(() => expect(screen.getByText(failed.message)).toBeInTheDocument());
+  /** A malformed frame must not blank a feed that was working. */
+  it('ignores an unparseable frame', async () => {
+    await renderWithFeeds([blocking], []);
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
 
-    // One dismiss control, and it names its row so a screen reader can tell several apart.
-    const buttons = screen.getAllByRole('button', { name: /^Dismiss:/ });
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0]).toHaveAccessibleName('Dismiss: TEST-WS/TEST-REPO#1');
+    FakeSocket.open.get(ORCHESTRATOR)?.onmessage?.({ data: 'not json' });
+
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
   });
 
-  /** Posts where the server told it to and re-reads, rather than removing the row locally. */
-  it('posts the dismiss path and re-reads the feeds', async () => {
-    const failed: AttentionItem = {
-      code: 'REVIEW_FAILED',
-      severity: 'WARNING',
-      subject: 'TEST-WS/TEST-REPO#1',
-      message: 'This review failed.',
-      action: '/r/TEST-WS/TEST-REPO/1',
-      dismiss: '/api/reviews/TEST-WS/TEST-REPO/1/attention-ack',
-    };
-    stubFeeds([failed], []);
-    renderBell();
-    await waitFor(() => screen.getByTestId('attention-count'));
-    screen.getByTestId('attention-toggle').click();
-    await waitFor(() => expect(screen.getByText(failed.message)).toBeInTheDocument());
-
-    const before = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-    screen.getByRole('button', { name: /^Dismiss:/ }).click();
-
-    await waitFor(() => {
-      const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls.some((c) => c[0] === failed.dismiss && c[1]?.method === 'POST')).toBe(true);
-      // Re-read rather than local removal: the server decides whether the row still holds.
-      expect(calls.length).toBeGreaterThan(before + 1);
-    });
-  });
-
-  it('lists each condition with a link to the page that fixes it', async () => {
-    stubFeeds([blocking], []);
-    renderBell();
-    await waitFor(() => screen.getByTestId('attention-count'));
-    screen.getByTestId('attention-toggle').click();
-    await waitFor(() => expect(screen.getByText(blocking.message)).toBeInTheDocument());
-    expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings/llm');
-  });
-
-  /**
-   * Every row's link used to read the bare word "Settings", which told the operator nothing about
-   * where they were about to land and left rows indistinguishable from each other — including to a
-   * screen reader, which announces link text. Each destination must name itself.
-   */
   it('names each link by where it goes, so two rows are distinguishable', async () => {
     const webhook: AttentionItem = {
-      code: 'WEBHOOK_DELIVERIES_REJECTED',
-      severity: 'WARNING',
-      subject: 'stub · TEST-OWNER/TEST-REPO',
-      message: '1 webhook delivery was refused — signature did not verify.',
-      action: '/settings/webhooks',
-      dismiss: null,
-    };
-    stubFeeds([blocking], [webhook]);
-    renderBell();
-    await waitFor(() => screen.getByTestId('attention-count'));
-    screen.getByTestId('attention-toggle').click();
-    await waitFor(() => expect(screen.getByText(webhook.message)).toBeInTheDocument());
-
-    expect(screen.getByRole('link', { name: 'Settings · LLM' })).toHaveAttribute(
-      'href',
-      '/settings/llm',
-    );
-    expect(screen.getByRole('link', { name: 'Settings · Webhooks' })).toHaveAttribute(
-      'href',
-      '/settings/webhooks',
-    );
-  });
-
-  /**
-   * A row naming one record deep-links to it with `?edit=<id>`. The label map is keyed on the path
-   * alone, so the query string must not push the row onto the "Open" fallback — that would undo the
-   * naming the label exists for.
-   */
-  it('keeps a named label when the action deep-links to a record', async () => {
-    const deepLinked: AttentionItem = {
       code: 'WEBHOOK_DELIVERIES_REJECTED',
       severity: 'WARNING',
       subject: 'stub · TEST-OWNER/TEST-REPO',
@@ -280,23 +196,26 @@ describe('AttentionBell', () => {
       action: '/settings/webhooks?edit=TEST-id-1',
       dismiss: null,
     };
-    stubFeeds([], [deepLinked]);
-    renderBell();
+    await renderWithFeeds([blocking], [webhook]);
     await waitFor(() => screen.getByTestId('attention-count'));
     screen.getByTestId('attention-toggle').click();
-    await waitFor(() => expect(screen.getByText(deepLinked.message)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(webhook.message)).toBeInTheDocument());
 
+    // The label map is keyed on the path alone, so `?edit=` must not push the row onto "Open".
     expect(screen.getByRole('link', { name: 'Settings · Webhooks' })).toHaveAttribute(
       'href',
       '/settings/webhooks?edit=TEST-id-1',
     );
+    expect(screen.getByRole('link', { name: 'Settings · LLM' })).toHaveAttribute(
+      'href',
+      '/settings/llm',
+    );
   });
 
-  /** CREDENTIAL_REJECTED subjects are provider names with no cross-registry uniqueness — an SCM
-   *  provider and an LLM provider can share a name and both be rejected. A React key that ignored
-   *  `action` (the one field that differs across registries) collided and dropped a row. */
+  /** CREDENTIAL_REJECTED subjects are provider names with no cross-registry uniqueness, so two rows
+   *  can share a code and subject and differ only by action. A key ignoring action dropped one. */
   it('renders every condition even when two share a code and subject', async () => {
-    const scmRejected: AttentionItem = {
+    const scm: AttentionItem = {
       code: 'CREDENTIAL_REJECTED',
       severity: 'WARNING',
       subject: 'prod',
@@ -304,18 +223,45 @@ describe('AttentionBell', () => {
       action: '/settings/providers',
       dismiss: null,
     };
-    const llmRejected: AttentionItem = {
-      code: 'CREDENTIAL_REJECTED',
-      severity: 'WARNING',
-      subject: 'prod',
-      message: "The LLM provider's credential was rejected.",
-      action: '/settings/llm',
-      dismiss: null,
-    };
-    stubFeeds([scmRejected, llmRejected], []);
-    renderBell();
+    const llm: AttentionItem = { ...scm, message: "The LLM provider's credential was rejected.", action: '/settings/llm' };
+    await renderWithFeeds([scm, llm], []);
     await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
+  });
+
+  /**
+   * Only a row describing a past event no fix can clear carries a dismiss. The absence of the control
+   * on a repairable condition is the behaviour under test, not an omission.
+   */
+  it('offers dismiss only on rows that carry one', async () => {
+    await renderWithFeeds([blocking, failed], []);
+    await waitFor(() => screen.getByTestId('attention-count'));
     screen.getByTestId('attention-toggle').click();
-    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2));
+    await waitFor(() => expect(screen.getByText(failed.message)).toBeInTheDocument());
+
+    const buttons = screen.getAllByRole('button', { name: /^Dismiss:/ });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAccessibleName('Dismiss: TEST-WS/TEST-REPO#1');
+  });
+
+  /**
+   * Posts where the server told it to, and does NOT remove the row locally — the server pushes the
+   * new list, so what is on screen stays what the server believes.
+   */
+  it('posts the dismiss path and leaves the row for the server to clear', async () => {
+    await renderWithFeeds([failed], []);
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(failed.message)).toBeInTheDocument());
+
+    screen.getByRole('button', { name: /^Dismiss:/ }).click();
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(failed.dismiss, { method: 'POST' }),
+    );
+    // Still shown: the row goes when the server says so, not because the UI edited its own list.
+    expect(screen.getByText(failed.message)).toBeInTheDocument();
+
+    FakeSocket.push(ORCHESTRATOR, []);
+    await waitFor(() => expect(screen.queryByTestId('attention-count')).toBeNull());
   });
 });
