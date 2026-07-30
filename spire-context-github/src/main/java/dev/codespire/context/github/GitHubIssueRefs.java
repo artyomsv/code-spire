@@ -29,9 +29,17 @@ public final class GitHubIssueRefs {
      */
     private static final Pattern BARE = Pattern.compile("(?<![\\w/-])#(\\d{1,7})\\b");
 
-    /** Exactly one slash: {@code owner/repo} is the whole of a GitHub namespace. */
+    /**
+     * Exactly one slash: {@code owner/repo} is the whole of a GitHub namespace.
+     *
+     * <p>Not preceded by {@code /}, because a URL fragment is not a reference: without the guard,
+     * {@code http://x/y#3} yields the false candidate {@code x/y#3}. The URL pattern above claims real
+     * issue and pull-request links first, so anything reaching here with a slash in front of it is a
+     * path or an anchor. A leading {@code :} is deliberately still allowed, so {@code ref:acme/repo#12}
+     * extracts — narrowing that too would cost recall the design does not want to lose.
+     */
     private static final Pattern QUALIFIED =
-            Pattern.compile("(?<![:/])\\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
+            Pattern.compile("(?<!/)\\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\\d{1,7})\\b");
 
     /**
      * Matched on the path, not the host, so github.com and a GitHub Enterprise host are covered by

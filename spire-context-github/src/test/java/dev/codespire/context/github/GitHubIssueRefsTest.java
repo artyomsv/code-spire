@@ -104,4 +104,24 @@ class GitHubIssueRefsTest {
         assertTrue(GitHubIssueRefs.allows(byRepo, "Acme", "Widgets"));
         assertFalse(GitHubIssueRefs.allows(byRepo, "acme", "secrets"));
     }
+
+    /** A colon before a qualified reference is prose, not a URL — it must still extract. */
+    @Test
+    void stillFindsAQualifiedReferenceAfterAColon() {
+        assertEquals(Set.of("acme/widgets#12"), GitHubIssueRefs.candidates("ref:acme/widgets#12"));
+    }
+
+    /**
+     * Every candidate must be resolvable. The two methods share the same three patterns today, so this
+     * holds by construction — the test exists to catch the two drifting apart later.
+     */
+    @Test
+    void everyCandidateItEmitsCanBeParsed() {
+        Set<String> found = GitHubIssueRefs.candidates(
+                "fixes #7, see acme/widgets#12 and https://github.com/acme/widgets/issues/9");
+        assertEquals(3, found.size());
+        for (String reference : found) {
+            assertTrue(GitHubIssueRefs.parse(reference).isPresent(), reference + " did not parse");
+        }
+    }
 }
