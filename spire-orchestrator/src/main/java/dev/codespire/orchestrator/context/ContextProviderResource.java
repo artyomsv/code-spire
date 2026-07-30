@@ -37,6 +37,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -50,6 +51,14 @@ public class ContextProviderResource {
     private static final Set<String> TYPES =
             Set.of("jira", "confluence", "github-issues", "gitlab-issues");
     private static final Set<String> AUTH_KINDS = Set.of("basic", "bearer");
+
+    /**
+     * Types whose API accepts only a bearer token. GitHub's basic auth is deprecated and a GitLab
+     * personal access token works on the OAuth-compliant {@code Authorization} header, so accepting
+     * {@code basic} here would only let an operator save something the worker has to refuse later —
+     * failing the context step with nothing on screen to explain why.
+     */
+    private static final Set<String> BEARER_ONLY_TYPES = Set.of("github-issues", "gitlab-issues");
 
     /**
      * Preview resolves one reference with no pull request behind it, so a bare {@code #123} has no
@@ -230,7 +239,7 @@ public class ContextProviderResource {
         Set<String> references = GitHubIssueRefs.candidates(text);
         boolean anyQualified = references.stream()
                 .map(GitHubIssueRefs::parse)
-                .flatMap(java.util.Optional::stream)
+                .flatMap(Optional::stream)
                 .anyMatch(ref -> !ref.isRepoRelative());
         if (!anyQualified) {
             return new PreviewResult(List.of(), "EMPTY", List.of(),
@@ -255,7 +264,7 @@ public class ContextProviderResource {
         Set<String> references = GitLabIssueRefs.candidates(text);
         boolean anyQualified = references.stream()
                 .map(GitLabIssueRefs::parse)
-                .flatMap(java.util.Optional::stream)
+                .flatMap(Optional::stream)
                 .anyMatch(ref -> !ref.isProjectRelative());
         if (!anyQualified) {
             return new PreviewResult(List.of(), "EMPTY", List.of(),
@@ -328,6 +337,11 @@ public class ContextProviderResource {
         if (!AUTH_KINDS.contains(in.authKind())) {
             throw new BadRequestException("Unsupported authKind '" + in.authKind()
                     + "' (expected one of: " + String.join(", ", AUTH_KINDS.stream().sorted().toList()) + ")");
+        }
+        if (BEARER_ONLY_TYPES.contains(in.type()) && !"bearer".equals(in.authKind())) {
+            throw new BadRequestException("Context provider type '" + in.type()
+                    + "' requires authKind 'bearer' (a personal access token). Basic auth is not "
+                    + "supported for this type.");
         }
         // Basic auth (Jira Cloud: email + API token) needs a username; bearer (PAT) does not.
         if ("basic".equals(in.authKind())) {

@@ -18,6 +18,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static io.restassured.RestAssured.given;
 import static io.restassured.RestAssured.when;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -33,6 +34,8 @@ import static org.hamcrest.Matchers.nullValue;
 class ContextProviderResourceTest {
 
     private static WireMockServer jira; // stands in for Jira; baseUrl points here
+    private static WireMockServer github; // stands in for the GitHub API
+    private static WireMockServer gitlab; // stands in for a GitLab instance
 
     @Inject
     ContextProviderRegistry registry;
@@ -41,11 +44,17 @@ class ContextProviderResourceTest {
     static void startJira() {
         jira = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         jira.start();
+        github = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        github.start();
+        gitlab = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        gitlab.start();
     }
 
     @AfterAll
     static void stopJira() {
         jira.stop();
+        github.stop();
+        gitlab.stop();
     }
 
     @BeforeEach
@@ -55,6 +64,14 @@ class ContextProviderResourceTest {
         jira.stubFor(get(urlEqualTo("/rest/api/2/myself"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{ \"accountId\": \"abc\", \"emailAddress\": \"bot@acme.com\" }")));
+        github.resetAll();
+        github.stubFor(get(urlEqualTo("/user"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"login\": \"spire-bot\", \"name\": \"Spire Bot\" }")));
+        gitlab.resetAll();
+        gitlab.stubFor(get(urlEqualTo("/api/v4/user"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{ \"id\": 1, \"username\": \"spire-bot\", \"name\": \"Spire Bot\" }")));
     }
 
     private static Map<String, Object> body(Object secret) {
@@ -430,5 +447,114 @@ class ContextProviderResourceTest {
         // succeeds against the WireMock (guard behavior is covered by ProviderUrlValidationTest).
         given().contentType("application/json").body(body("jira-token"))
                 .when().post("/api/context-providers").then().statusCode(equalTo(201));
+    }
+
+    // ---- github-issues / gitlab-issues: bearer-only, and preview through the real REST surface ----
+
+    private static Map<String, Object> githubBody(Object secret) {
+        var m = new java.util.HashMap<String, Object>();
+        m.put("name", "Acme GitHub Issues");
+        m.put("type", "github-issues");
+        m.put("baseUrl", github.baseUrl());
+        m.put("authKind", "bearer");
+        if (secret != null) {
+            m.put("secret", secret);
+        }
+        return m;
+    }
+
+    private static Map<String, Object> gitlabBody(Object secret) {
+        var m = new java.util.HashMap<String, Object>();
+        m.put("name", "Acme GitLab Issues");
+        m.put("type", "gitlab-issues");
+        m.put("baseUrl", gitlab.baseUrl());
+        m.put("authKind", "bearer");
+        if (secret != null) {
+            m.put("secret", secret);
+        }
+        return m;
+    }
+
+    /**
+     * The spec requires basic auth to be refused when the row is SAVED, not merely when the worker
+     * later builds a client from it. Without this the operator gets no feedback at all: the save
+     * succeeds — the credential ping can even pass, since GitHub accepts a PAT as a Basic password —
+     * and the failure surfaces later as a broken context step or a raw 500 from preview.
+     *
+     * <p>Each body points at ITS OWN WireMock (with a valid ping stub and a username, so every other
+     * validation passes) — pointing both at one shared stubless server would 400 from an unrelated
+     * 404 in {@code ping()} regardless of whether this guard exists, proving nothing.
+     */
+    @Test
+    void refusesBasicAuthForTheIssueTypes() {
+        var githubBasic = githubBody("TEST-token");
+        githubBasic.put("authKind", "basic");
+        githubBasic.put("username", "bot@acme.com");
+        given().contentType("application/json").body(githubBasic)
+                .when().post("/api/context-providers").then().statusCode(400);
+
+        var gitlabBasic = gitlabBody("TEST-token");
+        gitlabBasic.put("authKind", "basic");
+        gitlabBasic.put("username", "bot@acme.com");
+        given().contentType("application/json").body(gitlabBasic)
+                .when().post("/api/context-providers").then().statusCode(400);
+    }
+
+    @Test
+    void gitHubPreviewOfABareReferenceReturnsTheGuidance() {
+        String id = given().contentType("application/json").body(githubBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(java.util.Map.of("text", "#123"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("EMPTY"))
+                .body("detail", containsString("owner/repo#123"));
+    }
+
+    @Test
+    void gitHubPreviewResolvesAQualifiedReferenceAndReturnsTheItem() {
+        String id = given().contentType("application/json").body(githubBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        github.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/42")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"number\":42,\"title\":\"Widget crashes on save\",\"state\":\"open\","
+                        + "\"body\":\"Steps to reproduce...\","
+                        + "\"html_url\":\"https://github.invalid/acme/widgets/issues/42\"}")));
+
+        given().contentType("application/json").body(java.util.Map.of("text", "acme/widgets#42"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("OK"))
+                .body("items[0].kind", is("ISSUE"))
+                .body("items[0].title", containsString("Widget crashes on save"));
+    }
+
+    @Test
+    void gitLabPreviewOfABareReferenceReturnsTheGuidance() {
+        String id = given().contentType("application/json").body(gitlabBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(java.util.Map.of("text", "#123"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("EMPTY"))
+                .body("detail", containsString("owner/repo#123"));
+    }
+
+    @Test
+    void gitLabPreviewResolvesAQualifiedReferenceAndReturnsTheItem() {
+        String id = given().contentType("application/json").body(gitlabBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        gitlab.stubFor(get(urlPathEqualTo("/api/v4/projects/acme%2Fwidgets/issues/42")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"iid\":42,\"title\":\"Widget crashes on save\",\"state\":\"opened\","
+                        + "\"description\":\"Steps to reproduce...\","
+                        + "\"web_url\":\"https://gitlab.invalid/acme/widgets/-/issues/42\"}")));
+
+        given().contentType("application/json").body(java.util.Map.of("text", "acme/widgets#42"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("OK"))
+                .body("items[0].kind", is("ISSUE"))
+                .body("items[0].title", containsString("Widget crashes on save"));
     }
 }

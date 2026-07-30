@@ -92,8 +92,13 @@ public class ContextKeyValidator {
         String detail = p.status() == 0 ? "network/TLS failure (see the earlier stack)"
                 : p.status() / 100 != 2 ? "HTTP " + p.status()
                 : SIGN_IN_PAGE;
+        // A 401/403 body can echo the token back (some APIs quote the offending Authorization header
+        // in the error message) — never log it. Every other status is diagnostic, not a credential
+        // rejection, so its body is still worth the trail.
+        String bodyForLog = p.status() == 401 || p.status() == 403 ? "(withheld: auth failure)"
+                : bodySnippet(p.body());
         LOG.warnf("Context connectivity check FAILED for %s — status=%d contentType=%s reason=%s body: %s",
-                p.host(), p.status(), p.contentType(), detail, bodySnippet(p.body()));
+                p.host(), p.status(), p.contentType(), detail, bodyForLog);
         String outcomeDetail = p.status() / 100 != 2 ? null : SIGN_IN_PAGE; // resource maps a bad status itself
         return new CheckOutcome(false, null, p.status(), outcomeDetail);
     }
