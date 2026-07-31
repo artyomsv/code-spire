@@ -907,3 +907,43 @@ export async function previewPrompt(kind: string, system: string, body: string):
   if (!res.ok) return throwResponse(res, 'Failed to preview prompt');
   return res.json();
 }
+
+// ---- review context (assembled context blob + live PR description) ----
+
+export interface ContextItem {
+  kind: string;
+  title: string;
+  body: string;
+  uri: string | null;
+}
+
+export interface ReviewContext {
+  items: ContextItem[];
+  contributingSources: string[];
+  missingSources: string[];
+}
+
+const seg = (s: string) => encodeURIComponent(s);
+
+/** What the model was given for this review — read from the stored blob, never re-resolved. */
+export async function fetchReviewContext(
+  workspace: string,
+  slug: string,
+  pr: number,
+): Promise<ReviewContext> {
+  const res = await fetch(`/api/review-context/${seg(workspace)}/${seg(slug)}/${pr}`);
+  if (!res.ok) return throwResponse(res, 'Failed to load context');
+  return res.json();
+}
+
+/** The pull request's description as it stands NOW — fetched live, so it may have been edited. */
+export async function fetchPrDescription(
+  workspace: string,
+  slug: string,
+  pr: number,
+): Promise<string | null> {
+  const res = await fetch(`/api/reviews/${seg(workspace)}/${seg(slug)}/${pr}/description`);
+  if (!res.ok) return throwResponse(res, 'Failed to load the description');
+  const body = await res.json();
+  return body.description ?? null;
+}

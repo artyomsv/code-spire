@@ -147,11 +147,13 @@ services:
     depends_on:
       - orchestrator
       - gateway
+      - worker
     environment:
       UI_PORT: "39285"
       # Vite dev-server proxy targets -> the in-network Quarkus services.
       ORCHESTRATOR_URL: http://orchestrator:39280
       GATEWAY_URL: http://gateway:39281
+      WORKER_URL: http://worker:39282
       ORCHESTRATOR_WS_URL: ws://orchestrator:39280
       GATEWAY_WS_URL: ws://gateway:39281
       # Synced source needs polling to be seen reliably inside the container.

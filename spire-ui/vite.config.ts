@@ -6,6 +6,7 @@ import react from '@vitejs/plugin-react';
 // service names (http://orchestrator:39280, http://gateway:39281, ws://...).
 const orchestrator = process.env.ORCHESTRATOR_URL ?? 'http://localhost:34080';
 const gateway = process.env.GATEWAY_URL ?? 'http://localhost:34081';
+const worker = process.env.WORKER_URL ?? 'http://localhost:34082';
 const orchestratorWs = process.env.ORCHESTRATOR_WS_URL ?? 'ws://localhost:34080';
 const gatewayWs = process.env.GATEWAY_WS_URL ?? 'ws://localhost:34081';
 
@@ -25,6 +26,9 @@ export default defineConfig({
       // Webhook registrations are owned by the GATEWAY (:34081). More specific than
       // /api, so it must be listed first. Everything else /api -> orchestrator.
       '/api/webhook-repos': { target: gateway, changeOrigin: true },
+      // The assembled context is the WORKER's data (:34082) — it owns the blob and is the only
+      // service that can address it. More specific than /api, so it must be listed first.
+      '/api/review-context': { target: worker, changeOrigin: true },
       '/api': { target: orchestrator, changeOrigin: true },
       // The gateway pushes its own conditions, so the browser holds two attention sockets on one
       // origin. More specific than /ws, so it must be listed first — same reason as webhook-repos.
