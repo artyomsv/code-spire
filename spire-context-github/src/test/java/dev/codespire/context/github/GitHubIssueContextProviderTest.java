@@ -306,4 +306,25 @@ class GitHubIssueContextProviderTest {
         assertEquals("GITHUB_ISSUES", provider.source());
         assertEquals("GITHUB_ISSUES", new GitHubIssueReferenceSource().source());
     }
+
+    /**
+     * The review detail page splits ContextItem.body on this exact marker to show comments
+     * collapsed. It is a cross-module, cross-language contract with no shared constant, so
+     * changing the wording here must fail a test rather than silently empty that section.
+     */
+    @Test
+    void rendersCommentsUnderTheMarkerTheReviewDetailPageSplitsOn() {
+        stubIssue(42, "{\"number\":42,\"title\":\"Marker check\",\"body\":\"Body text.\"}");
+        server.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/42/comments"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
+                        [{"body":"Looks fine to me.","user":{"login":"dana"}}]
+                        """)));
+
+        ContextContribution contribution =
+                provider.contribute(request(Set.of("#42"), ScmType.GITHUB)).toCompletableFuture().join();
+
+        assertEquals(1, contribution.items().size());
+        assertTrue(contribution.items().get(0).body().contains("\n\nRecent comments:"),
+                "body must carry the 'Recent comments:' marker the UI splits on");
+    }
 }

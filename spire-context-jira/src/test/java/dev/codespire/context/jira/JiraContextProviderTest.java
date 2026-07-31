@@ -154,6 +154,30 @@ class JiraContextProviderTest {
         assertTrue(c.items().isEmpty());
     }
 
+    /**
+     * The review detail page splits ContextItem.body on this exact marker to show comments
+     * collapsed. It is a cross-module, cross-language contract with no shared constant, so
+     * changing the wording here must fail a test rather than silently empty that section.
+     */
+    @Test
+    void rendersCommentsUnderTheMarkerTheReviewDetailPageSplitsOn() {
+        server.stubFor(get(urlPathEqualTo("/rest/api/2/issue/CS-42")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("""
+                        {"key":"CS-42","fields":{
+                            "summary":"Marker check",
+                            "description":"Body text.",
+                            "comment":{"comments":[
+                                {"author":{"displayName":"Ana"},"body":"Looks fine to me."}]}}}
+                        """)));
+
+        ContextContribution c = provider.contribute(request(Set.of("CS-42"))).toCompletableFuture().join();
+
+        assertEquals(1, c.items().size());
+        assertTrue(c.items().getFirst().body().contains("\n\nRecent comments:"),
+                "body must carry the 'Recent comments:' marker the UI splits on");
+    }
+
     /** A deterministic, ordered key set so the 404-then-valid sequence is stable. */
     private static Set<String> orderedKeys(String... keys) {
         return new java.util.LinkedHashSet<>(List.of(keys));

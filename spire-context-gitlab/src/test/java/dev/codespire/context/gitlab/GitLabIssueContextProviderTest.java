@@ -306,4 +306,26 @@ class GitLabIssueContextProviderTest {
         assertEquals("GITLAB_ISSUES", provider.source());
         assertEquals("GITLAB_ISSUES", new GitLabIssueReferenceSource().source());
     }
+
+    /**
+     * The review detail page splits ContextItem.body on this exact marker to show comments
+     * collapsed. It is a cross-module, cross-language contract with no shared constant, so
+     * changing the wording here must fail a test rather than silently empty that section.
+     */
+    @Test
+    void rendersCommentsUnderTheMarkerTheReviewDetailPageSplitsOn() {
+        json("/api/v4/projects/" + ENCODED + "/issues/42", """
+                {"iid":42,"title":"Marker check","description":"Body text."}
+                """);
+        json("/api/v4/projects/" + ENCODED + "/issues/42/notes", """
+                [{"body":"Looks fine to me.","system":false,"author":{"username":"dana"}}]
+                """);
+
+        ContextContribution contribution =
+                provider.contribute(request(Set.of("#42"), ScmType.GITLAB)).toCompletableFuture().join();
+
+        assertEquals(1, contribution.items().size());
+        assertTrue(contribution.items().get(0).body().contains("\n\nRecent comments:"),
+                "body must carry the 'Recent comments:' marker the UI splits on");
+    }
 }
