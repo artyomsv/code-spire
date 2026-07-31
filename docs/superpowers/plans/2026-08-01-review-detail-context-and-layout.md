@@ -313,14 +313,15 @@ public class ReviewContextResource {
     public ReviewContextView get(@PathParam("workspace") String workspace,
                                  @PathParam("slug") String slug,
                                  @PathParam("pr") long pr) {
-        byte[] payload = blobStore.getByReview(ReviewIds.reviewId(new RepoRef(workspace, slug), pr));
+        String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
+        byte[] payload = blobStore.getByReview(reviewId);
         if (payload == null) {
             return EMPTY;
         }
-        return view(payload, workspace, slug, pr);
+        return view(payload, reviewId);
     }
 
-    private ReviewContextView view(byte[] payload, String workspace, String slug, long pr) {
+    private ReviewContextView view(byte[] payload, String reviewId) {
         try {
             AssembledContext context = mapper.readValue(payload, AssembledContext.class);
             return new ReviewContextView(
@@ -328,9 +329,10 @@ public class ReviewContextResource {
                     context.contributingSources() == null ? Set.of() : context.contributingSources(),
                     context.missingSources() == null ? Set.of() : context.missingSources());
         } catch (IOException e) {
-            // A blob we cannot parse is a display problem, not a reason to fail the page. Log it
-            // without the payload: context items quote issue and ticket text.
-            LOG.warnf(e, "Unreadable context blob for %s/%s#%d", workspace, slug, pr);
+            // A blob we cannot parse is a display problem, not a reason to fail the page. Log the
+            // review id only: context items quote issue and ticket text, so the payload never goes
+            // to a log.
+            LOG.warnf(e, "Unreadable context blob for %s", reviewId);
             return EMPTY;
         }
     }
