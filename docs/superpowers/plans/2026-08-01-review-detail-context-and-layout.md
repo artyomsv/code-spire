@@ -711,6 +711,25 @@ describe('splitComments', () => {
       comments: null,
     });
   });
+
+  /**
+   * One provider strips the assembled body, so a ticket with no description at all begins directly
+   * with the marker and never carries the leading blank line.
+   */
+  it('splits when the body begins with the marker', () => {
+    expect(splitComments('Recent comments:\n- alice: agreed')).toEqual({
+      detail: '',
+      comments: '- alice: agreed',
+    });
+  });
+
+  /** "Recent comments:" inside prose is not a section header and must not split the body. */
+  it('ignores the phrase when it is not on its own line', () => {
+    expect(splitComments('See the Recent comments: section below for detail.')).toEqual({
+      detail: 'See the Recent comments: section below for detail.',
+      comments: null,
+    });
+  });
 });
 
 describe('ContextCard', () => {
@@ -807,19 +826,23 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { fetchReviewContext, fetchPrDescription, type ContextItem, type ReviewContext } from '../api';
 
-const COMMENTS_MARKER = '\n\nRecent comments:';
+const COMMENTS_MARKER = 'Recent comments:';
 
 /**
  * Providers append comments into the item body under a fixed marker rather than as structured
  * data, so the split happens here. A test per provider pins the marker; if one ever changes its
  * wording, that test fails rather than this quietly showing an empty comments section.
+ *
+ * The marker is matched WITHOUT its leading newlines: one provider strips the body, so a ticket
+ * with no description at all starts directly with the marker and would otherwise fall through as
+ * prose. Matching at a line start covers both shapes.
  */
 export function splitComments(body: string): { detail: string; comments: string | null } {
-  const at = body.indexOf(COMMENTS_MARKER);
-  if (at < 0) return { detail: body, comments: null };
+  const match = /^Recent comments:$/m.exec(body);
+  if (!match || match.index === undefined) return { detail: body, comments: null };
   return {
-    detail: body.slice(0, at).trim(),
-    comments: body.slice(at + COMMENTS_MARKER.length).trim(),
+    detail: body.slice(0, match.index).trim(),
+    comments: body.slice(match.index + COMMENTS_MARKER.length).trim(),
   };
 }
 
