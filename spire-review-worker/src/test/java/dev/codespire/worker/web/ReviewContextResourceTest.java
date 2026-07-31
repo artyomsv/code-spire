@@ -9,6 +9,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 
@@ -70,6 +71,19 @@ class ReviewContextResourceTest {
         when().get("/api/review-context/acme/widgets/803")
                 .then().statusCode(200)
                 .body("missingSources", hasItem("jira"));
+
+        store.deleteByReview(reviewId);
+    }
+
+    /** A blob that fails to parse is a display problem, not a reason to fail the page. */
+    @Test
+    void returnsAnEmptyResultWhenTheStoredBlobIsNotValidJson() {
+        String reviewId = "review::acme/widgets#804";
+        store.put(BlobStore.Kind.CONTEXT, reviewId, "not json".getBytes(StandardCharsets.UTF_8));
+
+        when().get("/api/review-context/acme/widgets/804")
+                .then().statusCode(200)
+                .body("items", hasSize(0));
 
         store.deleteByReview(reviewId);
     }
