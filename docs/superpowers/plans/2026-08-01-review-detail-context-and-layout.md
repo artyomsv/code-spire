@@ -461,7 +461,7 @@ Add to `ReviewsResource` (inject `ReviewProviderResolver reviews;` and `Provider
     }
 ```
 
-Add the imports the file does not already have: `dev.codespire.contract.event.ReviewIds`, `dev.codespire.contract.scm.RepoRef`, `dev.codespire.contract.port.ScmApiException`, `dev.codespire.orchestrator.provider.ReviewProviderResolver`, `dev.codespire.orchestrator.provider.ProviderClients`, `jakarta.ws.rs.NotFoundException`, `jakarta.ws.rs.ServiceUnavailableException`.
+Add the imports the file does not already have: `dev.codespire.contract.event.ReviewIds`, `dev.codespire.contract.scm.RepoRef`, `dev.codespire.contract.scm.ScmApiException`, `dev.codespire.orchestrator.provider.ReviewProviderResolver`, `dev.codespire.orchestrator.provider.ProviderClients`, `jakarta.ws.rs.NotFoundException`, `jakarta.ws.rs.ServiceUnavailableException`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
