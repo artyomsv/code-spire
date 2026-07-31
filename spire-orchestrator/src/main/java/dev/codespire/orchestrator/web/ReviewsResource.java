@@ -22,6 +22,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.ServiceUnavailableException;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -96,6 +97,41 @@ public class ReviewsResource {
                                @PathParam("pr") long pr) {
         return projection.loadDetail(workspace, slug, pr)
                 .orElseThrow(() -> new NotFoundException("No review for " + workspace + "/" + slug + "#" + pr));
+    }
+
+    /** The pull request's description as it stands NOW — fetched live, never stored. */
+    public record DescriptionView(String description) {
+    }
+
+    /**
+     * Fetched live rather than stored: the description lives on neither {@code review_status} nor
+     * {@code DiffFetched}, so the UI always shows the PR's current text, not what the review parsed.
+     */
+    @GET
+    @Path("/{workspace}/{slug}/{pr}/description")
+    public DescriptionView description(@PathParam("workspace") String workspace,
+                                       @PathParam("slug") String slug,
+                                       @PathParam("pr") long pr) {
+        RepoRef repo = new RepoRef(workspace, slug);
+        // NotFoundException(String) only sets the exception's own message, not the HTTP response
+        // body — the entity must be set explicitly so the operator sees why the fetch was refused.
+        ScmProvider provider = reviewProviders.resolveForReview(ReviewIds.reviewId(repo, pr))
+                .orElseThrow(() -> new NotFoundException(Response.status(Response.Status.NOT_FOUND)
+                        .entity("No enabled provider for " + workspace + "/" + slug).build()));
+        try {
+            return new DescriptionView(clients.diffSource(provider).fetchPullRequest(repo, pr).description());
+        } catch (RuntimeException e) {
+            // Provider-neutral: every adapter implements ScmApiException, so one platform's status
+            // codes are never interpreted here. A genuine bug still surfaces unchanged.
+            if (!(e instanceof ScmApiException api)) {
+                throw e;
+            }
+            if (api.isNotFound()) {
+                throw new NotFoundException("Pull request not found: " + workspace + "/" + slug + "#" + pr);
+            }
+            throw new ServiceUnavailableException(
+                    api.isUnauthorized() ? "The stored credential was rejected." : "Could not reach the provider.");
+        }
     }
 
     /** Re-run a review's pipeline on its stored commit (force restart; clears cached LLM result). */
