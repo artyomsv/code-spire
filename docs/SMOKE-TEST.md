@@ -606,72 +606,201 @@ dismissal.
 Any of the review modes above pulls linked context into the prompt once a context provider is
 registered — additive, so no provider registered means reviews run exactly as before (empty
 context). This mode proves that provisioning works during a real review, against a real instance,
-for all four provider types: Jira, Confluence, GitHub Issues, GitLab Issues. Code-complete plus
-WireMock is not the bar for the two newest ones — this is their first contact with a real host.
+for all four provider types (Jira, Confluence, GitHub Issues, GitLab Issues) on all three SCMs
+(GitHub, GitLab, Bitbucket). Code-complete plus WireMock is not the bar for the two newest
+providers — this is their first contact with a real host.
 
-**Setup.** In Settings → **Context** register one provider per type you can reach, each with its own
-token:
-- **Jira:** `type=jira`, `baseUrl=https://<your-site>.atlassian.net`, `authKind=basic`,
-  `username=<account-email>`, `secret=<API token>` (self-managed Data Center: `authKind=bearer` with
-  a PAT instead). Optionally set **project keys** (`ACME`) so a bare ticket number resolves.
-- **Confluence:** same shape as Jira, `type=confluence`; optionally set space keys.
-- **GitHub Issues:** `type=github-issues`, `baseUrl=https://api.github.com` (or a GitHub Enterprise
-  Server `/api/v3` root), `authKind=bearer`, `secret=<PAT that can read issues>`. Optionally set an
-  owner/`owner/repo` allow-list.
-- **GitLab Issues:** `type=gitlab-issues`, `baseUrl=https://gitlab.com` (or a self-managed host),
-  `authKind=bearer`, `secret=<PAT with the read_api scope>`. Optionally set a group/`group/project`
-  allow-list.
+Scenarios are numbered **I-1 … I-18** so results can be reported back by id. The **minimum set** is
+one per SCM plus the guard — **I-10** (GitHub), **I-13** (GitLab), **I-17** (Bitbucket) and
+**Part 3**; the rest widen coverage.
 
-Save validates each credential up front (a bad token is a 400, not a silent save). Run each row's
-**Check** — all must show the token owner. Run each row's **Test** with a *qualified* reference
-(`owner/repo#123`, `group/project#123`, `PROJ-123`, a Confluence page URL) or a full issue/page
-URL — Test has no PR/MR behind it, so a **bare** `#123`/`!123`/`&123` has no repository to resolve
-against and only returns the actionable guidance message, not a result.
+### What each observable actually proves — read this first
 
-**Per provider type, in a real PR/MR:**
+Context is deliberately hard to see, and two of the three places you might look show less than you
+would expect. Know which is which before interpreting a run.
 
-1. Open a real PR/MR whose title or description references a real issue in that system — a Jira key,
-   a Confluence page URL, a bare `#123`/`!123`/`&123` (in the review's own repository/project), or the
-   qualified `owner/repo#123` / `group/subgroup/project#123` form.
-2. On the review's detail page, confirm the timeline shows `ContextRequested`, then
-   `ContextContributed` naming the source with status `OK` and a non-zero item count, then
-   `ContextAssembled`. This establishes resolution, credentials, and assembly against a real
-   instance — everything up to the persisted blob.
-3. Separately, run that provider's **Test** (Settings → Context) against the same reference and
-   confirm it returns the real `ContextItem` (kind, title, body, uri) a review would have injected —
-   for GitLab, try an epic (`&7`) too if the instance is Premium-tier; a free-tier instance skips it
-   (403/404) rather than failing the whole contribution.
-4. **What steps 2–3 do NOT establish: whether that item's text ever reached the model.** Assembly
-   persists a blob; the prompt is built from it as a separate step
-   (`ReviewWorker.loadContext` → `ReviewPromptBuilder.build`), and no screen shows the rendered
-   prompt for a real review — it is never logged or persisted anywhere (see
-   `techdebt/spire-review-worker/2-2-no-visibility-into-rendered-llm-prompt.md`). That final hop is
-   covered instead by a permanent CI test,
-   `ReviewWorkerTest.assembledContextReachesThePromptSentToTheModel`, which captures the exact
-   `Prompt` handed to the LLM client and asserts a context item's title and body are inside it — do
-   not go looking for a "prompt" screen in the UI; there isn't one, by design (the raw request can
-   carry retrieved source text, and logging it in plaintext was rejected as a bigger exposure than
-   not having the view at all).
-5. Note whether the review's output shows awareness of the context. This is a weak signal — record
-   it as an observation, never as proof of anything steps 2–3 didn't already establish.
+| Observable | Where | Proves | Does **not** prove |
+|---|---|---|---|
+| `ContextAssembled` row | spire-ui review detail, event list | The fan-out ran and finished for this review | That anything was found — it is emitted with an empty context too |
+| Stage reaches **Context** then **Review** | spire-ui review detail | The pipeline advanced past context | Anything about content |
+| `worker.context_blob` row, `size_bytes > 0` | Postgres | **≥1 real item was resolved, fetched and persisted** for this review | *Which* provider produced it |
+| `ContextRequested` / `ContextContributed` rows | orchestrator dashboard `:34080` only | A fan-out happened, a provider answered | Nothing else — both rows carry an **empty reviewId and empty detail**, so no source name, no item count, no attribution to a review |
+| **Test** result (Settings → Context) | spire-ui | The exact `ContextItem` (kind/title/body/uri) that provider would inject, with real credentials against the real host | That a *review* would resolve the same reference (no PR/MR behind Test) |
+| The bot's review text | The PR/MR | Nothing. A weak signal at best | Record as an observation, never as evidence |
 
-**Negative pass — the cross-platform `ScmType` guard.** With a GitHub Issues provider enabled, run a
-review on a **GitLab or Bitbucket** PR whose description contains a bare `#123` that also exists as a
-real issue in a same-named repository on GitHub. Expect: the timeline shows no
-`ContextContributed(GITHUB_ISSUES)` row at all (or one with zero items) — the review's own `ScmType`
-(GitLab/Bitbucket) fails the bare reference's platform check before GitHub is ever queried. This is a
-**live-review-only** check: per the setup note above, a provider's **Test** button never attempts to
-resolve a bare reference at all — it has no PR/MR behind it, so a bare `#123`/`!123`/`&123` short-
-circuits to the guidance message before any provider is even constructed. With no in-Test resolution
-attempt, there is nothing for the `ScmType` guard to agree or disagree with, so Test cannot exercise
-this guard for that reason — only a real review, on a real PR/MR of the *other* platform, can. A
-resolved GitHub issue showing up here is the cross-wiring defect the `ScmType` guard exists to
-prevent — stop and report it.
+Two consequences that shape every scenario below:
 
-**Real data only.** Use real issues in real repositories/projects. Do not create issues, pages, or PRs
-whose only purpose is to make this pass.
+1. **Attribution comes from the experiment, not the screen.** Nothing at runtime says "GitHub Issues
+   contributed 2 items". So **enable exactly one context provider at a time** — then a
+   `worker.context_blob` row for that review can only have come from that provider.
+2. **The blob row is the verdict.** `size_bytes` is the *plaintext* length, written only when at
+   least one item was assembled. No row ⇒ empty context. It needs no decryption:
+
+```bash
+docker exec -it spire-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "SELECT review_id, size_bytes, created_at FROM worker.context_blob ORDER BY created_at DESC LIMIT 5;"
+```
+
+Shorthand used below: **CONTRIBUTED** = a `worker.context_blob` row for that reviewId with
+`size_bytes > 0`. **NOT CONTRIBUTED** = no row for that reviewId (with one provider enabled).
+
+### Setup
+
+1. Stack up (`docker compose up -d`), all three services running, a default LLM provider configured.
+2. **Review-mode slider → `active`.** `observe` registers the PR and stops — no diff, no context, no
+   LLM. Nothing in this mode works in observe.
+3. Because the mode is active, **the bot posts real comments on the PRs you use.** Pick repositories
+   where that is acceptable.
+4. Register providers in Settings → **Context**, each with its own token:
+
+| Type | baseUrl | authKind | Project keys field means |
+|---|---|---|---|
+| `jira` | `https://<site>.atlassian.net` (DC: your host) | `basic` + account email (DC: `bearer` PAT) | Jira project keys (`ACME`) — lets a bare number resolve |
+| `confluence` | same site root | as Jira | Space keys |
+| `github-issues` | `https://api.github.com` (GHES: `.../api/v3`) | `bearer` only | `owner` or `owner/repo` allow-list |
+| `gitlab-issues` | `https://gitlab.com` (or self-managed host) | `bearer` only (`read_api` scope) | `group` or `group/project` allow-list, prefix-matched |
+
+`basic` is **rejected on save** for the two `*-issues` types (both APIs are bearer-only) — a 400,
+not a silent accept. Save also validates the credential up front, so a bad token cannot be stored.
+
+5. Run every row's **Check**. Each must return the token owner (`/user`, `/api/v4/user`, and each
+   Atlassian product's own identity call).
+
+**Where references are read from.** Extraction runs once at diff-fetch over the pull request's
+**title**, **source branch name** and **description** — *not* commit messages, file contents, or
+comments. Put the reference in the description unless a scenario says otherwise. A second level then
+mines the *text of what level 1 retrieved* for new references (one hop only, `MAX_DEPTH=2`), each
+provider capped at 10 references per level, the whole fan-out bounded to 20s.
+
+**Real data only — for the context, not the harness.** Every object a scenario *resolves* (issue,
+merge request, epic, ticket, page) must already exist for a real reason: never invent one to make a
+scenario pass, because a fabricated ticket teaches you nothing about whether real ones resolve. The
+PR/MR doing the referencing is the harness, not the data — opening one in a dedicated test
+repository is how the pass is run. On GitHub and GitLab, note that a bare `#N` also resolves **pull
+/ merge requests**, so an existing PR number is a valid bare reference in a repository that has no
+issues.
+
+### Part 1 — resolution without a PR (Test)
+
+Fast, deterministic, and isolates grammar + credentials from the pipeline. Settings → Context →
+**Test** on each row.
+
+| # | Provider | Input | Expected |
+|---|---|---|---|
+| I-1 | jira | `PROJ-123` (a real key) | One item, kind `TICKET`, real summary/description |
+| I-2 | confluence | a real page URL (`…/pages/12345/…`) | One item, real page title and body text |
+| I-3 | github-issues | `owner/repo#123` (real) | One item, kind `ISSUE` (or `PULL_REQUEST` for a PR number) |
+| I-4 | gitlab-issues | `group/project#123` (real) | One item, kind `ISSUE` |
+| I-5 | github-issues | bare `#123` | **No result** — the guidance message ("Enter owner/repo#123 or paste an issue URL"). Test has no PR behind it, so a repository-relative reference has nothing to resolve against. This is expected, not a failure |
+| I-6 | gitlab-issues | bare `#123` / `!123` / `&123` | Same: guidance message, no result |
+
+A wrong result here (an item for a reference you did not mean) is more serious than an empty one —
+stop and report it.
+
+### Part 2 — resolution inside a real review, per SCM
+
+For each scenario: enable **only** the provider named, put the reference in the PR/MR description,
+trigger a review (push a commit, or use **Register PR** from the dashboard — Modes C/D — if you have
+no tunnel running), then check the blob row.
+
+**Platform-independent — run on each of GitHub, GitLab and Bitbucket:**
+
+| # | Provider enabled | Put in the PR/MR description | Expected |
+|---|---|---|---|
+| I-7 | jira | a real `PROJ-123` key | CONTRIBUTED. Jira keys are site-global, so all three SCMs behave identically |
+| I-8 | confluence | a real page URL on the configured host | CONTRIBUTED |
+| I-9 | jira | a key whose ticket description itself links a Confluence page, **with both jira and confluence enabled** | CONTRIBUTED, and the blob is visibly larger than I-7's — this is the level-2 hop. Skip if no such real ticket exists |
+
+**GitHub PR:**
+
+| # | Provider enabled | In the description | Expected |
+|---|---|---|---|
+| I-10 | github-issues | bare `#123` (a real issue in *this* repo) | CONTRIBUTED — repo-relative resolves because the review is on GitHub |
+| I-11 | github-issues | `otherowner/otherrepo#123` | CONTRIBUTED — a qualified reference names its own repository |
+| I-12 | github-issues | a full issue URL, and a full `/pull/N` URL | CONTRIBUTED, two items; the PR one is kind `PULL_REQUEST` |
+
+**GitLab MR:**
+
+| # | Provider enabled | In the description | Expected |
+|---|---|---|---|
+| I-13 | gitlab-issues | bare `#123` (real issue in *this* project) | CONTRIBUTED |
+| I-14 | gitlab-issues | bare `!123` (a real MR in this project) | CONTRIBUTED, kind `PULL_REQUEST` |
+| I-15 | gitlab-issues | bare `&7` (a real epic) | Premium tier: CONTRIBUTED, kind `EPIC`. **Free tier: no epic item, and that is correct** — 403/404 skips that one reference, so pair it with a `#123` in the same description and confirm the issue still contributes |
+| I-16 | gitlab-issues | `group/subgroup/project#123` | CONTRIBUTED — nested namespaces, the multi-segment qualified form |
+
+**Bitbucket PR:**
+
+| # | Provider enabled | In the description | Expected |
+|---|---|---|---|
+| I-17 | jira + confluence | a real key and a real page URL | CONTRIBUTED. There is no Bitbucket issue provider — Jira/Confluence *is* the Bitbucket context path, and it is the one this project was built around |
+| I-18 | github-issues | `owner/repo#123` (a real GitHub issue) | CONTRIBUTED — a qualified reference is not platform-gated, so a Bitbucket PR can pull GitHub issue context |
+
+I-18 paired with the negative pass below is the important one: it proves the cross-platform guard is
+per-*reference*, not per-provider.
+
+### Part 3 — negative pass: the cross-platform `ScmType` guard
+
+The hazard: the same `workspace/slug` routinely exists on two platforms, so a bare `#123` resolved
+against the wrong host returns a **real but unrelated issue** — a plausible wrong answer, not an
+error. The guard declines rather than guesses.
+
+**Run on a GitLab MR or a Bitbucket PR**, with **only `github-issues` enabled**, and a description
+containing a bare `#123` that exists as a real issue in a same-named repository on GitHub (your own
+`artyomsv/*` pair works).
+
+Expected: **NOT CONTRIBUTED** — no blob row. The review's own platform fails the bare reference's
+check before GitHub is ever queried. A GitHub issue appearing here is the cross-wiring defect the
+guard exists to prevent — stop and report it.
+
+Note the asymmetry against I-18, same SCM, same provider: the *qualified* reference contributes and
+the *bare* one does not. That pair is the whole design, observable in two runs.
+
+This is a **live-review-only** check. A provider's **Test** button short-circuits a bare reference to
+the guidance message (I-5/I-6) before any provider is constructed, so there is no resolution attempt
+for the guard to agree or disagree with. Only a real review on a real PR/MR of the other platform
+exercises it.
+
+### Part 4 — the last hop: does the item reach the model?
+
+**Nothing in Parts 1–3 establishes this.** Assembly persists a blob; the prompt is built from it as
+a separate step (`ReviewWorker.loadContext` → `ReviewPromptBuilder.build`), and no screen shows the
+rendered prompt for a real review — it is never logged or persisted anywhere (see
+`techdebt/spire-review-worker/2-2-no-visibility-into-rendered-llm-prompt.md`; `review_llm_call`
+stores only model, token counts and cost). Do not go looking for a "prompt" view; there isn't one,
+by design — the raw request can carry retrieved source text, and logging it in plaintext was
+rejected as a bigger exposure than not having the view.
+
+That hop is covered instead by a permanent CI test, which captures the exact `Prompt` handed to the
+LLM client and asserts a context item's title and body are inside it:
+
+```bash
+./gradlew :spire-review-worker:test --tests '*ReviewWorkerTest*'
+```
+
+`assembledContextReachesThePromptSentToTheModel` is the one that matters. It is confirmed to
+discriminate (it fails when `contextRef` is null).
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| No `ContextAssembled` at all; stage never leaves Received | Review-mode is `observe` |
+| `ContextAssembled` but never a blob row, every scenario | Provider disabled, or its allow-list (project-keys field) excludes the repository — an **empty** allow-list accepts everything; a wrong entry silently excludes |
+| Only the bare-reference scenarios fail | Expected off-platform (that is Part 3); on-platform it means the review's SCM provider type did not resolve — check Settings → Providers |
+| Contribution missing after ~20s, worker logs "did not contribute within the budget" | Fan-out timeout — a slow host, or too many references |
+| Test works, review does not | Extraction reads only title / branch / description; check the reference is in one of those |
+
+### Known limitation of this pass
+
+`ContextRequested` and `ContextContributed` reach the orchestrator dashboard with an **empty
+reviewId and empty detail** (`ResultSaga.reviewIdOf` has no case for either, and neither is appended
+to the per-review projection). So per-source, per-review attribution does not exist at runtime —
+which is why every scenario above enables one provider at a time and reads the blob row. Worth
+closing before the next context provider lands; it is a two-line addition to `reviewIdOf` plus a
+`projection.appendEvent` on `ContextContributed`.
 
 ### Cleanup
 
 Remove any provider added only for this pass in Settings → Context (or
 `DELETE /api/context-providers/{id}`). Context blobs vanish with their reviews — no separate cleanup.
+Flip Review-mode back to `observe`.
