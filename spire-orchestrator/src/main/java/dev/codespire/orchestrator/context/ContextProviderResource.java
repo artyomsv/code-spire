@@ -335,9 +335,16 @@ public class ContextProviderResource {
                                      List<String> keys, String errorOnErrorStatus, String errorOnThrow) {
         try {
             ContextContribution c = provider.contribute(req).toCompletableFuture().join();
-            String status = c.status().name();
-            String detail = "ERROR".equals(status) ? errorOnErrorStatus : null;
-            return new PreviewResult(keys, status, c.items(), detail);
+            // An EMPTY here means the reference WAS recognised and attempted — unlike the bare-form
+            // short-circuits above, which never reach a provider. Returning it with a null detail
+            // made "no such issue" and "the token cannot see it" look identical on screen.
+            String detail = switch (c.status()) {
+                case ERROR -> errorOnErrorStatus;
+                case EMPTY -> "Nothing came back for " + String.join(", ", keys)
+                        + " — check that it exists and that the token can read it.";
+                case OK -> null;
+            };
+            return new PreviewResult(keys, c.status().name(), c.items(), detail);
         } catch (RuntimeException e) {
             LOG.warnf(e, "Context preview failed for provider %s (%s)", cfg.id(), cfg.type());
             return new PreviewResult(keys, "ERROR", List.of(), errorOnThrow);

@@ -574,6 +574,26 @@ class ContextProviderResourceTest {
                 .body("detail", not(containsString("group/project#123")));
     }
 
+    /**
+     * A reference the provider recognised, attempted and got nothing for used to come back as EMPTY
+     * with a null detail — indistinguishable from "the token cannot see it". Only the BARE case
+     * explained itself.
+     */
+    @Test
+    void previewExplainsWhenARecognisedReferenceResolvesToNothing() {
+        String id = given().contentType("application/json").body(githubBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        github.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/404"))
+                .willReturn(aResponse().withStatus(404)));
+
+        given().contentType("application/json").body(java.util.Map.of("text", "acme/widgets#404"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("EMPTY"))
+                .body("detail", notNullValue())
+                .body("detail", containsString("acme/widgets#404"));
+    }
+
     @Test
     void gitLabPreviewResolvesAQualifiedReferenceAndReturnsTheItem() {
         String id = given().contentType("application/json").body(gitlabBody("TEST-token"))
