@@ -76,6 +76,30 @@ public class PostgresBlobStore implements BlobStore {
         }
     }
 
+    /**
+     * The newest context blob a review owns, decrypted, or null when it owns none.
+     *
+     * <p>Keyed by review rather than by {@code context_id} because no caller outside this service
+     * knows a review's contextRef — it rides on ContextAssembled into GenerateReview and is never
+     * projected. A re-run deletes the prior blob before writing, so ordering only matters if a
+     * delete ever fails; newest-first keeps the answer current rather than stale.
+     */
+    public byte[] getByReview(String reviewId) {
+        String sql = "SELECT ciphertext, aad FROM context_blob WHERE review_id = ? "
+                + "ORDER BY created_at DESC LIMIT 1";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return encryption.decrypt(rs.getBytes("ciphertext"), rs.getString("aad"));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("context_blob read-by-review failed", e);
+        }
+    }
+
     @Override
     public void delete(BlobRef ref) {
         try (Connection c = dataSource.getConnection();
