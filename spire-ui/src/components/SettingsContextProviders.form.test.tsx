@@ -43,6 +43,43 @@ describe('SettingsContextProviders — add-provider form', () => {
     expect(screen.queryByRole('option', { name: /^basic/i })).not.toBeInTheDocument();
   });
 
+  /**
+   * The row rendered an Enabled/Disabled pill while the form posted `initial.enabled` straight back,
+   * so the state was visible but unreachable — a provider could only be disabled through the API.
+   */
+  it('sends enabled=false when the Enabled box is unchecked on an existing provider', async () => {
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
+      {
+        id: 'ctx-1',
+        name: 'Acme Jira',
+        type: 'jira',
+        baseUrl: 'https://acme.example.invalid',
+        authKind: 'basic',
+        username: 'bot@example.invalid',
+        projectKeys: 'ACME',
+        enabled: true,
+        isDefault: false,
+        hasSecret: true,
+        createdAt: '2026-07-31T00:00:00Z',
+        lastCheckAt: null,
+        lastCheckOk: null,
+        lastCheckError: null,
+      },
+    ] as never);
+    const update = vi.spyOn(api, 'updateContextProvider').mockResolvedValue(undefined as never);
+
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
+
+    const box = await screen.findByRole('checkbox', { name: /enabled/i });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1]).toMatchObject({ enabled: false });
+  });
+
   it('leaves auth alone when switching between types that permit the same kinds', async () => {
     // Jira and Confluence both allow basic and bearer, so a switch between them must not coerce.
     renderPage();

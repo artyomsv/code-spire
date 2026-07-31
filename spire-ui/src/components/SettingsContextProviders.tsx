@@ -337,6 +337,7 @@ function ContextProviderForm({
   const [username, setUsername] = useState(initial?.username ?? '');
   const [projectKeys, setProjectKeys] = useState(initial?.projectKeys ?? '');
   const [secret, setSecret] = useState('');
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const copy = TYPE_COPY[type];
@@ -353,7 +354,7 @@ function ContextProviderForm({
       username: authKind === 'basic' ? username.trim() : undefined,
       secret: secret.trim() || undefined,
       projectKeys: projectKeys.trim() || undefined,
-      enabled: initial?.enabled ?? true,
+      enabled,
     };
     try {
       if (editing && initial) {
@@ -456,6 +457,11 @@ function ContextProviderForm({
                 {initial?.hasSecret ? 'A secret is stored — leave blank to keep it.' : 'No secret stored yet.'}
               </small>
             )}
+          </label>
+
+          <label className="field-check">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <span>Enabled</span>
           </label>
 
           {error && <div className="modal-msg modal-error">{error}</div>}
