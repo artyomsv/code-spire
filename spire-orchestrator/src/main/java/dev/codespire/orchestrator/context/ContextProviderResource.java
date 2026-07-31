@@ -36,6 +36,7 @@ import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -70,9 +71,25 @@ public class ContextProviderResource {
             "A bare #123 needs a repository — enter the qualified form (owner/repo#123) or paste the "
                     + "issue URL.";
 
-    static final String GITLAB_BARE_REFERENCE_GUIDANCE =
+    static final String GITLAB_BARE_ISSUE_GUIDANCE =
             "A bare #123 needs a project — enter the qualified form (group/project#123) or paste the "
                     + "issue URL.";
+
+    /**
+     * GitLab spells three objects with three sigils, and only the issue has a qualified short form.
+     * A merge request must be named by URL; an epic is scoped to a GROUP, not a project, so
+     * {@code group/project#123} is not merely the wrong example for it but an unreachable one.
+     * Sending an operator to a form that cannot resolve is worse than saying nothing.
+     */
+    static final String GITLAB_BARE_MERGE_REQUEST_GUIDANCE =
+            "A bare !123 needs a project — paste the merge request URL "
+                    + "(https://<host>/group/project/-/merge_requests/123). Merge requests have no "
+                    + "qualified short form.";
+
+    static final String GITLAB_BARE_EPIC_GUIDANCE =
+            "A bare &123 needs a group — paste the epic URL "
+                    + "(https://<host>/groups/<group>/-/epics/123). Epics are group-scoped, so there "
+                    + "is no group/project form for them.";
 
     @Inject
     ContextProviderRegistry registry;
@@ -276,7 +293,7 @@ public class ContextProviderResource {
             return new PreviewResult(List.of(), "EMPTY", List.of(),
                     references.isEmpty()
                             ? "No reference found in the input. Enter group/project#123 or paste an issue URL."
-                            : GITLAB_BARE_REFERENCE_GUIDANCE);
+                            : gitLabBareGuidance(references));
         }
         ContextProvider provider = new GitLabIssueContextProvider(
                 new GitLabIssueConfig(cfg.baseUrl(), cfg.authKind(), cfg.secret(),
@@ -287,6 +304,30 @@ public class ContextProviderResource {
                 "GitLab did not return the issue as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks read_api).",
                 "Could not reach GitLab to resolve the reference(s).");
+    }
+
+    /**
+     * The guidance for a bare GitLab reference, in the syntax of the sigil the operator actually
+     * typed. Mixed input gets every relevant hint rather than an arbitrary one.
+     */
+    private static String gitLabBareGuidance(Set<String> references) {
+        Set<String> hints = new LinkedHashSet<>();
+        for (String reference : references) {
+            GitLabIssueRefs.parse(reference)
+                    .filter(GitLabIssueRefs.Ref::isProjectRelative)
+                    .ifPresent(ref -> hints.add(gitLabGuidanceFor(ref.kind())));
+        }
+        // Nothing parsed as project-relative (a qualified form would have short-circuited earlier),
+        // so the issue wording is the safe general answer.
+        return hints.isEmpty() ? GITLAB_BARE_ISSUE_GUIDANCE : String.join(" ", hints);
+    }
+
+    private static String gitLabGuidanceFor(GitLabIssueRefs.Kind kind) {
+        return switch (kind) {
+            case ISSUE -> GITLAB_BARE_ISSUE_GUIDANCE;
+            case MERGE_REQUEST -> GITLAB_BARE_MERGE_REQUEST_GUIDANCE;
+            case EPIC -> GITLAB_BARE_EPIC_GUIDANCE;
+        };
     }
 
     /** Run a provider's {@code contribute} for a preview and map its outcome to a {@link PreviewResult}. */

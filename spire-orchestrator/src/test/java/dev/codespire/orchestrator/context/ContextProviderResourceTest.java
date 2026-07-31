@@ -21,6 +21,7 @@ import static io.restassured.RestAssured.when;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -538,6 +539,39 @@ class ContextProviderResourceTest {
                 .then().statusCode(200)
                 .body("status", is("EMPTY"))
                 .body("detail", containsString("group/project#123"));
+    }
+
+    /**
+     * GitLab spells three objects with three sigils and only issues have a qualified short form, so
+     * one guidance message cannot be right for all three. A live pass typed {@code !3} and was told
+     * to write {@code group/project#123} — advice for a different object.
+     */
+    @Test
+    void gitLabPreviewOfABareMergeRequestNamesTheMergeRequestForm() {
+        String id = given().contentType("application/json").body(gitlabBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(java.util.Map.of("text", "!3"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("EMPTY"))
+                .body("detail", containsString("merge_requests"))
+                .body("detail", not(containsString("group/project#123")));
+    }
+
+    /**
+     * An epic is group-scoped and has no qualified form at all, so pointing the operator at
+     * {@code group/project#123} sends them somewhere that cannot work. Only the group URL resolves.
+     */
+    @Test
+    void gitLabPreviewOfABareEpicNamesTheGroupEpicUrl() {
+        String id = given().contentType("application/json").body(gitlabBody("TEST-token"))
+                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(java.util.Map.of("text", "&7"))
+                .when().post("/api/context-providers/" + id + "/preview")
+                .then().statusCode(200)
+                .body("status", is("EMPTY"))
+                .body("detail", containsString("epics"))
+                .body("detail", not(containsString("group/project#123")));
     }
 
     @Test
