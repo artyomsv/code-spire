@@ -382,7 +382,6 @@ import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.when;
 import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.is;
 
 /**
  * The description is fetched live, so its failures are the SCM's. Each must surface as itself: an
@@ -405,11 +404,15 @@ class ReviewDescriptionResourceTest {
                 .then().statusCode(404);
     }
 
+    /**
+     * A workspace with no enabled provider must say so. Returning an empty description would read
+     * as "this pull request has no description", which is a different fact entirely.
+     */
     @Test
     void reportsNoProviderRatherThanAnEmptyDescription() {
         when().get("/api/reviews/unregistered/repo/1/description")
                 .then().statusCode(404)
-                .body("", is(org.hamcrest.Matchers.notNullValue()));
+                .body(containsString("No enabled provider"));
     }
 }
 ```
