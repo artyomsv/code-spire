@@ -30,6 +30,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DATA-MODEL.md` | Value types, event store, object store, read models, encryption boundaries |
 | `docs/SCM-MAPPING.md` | Provider-neutral SCM model verified against Bitbucket/GitHub/GitLab/DC APIs |
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
+| `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
