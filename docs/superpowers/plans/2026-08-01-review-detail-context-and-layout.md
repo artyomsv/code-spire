@@ -1077,7 +1077,10 @@ export function toRuns(events: ReviewEvent[]): Run[] {
 
 export default function EventStream({ r }: { r: ReviewDetail }) {
   const runs = toRuns(r.events);
-  const [open, setOpen] = useState<Record<number, boolean>>({ 0: true });
+  // Keyed by run label, not display position. ReviewDetail refetches and replaces the whole review
+  // on every live update without remounting, so this state survives; keyed by index, a new run
+  // would shift every older one and silently move the operator's expansion to a different run.
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   return (
     <div className="card">
@@ -1087,15 +1090,22 @@ export default function EventStream({ r }: { r: ReviewDetail }) {
         <span className="badge">this review only</span>
       </div>
       <div className="body">
-        {runs.map((run, i) => (
+        {runs.map((run, i) => {
+          // The newest run is expanded unless the operator has said otherwise for that run.
+          const isOpen = open[run.label] ?? i === 0;
+          return (
           <div className="ev-run" role="group" aria-label={run.label} key={run.label}>
-            <button className="ev-run-head" onClick={() => setOpen({ ...open, [i]: !open[i] })}>
-              {open[i] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <button
+              className="ev-run-head"
+              aria-expanded={isOpen}
+              onClick={() => setOpen({ ...open, [run.label]: !isOpen })}
+            >
+              {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               <span className="ev-sep-label">{run.label}</span>
               {i === 0 && <span className="badge">latest</span>}
               <span className="muted">{run.events.length} events</span>
             </button>
-            {open[i] && (
+            {isOpen && (
               <div className="events">
                 {run.events.map((e, j) => (
                   <div className={`ev ${e.lane}`} key={j}>
@@ -1115,7 +1125,8 @@ export default function EventStream({ r }: { r: ReviewDetail }) {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
