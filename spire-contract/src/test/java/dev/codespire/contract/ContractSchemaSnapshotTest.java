@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -56,6 +57,15 @@ class ContractSchemaSnapshotTest {
     private static final List<Class<?>> ROOTS =
             List.of(IntegrationEvent.class, DomainEvent.class, ActionCommand.class);
 
+    /**
+     * The roots that MUST carry {@code @JsonSubTypes}, named explicitly rather than discovered.
+     *
+     * <p>{@link DomainEvent} is deliberately absent — it is named by simple name through the
+     * orchestrator's {@code EventTypes} registry, guarded there by {@code EventTypesCoverageTest}.
+     */
+    private static final List<Class<?>> KAFKA_ROOTS =
+            List.of(IntegrationEvent.class, ActionCommand.class);
+
     @Test
     void wireShapeMatchesTheRecordedSnapshot() throws IOException {
         String actual = renderSchema();
@@ -90,17 +100,19 @@ class ContractSchemaSnapshotTest {
      * The discriminator is the most breaking name of all: it is written into every persisted event, so
      * a subtype missing one cannot be read back at all.
      *
-     * <p>Only the two Kafka hierarchies carry {@code @JsonSubTypes}. {@link DomainEvent} names its
-     * types by simple name through the orchestrator's own {@code EventTypes} registry, which lives in
-     * another module — {@code EventTypesCoverageTest} there is the matching guard.
+     * <p>This iterates {@link #KAFKA_ROOTS} rather than skipping roots that happen to carry no
+     * annotation. The earlier shape did the latter, which meant removing {@code @JsonSubTypes}
+     * entirely — the exact change that breaks every topic and the event store — made this test pass
+     * by finding nothing to check. A guard that cannot fail is worse than no guard, because it
+     * reads like coverage.
      */
     @Test
     void everyKafkaSubtypeHasAJsonDiscriminator() {
-        for (Class<?> root : ROOTS) {
+        for (Class<?> root : KAFKA_ROOTS) {
             Map<String, String> names = discriminators(root);
-            if (names.isEmpty()) {
-                continue; // not a Jackson-polymorphic hierarchy — see the javadoc above
-            }
+            assertFalse(names.isEmpty(), root.getSimpleName() + " carries no @JsonSubTypes at all — "
+                    + "every record of this hierarchy would go on the wire without its discriminator "
+                    + "and could not be read back");
             for (Class<?> subtype : root.getPermittedSubclasses()) {
                 assertTrue(names.containsKey(subtype.getName()),
                         subtype.getSimpleName() + " has no @JsonSubTypes entry on " + root.getSimpleName());

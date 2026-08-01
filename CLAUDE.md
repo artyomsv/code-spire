@@ -386,4 +386,12 @@ cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
   (ADR-014), not app-layer crypto.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
-- Java 25 / Quarkus 3.36 / Gradle Kotlin DSL; pure domain code stays free of framework imports.
+- Java 25 / Quarkus 3.36 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
+  build-enforced for `spire-contract` and `spire-diff` by `PureModulesAreFrameworkFreeTest`
+  (`spire-arch`), which permits only the JDK, those modules themselves, and one documented
+  exception: **`jackson-annotations`** (annotations only, no databind) on the sealed
+  `IntegrationEvent` / `ActionCommand` hierarchies, because those types *are* the Kafka wire
+  contract and their discriminators belong with them. Per-service mix-ins were considered and
+  rejected: they spread one registry across every `ObjectMapper` in three services, where a missed
+  site is a runtime wire break rather than a compile error. Adding a second exception means
+  amending that allowlist, on purpose.
