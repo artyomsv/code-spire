@@ -2,15 +2,19 @@ package dev.codespire.orchestrator.web;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import dev.codespire.orchestrator.provider.ProviderRegistry;
 import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
@@ -24,10 +28,18 @@ import static org.hamcrest.Matchers.containsString;
  * empty description would read as "this pull request has no description", which is a different fact.
  */
 @QuarkusTest
+// PER_CLASS so the cleanup below can be a plain @Inject-ed instance method — deleting through the
+// registry directly avoids depending on the app's own HTTP listener still being reachable by the
+// time @AfterAll runs.
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ReviewDescriptionResourceTest {
+
+    @Inject
+    ProviderRegistry providerRegistry;
 
     private static WireMockServer scm; // stands in for the SCM; baseUrl points here
     private static boolean providerRegistered; // scm_provider has a unique (type, workspace) constraint
+    private static String acmeProviderId; // captured on registration so it can be deleted afterward
 
     @BeforeAll
     static void startScm() {
@@ -45,16 +57,21 @@ class ReviewDescriptionResourceTest {
                           "author": { "account_id": "a1", "nickname": "alice", "display_name": "Alice" },
                           "links": { "html": {"href": "https://bitbucket.example/acme/widgets/pull-requests/1"} } }
                         """)));
+        scm.stubFor(get(urlEqualTo("/repositories/acme/widgets/pullrequests/2"))
+                .willReturn(aResponse().withStatus(401)));
     }
 
     @AfterAll
-    static void stopScm() {
+    void stopScmAndDeleteAcmeProvider() {
         scm.stop();
+        if (acmeProviderId != null) {
+            providerRegistry.delete(UUID.fromString(acmeProviderId));
+        }
     }
 
     // Registration is deferred to the first test (RestAssured's port isn't wired up during
     // @BeforeAll) and done only once: scm_provider has a unique (type, workspace) constraint,
-    // and all three tests share the one "acme" provider anyway.
+    // and all tests in this class share the one "acme" provider anyway.
     @BeforeEach
     void registerAcmeProviderOnce() {
         if (providerRegistered) {
@@ -69,8 +86,9 @@ class ReviewDescriptionResourceTest {
         body.put("secret", "tok-abc");
         body.put("enabled", true);
         body.put("authors", List.of());
-        given().contentType("application/json").body(body)
-                .when().post("/api/providers").then().statusCode(201);
+        acmeProviderId = given().contentType("application/json").body(body)
+                .when().post("/api/providers").then().statusCode(201)
+                .extract().path("id");
         providerRegistered = true;
     }
 
@@ -96,5 +114,15 @@ class ReviewDescriptionResourceTest {
         when().get("/api/reviews/unregistered/repo/1/description")
                 .then().statusCode(404)
                 .body(containsString("No enabled provider"));
+    }
+
+    /**
+     * A revoked/rotated bot token must surface as a distinct, actionable failure — not the same
+     * empty-description shape a genuinely blank pull request would produce.
+     */
+    @Test
+    void reportsRejectedCredentialWhenTheScmReturnsUnauthorized() {
+        when().get("/api/reviews/acme/widgets/2/description")
+                .then().statusCode(503);
     }
 }
