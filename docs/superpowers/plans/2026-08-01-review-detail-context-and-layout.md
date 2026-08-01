@@ -1124,9 +1124,15 @@ export default function EventStream({ r }: { r: ReviewDetail }) {
 
 If `formatEventTime` is not currently exported from `render.tsx`, export it.
 
-- [ ] **Step 4: Delete the old card**
+- [ ] **Step 4: Delete the old card and move its call site**
 
 Remove `eventsCard` from `render.tsx` (lines 857-903) and the now-unused `Fragment` import if nothing else uses it.
+
+`ReviewDetail.tsx` imports `eventsCard` and calls it, so deleting it alone leaves the project
+uncompilable — the swap belongs in the same task. In `ReviewDetail.tsx`: drop `eventsCard` from the
+`../render` import list, add `import EventStream from './EventStream';`, and replace `{eventsCard(r)}`
+with `<EventStream r={r} />`. Change nothing else in that file; the card ordering and the Context card
+placement belong to Task 8.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -1225,7 +1231,9 @@ In `ReviewDetail.tsx`, replace the closing grid with:
       </div>
 ```
 
-Add `import ContextCard from './ContextCard';` and `import EventStream from './EventStream';`, and drop `eventsCard` from the `render` import list.
+Add `import ContextCard from './ContextCard';`. `EventStream` is already imported and already replaced
+`eventsCard` in Task 7, so the only changes here are placing `<ContextCard …/>` in the left column and
+swapping the right column's two cards.
 
 - [ ] **Step 4: Run test to verify it passes**
 
