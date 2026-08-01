@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { FileText, GitPullRequest } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';

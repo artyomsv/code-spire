@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import ReviewDetail from './ReviewDetail';
 import * as api from '../api';
 import type { ReviewDetail as ReviewDetailData } from '../api';

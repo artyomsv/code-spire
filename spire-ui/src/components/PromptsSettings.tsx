@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { ChevronRight, FileText } from 'lucide-react';
 import { fetchPrompts, type PromptView } from '../api';
 import { KIND_LABELS } from './promptKinds';

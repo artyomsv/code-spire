@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';

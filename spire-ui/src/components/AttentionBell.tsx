@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Bell, CircleAlert, TriangleAlert } from 'lucide-react';
 import { useAttention } from '../hooks/useAttention';
 import { dismissAttention } from '../api';

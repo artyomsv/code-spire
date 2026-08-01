@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import type { ReviewStatus, ReviewSummary } from '../api';
 import { ago, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
 import { formatCost } from '../money';
