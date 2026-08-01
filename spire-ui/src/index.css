@@ -641,6 +641,47 @@
     letter-spacing: 0.05em; text-transform: uppercase; color: var(--iris); white-space: nowrap;
   }
 
+  /* ---- extension: context card (assembled context handed to the model + live PR description) ---- */
+  .ctx-desc-toggle {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 500; color: var(--text-2);
+    padding: 5px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel-2); cursor: pointer;
+  }
+  .ctx-desc-toggle:hover { color: var(--text); border-color: var(--border-strong); background: var(--hover); }
+  .ctx-desc-toggle svg { color: var(--text-3); flex: none; }
+
+  .ctx-item { margin-top: 14px; }
+  .ctx-item-head {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  }
+  .ctx-item-head:hover .ctx-item-title { color: var(--text); }
+  .ctx-item-head svg { color: var(--text-3); flex: none; }
+  .ctx-item-kind {
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    font-weight: 700; padding: 2px 7px; border-radius: 5px; background: var(--iris-soft); color: var(--iris);
+    flex: none;
+  }
+  .ctx-item-title {
+    font-size: 13px; font-weight: 550; color: var(--text-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .ctx-item-body { margin-top: 10px; margin-left: 22px; }
+  .ctx-comments-toggle {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
+    font-size: 11.5px; color: var(--text-3); background: none; border: none; padding: 0; cursor: pointer;
+  }
+  .ctx-comments-toggle:hover { color: var(--text-2); }
+  .ctx-detail, .ctx-comments {
+    margin: 0; padding: 9px 11px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px;
+    font-family: var(--font-sans); font-size: 12.5px; line-height: 1.5; color: var(--text-2);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .ctx-detail { margin-top: 10px; }
+  .ctx-comments { margin-top: 8px; }
+  .ctx-empty { margin-top: 10px; font-size: 13px; color: var(--text-3); }
+
   /* conversation thread (scoped) — AuthorReplied/FollowUpGenerated reshaped as question→answer exchanges */
   .convo { display: flex; flex-direction: column; gap: 14px; }
   .convo-exchange { display: flex; flex-direction: column; }
