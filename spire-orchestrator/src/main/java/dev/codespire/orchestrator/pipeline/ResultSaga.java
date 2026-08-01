@@ -128,7 +128,10 @@ public class ResultSaga {
                         .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.references() == null ? Set.of() : e.references(), contextCred, scmType));
+                        e.references() == null ? Set.of() : e.references(), contextCred, scmType,
+                        // Already read at diff-fetch, from the PR's target branch — the aggregator
+                        // holds no SCM credential and so cannot fetch it itself.
+                        e.repoRules()));
             });
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");

@@ -142,9 +142,16 @@ public sealed interface IntegrationEvent {
      * {@link dev.codespire.contract.port.ContextReferenceSource} contributes the shapes it knows, and
      * every entry is a recall-favouring candidate that a provider narrows later.
      */
+    /**
+     * {@code repoRules} is the repository's own {@code .codespire} review rules, read at diff-fetch
+     * from the PR's TARGET branch (see {@code DiffSource.fetchTextFileOnBranch}) and carried here so
+     * the context aggregator needs no SCM credential of its own. Null when the repo has no rules file,
+     * which is the normal case. Nullable by design: events serialized before this field existed
+     * deserialize with it absent.
+     */
     record DiffFetched(String reviewId, long prId, String commit, int changedFiles,
                        List<String> languages, long sizeBytes, boolean truncated,
-                       Set<String> references) implements IntegrationEvent {
+                       Set<String> references, String repoRules) implements IntegrationEvent {
 
         public DiffFetched {
             languages = languages == null ? null : List.copyOf(languages);

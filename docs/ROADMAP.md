@@ -333,7 +333,6 @@ Open, by nature of the work rather than by section:
 | **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
 | **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P2 rest** | Repo rules provider (`.codespire` config) | M | The last unbuilt piece of the original Phase 2; lets a repo state its own conventions instead of relying on the global prompt. |
 | **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Contract-compat CI gate | S | Round-trip + snapshot tests on `spire-contract`; fail a breaking change without an `eventVersion` bump + upcaster (ADR-013). Cheap, and it protects event-store replay. |
@@ -376,7 +375,13 @@ Operator decides.
 ## Phase 2 — Context providers (~2–3 pw) — ✅ exit met; one item unbuilt
 - ✅ Context-provider pipeline + aggregator (completeness/timeout policy).
 - ✅ `spire-context-jira` and `spire-context-confluence` plugins.
-- **Repo rules provider (`.codespire` config) — still unbuilt.** The only outstanding Phase 2 item.
+- ✅ **Repo rules provider (`.codespire` config) — delivered 2026-08-01.** A repository states its own
+  conventions in a `.codespire` file, contributed as `ContextContributed{source=RULES}` /
+  `ContextItem{kind=RULE}`. Read from the PR's **target branch**, never the reviewed commit: the head
+  is written by the change under review, so rules taken from it would let a PR rewrite the reviewer's
+  instructions in the same PR. Prompt fencing cannot cover that — rules are *meant* to steer the
+  review. Fetched at diff-fetch via `DiffSource.fetchTextFileOnBranch` (all three adapters) and
+  carried on `DiffFetched.repoRules`, so the context aggregator never needs an SCM credential.
 - ✅ Conversational follow-up loop (S8).
 - **Exit met (2026-07-18):** reviews cite the linked Jira ticket; author replies get in-thread answers.
 

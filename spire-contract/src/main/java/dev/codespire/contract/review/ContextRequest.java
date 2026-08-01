@@ -19,6 +19,11 @@ import java.util.Set;
  * routinely exists on two platforms. A provider compares this against its own axis before resolving
  * such a reference against {@code repo}; core only carries the value. Null means the platform could
  * not be determined, in which case a provider needing it must decline.
+ *
+ * <p>{@code repoRules} is the repository's own {@code .codespire} file, already fetched. It arrives
+ * as text rather than as something a provider retrieves because retrieval needs an SCM credential and
+ * this aggregator is deliberately never given one — the same reason reference extraction runs at
+ * diff-fetch. Null when the repository has no rules file.
  */
 public record ContextRequest(String reviewId,
                              RepoRef repo,
@@ -26,7 +31,8 @@ public record ContextRequest(String reviewId,
                              String commit,
                              Set<String> references,
                              Set<String> expectedSources,
-                             ScmType scmType) {
+                             ScmType scmType,
+                             String repoRules) {
 
     public ContextRequest {
         references = references == null ? null : Set.copyOf(references);

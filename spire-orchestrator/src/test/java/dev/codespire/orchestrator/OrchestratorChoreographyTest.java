@@ -113,7 +113,7 @@ class OrchestratorChoreographyTest {
         expectCommands(1, "FetchDiff");
 
         // worker results drive the next commands
-        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_A, 1, List.of("java"), 100, false, Set.of()));
+        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_A, 1, List.of("java"), 100, false, Set.of(), null));
         List<String> afterDiffFetched = expectCommands(2, "GatherContext");
         // Task 1: the resolved-provider branch of ResultSaga's scmType lookup, over the real
         // registerProvider() "bitbucket-cloud" row for this review's workspace — the unresolvable
@@ -133,7 +133,7 @@ class OrchestratorChoreographyTest {
                 new ReviewResult(List.of(), "stale summary", new ModelUsage("m", 0, 0, 0))));
 
         // B's flow continues normally
-        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_B, 1, List.of("java"), 100, false, Set.of()));
+        produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_B, 1, List.of("java"), 100, false, Set.of(), null));
         List<String> commands = expectCommands(5, "GatherContext");
         assertTrue(commands.stream().noneMatch(c ->
                         c.contains("\"type\":\"PostComments\"") && c.contains(COMMIT_A)),
@@ -161,7 +161,7 @@ class OrchestratorChoreographyTest {
         awaitTimelineContains("\"ReviewCancelled\"");
 
         // a late worker result for the cancelled run triggers NOTHING
-        produce78(new IntegrationEvent.DiffFetched(reviewId78, 78, "ccc333ccc333", 1, List.of("java"), 10, false, Set.of()));
+        produce78(new IntegrationEvent.DiffFetched(reviewId78, 78, "ccc333ccc333", 1, List.of("java"), 10, false, Set.of(), null));
         awaitTimelineContains("dropped:DiffFetched");
         List<String> afterCancel = expectCommands(8, "FetchDiff"); // still exactly 8 commands
         assertTrue(afterCancel.stream()

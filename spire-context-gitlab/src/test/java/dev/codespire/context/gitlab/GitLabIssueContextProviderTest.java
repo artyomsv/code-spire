@@ -53,7 +53,7 @@ class GitLabIssueContextProviderTest {
 
     private static ContextRequest request(Set<String> references, ScmType scmType) {
         return new ContextRequest("review::acme/tools/widgets#7", REPO, 7, "abc123", references,
-                Set.of(), scmType);
+                Set.of(), scmType, null);
     }
 
     private static void json(String path, String body) {

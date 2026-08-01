@@ -47,6 +47,11 @@ public class GitLabClient {
         return parse(send("GET", path, null));
     }
 
+    /** A response read as text — the raw-file endpoints answer file bytes, not JSON. */
+    public String getText(String path) {
+        return send("GET", path, null);
+    }
+
     public JsonNode postJson(String path, Object body) {
         try {
             return parse(send("POST", path, mapper.writeValueAsString(body)));

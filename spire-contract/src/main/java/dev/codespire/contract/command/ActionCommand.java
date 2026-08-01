@@ -80,10 +80,16 @@ public sealed interface ActionCommand {
      * repo-relative reference (an issue number) belongs to its own host. Null when the review's
      * provider could not be resolved; a provider that needs it then contributes nothing.
      */
+    /**
+     * {@code repoRules} carries the repository's already-fetched {@code .codespire} rules. The
+     * aggregator holds context-provider credentials only, never an SCM one, so the file is read at
+     * diff-fetch — where an SCM client already exists — and passed through here.
+     */
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
                          Set<String> references,
                          String contextCredential,
-                         ScmType scmType) implements ActionCommand {
+                         ScmType scmType,
+                         String repoRules) implements ActionCommand {
     }
 
     /**

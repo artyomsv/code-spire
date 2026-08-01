@@ -210,7 +210,7 @@ public class ContextWorker {
     private static ContextRequest request(GatherContext command, Set<String> references,
                                           Set<String> expected) {
         return new ContextRequest(command.reviewId(), command.repo(), command.prId(), command.commit(),
-                references, expected, command.scmType());
+                references, expected, command.scmType(), command.repoRules());
     }
 
     /** The address of every item retrieved this round — already in hand, so never a fresh reference. */

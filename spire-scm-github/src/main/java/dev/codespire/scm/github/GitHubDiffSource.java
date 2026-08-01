@@ -11,6 +11,9 @@ import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.diff.UnifiedDiffParser;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 import java.util.List;
 
 /**
@@ -74,6 +77,25 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
     @Override
     public String fetchCompareDiff(RepoRef repo, String base, String head) {
         return client.getDiff("/repos/" + repo.full() + "/compare/" + base + "..." + head);
+    }
+
+    /**
+     * {@code GET /repos/{owner}/{repo}/contents/{path}?ref={branch}} with the raw media type.
+     *
+     * <p>A 404 is the ordinary answer for a repository that has no such file, so it yields null rather
+     * than an exception — the port's contract. Anything else is a real failure and propagates.
+     */
+    @Override
+    public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
+        try {
+            return client.getRaw("/repos/" + repo.full() + "/contents/" + path
+                    + "?ref=" + URLEncoder.encode(branch, StandardCharsets.UTF_8));
+        } catch (GitHubApiException e) {
+            if (e.isNotFound()) {
+                return null;
+            }
+            throw e;
+        }
     }
 
     private String prPath(RepoRef repo, long prId) {

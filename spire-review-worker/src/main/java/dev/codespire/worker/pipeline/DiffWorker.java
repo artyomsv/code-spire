@@ -4,6 +4,7 @@ import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.port.DiffSource;
+import dev.codespire.worker.adapters.RulesContextProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.DiffLine;
@@ -53,7 +54,11 @@ public class DiffWorker {
                     diff.truncated(),
                     // Every registered extractor's candidates, unioned. Which syntax belongs to which
                     // source is the extractor's business; providers narrow this set later.
-                    references.referencesIn(pr.title(), pr.sourceBranch(), pr.description())));
+                    references.referencesIn(pr.title(), pr.sourceBranch(), pr.description()),
+                    // Read from the TARGET branch, never the reviewed commit: the head is written by
+                    // the change under review, so taking rules from it would let a PR rewrite the
+                    // reviewer's instructions in the same PR being reviewed.
+                    repoRules(diffSource, command, pr)));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {
@@ -63,6 +68,26 @@ public class DiffWorker {
                 return;
             }
             fail(command, e);
+        }
+    }
+
+    /**
+     * The repository's own review rules, or null when it has none — which is the common case.
+     *
+     * <p>Never fails the review: rules are enrichment, and a repository whose rules could not be read
+     * should still get an ordinary review rather than none. A provider that cannot serve the file at
+     * all (the stub, or an adapter that has not implemented it) returns null from the port.
+     */
+    private static String repoRules(DiffSource diffSource, FetchDiff command, PullRequest pr) {
+        if (pr.targetBranch() == null || pr.targetBranch().isBlank()) {
+            return null;
+        }
+        try {
+            return diffSource.fetchTextFileOnBranch(command.repo(), pr.targetBranch(),
+                    RulesContextProvider.FILE);
+        } catch (RuntimeException e) {
+            LOG.debugf("No repository rules for %s: %s", command.reviewId(), e.getMessage());
+            return null;
         }
     }
 

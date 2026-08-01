@@ -64,6 +64,10 @@ public class WorkerContextClients {
                 default -> throw new IllegalStateException("Unsupported context provider type: " + cred.type());
             }
         }
+        // Added unconditionally, outside the credential loop: repository rules need no credential and
+        // no registry entry, so a team gets them without an operator configuring anything — including
+        // on a deployment where no external context source is registered at all.
+        providers.add(new RulesContextProvider());
         return providers;
     }
 

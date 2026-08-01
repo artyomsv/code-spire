@@ -29,6 +29,12 @@ import java.util.function.Supplier;
  * <p>The delays are deliberately tiny for the same reason: worst case here is roughly
  * {@code 100 + 200 = 300ms} of sleep plus jitter, on a consumer thread whose poll interval the
  * posting path is already carefully budgeting against.
+ *
+ * <p><b>Every port method must be delegated here, including the defaulted ones.</b> A method left
+ * unoverridden does not fall through to the delegate — it resolves to {@link DiffSource}'s own
+ * default, so the wrapped adapter's real implementation is silently replaced by "return null". That
+ * failure is invisible: the call succeeds, returns nothing, and the feature relying on it just never
+ * works. It already happened once, to {@code fetchTextFileOnBranch}.
  */
 public class RetryingDiffSource implements DiffSource {
 
@@ -76,6 +82,11 @@ public class RetryingDiffSource implements DiffSource {
     @Override
     public String fetchCompareDiff(RepoRef repo, String base, String head) {
         return withRetry("fetchCompareDiff", () -> delegate.fetchCompareDiff(repo, base, head));
+    }
+
+    @Override
+    public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
+        return withRetry("fetchTextFileOnBranch", () -> delegate.fetchTextFileOnBranch(repo, branch, path));
     }
 
     @Override

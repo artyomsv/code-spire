@@ -146,6 +146,28 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
         return "/projects/" + encodedProject(repo) + "/merge_requests/" + prId;
     }
 
+    /**
+     * {@code GET /projects/{enc}/repository/files/{enc-path}/raw?ref={branch}}.
+     *
+     * <p>The file path is URL-encoded too — GitLab addresses a file the same way it addresses a
+     * project, so {@code docs/rules.md} must arrive as {@code docs%2Frules.md} rather than as extra
+     * path segments. A 404 means the repository has no such file, the ordinary case, so it yields
+     * null; anything else propagates.
+     */
+    @Override
+    public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
+        try {
+            return client.getText("/projects/" + encodedProject(repo) + "/repository/files/"
+                    + URLEncoder.encode(path, StandardCharsets.UTF_8)
+                    + "/raw?ref=" + URLEncoder.encode(branch, StandardCharsets.UTF_8));
+        } catch (GitLabApiException e) {
+            if (e.isNotFound()) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
     /** GitLab addresses a project by its URL-encoded {@code namespace/project} path. */
     private static String encodedProject(RepoRef repo) {
         return URLEncoder.encode(repo.full(), StandardCharsets.UTF_8);

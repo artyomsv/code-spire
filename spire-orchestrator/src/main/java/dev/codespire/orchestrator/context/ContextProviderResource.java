@@ -228,7 +228,7 @@ public class ContextProviderResource {
                 new JiraConfig(cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret(), projectKeys), mapper);
         // Jira keys are globally unique within a site, so the review's platform is irrelevant here.
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                keys, Set.of(), null);
+                keys, Set.of(), null, null); // preview has no repository, so no rules
         return runPreview(cfg, provider, req, List.copyOf(keys),
                 "Jira did not return the ticket(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
@@ -251,7 +251,7 @@ public class ContextProviderResource {
         // scmType is irrelevant here: a Confluence page id is globally unique on its host, not
         // repo-relative, so the review's platform has nothing to disambiguate.
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                Set.copyOf(links), Set.of(), null);
+                Set.copyOf(links), Set.of(), null, null);
         return runPreview(cfg, provider, req, List.copyOf(pageIds),
                 "Confluence did not return the page(s) as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks REST access).",
@@ -276,7 +276,7 @@ public class ContextProviderResource {
         // The operator is explicitly testing THIS provider, so the request states its own platform —
         // a preview with a null platform would make every repo-relative reference decline.
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                references, Set.of(), ScmType.GITHUB);
+                references, Set.of(), ScmType.GITHUB, null);
         return runPreview(cfg, provider, req, List.copyOf(references),
                 "GitHub did not return the issue as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token cannot read issues).",
@@ -299,7 +299,7 @@ public class ContextProviderResource {
                 new GitLabIssueConfig(cfg.baseUrl(), cfg.authKind(), cfg.secret(),
                         GitLabIssueRefs.parseProjectAllowList(cfg.projectKeys())), mapper);
         ContextRequest req = new ContextRequest("preview", new RepoRef("preview", "preview"), 0, "",
-                references, Set.of(), ScmType.GITLAB);
+                references, Set.of(), ScmType.GITLAB, null);
         return runPreview(cfg, provider, req, List.copyOf(references),
                 "GitLab did not return the issue as JSON — run the connection check; the token is likely "
                         + "being redirected to a sign-in page (wrong base URL, or the token lacks read_api).",

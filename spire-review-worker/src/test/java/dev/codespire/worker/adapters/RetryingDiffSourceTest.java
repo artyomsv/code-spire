@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -118,6 +119,26 @@ class RetryingDiffSourceTest {
         DiffSource wrapped = new RetryingDiffSource(new FailingDiffSource(0, 200));
 
         assertEquals(wrapped, new WorkerScmClients.Clients(wrapped, null).diff());
+    }
+
+    /**
+     * A decorator that forgets a method does not fall through to its delegate — it inherits
+     * {@link DiffSource}'s own default and silently answers null, replacing the real adapter's
+     * implementation with nothing. The call still succeeds, so the only symptom is a feature that
+     * never works. That is precisely how {@code fetchTextFileOnBranch} was lost when it was added,
+     * and this is the guard so the next port method cannot repeat it.
+     */
+    @Test
+    void delegatesEveryMethodOfThePort() {
+        for (java.lang.reflect.Method method : DiffSource.class.getDeclaredMethods()) {
+            if (method.isSynthetic()) {
+                continue;
+            }
+            assertDoesNotThrow(
+                    () -> RetryingDiffSource.class.getDeclaredMethod(method.getName(), method.getParameterTypes()),
+                    "RetryingDiffSource does not override " + method.getName()
+                            + " — it would answer the interface default instead of the wrapped adapter");
+        }
     }
 
     private RetryingDiffSource source(DiffSource delegate) {

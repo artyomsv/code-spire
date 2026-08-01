@@ -54,7 +54,7 @@ class GitHubIssueContextProviderTest {
 
     private static ContextRequest request(Set<String> references, ScmType scmType) {
         return new ContextRequest("review::acme/widgets#7", REPO, 7, "abc123", references,
-                Set.of(), scmType);
+                Set.of(), scmType, null);
     }
 
     private static void stubIssue(int number, String body) {

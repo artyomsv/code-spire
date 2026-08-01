@@ -30,6 +30,8 @@ public class GitHubClient {
     private static final int MAX_REDIRECTS = 3;
     private static final String JSON_MEDIA = "application/vnd.github+json";
     private static final String DIFF_MEDIA = "application/vnd.github.diff";
+    /** File contents as bytes rather than the base64-in-JSON envelope the default media type returns. */
+    private static final String RAW_MEDIA = "application/vnd.github.raw";
     private static final String API_VERSION = "2022-11-28";
 
     private final HttpClient http;
@@ -54,6 +56,11 @@ public class GitHubClient {
     /** The PR's unified diff (vnd.github.diff media type). */
     public String getDiff(String path) {
         return send("GET", path, DIFF_MEDIA, null);
+    }
+
+    /** A file's contents verbatim (vnd.github.raw), rather than base64 inside a JSON envelope. */
+    public String getRaw(String path) {
+        return send("GET", path, RAW_MEDIA, null);
     }
 
     public JsonNode postJson(String path, Object body) {

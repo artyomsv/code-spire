@@ -94,7 +94,7 @@ class ResultSagaCredentialTest {
         List<ActionCommand> emitted = new ArrayList<>();
         ResultSaga saga = sagaForDiffFetched(emitted, Optional.empty());
 
-        saga.on(new DiffFetched(REVIEW_ID, 1, "abc123", 1, List.of("java"), 10, false, Set.of()));
+        saga.on(new DiffFetched(REVIEW_ID, 1, "abc123", 1, List.of("java"), 10, false, Set.of(), null));
 
         assertEquals(1, emitted.size(), "one GatherContext command emitted");
         var gatherContext = assertInstanceOf(ActionCommand.GatherContext.class, emitted.get(0));

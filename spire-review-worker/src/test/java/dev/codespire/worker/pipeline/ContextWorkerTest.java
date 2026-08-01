@@ -49,7 +49,7 @@ class ContextWorkerTest {
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final GatherContext COMMAND = new GatherContext(
             "review::sandbox/demo-repo#7", REPO, 7, "abc123",
-            Set.of("CS-42", "https://issue/42"), null, null);
+            Set.of("CS-42", "https://issue/42"), null, null, null);
 
     private ContextWorker worker;
     private List<IntegrationEvent> emitted;
@@ -163,7 +163,7 @@ class ContextWorkerTest {
                 "AB-1", "see CD-2 for the design", "CD-2", "deeper still: EF-3", "EF-3", "must not be fetched"));
         clients.providers = List.of(jira);
         GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
-                Set.of("AB-1"), null, null);
+                Set.of("AB-1"), null, null, null);
 
         worker.gatherContext(command);
 
@@ -182,7 +182,7 @@ class ContextWorkerTest {
         LinkProvider confluence = new LinkProvider(Map.of("123", "the design doc"));
         clients.providers = List.of(jira, confluence);
         GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
-                Set.of("AB-1", page), null, null);
+                Set.of("AB-1", page), null, null, null);
 
         worker.gatherContext(command);
 
@@ -234,7 +234,7 @@ class ContextWorkerTest {
 
     private static GatherContext githubCommand(Set<String> references) {
         return new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
-                references, null, ScmType.GITHUB);
+                references, null, ScmType.GITHUB, null);
     }
 
     /** Items the assembled context actually carries, counted from the merged Contributed events. */

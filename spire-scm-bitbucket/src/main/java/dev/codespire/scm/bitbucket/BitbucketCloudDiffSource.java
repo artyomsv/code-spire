@@ -127,6 +127,24 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
         return client.getText("/repositories/" + repo.full() + "/diff/" + head + ".." + base);
     }
 
+    /**
+     * {@code GET /repositories/{workspace}/{slug}/src/{branch}/{path}} returns the file verbatim.
+     *
+     * <p>A 404 is the ordinary answer for a repository with no such file, so it yields null rather
+     * than an exception — the port's contract. Anything else is a real failure and propagates.
+     */
+    @Override
+    public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
+        try {
+            return client.getText("/repositories/" + repo.full() + "/src/" + branch + "/" + path);
+        } catch (BitbucketApiException e) {
+            if (e.isNotFound()) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
     private String prPath(RepoRef repo, long prId) {
         return "/repositories/" + repo.workspace() + "/" + repo.slug() + "/pullrequests/" + prId;
     }
