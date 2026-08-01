@@ -3,6 +3,15 @@ quarkus:
     name: spire-gateway
   http:
     port: ${GATEWAY_HTTP_PORT:34081}   # host-exposed port in the 34xxx project range
+    limits:
+      # The /webhooks/{provider}/{key} edges are the only internet-facing, PRE-authentication
+      # endpoints in the system, and they buffer the whole body in memory before the signature is
+      # verified — so this cap, not the signature, is what bounds that exposure. Real PR-event
+      # payloads are metadata only (the diff is never in them, ADR-011) and run well under 100K,
+      # while the Quarkus default of 10M lets anyone who knows a webhook URL push memory pressure
+      # 100x higher than any legitimate delivery needs. The registry CRUD API bodies are smaller
+      # still, so one global limit covers both without a per-path rule.
+      max-body-size: 1M
   # The gateway OWNS the per-repo webhook registry (its own schema). Same Postgres
   # as the orchestrator, but a schema-scoped role (GATEWAY_POSTGRES_*) with no access
   # to the orchestrator schema — a compromised edge cannot read the API-token registry.

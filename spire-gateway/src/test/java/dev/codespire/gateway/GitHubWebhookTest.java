@@ -2,6 +2,7 @@ package dev.codespire.gateway;
 
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.gateway.registry.WebhookRepoRegistry;
+import io.quarkus.runtime.configuration.MemorySize;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.kafka.InjectKafkaCompanion;
@@ -11,6 +12,7 @@ import io.smallrye.reactive.messaging.kafka.companion.ConsumerTask;
 import io.smallrye.reactive.messaging.kafka.companion.KafkaCompanion;
 import jakarta.inject.Inject;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -267,6 +269,28 @@ class GitHubWebhookTest {
         WebhookRepoRegistry.Rejection row = registry.rejecting().stream()
                 .filter(r -> r.target().equals(REPO)).findFirst().orElseThrow();
         assertEquals("malformed_payload", row.reason());
+    }
+
+    /**
+     * The body cap, not the signature, is what bounds the pre-authentication exposure: the edge reads
+     * the whole body into memory before it can verify anything.
+     *
+     * <p>This asserts the configured limit rather than driving an oversized request, because the HTTP
+     * outcome is genuinely non-deterministic — the server may answer 413 or simply reset the
+     * connection mid-upload, and a client sees the latter as a transport error with no status at all.
+     * Enforcement is Quarkus's to guarantee; the value is ours, and the regressions worth catching are
+     * someone deleting the setting or raising it back toward the 10M default.
+     */
+    @Test
+    void capsTheRequestBodyFarBelowTheQuarkusDefault() {
+        long limit = ConfigProvider.getConfig()
+                .getValue("quarkus.http.limits.max-body-size", MemorySize.class).asLongValue();
+
+        assertTrue(limit <= 2 * 1024 * 1024,
+                "webhook edges are internet-facing and pre-authentication — the cap must stay far "
+                        + "below the 10M Quarkus default, was " + limit);
+        assertTrue(limit >= 512 * 1024,
+                "…but above any legitimate PR-event payload, which is metadata only, was " + limit);
     }
 
     private static String hmac(byte[] body) throws Exception {
