@@ -4,9 +4,9 @@
 |-------|-------|
 | Criticality | Low |
 | Complexity | Large |
-| Location | `spire-scm-bitbucket/.../BitbucketCloudClient.java`, `spire-scm-github/.../GitHubClient.java`, `spire-scm-gitlab/.../GitLabClient.java`, `spire-context-jira/...`, `spire-context-confluence/...` |
+| Location | `spire-scm-bitbucket/.../BitbucketCloudClient.java`, `spire-scm-github/.../GitHubClient.java`, `spire-scm-gitlab/.../GitLabClient.java` |
 | Found during | Wave 1/2 debt pass — successor to `3-3-scm-clients-still-carry-their-own-unguarded-redirect-resolve` |
-| Date | 2026-08-01 |
+| Date | 2026-08-01, corrected 2026-08-02 |
 
 ## Issue
 
@@ -16,30 +16,39 @@ caller's `ScmApiException` classification. **That is fixed** — each client now
 `redirectTarget` guard mirroring `PinnedJsonClient.redirectTarget`, with a regression test per client
 (`refusesAnUnparseableRedirectTarget`, verified by mutation to fail without the guard).
 
-What remains is duplication, not a bug. Five manual redirect loops now exist with the same shape —
-host-pinned auth, 3xx handling, `requireSafeRedirectTarget`, and now the parse guard: the three SCM
-clients plus `spire-context-jira` and `spire-context-confluence`, against the one in `spire-http`
-that `spire-context-github` and `spire-context-gitlab` use. A future fix to the redirect handling
-still has to land in six places, and the next one may not be caught as cheaply as this one was.
+What remains is duplication, not a bug.
+
+**Correction (2026-08-02).** This entry previously claimed five hand-rolled loops remained and
+recommended migrating `spire-context-jira` and `spire-context-confluence` first as the cheap half.
+Both were already on `PinnedJsonClient` — they were migrated in the same pass that extracted
+`spire-http`, exactly as CLAUDE.md records. The count was wrong when the entry was written. Verified
+against the code:
+
+- **One** shared implementation: `spire-http/PinnedJsonClient`, used by the Jira, Confluence,
+  GitHub-issues and GitLab-issues context adapters.
+- **Three** hand-rolled loops: the SCM clients below.
+- **Two** clients that refuse redirects outright (`ContextKeyValidator`, `LlmKeyValidator`): they set
+  `Redirect.NEVER` and never read `Location`. That is the safest posture available and carries no
+  guard of its own, so it is not a copy and is not counted.
 
 ## Risks
 
-Maintenance only, and it is the risk that produced the predecessor entry: `spire-http` was extracted
-specifically to give the guard one home, then the migration covered two of the seven callers, and the
-gap went unnoticed until a review checked the "one home" claim against the code. The same drift can
-recur — a hardening change lands in `PinnedJsonClient` and silently misses the five hand-rolled
-copies.
+Maintenance only. The entry's actual fear — a hardening change lands in `PinnedJsonClient` and
+silently misses the copies — is now **build-enforced** by `RedirectHandlingHasOneHomeTest`
+(`spire-arch`). A fourth hand-rolled loop fails the build, and an allowlist entry that stops
+describing a redirect loop fails too, so the count can only go down. What the check cannot do is
+force the existing three across; that is the work below.
 
-No correctness gap is known today: the three SCM clients and the two older context adapters now
-carry equivalent guards.
+No correctness gap is known today: all three carry guards equivalent to the shared client's.
 
 ## Suggested Solutions
 
-1. **Migrate the SCM clients onto `PinnedJsonClient`** when they are next opened for other work. Not
-   a drop-in swap: they support POST/PUT and per-client `Retry-After` extraction that the read-only
-   context use never needed, so `PinnedJsonClient` would have to grow those first.
-2. **Migrate `spire-context-jira` and `spire-context-confluence` first** — they are read-only JSON
-   clients, which is exactly what `PinnedJsonClient` was built for, so they should be close to a
-   straight swap and would cut five copies to three at a fraction of the cost.
-3. Leave as is and accept the duplication, provided any future change to redirect handling is
-   explicitly applied to all six sites.
+1. **Grow `PinnedJsonClient`, then migrate the SCM clients** — in that order, and preferably when one
+   of them is next opened for other work rather than as a standalone change. They are not a drop-in
+   swap: they need POST/PUT with JSON bodies (comment posting), non-JSON GETs (`getRaw` for GitHub's
+   raw file content, `getText` for GitLab's), per-provider `Retry-After` extraction, and GitHub's
+   GraphQL POST plus its 403-with-zero-remaining rate-limit heuristic. The shared client is read-only
+   JSON today because that is all the context adapters ever needed.
+2. Leave as is. The guard above makes the duplication visible and bounded, which addresses the drift
+   risk without touching the comment-posting write path — the highest-consequence code in the system,
+   and the reason this is rated Large despite being Low criticality.
