@@ -8,12 +8,14 @@ import dev.codespire.contract.event.IntegrationEvent.ContextContributed;
 import dev.codespire.contract.event.IntegrationEvent.ContextRequested;
 import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.ContextProvider;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.ContribStatus;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.context.confluence.ConfluenceLinks;
+import dev.codespire.context.github.GitHubIssueRefs;
 import dev.codespire.worker.adapters.PostgresBlobStore;
 import dev.codespire.worker.adapters.WorkerContextClients;
 import org.junit.jupiter.api.BeforeEach;
@@ -190,6 +192,63 @@ class ContextWorkerTest {
         assertEquals(Set.of("JIRA", "CONFLUENCE"), assembled.contributingSources());
     }
 
+    @Test
+    void secondLevelResolvesABareIssueReferenceInsideAFetchedIssue() {
+        // The PR names issue #1 as its root cause; #1's body points at #2. Both must reach the prompt —
+        // a bare reference found inside retrieved text still resolves against the review's own repository.
+        IssueProvider github = new IssueProvider(Map.of(1, "Root cause is tracked in #2", 2, "The cap is 50"));
+        clients.providers = List.of(github);
+
+        worker.gatherContext(githubCommand(Set.of("#1")));
+
+        assertEquals(List.of(1, 2), github.fetched, "level 2 resolves the issue linked from issue #1");
+        assertEquals(Set.of("GITHUB_ISSUES"), lastAssembled().contributingSources());
+    }
+
+    @Test
+    void aReferenceLeftInAnIssueCommentIsResolvedLikeOneInTheBody() {
+        // Providers append comments to the item body, so the corpus the next level mines already
+        // contains them: a link a reviewer left in a comment resolves like one in the description.
+        IssueProvider github = new IssueProvider(Map.of(
+                1, "State: open\n\nNothing linked here.\n\nRecent comments:\n- ana: superseded by #2",
+                2, "The cap is 50"));
+        clients.providers = List.of(github);
+
+        worker.gatherContext(githubCommand(Set.of("#1")));
+
+        assertEquals(List.of(1, 2), github.fetched, "a reference inside a comment reaches level 2");
+    }
+
+    @Test
+    void aCycleBetweenTwoIssuesTerminatesWithEachIssueFetchedOnce() {
+        // #1 links #2 and #2 links back to #1. The depth cap ends collection; dedup is what keeps an
+        // already-retrieved issue from being fetched again — including from the html_url it carries itself.
+        IssueProvider github = new IssueProvider(Map.of(1, "See #2", 2, "Caused by #1"));
+        clients.providers = List.of(github);
+
+        worker.gatherContext(githubCommand(Set.of("#1")));
+
+        assertEquals(List.of(1, 2), github.fetched, "a reference cycle costs one fetch per issue, not more");
+        assertEquals(2, itemsIn(lastAssembled()), "both issues reach the prompt, neither twice");
+    }
+
+    private static GatherContext githubCommand(Set<String> references) {
+        return new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
+                references, null, ScmType.GITHUB);
+    }
+
+    /** Items the assembled context actually carries, counted from the merged Contributed events. */
+    private int itemsIn(ContextAssembled assembled) {
+        return (int) emitted.stream()
+                .filter(e -> e instanceof ContextContributed)
+                .map(e -> ((ContextContributed) e).contribution())
+                .filter(c -> assembled.contributingSources().contains(c.source()))
+                .flatMap(c -> c.items().stream())
+                .map(ContextItem::uri)
+                .distinct()
+                .count();
+    }
+
     private ContextAssembled lastAssembled() {
         return assertInstanceOf(ContextAssembled.class, emitted.get(emitted.size() - 1));
     }
@@ -329,6 +388,64 @@ class ContextWorkerTest {
             }
             ContribStatus status = items.isEmpty() ? ContribStatus.EMPTY : ContribStatus.OK;
             return CompletableFuture.completedFuture(new ContextContribution("CONFLUENCE", status, items, 1));
+        }
+    }
+
+    /**
+     * A GitHub-issues-like provider: a bare {@code #N} resolves against the review's own repository
+     * (and only when the review runs on GitHub), and every item carries the {@code html_url} the real
+     * provider carries — which is what makes it a faithful stand-in for cross-level dedup.
+     */
+    private static final class IssueProvider implements ContextProvider {
+        private static final String ISSUE_URL = "https://github.com/sandbox/demo-repo/issues/";
+
+        private final Map<Integer, String> bodies; // issue number -> body (may carry the next reference)
+        final List<Integer> fetched = new ArrayList<>();
+
+        IssueProvider(Map<Integer, String> bodies) {
+            this.bodies = bodies;
+        }
+
+        @Override
+        public String source() {
+            return "GITHUB_ISSUES";
+        }
+
+        @Override
+        public boolean supports(ContextRequest request) {
+            return !targets(request).isEmpty();
+        }
+
+        @Override
+        public CompletionStage<ContextContribution> contribute(ContextRequest request) {
+            List<ContextItem> items = new ArrayList<>();
+            for (int number : targets(request)) {
+                fetched.add(number);
+                String body = bodies.get(number);
+                if (body != null) {
+                    items.add(new ContextItem("ISSUE", "#" + number + " — Issue " + number, body,
+                            ISSUE_URL + number));
+                }
+            }
+            ContribStatus status = items.isEmpty() ? ContribStatus.EMPTY : ContribStatus.OK;
+            return CompletableFuture.completedFuture(
+                    new ContextContribution("GITHUB_ISSUES", status, items, 1));
+        }
+
+        /** Issue numbers this request resolves to, deduped the way the real provider dedupes targets. */
+        private static List<Integer> targets(ContextRequest request) {
+            if (request.references() == null || request.scmType() != ScmType.GITHUB) {
+                return List.of();
+            }
+            List<Integer> numbers = new ArrayList<>();
+            for (String reference : request.references()) {
+                GitHubIssueRefs.parse(reference)
+                        .filter(ref -> ref.isRepoRelative() || REPO.slug().equals(ref.repo()))
+                        .map(GitHubIssueRefs.Ref::number)
+                        .filter(number -> !numbers.contains(number))
+                        .ifPresent(numbers::add);
+            }
+            return numbers;
         }
     }
 

@@ -144,6 +144,13 @@ public class ContextWorker {
             if (level == MAX_DEPTH) {
                 break; // don't discover a further level we won't fetch
             }
+            // Everything RETRIEVED is seen, not just everything requested. An item carries its own
+            // address, and the corpus below includes it: without this, a source whose grammar
+            // recognises its own item urls (GitHub's and GitLab's do; Jira and Confluence normalize a
+            // url down to the key or page id already seen) reads that address as a fresh reference and
+            // re-fetches the very item it came from — spending the next level's bounded reference
+            // budget on items already in hand.
+            seen.addAll(contextReferences.normalizeAll(urisOf(round)));
             // Discover the next level from the text retrieved this round — each extractor mines its
             // own shapes and dedupes in its own normalized form, so nothing here parses anything.
             next = contextReferences.freshReferencesIn(seen, corpusOf(round));
@@ -204,6 +211,21 @@ public class ContextWorker {
                                           Set<String> expected) {
         return new ContextRequest(command.reviewId(), command.repo(), command.prId(), command.commit(),
                 references, expected, command.scmType());
+    }
+
+    /** The address of every item retrieved this round — already in hand, so never a fresh reference. */
+    private static Set<String> urisOf(List<ContextContribution> contributions) {
+        Set<String> uris = new LinkedHashSet<>();
+        for (ContextContribution c : contributions) {
+            if (c.status() == ContribStatus.OK && c.items() != null) {
+                for (ContextItem item : c.items()) {
+                    if (item.uri() != null && !item.uri().isBlank()) {
+                        uris.add(item.uri());
+                    }
+                }
+            }
+        }
+        return uris;
     }
 
     /** All retrieved text this round (title + body + uri of OK items) — the corpus the next level mines. */
