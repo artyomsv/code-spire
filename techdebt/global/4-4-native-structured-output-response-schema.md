@@ -2,11 +2,12 @@
 
 | Field | Value |
 |-------|-------|
-| Criticality | High |
+| Criticality | Low |
 | Complexity | Large |
 | Location | `spire-llm/src/main/java/dev/codespire/llm/LangChain4jLlmProvider.java`, `FindingsParser.java`, `VerdictsParser.java`; `spire-contract/.../port/LlmProvider.java`; `spire-orchestrator/.../llm/LlmModelRegistry.java` (catalog capability) |
 | Found during | Prompt-management feature — operator asked why some prompts request JSON and some don't |
 | Date | 2026-07-23 |
+| Status | **Backlog, deliberately.** Demoted from High on 2026-08-02: the lenient path has not been observed to drop a finding in live use across three SCMs, and the fix is a large change to the `LlmProvider` SPI, the model catalog and three adapters. Revisit when a real review is seen to under-report, or when provider prompt caching becomes worth the cost lever. Not a wave item. |
 
 ## Issue
 
