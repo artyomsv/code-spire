@@ -209,6 +209,20 @@ class BitbucketCloudApiTest {
         assertEquals(1, diff.files().size());
     }
 
+    /**
+     * {@code URI#resolve} throws an unchecked IllegalArgumentException on this Location. Unclassified,
+     * it escapes every caller's ScmApiException handling — no retry decision, no 404/401 degradation —
+     * and surfaces as an unhandled failure instead of one the pipeline knows how to absorb.
+     */
+    @Test
+    void refusesAnUnparseableRedirectTarget() {
+        server.stubFor(get(urlEqualTo("/repositories/sandbox/demo-repo/pullrequests/42/diff"))
+                .willReturn(aResponse().withStatus(302).withHeader("Location", "http://")));
+        BitbucketApiException e = assertThrows(BitbucketApiException.class,
+                () -> diffSource.fetchDiff(REPO, 42, "abc123def456"));
+        assertTrue(e.getMessage().contains("unparseable redirect target refused"));
+    }
+
     @Test
     void crossHostRedirectToLoopbackIsRefused() {
         // 127.0.0.1 differs from the configured base host (localhost) -> SSRF guard applies

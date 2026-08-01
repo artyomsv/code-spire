@@ -76,7 +76,7 @@ public class GitLabClient {
                 }
                 String location = response.headers().firstValue("Location")
                         .orElseThrow(() -> new GitLabApiException(status, method, path));
-                target = target.resolve(location);
+                target = redirectTarget(target, location, status, method, path);
                 requireSafeRedirectTarget(target, status, method, path);
                 continue;
             }
@@ -123,6 +123,21 @@ public class GitLabClient {
      * Same-host targets skip the check — the base host is operator config, not
      * attacker data, and dev/test legitimately run against WireMock on localhost.
      */
+    /**
+     * A malformed {@code Location} ({@code http://}) makes {@link URI#resolve} throw an unchecked
+     * {@link IllegalArgumentException}, which would escape past every caller's
+     * {@code ScmApiException} handling — no retry classification, no 401/404 degradation, just an
+     * unhandled failure. Classify it as this adapter's own exception instead. The header value is
+     * deliberately not echoed into the message: it is attacker-influenced and messages get logged.
+     */
+    private URI redirectTarget(URI current, String location, int status, String method, String path) {
+        try {
+            return current.resolve(location);
+        } catch (IllegalArgumentException e) {
+            throw new GitLabApiException(status, method, path, "unparseable redirect target refused");
+        }
+    }
+
     private void requireSafeRedirectTarget(URI target, int status, String method, String path) {
         String host = target.getHost();
         if (host == null) {
