@@ -641,6 +641,16 @@
     letter-spacing: 0.05em; text-transform: uppercase; color: var(--iris); white-space: nowrap;
   }
 
+  /* Newest-first collapsible pipeline runs — each .ev-run is one ReviewRequested..next-run span. */
+  .ev-run + .ev-run { margin-top: 14px; }
+  .ev-run-head {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 6px 0; background: none; border: none; cursor: pointer; text-align: left;
+  }
+  .ev-run-head svg { color: var(--text-3); flex: none; }
+  .ev-run-head .muted { margin-left: auto; font-size: 11px; color: var(--text-3); }
+  .ev-run .events { margin-top: 4px; padding-left: 22px; }
+
   /* ---- extension: context card (assembled context handed to the model + live PR description) ---- */
   .ctx-desc-toggle {
     display: inline-flex; align-items: center; gap: 7px;

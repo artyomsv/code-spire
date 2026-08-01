@@ -3,8 +3,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';
-import { eventsCard, findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
+import { findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
+import EventStream from './EventStream';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -223,7 +224,7 @@ export default function ReviewDetail({ reviews }: Props) {
         <div>
           {findingsCard(r)}
           {generalDiscussionCard(r)}
-          {eventsCard(r)}
+          <EventStream r={r} />
         </div>
         <div>
           {usageCard(r)}

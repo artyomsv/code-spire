@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
@@ -854,51 +854,3 @@ export function generalDiscussionCard(r: ReviewDetail) {
   );
 }
 
-export function eventsCard(r: ReviewDetail) {
-  return (
-    <div className="card">
-      <div className="head">
-        <span className="k">//</span>
-        <h3>Event stream</h3>
-        <span className="badge">this review only</span>
-      </div>
-      <div className="body">
-        <div className="events">
-          {(() => {
-            // Each run of the pipeline starts with a ReviewRequested event. Number the
-            // runs and draw a separator before every run after the first, so a review
-            // that was re-run (or superseded and restarted) reads as distinct passes
-            // instead of one undifferentiated stream.
-            let run = 0;
-            return r.events.map((e: ReviewEvent, i: number) => {
-              const startsRun = e.type === 'ReviewRequested';
-              if (startsRun) run += 1;
-              return (
-                <Fragment key={i}>
-                  {startsRun && run > 1 && (
-                    <div className="ev-sep" role="separator" aria-label={`Re-run ${run - 1}`}>
-                      <span className="ev-sep-label">Re-run {run - 1} · {e.at}</span>
-                    </div>
-                  )}
-                  <div className={`ev ${e.lane}`}>
-                    <div className="at">
-                      <span className="at-abs">{formatEventTime(e.ts)}</span>
-                      <span className="at-rel">{e.at}</span>
-                    </div>
-                    <div className="what">
-                      <span className="lane"></span>
-                      <div>
-                        <div className="type">{e.type}</div>
-                        <div className="det">{e.det}</div>
-                      </div>
-                    </div>
-                  </div>
-                </Fragment>
-              );
-            });
-          })()}
-        </div>
-      </div>
-    </div>
-  );
-}
