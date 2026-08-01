@@ -57,7 +57,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
 
     expect(await screen.findByText(/Cap discounts at 50%/)).toBeInTheDocument();
     expect(screen.queryByText(/Must reject above 50/)).not.toBeInTheDocument();
@@ -71,7 +71,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Cap discounts at 50%/ }));
     expect(await screen.findByText(/Must reject above 50/)).toBeInTheDocument();
@@ -88,10 +88,34 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Cap discounts at 50%/ }));
     expect(screen.queryByRole('button', { name: /comment/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * A comment can contain its own markdown list ("see below:" followed by bullet points). Only
+   * lines shaped like a comment header ("- author: text") may count as a comment — a bare bullet
+   * inside a comment's body must not inflate the count.
+   */
+  it('counts only comment headers, not markdown bullets inside a comment', async () => {
+    const withNestedList = {
+      ...item,
+      body:
+        'State: open\n\nRecent comments:\n' +
+        '- alice: see below:\n- first point\n- second point\n- bob: thanks',
+    };
+    vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [withNestedList],
+      contributingSources: [],
+      missingSources: [],
+    });
+
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Cap discounts at 50%/ }));
+    expect(await screen.findByRole('button', { name: /2 comments/i })).toBeInTheDocument();
   });
 
   /** No context is the normal path with no provider configured — not a failure. */
@@ -102,7 +126,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
 
     expect(await screen.findByText(/No context was resolved/i)).toBeInTheDocument();
   });
@@ -115,12 +139,27 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
     await screen.findByText(/Cap discounts at 50%/);
     expect(api.fetchPrDescription).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /description/i }));
     await waitFor(() => expect(api.fetchPrDescription).toHaveBeenCalledWith('acme', 'widgets', 7));
+  });
+
+  /** The description is fetched live and may not match what the review actually saw — the UI must
+   *  say so, or it can be mistaken for the (possibly stale) text captured at review time. */
+  it('labels the description as the pull request current text', async () => {
+    vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [item],
+      contributingSources: [],
+      missingSources: [],
+    });
+
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
+    fireEvent.click(await screen.findByRole('button', { name: /description/i }));
+
+    expect(await screen.findByText(/current pull request text/i)).toBeInTheDocument();
   });
 
   /**
@@ -132,9 +171,76 @@ describe('ContextCard', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(api, 'fetchReviewContext').mockRejectedValue(new Error('network error'));
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
 
     expect(await screen.findByText(/Could not load the context/i)).toBeInTheDocument();
     expect(screen.queryByText(/No context was resolved/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * A revoked bot token or a network error must not be indistinguishable from a pull request that
+   * genuinely has no description — the same "—" placeholder in both cases hid a credential problem
+   * from the operator.
+   */
+  it('shows a failure message instead of the empty placeholder when the description fetch fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [item],
+      contributingSources: [],
+      missingSources: [],
+    });
+    vi.spyOn(api, 'fetchPrDescription').mockRejectedValue(new Error('The stored credential was rejected.'));
+
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
+    fireEvent.click(screen.getByRole('button', { name: /description/i }));
+
+    expect(await screen.findByText(/description could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+  });
+
+  it('renders no link for an item with an unsafe uri', async () => {
+    vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [{ ...item, uri: 'javascript:alert(1)' }],
+      contributingSources: [],
+      missingSources: [],
+    });
+
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
+
+    await screen.findByText(/Cap discounts at 50%/);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('renders a link for an item with an https uri', async () => {
+    vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [item],
+      contributingSources: [],
+      missingSources: [],
+    });
+
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
+
+    const link = await screen.findByRole('link');
+    expect(link).toHaveAttribute('href', item.uri);
+  });
+
+  /** Every sibling card live-updates on a re-run; this one must too, or it keeps showing the
+   *  previous run's items after the pipeline has moved on to a new commit. */
+  it('refetches when the review advances to a new commit', async () => {
+    const fetchSpy = vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [item],
+      contributingSources: [],
+      missingSources: [],
+    });
+    // The spy is shared across this file's tests (vi.spyOn re-wraps the same mock), so its call
+    // count going in reflects earlier tests, not this one — start from a clean count.
+    fetchSpy.mockClear();
+
+    const { rerender } = render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc111" />);
+    await screen.findByText(/Cap discounts at 50%/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    rerender(<ContextCard workspace="acme" slug="widgets" pr={7} sha="def222" />);
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
   });
 });

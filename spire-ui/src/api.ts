@@ -937,6 +937,10 @@ export async function fetchReviewContext(
 }
 
 /** The pull request's description as it stands NOW — fetched live, so it may have been edited. */
+interface DescriptionResponse {
+  description: string | null;
+}
+
 export async function fetchPrDescription(
   workspace: string,
   slug: string,
@@ -944,6 +948,6 @@ export async function fetchPrDescription(
 ): Promise<string | null> {
   const res = await fetch(`/api/reviews/${seg(workspace)}/${seg(slug)}/${pr}/description`);
   if (!res.ok) return throwResponse(res, 'Failed to load the description');
-  const body = await res.json();
+  const body: DescriptionResponse = await res.json();
   return body.description ?? null;
 }

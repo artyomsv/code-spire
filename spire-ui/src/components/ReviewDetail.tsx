@@ -224,7 +224,7 @@ export default function ReviewDetail({ reviews }: Props) {
       <div className="grid2" style={{ marginTop: 18 }}>
         <div>
           {findingsCard(r)}
-          <ContextCard workspace={r.workspace} slug={r.slug} pr={r.pr} />
+          <ContextCard workspace={r.workspace} slug={r.slug} pr={r.pr} sha={r.sha} />
           {generalDiscussionCard(r)}
           <EventStream r={r} />
         </div>

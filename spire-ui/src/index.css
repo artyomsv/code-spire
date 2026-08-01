@@ -660,14 +660,23 @@
   }
   .ctx-desc-toggle:hover { color: var(--text); border-color: var(--border-strong); background: var(--hover); }
   .ctx-desc-toggle svg { color: var(--text-3); flex: none; }
+  /* The description is fetched live, unlike the rest of this card ("as given to the model") — this
+     note keeps the two sources from being confused. */
+  .ctx-desc-live { margin-top: 10px; font-size: 11px; color: var(--text-3); }
 
   .ctx-item { margin-top: 14px; }
+  .ctx-item-row { display: flex; align-items: center; gap: 8px; }
   .ctx-item-head {
-    display: flex; align-items: center; gap: 8px; width: 100%;
+    display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
     background: none; border: none; padding: 0; cursor: pointer; text-align: left;
   }
   .ctx-item-head:hover .ctx-item-title { color: var(--text); }
   .ctx-item-head svg { color: var(--text-3); flex: none; }
+  .ctx-item-link {
+    flex: none; font-size: 11px; color: var(--text-3);
+    padding: 2px 7px; border: 1px solid var(--border); border-radius: 5px; text-decoration: none;
+  }
+  .ctx-item-link:hover { color: var(--text-2); border-color: var(--border-strong); }
   .ctx-item-kind {
     font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
     font-weight: 700; padding: 2px 7px; border-radius: 5px; background: var(--iris-soft); color: var(--iris);
