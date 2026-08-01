@@ -47,7 +47,10 @@ describe('EventStream', () => {
   it('expands an older run on demand', () => {
     render(<EventStream r={review} />);
 
-    fireEvent.click(screen.getAllByRole('button')[1]);
+    const buttons = screen.getAllByRole('button');
+    expect(buttons[1]).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(buttons[1]);
+    expect(buttons[1]).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getAllByRole('group')[1]).toHaveTextContent('DiffFetched');
   });
 
@@ -56,5 +59,52 @@ describe('EventStream', () => {
 
     expect(screen.getAllByRole('group')).toHaveLength(1);
     expect(screen.getByRole('group')).toHaveTextContent('DiffFetched');
+  });
+
+  /**
+   * ReviewDetail re-renders EventStream in place on every live websocket update — it never
+   * remounts. If expand state were keyed by display index, a new run prepending to the front
+   * would shift every older run's index by one and the operator's expanded run would silently
+   * collapse while a different one appeared open in its place.
+   */
+  it('keeps the operator-expanded run expanded when a new run appears', () => {
+    const twoRuns = [
+      ev('ReviewRequested', '+0.0s'),
+      ev('DiffFetched', '+1.2s'),
+      ev('ReviewRequested', '+0.0s'),
+      ev('DiffFetched', '+1.1s'),
+    ];
+    const { rerender } = render(<EventStream r={{ events: twoRuns } as never} />);
+
+    // Expand the older run ("Initial run", displayed last).
+    fireEvent.click(screen.getAllByRole('button')[1]);
+    expect(screen.getAllByRole('group')[1]).toHaveTextContent('+1.2s');
+
+    // A live update re-renders in place with a new run prepended chronologically.
+    const threeRuns = [...twoRuns, ev('ReviewRequested', '+0.0s'), ev('CommentsPosted', '+9s')];
+    rerender(<EventStream r={{ events: threeRuns } as never} />);
+
+    const groups = screen.getAllByRole('group');
+    expect(groups).toHaveLength(3);
+    // "Initial run" now sits at index 2, but stays the one the operator expanded.
+    expect(groups[2]).toHaveTextContent('+1.2s');
+    // The run that shifted into the old index (Re-run 1) must NOT have inherited that state.
+    expect(groups[1]).not.toHaveTextContent('+1.1s');
+  });
+
+  /** Real reviews don't always start with ReviewRequested (e.g. a stored PR event precedes it);
+   *  toRuns must not drop that leading event into nowhere. */
+  it('does not drop events preceding the first ReviewRequested', () => {
+    const events = [
+      ev('PullRequestEventReceived', '+0.0s'),
+      ev('ReviewRequested', '+0.1s'),
+      ev('DiffFetched', '+1s'),
+    ];
+    render(<EventStream r={{ events } as never} />);
+
+    const groups = screen.getAllByRole('group');
+    expect(groups).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('button')[1]);
+    expect(screen.getAllByRole('group')[1]).toHaveTextContent('PullRequestEventReceived');
   });
 });

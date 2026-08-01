@@ -34,7 +34,7 @@ function ContextItemRow({ item }: { item: ContextItem }) {
 
   return (
     <div className="ctx-item">
-      <button className="ctx-item-head" onClick={() => setOpen(!open)}>
+      <button className="ctx-item-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <span className="ctx-item-kind">{item.kind}</span>
         <span className="ctx-item-title">{item.title}</span>
@@ -44,7 +44,11 @@ function ContextItemRow({ item }: { item: ContextItem }) {
           <pre className="ctx-detail">{detail}</pre>
           {comments && (
             <>
-              <button className="ctx-comments-toggle" onClick={() => setShowComments(!showComments)}>
+              <button
+                className="ctx-comments-toggle"
+                aria-expanded={showComments}
+                onClick={() => setShowComments(!showComments)}
+              >
                 {showComments ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 {count} comment{count === 1 ? '' : 's'}
               </button>
@@ -108,7 +112,7 @@ export default function ContextCard({
         <span className="badge">as given to the model</span>
       </div>
       <div className="body">
-        <button className="ctx-desc-toggle" onClick={() => void toggleDescription()}>
+        <button className="ctx-desc-toggle" aria-expanded={descriptionOpen} onClick={() => void toggleDescription()}>
           {descriptionOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           Pull request description
         </button>
