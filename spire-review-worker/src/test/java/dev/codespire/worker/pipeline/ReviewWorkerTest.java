@@ -59,6 +59,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -111,6 +112,7 @@ class ReviewWorkerTest {
     private RecordingSink sink;
     private InMemoryIdempotency idempotency;
     private List<Prompt> llmCalls;
+    private CapturingPromptLog loggedPrompts;
     private RuntimeException diffFailure;
     private String diffText;
     private String compareDiff;
@@ -134,6 +136,8 @@ class ReviewWorkerTest {
         reviewResponse = "{\"summary\":\"s\",\"findings\":[]}";
 
         worker = new ReviewWorker();
+        loggedPrompts = new CapturingPromptLog();
+        worker.promptLog = loggedPrompts;
         worker.mapper = new ObjectMapper();
         worker.inlinePostThrottleMs = 0;
         worker.rateLimitRetryCapSeconds = 0;
@@ -515,6 +519,21 @@ class ReviewWorkerTest {
         String userPrompt = llmCalls.get(0).user();
         assertTrue(userPrompt.contains(item.title()), "context item title must reach the rendered prompt");
         assertTrue(userPrompt.contains(item.body()), "context item body must reach the rendered prompt");
+    }
+
+    /**
+     * The operator's only window onto the assembly step. It has to be handed the SAME prompt object
+     * that goes to the model — a log fed from a second, separately-built render would show something
+     * the model never saw, which is worse than showing nothing.
+     */
+    @Test
+    void theModelsPromptIsTheOneOfferedToThePromptLog() {
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
+
+        assertEquals(1, llmCalls.size());
+        assertEquals(List.of("review"), loggedPrompts.kinds);
+        assertSame(llmCalls.get(0), loggedPrompts.prompts.get(0),
+                "the logged prompt must be the very object sent to the model");
     }
 
     @Test
@@ -1034,6 +1053,22 @@ class ReviewWorkerTest {
                 }
             });
             return posted;
+        }
+    }
+
+    /**
+     * Records what the worker offers the prompt log. Overrides {@code record} rather than enabling
+     * the flag, so the assertion is about the seam being fed the right object — whether the line then
+     * reaches a log file is the logger's business, not this test's.
+     */
+    private static final class CapturingPromptLog extends PromptLog {
+        final List<String> kinds = new ArrayList<>();
+        final List<Prompt> prompts = new ArrayList<>();
+
+        @Override
+        public void record(String kind, Prompt prompt) {
+            kinds.add(kind);
+            prompts.add(prompt);
         }
     }
 }

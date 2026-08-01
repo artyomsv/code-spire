@@ -59,6 +59,9 @@ public class FollowUpWorker {
     WorkerLlmProvider llm;
 
     @Inject
+    PromptLog promptLog;
+
+    @Inject
     CommentIdempotencyStore idempotency;
 
     @Inject
@@ -121,7 +124,8 @@ public class FollowUpWorker {
         }
         WorkerLlmProvider.LlmClient client = llm.forCommand(command);
         FollowUpResult result = answer(command.repo(), command.prId(), command.threadRef(),
-                transcript, clients.diff(), client.provider(), client.params(), clients.comments(),
+                transcript, clients.diff(), promptLog.tap("follow-up", client.provider()),
+                client.params(), clients.comments(),
                 command.followUpPrompt(), command.otherFindings());
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),

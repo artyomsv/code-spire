@@ -37,6 +37,14 @@ spire:
     # registry uses the per-command brokered credential from the LLM provider
     # registry (Settings -> LLM, ADR-018). No SPIRE_LLM_BASE_URL/API_KEY/MODEL.
     provider: ${SPIRE_LLM_PROVIDER:registry}   # stub | registry
+  review:
+    # Writes the fully rendered prompt (system + user, including the fenced context slot) to the log
+    # before each model call. OFF by default, and that is a security decision: a rendered prompt
+    # carries the whole diff and every retrieved context item, which this project otherwise keeps
+    # Tink-encrypted at rest (ADR-014). Enabling it copies that into plaintext logs. Turn it on for
+    # the length of a debugging session — when a review cites something surprising and you need to
+    # see what the model was actually given — then turn it back off.
+    log-prompts: ${SPIRE_REVIEW_LOG_PROMPTS:false}
 
 mp:
   messaging:

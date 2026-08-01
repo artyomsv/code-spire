@@ -226,6 +226,7 @@ class FollowUpWorkerTest {
     private static FollowUpWorker capWorker(CommentIdempotencyStore.Claim claim, CommentSink sink,
                                            List<IntegrationEvent> emitted, List<String> markedKeys) {
         FollowUpWorker worker = new FollowUpWorker();
+        worker.promptLog = new PromptLog(); // disabled by default — the seam must not NPE
         worker.scm = new WorkerScmClients() {
             @Override
             public Clients forCommand(ActionCommand command) {

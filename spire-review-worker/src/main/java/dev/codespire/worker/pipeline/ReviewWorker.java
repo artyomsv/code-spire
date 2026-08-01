@@ -91,6 +91,9 @@ public class ReviewWorker {
     ResultsEmitter results;
 
     @Inject
+    PromptLog promptLog;
+
+    @Inject
     BlobStore blobStore;
 
     @Inject
@@ -187,7 +190,8 @@ public class ReviewWorker {
         ReviewPromptBuilder.Built built =
                 ReviewPromptBuilder.build(pr, diff.files(), context, reconciliation.exclusions(),
                         command.reviewPrompt());
-        Completion completion = client.provider().complete(built.prompt(), client.params())
+        Completion completion = promptLog.tap("review", client.provider())
+                .complete(built.prompt(), client.params())
                 .toCompletableFuture().join();
 
         ReviewResult parsed = FindingsParser.parse(completion.text(), completion.usage());
@@ -240,7 +244,8 @@ public class ReviewWorker {
         Map<String, ThreadTranscript> transcripts = fetchTranscripts(clients, command, remapped);
         Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText,
                 incremental != null, command.reconcilePrompt());
-        Completion completion = client.provider().complete(prompt, client.params())
+        Completion completion = promptLog.tap("reconcile", client.provider())
+                .complete(prompt, client.params())
                 .toCompletableFuture().join();
         List<FindingVerdict> verdicts = downgradeUntouched(
                 VerdictsParser.parse(completion.text(), remapped), incremental);
