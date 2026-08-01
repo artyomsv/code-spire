@@ -30,6 +30,7 @@ function ContextItemRow({ item }: { item: ContextItem }) {
   const [open, setOpen] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const { detail, comments } = splitComments(item.body);
+  const count = comments ? commentCount(comments) : 0;
 
   return (
     <div className="ctx-item">
@@ -45,7 +46,7 @@ function ContextItemRow({ item }: { item: ContextItem }) {
             <>
               <button className="ctx-comments-toggle" onClick={() => setShowComments(!showComments)}>
                 {showComments ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                {commentCount(comments)} comments
+                {count} comment{count === 1 ? '' : 's'}
               </button>
               {showComments && <pre className="ctx-comments">{comments}</pre>}
             </>
@@ -66,17 +67,25 @@ export default function ContextCard({
   pr: number;
 }) {
   const [context, setContext] = useState<ReviewContext | null>(null);
+  // Kept separate from an empty ReviewContext: "we asked and there was nothing" and "we could not
+  // ask" must never render the same message, or a rejected credential / 5xx looks identical to the
+  // normal no-provider-configured path.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [description, setDescription] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setLoadFailed(false);
     void fetchReviewContext(workspace, slug, pr)
       .then((c) => {
         if (!cancelled) setContext(c);
       })
-      .catch(() => {
-        if (!cancelled) setContext({ items: [], contributingSources: [], missingSources: [] });
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load review context', err);
+          setLoadFailed(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -105,8 +114,9 @@ export default function ContextCard({
         </button>
         {descriptionOpen && <pre className="ctx-detail">{description ?? '—'}</pre>}
 
-        {context === null && <div className="ctx-empty">Loading…</div>}
-        {context !== null && context.items.length === 0 && (
+        {context === null && !loadFailed && <div className="ctx-empty">Loading…</div>}
+        {loadFailed && <div className="ctx-empty">Could not load the context for this review.</div>}
+        {!loadFailed && context !== null && context.items.length === 0 && (
           <div className="ctx-empty">No context was resolved for this review.</div>
         )}
         {context?.items.map((item, i) => <ContextItemRow key={item.uri ?? i} item={item} />)}

@@ -122,4 +122,19 @@ describe('ContextCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /description/i }));
     await waitFor(() => expect(api.fetchPrDescription).toHaveBeenCalledWith('acme', 'widgets', 7));
   });
+
+  /**
+   * A fetch failure (network, 5xx, rejected credential) must read differently from a review that
+   * genuinely resolved no context — otherwise an operator can't tell "nothing was configured" from
+   * "we couldn't even ask", the same silent-failure shape that bit the turn cap before.
+   */
+  it('shows a failure message instead of the empty-context message when the fetch fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(api, 'fetchReviewContext').mockRejectedValue(new Error('network error'));
+
+    render(<ContextCard workspace="acme" slug="widgets" pr={7} />);
+
+    expect(await screen.findByText(/Could not load the context/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No context was resolved/i)).not.toBeInTheDocument();
+  });
 });
