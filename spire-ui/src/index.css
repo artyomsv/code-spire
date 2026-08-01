@@ -657,9 +657,6 @@
     font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
     color: var(--text-3); margin-bottom: 8px;
   }
-  /* The description is fetched live, unlike the rest of this card ("as given to the model") — this
-     note keeps the two sources from being confused. */
-  .ctx-desc-live { margin-top: 6px; font-size: 11px; color: var(--text-3); }
 
   .ctx-item { margin-top: 14px; }
   .ctx-item-row { display: flex; align-items: center; gap: 8px; }

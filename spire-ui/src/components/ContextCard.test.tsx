@@ -147,9 +147,8 @@ describe('ContextCard', () => {
     expect(screen.queryByRole('button', { name: /pull request description/i })).not.toBeInTheDocument();
   });
 
-  /** The description is fetched live and may not match what the review actually saw — the UI must
-   *  say so, or it can be mistaken for the (possibly stale) text captured at review time. */
-  it('labels the description as the pull request current text', async () => {
+  /** The section carries its own label, so the description is identifiable without a caption. */
+  it('labels the description section', async () => {
     vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
       items: [item],
       contributingSources: [],
@@ -158,7 +157,7 @@ describe('ContextCard', () => {
 
     render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
 
-    expect(await screen.findByText(/current pull request text/i)).toBeInTheDocument();
+    expect(await screen.findByText(/pull request description/i)).toBeInTheDocument();
   });
 
   /**

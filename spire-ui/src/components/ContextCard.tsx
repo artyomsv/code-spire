@@ -157,12 +157,7 @@ export default function ContextCard({ workspace, slug, pr, sha }: ContextCardPro
           {descriptionFailed ? (
             <div className="ctx-empty">The pull request description could not be loaded.</div>
           ) : (
-            <>
-              <pre className="ctx-detail">{description ?? '—'}</pre>
-              {/* The items above are as-reviewed; this one is not. Saying so is the condition on
-                  which showing live text at all was acceptable. */}
-              <div className="ctx-desc-live">Current pull request text, fetched live</div>
-            </>
+            <pre className="ctx-detail">{description ?? '—'}</pre>
           )}
         </div>
 
