@@ -41,6 +41,19 @@ public class WorkerScmClients {
 
     /** DiffSource + CommentSink built for a single command. */
     public record Clients(DiffSource diff, CommentSink comments) {
+
+        /**
+         * Reads get their transient-failure retry here, at the one point every {@code Clients} is
+         * built, rather than in each provider branch below — a fourth adapter then cannot be added
+         * without it, which is exactly how the first three came to differ elsewhere (ADR-020).
+         *
+         * <p>Null is permitted: commands that only post never resolve a diff source.
+         */
+        public Clients {
+            if (diff != null && !(diff instanceof RetryingDiffSource)) {
+                diff = new RetryingDiffSource(diff);
+            }
+        }
     }
 
     // Which SCM a review targets is the UI registry (encrypted scm_provider table),
