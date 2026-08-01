@@ -131,7 +131,7 @@ services:
       # published host port reaches the app inside the container.
       QUARKUS_HTTP_HOST: 0.0.0.0
     ports:
-      - "39282:39282"   # HTTP: health endpoint
+      - "39282:39282"   # HTTP: health + review-context endpoints
       - "39292:39292"   # JDWP debug
     volumes:
       - gradle-cache-worker:/root/.gradle

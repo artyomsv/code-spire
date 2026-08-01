@@ -2,7 +2,7 @@ quarkus:
   application:
     name: spire-review-worker
   http:
-    port: ${WORKER_HTTP_PORT:34082}   # health endpoint only; 34xxx project range
+    port: ${WORKER_HTTP_PORT:34082}   # health + review-context endpoints; 34xxx project range
   datasource:
     db-kind: postgresql
     jdbc:
