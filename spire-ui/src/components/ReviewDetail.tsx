@@ -6,6 +6,7 @@ import Tooltip from './Tooltip';
 import { findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 import EventStream from './EventStream';
+import ContextCard from './ContextCard';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -223,12 +224,13 @@ export default function ReviewDetail({ reviews }: Props) {
       <div className="grid2" style={{ marginTop: 18 }}>
         <div>
           {findingsCard(r)}
+          <ContextCard workspace={r.workspace} slug={r.slug} pr={r.pr} />
           {generalDiscussionCard(r)}
           <EventStream r={r} />
         </div>
         <div>
-          {usageCard(r)}
           {metaCard(r)}
+          {usageCard(r)}
         </div>
       </div>
     </section>
