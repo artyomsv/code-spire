@@ -890,6 +890,7 @@ export default function ContextCard({
   pr: number;
 }) {
   const [context, setContext] = useState<ReviewContext | null>(null);
+  const [failed, setFailed] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [description, setDescription] = useState<string | null>(null);
 
@@ -899,8 +900,12 @@ export default function ContextCard({
       .then((c) => {
         if (!cancelled) setContext(c);
       })
-      .catch(() => {
-        if (!cancelled) setContext({ items: [], contributingSources: [], missingSources: [] });
+      .catch((err: unknown) => {
+        // A failure must never render as an empty result: "we could not ask" and "there was
+        // nothing to find" are different facts, and collapsing them is how a broken pipeline
+        // stays invisible.
+        console.error('Could not load review context', err);
+        if (!cancelled) setFailed(true);
       });
     return () => {
       cancelled = true;
@@ -929,9 +934,10 @@ export default function ContextCard({
         </button>
         {descriptionOpen && <pre className="ctx-detail">{description ?? '—'}</pre>}
 
-        {context === null && <div className="muted">Loading…</div>}
-        {context !== null && context.items.length === 0 && (
-          <div className="muted">No context was resolved for this review.</div>
+        {failed && <div className="ctx-empty">Could not load the context for this review.</div>}
+        {!failed && context === null && <div className="ctx-empty">Loading…</div>}
+        {!failed && context !== null && context.items.length === 0 && (
+          <div className="ctx-empty">No context was resolved for this review.</div>
         )}
         {context?.items.map((item, i) => <Item key={item.uri ?? i} item={item} />)}
       </div>
