@@ -6,7 +6,11 @@ import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.LineType;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -255,5 +259,182 @@ class UnifiedDiffParserTest {
         assertTrue(p.binary());
         assertEquals("assets/img b/logo.png", p.oldPath());
         assertEquals("assets/img b/logo.png", p.newPath());
+    }
+
+    // ---- headerless (plain "diff -u") input ------------------------------------------------
+
+    /**
+     * Plain {@code diff -u} carries no {@code diff --git} line. Before the fallback detector this
+     * parsed to an empty list with no error, so a review saw zero changed files and said nothing —
+     * the shape that made GitLab's compare diff silently disable reconciliation.
+     */
+    @Test
+    void parsesAHeaderlessDiffWithDualLineNumbers() {
+        String diff = """
+                --- a/src/App.java
+                +++ b/src/App.java
+                @@ -10,3 +10,4 @@
+                     int a = 1;
+                -    int b = 2;
+                +    int b = 3;
+                +    int c = 4;
+                     int d = 5;
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+
+        assertEquals(1, patches.size());
+        FilePatch p = patches.getFirst();
+        assertEquals("src/App.java", p.oldPath());
+        assertEquals("src/App.java", p.newPath());
+        assertEquals(ChangeType.MODIFIED, p.change());
+
+        List<DiffLine> lines = p.hunks().getFirst().lines();
+        assertEquals(new DiffLine(LineType.CONTEXT, 10, 10, "    int a = 1;"), lines.get(0));
+        assertEquals(new DiffLine(LineType.REMOVED, 11, null, "    int b = 2;"), lines.get(1));
+        assertEquals(new DiffLine(LineType.ADDED, null, 11, "    int b = 3;"), lines.get(2));
+        assertEquals(new DiffLine(LineType.ADDED, null, 12, "    int c = 4;"), lines.get(3));
+        assertEquals(new DiffLine(LineType.CONTEXT, 12, 13, "    int d = 5;"), lines.get(4));
+    }
+
+    /** The hunk's own counts are what end a file, so the next "--- " starts a new one. */
+    @Test
+    void parsesMultipleFilesInAHeaderlessDiff() {
+        String diff = """
+                --- a/one.txt
+                +++ b/one.txt
+                @@ -1 +1 @@
+                -x
+                +y
+                --- a/two.txt
+                +++ b/two.txt
+                @@ -1 +1 @@
+                -p
+                +q
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+
+        assertEquals(2, patches.size());
+        assertEquals("one.txt", patches.getFirst().newPath());
+        assertEquals("two.txt", patches.get(1).newPath());
+        assertEquals("q", patches.get(1).hunks().getFirst().lines().get(1).content());
+    }
+
+    /** Change type comes from /dev/null on either side — there is no "new file mode" line to read. */
+    @Test
+    void derivesAddedAndDeletedFromDevNullInAHeaderlessDiff() {
+        String diff = """
+                --- /dev/null
+                +++ b/docs/new.md
+                @@ -0,0 +1,2 @@
+                +hello
+                +world
+                --- a/docs/gone.md
+                +++ /dev/null
+                @@ -1,2 +0,0 @@
+                -bye
+                -now
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+
+        assertEquals(2, patches.size());
+        assertEquals(ChangeType.ADDED, patches.getFirst().change());
+        assertNull(patches.getFirst().oldPath());
+        assertEquals("docs/new.md", patches.getFirst().newPath());
+        assertEquals(ChangeType.DELETED, patches.get(1).change());
+        assertNull(patches.get(1).newPath());
+        assertEquals("docs/gone.md", patches.get(1).oldPath());
+    }
+
+    /**
+     * The discriminating test for the detector choice: a binary file carries NO ---/+++ pair, so it
+     * is invisible to the headerless detector. If git-style input ever fell through to that
+     * fallback, this file would silently vanish from the review.
+     */
+    @Test
+    void gitHeadersWinSoABinaryFileIsNotLostBesideATextFile() {
+        String diff = """
+                diff --git a/logo.png b/logo.png
+                Binary files a/logo.png and b/logo.png differ
+                diff --git a/x.txt b/x.txt
+                --- a/x.txt
+                +++ b/x.txt
+                @@ -1 +1 @@
+                -x
+                +y
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+
+        assertEquals(2, patches.size(), "the binary file has no ---/+++ pair to be found by");
+        assertTrue(patches.getFirst().binary());
+        assertEquals("x.txt", patches.get(1).newPath());
+    }
+
+    /** Removing a line whose own text starts with "-- " is content, never a file boundary. */
+    @Test
+    void hunkLinesThatLookLikeFileHeadersStayContent() {
+        String diff = """
+                diff --git a/x.txt b/x.txt
+                --- a/x.txt
+                +++ b/x.txt
+                @@ -1 +1 @@
+                --- old marker
+                +++ new marker
+                """;
+        List<FilePatch> patches = UnifiedDiffParser.parse(diff);
+
+        assertEquals(1, patches.size());
+        List<DiffLine> lines = patches.getFirst().hunks().getFirst().lines();
+        assertEquals(new DiffLine(LineType.REMOVED, 1, null, "-- old marker"), lines.get(0));
+        assertEquals(new DiffLine(LineType.ADDED, null, 1, "++ new marker"), lines.get(1));
+    }
+
+    // ---- the zero-files guard --------------------------------------------------------------
+
+    /**
+     * The cheap half of this debt item. A non-blank diff that yields nothing is always an anomaly,
+     * and every caller experiences it as "no changes" rather than as an error — which is why the
+     * GitLab shape above went unnoticed for weeks. Asserted rather than assumed.
+     */
+    @Test
+    void warnsWhenNonBlankTextParsesToZeroFiles() {
+        List<String> warnings = warningsFrom(() -> UnifiedDiffParser.parse("not a diff at all"));
+
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("parsed to zero files")),
+                "expected a zero-files warning, got " + warnings);
+    }
+
+    /** Negative control: the guard must stay quiet on every diff that did parse. */
+    @Test
+    void doesNotWarnWhenFilesWereParsed() {
+        List<String> warnings = warningsFrom(() -> UnifiedDiffParser.parse(MODIFIED));
+
+        assertTrue(warnings.isEmpty(), "expected no warning for a well-formed diff, got " + warnings);
+    }
+
+    /** The parser logs through System.Logger, which routes to java.util.logging in this module. */
+    private static List<String> warningsFrom(Runnable parse) {
+        Logger logger = Logger.getLogger(UnifiedDiffParser.class.getName());
+        List<String> captured = new ArrayList<>();
+        Handler handler = new Handler() {
+            @Override
+            public void publish(LogRecord entry) {
+                captured.add(entry.getMessage());
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(handler);
+        try {
+            parse.run();
+        } finally {
+            logger.removeHandler(handler);
+        }
+        return captured;
     }
 }
