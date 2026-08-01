@@ -650,17 +650,16 @@
   .ev-run .events { margin-top: 4px; padding-left: 22px; }
 
   /* ---- extension: context card (assembled context handed to the model + live PR description) ---- */
-  .ctx-desc-toggle {
-    display: inline-flex; align-items: center; gap: 7px;
-    font-size: 12px; font-weight: 500; color: var(--text-2);
-    padding: 5px 11px; border: 1px solid var(--border); border-radius: 8px;
-    background: var(--panel-2); cursor: pointer;
+  .ctx-desc { margin-bottom: 4px; }
+  /* Same small-caps mono label the table headers use, so the card reads as part of the system
+     rather than as a control. */
+  .ctx-desc-label {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--text-3); margin-bottom: 8px;
   }
-  .ctx-desc-toggle:hover { color: var(--text); border-color: var(--border-strong); background: var(--hover); }
-  .ctx-desc-toggle svg { color: var(--text-3); flex: none; }
   /* The description is fetched live, unlike the rest of this card ("as given to the model") — this
      note keeps the two sources from being confused. */
-  .ctx-desc-live { margin-top: 10px; font-size: 11px; color: var(--text-3); }
+  .ctx-desc-live { margin-top: 6px; font-size: 11px; color: var(--text-3); }
 
   .ctx-item { margin-top: 14px; }
   .ctx-item-row { display: flex; align-items: center; gap: 8px; }
@@ -670,11 +669,8 @@
   }
   .ctx-item-head:hover .ctx-item-title { color: var(--text); }
   .ctx-item-head svg { color: var(--text-3); flex: none; }
-  .ctx-item-link {
-    flex: none; font-size: 11px; color: var(--text-3);
-    padding: 2px 7px; border: 1px solid var(--border); border-radius: 5px; text-decoration: none;
-  }
-  .ctx-item-link:hover { color: var(--text-2); border-color: var(--border-strong); }
+  /* The link uses the shared .icon-btn, same as the header's open-in-provider control. */
+  .ctx-item-row .icon-btn { flex: none; width: 28px; height: 28px; }
   .ctx-item-kind {
     font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
     font-weight: 700; padding: 2px 7px; border-radius: 5px; background: var(--iris-soft); color: var(--iris);

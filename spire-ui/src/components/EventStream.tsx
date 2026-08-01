@@ -61,7 +61,6 @@ export default function EventStream({ r }: { r: ReviewDetail }) {
               >
                 {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 <span className="ev-sep-label">{run.label}</span>
-                {i === 0 && <span className="badge">latest</span>}
                 <span className="muted">{run.events.length} events</span>
               </button>
               {isOpen && (

@@ -132,7 +132,8 @@ describe('ContextCard', () => {
   });
 
   /** The description costs an SCM call, so it must not be paid for on every page load. */
-  it('does not fetch the description until it is expanded', async () => {
+  /** The description is shown outright, not behind a toggle, so it is fetched with the card. */
+  it('fetches and shows the description without any interaction', async () => {
     vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
       items: [item],
       contributingSources: [],
@@ -140,11 +141,10 @@ describe('ContextCard', () => {
     });
 
     render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
-    await screen.findByText(/Cap discounts at 50%/);
-    expect(api.fetchPrDescription).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: /description/i }));
-    await waitFor(() => expect(api.fetchPrDescription).toHaveBeenCalledWith('acme', 'widgets', 7));
+    expect(await screen.findByText('Implements #7')).toBeInTheDocument();
+    expect(api.fetchPrDescription).toHaveBeenCalledWith('acme', 'widgets', 7);
+    expect(screen.queryByRole('button', { name: /pull request description/i })).not.toBeInTheDocument();
   });
 
   /** The description is fetched live and may not match what the review actually saw — the UI must
@@ -157,7 +157,6 @@ describe('ContextCard', () => {
     });
 
     render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
-    fireEvent.click(await screen.findByRole('button', { name: /description/i }));
 
     expect(await screen.findByText(/current pull request text/i)).toBeInTheDocument();
   });
@@ -192,7 +191,6 @@ describe('ContextCard', () => {
     vi.spyOn(api, 'fetchPrDescription').mockRejectedValue(new Error('The stored credential was rejected.'));
 
     render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" />);
-    fireEvent.click(screen.getByRole('button', { name: /description/i }));
 
     expect(await screen.findByText(/description could not be loaded/i)).toBeInTheDocument();
     expect(screen.queryByText('—')).not.toBeInTheDocument();
@@ -222,6 +220,10 @@ describe('ContextCard', () => {
 
     const link = await screen.findByRole('link');
     expect(link).toHaveAttribute('href', item.uri);
+    // The shared icon-button pattern, same as the header's open-in-provider control — the label
+    // is what makes an icon-only control usable, so it is pinned here rather than left to CSS.
+    expect(link).toHaveClass('icon-btn');
+    expect(link).toHaveAccessibleName(/open in the issue tracker/i);
   });
 
   /** Every sibling card live-updates on a re-run; this one must too, or it keeps showing the

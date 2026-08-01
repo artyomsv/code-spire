@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { fetchReviewContext, fetchPrDescription, type ContextItem, type ReviewContext } from '../api';
 import { safeHttpUrl } from '../render';
+import Tooltip from './Tooltip';
 
 const COMMENTS_MARKER = 'Recent comments:';
 // The marker is matched WITHOUT its leading newlines: one provider strips the body, so a ticket
@@ -48,9 +49,17 @@ function ContextItemRow({ item }: { item: ContextItem }) {
           <span className="ctx-item-title">{item.title}</span>
         </button>
         {href && (
-          <a className="ctx-item-link" href={href} target="_blank" rel="noreferrer noopener">
-            Open
-          </a>
+          <Tooltip label="Open in the issue tracker">
+            <a
+              className="icon-btn"
+              href={href}
+              target="_blank"
+              rel="noreferrer noopener"
+              aria-label="Open in the issue tracker"
+            >
+              <ExternalLink size={16} />
+            </a>
+          </Tooltip>
         )}
       </div>
       {open && (
@@ -91,7 +100,6 @@ export default function ContextCard({ workspace, slug, pr, sha }: ContextCardPro
   // ask" must never render the same message, or a rejected credential / 5xx looks identical to the
   // normal no-provider-configured path.
   const [loadFailed, setLoadFailed] = useState(false);
-  const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [description, setDescription] = useState<string | null>(null);
   // Distinct from "description === null" (not fetched yet): a failed fetch (revoked credential,
   // network error) must not render as "this pull request has no description".
@@ -115,18 +123,26 @@ export default function ContextCard({ workspace, slug, pr, sha }: ContextCardPro
     };
   }, [workspace, slug, pr, sha]);
 
-  async function toggleDescription() {
-    const next = !descriptionOpen;
-    setDescriptionOpen(next);
-    if (next && description === null && !descriptionFailed) {
-      try {
-        setDescription(await fetchPrDescription(workspace, slug, pr));
-      } catch (err) {
-        console.error('Failed to load the pull request description', err);
-        setDescriptionFailed(true);
-      }
-    }
-  }
+  // The description is shown outright rather than behind a toggle, so it is fetched with the card.
+  // That costs one SCM call per page view — the price of having the text that explains why a given
+  // issue was pulled in visible without a click.
+  useEffect(() => {
+    let cancelled = false;
+    setDescriptionFailed(false);
+    void fetchPrDescription(workspace, slug, pr)
+      .then((d) => {
+        if (!cancelled) setDescription(d);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load the pull request description', err);
+          setDescriptionFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace, slug, pr, sha]);
 
   return (
     <div className="card">
@@ -136,20 +152,19 @@ export default function ContextCard({ workspace, slug, pr, sha }: ContextCardPro
         <span className="badge">as given to the model</span>
       </div>
       <div className="body">
-        <button className="ctx-desc-toggle" aria-expanded={descriptionOpen} onClick={() => void toggleDescription()}>
-          {descriptionOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          Pull request description
-        </button>
-        {descriptionOpen && (
-          descriptionFailed ? (
+        <div className="ctx-desc">
+          <div className="ctx-desc-label">Pull request description</div>
+          {descriptionFailed ? (
             <div className="ctx-empty">The pull request description could not be loaded.</div>
           ) : (
             <>
-              <div className="ctx-desc-live">Current pull request text, fetched live</div>
               <pre className="ctx-detail">{description ?? '—'}</pre>
+              {/* The items above are as-reviewed; this one is not. Saying so is the condition on
+                  which showing live text at all was acceptable. */}
+              <div className="ctx-desc-live">Current pull request text, fetched live</div>
             </>
-          )
-        )}
+          )}
+        </div>
 
         {context === null && !loadFailed && <div className="ctx-empty">Loading…</div>}
         {loadFailed && <div className="ctx-empty">Could not load the context for this review.</div>}

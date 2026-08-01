@@ -30,7 +30,9 @@ describe('EventStream', () => {
 
     const groups = screen.getAllByRole('group');
     expect(groups).toHaveLength(2);
-    expect(groups[0]).toHaveTextContent(/latest/i);
+    // Ordering is pinned by the run's own label rather than a "latest" chip: the label is what an
+    // operator reads, and it survives the chip being restyled or removed.
+    expect(groups[0]).toHaveTextContent('Re-run 1');
     expect(groups[0]).toHaveTextContent('CommentsPosted');
     expect(groups[1]).not.toHaveTextContent('DiffFetched');
   });
