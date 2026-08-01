@@ -9,15 +9,24 @@ interface Run {
 }
 
 /**
- * Runs are delimited by ReviewRequested. Numbering is computed in the API's chronological order so
- * a run keeps its identity once the list is reversed for display.
+ * A run is opened by a ReviewRequested event — except the first run, which starts at whatever
+ * event comes first. Real reviews often begin with an inline integration event
+ * (PullRequestEventReceived lands before ReviewRequested arrives over the bus), and that leading
+ * event must fold into the initial run rather than opening a falsely-numbered run of its own.
+ * Numbering is computed in the API's chronological order so a run keeps its identity once the
+ * list is reversed for display.
  */
 export function toRuns(events: ReviewEvent[]): Run[] {
   const runs: Run[] = [];
+  let sawReviewRequested = false;
   for (const e of events) {
-    if (e.type === 'ReviewRequested' || runs.length === 0) {
-      runs.push({ label: runs.length === 0 ? 'Initial run' : `Re-run ${runs.length}`, events: [] });
+    const isReviewRequested = e.type === 'ReviewRequested';
+    if (runs.length === 0) {
+      runs.push({ label: 'Initial run', events: [] });
+    } else if (isReviewRequested && sawReviewRequested) {
+      runs.push({ label: `Re-run ${runs.length}`, events: [] });
     }
+    if (isReviewRequested) sawReviewRequested = true;
     runs[runs.length - 1].events.push(e);
   }
   return runs.reverse();

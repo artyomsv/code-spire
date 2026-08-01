@@ -92,9 +92,14 @@ describe('EventStream', () => {
     expect(groups[1]).not.toHaveTextContent('+1.1s');
   });
 
-  /** Real reviews don't always start with ReviewRequested (e.g. a stored PR event precedes it);
-   *  toRuns must not drop that leading event into nowhere. */
-  it('does not drop events preceding the first ReviewRequested', () => {
+  /**
+   * Real reviews frequently begin with PullRequestEventReceived (appended inline by the
+   * orchestrator) before ReviewRequested arrives over the bus. That leading event must fold into
+   * the one genuine run rather than opening a phantom run of its own — the earlier version of this
+   * test only checked the event wasn't dropped, which passed even while it was mislabelled as a
+   * second, falsely-numbered run.
+   */
+  it('folds a leading PullRequestEventReceived into the initial run, not a run of its own', () => {
     const events = [
       ev('PullRequestEventReceived', '+0.0s'),
       ev('ReviewRequested', '+0.1s'),
@@ -103,8 +108,23 @@ describe('EventStream', () => {
     render(<EventStream r={{ events } as never} />);
 
     const groups = screen.getAllByRole('group');
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toHaveTextContent('Initial run');
+    expect(groups[0]).not.toHaveTextContent('Re-run 1');
+    expect(groups[0]).toHaveTextContent('PullRequestEventReceived');
+  });
+
+  it('numbers a genuine second run as Re-run 1 even when the first run had a leading event', () => {
+    const events = [
+      ev('PullRequestEventReceived', '+0.0s'),
+      ev('ReviewRequested', '+0.1s'),
+      ev('DiffFetched', '+1s'),
+      ev('ReviewRequested', '+5m'),
+    ];
+    render(<EventStream r={{ events } as never} />);
+
+    const groups = screen.getAllByRole('group');
     expect(groups).toHaveLength(2);
-    fireEvent.click(screen.getAllByRole('button')[1]);
-    expect(screen.getAllByRole('group')[1]).toHaveTextContent('PullRequestEventReceived');
+    expect(groups[0]).toHaveTextContent('Re-run 1');
   });
 });
