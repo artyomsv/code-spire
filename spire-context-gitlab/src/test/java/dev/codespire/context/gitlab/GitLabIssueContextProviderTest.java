@@ -112,6 +112,38 @@ class GitLabIssueContextProviderTest {
         assertEquals("https://gitlab.com/acme/tools/widgets/-/issues/12", item.uri());
     }
 
+    /**
+     * This endpoint returns notes NEWEST-first, so the newest are the head of the page. Taking the tail
+     * — the shape that reads correctly against an oldest-first API — renders the oldest notes instead,
+     * which on a long-running issue is exactly the discussion nobody needs.
+     */
+    @Test
+    void keepsTheNewestNotesRatherThanTheOldestWhenThereAreMoreThanTheBound() {
+        json("/api/v4/projects/" + ENCODED + "/issues/12", """
+                {"iid":12,"title":"Widget spins backwards","state":"opened",
+                 "description":"Spins backwards above 40rpm.","labels":["bug"],
+                 "web_url":"https://gitlab.com/acme/tools/widgets/-/issues/12"}
+                """);
+        json("/api/v4/projects/" + ENCODED + "/issues/12/notes", """
+                [{"body":"note 7","system":false,"author":{"username":"gita"}},
+                 {"body":"note 6","system":false,"author":{"username":"finn"}},
+                 {"body":"note 5","system":false,"author":{"username":"eve"}},
+                 {"body":"note 4","system":false,"author":{"username":"dana"}},
+                 {"body":"note 3","system":false,"author":{"username":"cai"}},
+                 {"body":"note 2","system":false,"author":{"username":"bo"}},
+                 {"body":"note 1","system":false,"author":{"username":"ana"}}]
+                """);
+
+        ContextItem item = provider.contribute(request(Set.of("#12"), ScmType.GITLAB))
+                .toCompletableFuture().join().items().get(0);
+
+        assertTrue(item.body().contains("note 7"), "the newest note is kept");
+        assertFalse(item.body().contains("note 1"), "the oldest notes fall outside the bound");
+        assertFalse(item.body().contains("note 2"));
+        assertTrue(item.body().indexOf("note 3") < item.body().indexOf("note 7"),
+                "kept notes render oldest-first");
+    }
+
     @Test
     void resolvesAMergeRequestReferenceUnderItsOwnKind() {
         json("/api/v4/projects/" + ENCODED + "/merge_requests/34", """

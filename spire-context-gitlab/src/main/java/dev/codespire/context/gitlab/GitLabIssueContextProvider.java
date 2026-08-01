@@ -11,6 +11,7 @@ import dev.codespire.contract.review.ContribStatus;
 import dev.codespire.contract.scm.RepoRef;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -290,11 +291,15 @@ public class GitLabIssueContextProvider implements ContextProvider {
      * Append the most recent human notes. {@code system: true} notes are activity records ("changed
      * title from…") — noise that would crowd out the discussion. Notes are a second call and pure
      * enrichment, so a failure drops them and keeps the object.
+     *
+     * <p>This endpoint returns notes NEWEST-first, so the newest are the head of page 1 — the sort is
+     * requested explicitly rather than left to the API's default, because the whole of "recent"
+     * depends on it. They are then reversed back into reading order.
      */
     private void appendRecentNotes(StringBuilder body, String notesPath) {
         JsonNode notes;
         try {
-            notes = client.getJson(notesPath + "?per_page=100");
+            notes = client.getJson(notesPath + "?per_page=100&order_by=created_at&sort=desc");
         } catch (RuntimeException e) {
             return;
         }
@@ -303,14 +308,13 @@ public class GitLabIssueContextProvider implements ContextProvider {
         }
         List<JsonNode> human = new ArrayList<>();
         for (JsonNode note : notes) {
-            if (!note.path("system").asBoolean(false)) {
+            if (!note.path("system").asBoolean(false) && human.size() < MAX_COMMENTS) {
                 human.add(note);
             }
         }
-        int from = Math.max(0, human.size() - MAX_COMMENTS);
+        Collections.reverse(human); // newest-first off the wire, oldest-first for the prompt
         StringBuilder rendered = new StringBuilder();
-        for (int i = from; i < human.size(); i++) {
-            JsonNode note = human.get(i);
+        for (JsonNode note : human) {
             String text = clip(note.path("body").asText(""), MAX_COMMENT_CHARS);
             if (text.isBlank()) {
                 continue;

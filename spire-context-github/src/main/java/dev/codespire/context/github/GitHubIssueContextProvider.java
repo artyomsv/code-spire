@@ -2,6 +2,7 @@ package dev.codespire.context.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import dev.codespire.contract.port.ContextProvider;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.ContextContribution;
@@ -39,6 +40,8 @@ public class GitHubIssueContextProvider implements ContextProvider {
     /** Include the last few comments — where the real decisions often live — bounded to limit noise. */
     private static final int MAX_COMMENTS = 5;
     private static final int MAX_COMMENT_CHARS = 500;
+    /** Page size for the comments call; the issue's own comment count says which page holds the newest. */
+    private static final int COMMENTS_PER_PAGE = 100;
     /** Cost guard: a description listing dozens of issues must not become dozens of API calls. */
     private static final int MAX_REFERENCES = 10;
 
@@ -178,7 +181,7 @@ public class GitHubIssueContextProvider implements ContextProvider {
         if (!body.isBlank()) {
             rendered.append('\n').append(body);
         }
-        appendRecentComments(rendered, target);
+        appendRecentComments(rendered, target, issue.path("comments").asInt(-1));
 
         String title = renderTitle(target, request, issue.path("title").asText(""));
         String uri = issue.path("html_url").asText("");
@@ -233,20 +236,9 @@ public class GitHubIssueContextProvider implements ContextProvider {
      * <p>Comments are a second call, so they can fail while the issue itself read fine. They are
      * enrichment: a failure here drops them and keeps the issue rather than losing both.
      */
-    private void appendRecentComments(StringBuilder body, Target target) {
-        JsonNode comments;
-        try {
-            comments = client.getJson(target.path() + "/comments?per_page=100");
-        } catch (RuntimeException e) {
-            return;
-        }
-        if (!comments.isArray() || comments.isEmpty()) {
-            return;
-        }
-        int from = Math.max(0, comments.size() - MAX_COMMENTS); // returned oldest-first: take the tail
+    private void appendRecentComments(StringBuilder body, Target target, int commentCount) {
         StringBuilder rendered = new StringBuilder();
-        for (int i = from; i < comments.size(); i++) {
-            JsonNode comment = comments.get(i);
+        for (JsonNode comment : recentComments(target, commentCount)) {
             String text = clip(comment.path("body").asText(""), MAX_COMMENT_CHARS);
             if (text.isBlank()) {
                 continue;
@@ -257,6 +249,56 @@ public class GitHubIssueContextProvider implements ContextProvider {
         if (rendered.length() > 0) {
             body.append("\n\nRecent comments:").append(rendered);
         }
+    }
+
+    /**
+     * The newest {@link #MAX_COMMENTS} comments, oldest-first.
+     *
+     * <p>The endpoint orders comments by ascending id and takes no sort parameter, so on an issue
+     * past one page the tail of page 1 is mid-history — while the decisions and the links worth
+     * following are at the end. The issue payload carries the total, which is what lets us ask for
+     * the last page directly; a last page shorter than the bound is topped up from the one before it.
+     *
+     * @param commentCount the issue's own count, or -1 when the payload did not carry one.
+     */
+    private List<JsonNode> recentComments(Target target, int commentCount) {
+        if (commentCount == 0) {
+            return List.of(); // the issue says it has none — don't spend a call finding out
+        }
+        int lastPage = commentCount > 0 ? (commentCount - 1) / COMMENTS_PER_PAGE + 1 : 1;
+        List<JsonNode> recent = new ArrayList<>(tailOf(commentsPage(target, lastPage)));
+        if (recent.size() < MAX_COMMENTS && lastPage > 1) {
+            List<JsonNode> previous = tailOf(commentsPage(target, lastPage - 1));
+            int missing = Math.min(MAX_COMMENTS - recent.size(), previous.size());
+            recent.addAll(0, previous.subList(previous.size() - missing, previous.size()));
+        }
+        return recent;
+    }
+
+    /**
+     * One page of comments, or a missing node when the call fails. Comments are a second call, so they
+     * can fail while the issue itself read fine: they are enrichment, and a failure here drops them
+     * and keeps the issue rather than losing both.
+     */
+    private JsonNode commentsPage(Target target, int page) {
+        try {
+            return client.getJson(target.path() + "/comments?per_page=" + COMMENTS_PER_PAGE
+                    + "&page=" + page);
+        } catch (RuntimeException e) {
+            return MissingNode.getInstance();
+        }
+    }
+
+    /** The last {@link #MAX_COMMENTS} entries of a page, oldest-first. */
+    private static List<JsonNode> tailOf(JsonNode page) {
+        if (!page.isArray() || page.isEmpty()) {
+            return List.of();
+        }
+        List<JsonNode> tail = new ArrayList<>();
+        for (int i = Math.max(0, page.size() - MAX_COMMENTS); i < page.size(); i++) {
+            tail.add(page.get(i));
+        }
+        return tail;
     }
 
     private static String clip(String text, int max) {

@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Set;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
@@ -67,6 +68,23 @@ class GitHubIssueContextProviderTest {
     private static void stubIssueAt(String owner, String repo, int number, String body) {
         server.stubFor(get(urlPathEqualTo("/repos/" + owner + "/" + repo + "/issues/" + number))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(body)));
+    }
+
+    private static void stubCommentsPage(int number, int page, String body) {
+        server.stubFor(get(urlPathEqualTo("/repos/acme/widgets/issues/" + number + "/comments"))
+                .withQueryParam("page", equalTo(String.valueOf(page)))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(body)));
+    }
+
+    /** {@code n} comments whose bodies are "<label> 1".."<label> n", oldest-first as the API returns them. */
+    private static String comments(String label, int n) {
+        StringBuilder json = new StringBuilder("[");
+        for (int i = 1; i <= n; i++) {
+            json.append(i == 1 ? "" : ",")
+                    .append("{\"body\":\"").append(label).append(' ').append(i)
+                    .append("\",\"user\":{\"login\":\"dana\"}}");
+        }
+        return json.append(']').toString();
     }
 
     private static void stubNoCommentsAt(String owner, String repo, int number) {
@@ -194,6 +212,49 @@ class GitHubIssueContextProviderTest {
         assertTrue(item.body().contains("Root cause is the gear ratio"), "comments carry the decision");
         assertTrue(item.body().contains("ines"));
         assertEquals("https://github.com/acme/widgets/issues/123", item.uri());
+    }
+
+    /**
+     * The endpoint orders comments by ascending id and offers no sort parameter, so on a busy issue the
+     * tail of page 1 is mid-history — while the decisions and the links worth following are at the end.
+     * A last page shorter than the bound is topped up from the page before it, so "the newest five"
+     * stays five rather than however many happen to land past the last page boundary.
+     */
+    @Test
+    void readsTheNewestCommentsPageRatherThanTheFirstOnABusyIssue() {
+        stubIssue(123, """
+                {"number":123,"title":"Widget spins backwards","state":"open","comments":250,
+                 "body":"The widget spins backwards above 40rpm.",
+                 "html_url":"https://github.com/acme/widgets/issues/123"}
+                """);
+        stubCommentsPage(123, 1, comments("oldest", 4));
+        stubCommentsPage(123, 2, comments("middle", 6));
+        stubCommentsPage(123, 3, comments("newest", 3)); // 250 comments => the last page holds 50 slots, 3 used
+
+        ContextItem item = provider.contribute(request(Set.of("#123"), ScmType.GITHUB))
+                .toCompletableFuture().join().items().get(0);
+
+        assertTrue(item.body().contains("newest 3"), "the newest comment is kept");
+        assertTrue(item.body().contains("middle 6"), "a short last page is topped up from the one before");
+        assertTrue(item.body().contains("middle 5"));
+        assertFalse(item.body().contains("middle 4"), "only enough to reach the bound is topped up");
+        assertFalse(item.body().contains("oldest 1"), "page 1 is not where recent comments live");
+        assertTrue(item.body().indexOf("middle 5") < item.body().indexOf("newest 1"),
+                "kept comments render oldest-first");
+    }
+
+    @Test
+    void spendsNoCallOnCommentsWhenTheIssueReportsNone() {
+        stubIssue(124, """
+                {"number":124,"title":"Widget spins backwards","state":"open","comments":0,
+                 "body":"No discussion yet.","html_url":"https://github.com/acme/widgets/issues/124"}
+                """);
+
+        ContextItem item = provider.contribute(request(Set.of("#124"), ScmType.GITHUB))
+                .toCompletableFuture().join().items().get(0);
+
+        assertFalse(item.body().contains("Recent comments"));
+        server.verify(0, getRequestedFor(urlPathEqualTo("/repos/acme/widgets/issues/124/comments")));
     }
 
     /**
