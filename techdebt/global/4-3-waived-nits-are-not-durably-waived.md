@@ -4,9 +4,9 @@
 |-------|-------|
 | Criticality | Low |
 | Complexity | Medium |
-| Location | `spire-contract/src/main/java/dev/codespire/contract/llm/PromptCatalog.java` (`REVIEW_BODY` `{{prior_findings}}`), `spire-orchestrator/.../readmodel/ReviewProjection.java` (`priorRunFor`, `recordOpenFindings`) |
+| Location | `spire-contract/.../llm/PromptCatalog.java` (`REVIEW_BODY` `{{prior_findings}}`), `spire-orchestrator/.../readmodel/ReviewProjection.java` (`priorRunFor`, `recordOpenFindings`), `spire-ui/src/components/ReviewsList.tsx` (the open-count badge) |
 | Found during | Three-provider parity pass (runbook Mode G), S10 round 3.2 |
-| Date | 2026-07-26 |
+| Date | 2026-07-26, re-scoped 2026-08-02 |
 
 ## Issue
 
@@ -24,28 +24,41 @@ snapshot) does its job on the *type-mismatch* finding, and the new finding is a 
 concern that happens to sit at the same line. The gap is that a waiver is conversational, not
 tracked, so it cannot be honoured by a later run.
 
+## Re-scoping (2026-08-02)
+
+This entry recommended option 3 below as "the cheapest and addresses the actual harm". Neither half
+of that holds up on inspection:
+
+- **It is not implementable as written.** Marking "a finding that was previously waived" requires
+  knowing a waiver happened. Nothing records one — that is the entry's own premise. `PriorFinding`
+  carries `(path, line, severity, message, threadRef)` and no waiver flag, and the reconcile contract
+  has no field for it. Option 3 silently assumes option 1's storage.
+- **The nearest implementable version already ships.** The detail page's unified findings list
+  already separates this round's findings (`newFindingRows`, status `new`) from reconciliation
+  verdicts against prior findings, and collapses closed verdicts into their own section. A reader
+  looking at a review after a fix can already see which rows are new and which are carried over.
+
+What is genuinely left is narrower than the entry claimed: the **reviews-list badge** is a bare
+number with no breakdown, so a count moving 1 → 2 between rounds still reads as a regression until
+the review is opened. That is a display gap on one number, not the reconciliation-correctness problem
+the original framing implied.
+
 ## Risks
 
-Mostly a confusing signal rather than a wrong one. `openFindings` **rises after a fix** (observed
-1 → 2), which reads as a regression when it is a previously-waived nit surfacing. On a long-running
-PR the same nit can be waived and re-raised repeatedly, since each round is free to rediscover it.
-It also erodes trust in the open count, which the reviews list badge is derived from.
-
-The counter-argument for leaving it: the nit *is* real, and a reviewer that never revisits a
-set-aside issue would let genuine problems disappear because one earlier round called them minor.
+Low, and lower than filed. A confusing signal rather than a wrong one, and confined to the list view
+now that the detail view distinguishes new from carried-over. The counter-argument for leaving it
+whole: the nit *is* real, and a reviewer that never revisits a set-aside issue would let genuine
+problems disappear because one earlier round called them minor.
 
 ## Suggested Solutions
 
-1. **Track waivers explicitly.** Give the reconcile contract an optional `waived: [...]` alongside
-   its verdicts, persist them next to the findings snapshot, and feed them into the review prompt as
-   a second exclusion list ("noted and set aside — do not raise"). Durable and honest, but it adds a
-   store, a wire field, and a prompt slot.
-2. **Do not waive in prose at all.** Require the reconcile note to either keep the finding open or
-   close it cleanly, and let anything genuinely worth raising become its own finding immediately —
-   consistent, at the cost of more findings up front.
-3. **Surface it in the UI instead of suppressing it.** Mark a finding that was previously waived so
-   the open count still changes but the reader can see why, which removes the "count went up after a
-   fix" surprise without new prompt machinery.
-
-Option 3 is the cheapest and addresses the actual harm (a misleading signal) rather than the
-philosophical question of whether a waiver should be permanent.
+1. **Break the list badge down** — the remaining gap, and cheap: show new-vs-carried-over on the
+   reviews list the way the detail page already does, so the count's movement explains itself without
+   opening the review. Needs the split in the list payload, which the detail endpoint already computes.
+2. **Track waivers explicitly.** Give the reconcile contract an optional `waived: [...]` alongside its
+   verdicts, persist it next to the findings snapshot, and feed it into the review prompt as a second
+   exclusion list ("noted and set aside — do not raise"). Durable and honest, but it adds a store, a
+   wire field and a prompt slot — and it is the prerequisite for any UI that claims to show a waiver.
+3. **Do not waive in prose at all.** Require the reconcile note to either keep the finding open or
+   close it cleanly, and let anything worth raising become its own finding immediately — consistent,
+   at the cost of more findings up front.
