@@ -21,6 +21,9 @@ export { formatEventTime };
 
 export const STAGES = ['Received', 'Diff', 'Context', 'Review', 'Comments', 'Done'];
 
+/** Derived, not a literal 2, so reordering the pipeline above moves this with it. */
+export const CONTEXT_STAGE = STAGES.indexOf('Context');
+
 /** Label for a stage index, clamped — the backend can report stage 6 ("past Done"). */
 export function stageLabel(stage: number): string {
   return STAGES[Math.min(stage, STAGES.length - 1)];

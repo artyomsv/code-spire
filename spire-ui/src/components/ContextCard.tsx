@@ -92,9 +92,17 @@ interface ContextCardProps {
   // review advances to a new run — without it, this card kept showing the previous run's items
   // after a re-run while every sibling card live-updated.
   sha: string;
+  // Whether the pipeline has finished assembling context for THIS run.
+  //
+  // `sha` alone only covers a new run. Within one run it never moves — context is assembled at the
+  // commit the card already mounted on — so a page opened while the review was still running
+  // fetched once, found nothing, and never asked again. It stayed empty until a manual refresh
+  // while every sibling card updated live. This flips false -> true exactly once per run, which is
+  // the one moment there is something new to fetch.
+  contextReady: boolean;
 }
 
-export default function ContextCard({ workspace, slug, pr, sha }: ContextCardProps) {
+export default function ContextCard({ workspace, slug, pr, sha, contextReady }: ContextCardProps) {
   const [context, setContext] = useState<ReviewContext | null>(null);
   // Kept separate from an empty ReviewContext: "we asked and there was nothing" and "we could not
   // ask" must never render the same message, or a rejected credential / 5xx looks identical to the
@@ -121,11 +129,16 @@ export default function ContextCard({ workspace, slug, pr, sha }: ContextCardPro
     return () => {
       cancelled = true;
     };
-  }, [workspace, slug, pr, sha]);
+  }, [workspace, slug, pr, sha, contextReady]);
 
   // The description is shown outright rather than behind a toggle, so it is fetched with the card.
   // That costs one SCM call per page view — the price of having the text that explains why a given
   // issue was pulled in visible without a click.
+  //
+  // `contextReady` is deliberately NOT a dependency here, unlike the effect above: the pull
+  // request's description does not change because the pipeline assembled context, and this is the
+  // one fetch on the page that spends an SCM call. Refetching it on a stage change would buy
+  // nothing and cost a call per stage.
   useEffect(() => {
     let cancelled = false;
     setDescriptionFailed(false);

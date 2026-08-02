@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';
-import { findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
+import { CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
@@ -224,7 +224,16 @@ export default function ReviewDetail({ reviews }: Props) {
       <div className="grid2" style={{ marginTop: 18 }}>
         <div>
           {findingsCard(r)}
-          <ContextCard workspace={r.workspace} slug={r.slug} pr={r.pr} sha={r.sha} />
+          {/* The socket reports stage progress; the assembled context itself lives in the worker
+              behind its own endpoint, so the card has to be told when there is something to
+              re-fetch. STAGES[2] is "Context", and its completion is that moment. */}
+          <ContextCard
+            workspace={r.workspace}
+            slug={r.slug}
+            pr={r.pr}
+            sha={r.sha}
+            contextReady={r.stages[CONTEXT_STAGE] === 'done'}
+          />
           {generalDiscussionCard(r)}
           <EventStream r={r} />
         </div>
