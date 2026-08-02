@@ -297,4 +297,14 @@ class BitbucketCloudApiTest {
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{ \"id\": 991 }")));
     }
+
+    /**
+     * The circuit breaker keys on this, and it is called on every guarded SCM read — so a null or
+     * a full URL here would silently mis-key every circuit in the worker. Nothing else exercises the
+     * real implementation: the worker's own tests all use fakes that return a literal.
+     */
+    @Test
+    void reportsTheApiHostAloneNotTheWholeBaseUrl() {
+        assertEquals("localhost", diffSource.apiHost());
+    }
 }
