@@ -49,6 +49,11 @@ public class BitbucketCloudClient {
         return parse(send("GET", path, null));
     }
 
+    /** The API host, so callers can key per-instance operational state (see {@code DiffSource.apiHost}). */
+    public String apiHost() {
+        return baseUri.getHost() != null ? baseUri.getHost() : baseUri.toString();
+    }
+
     public String getText(String path) {
         return send("GET", path, null);
     }

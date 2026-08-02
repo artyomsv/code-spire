@@ -39,6 +39,11 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
         return ScmType.GITLAB;
     }
 
+    @Override
+    public String apiHost() {
+        return client.apiHost(); // gitlab.com or a self-managed host — keyed per instance
+    }
+
     /** GET /user — the token owner (SCM-MAPPING §GitLab); {@code id} is the stable numeric account id. */
     @Override
     public Author whoami() {

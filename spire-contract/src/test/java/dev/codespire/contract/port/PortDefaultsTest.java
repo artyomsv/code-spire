@@ -16,6 +16,8 @@ class PortDefaultsTest {
     void diffSourceCompareDefaultsToUnavailable() {
         DiffSource source = new DiffSource() {
             @Override public ScmType type() { return ScmType.GITHUB; }
+            // apiHost has no default on purpose — see its javadoc; every implementor answers.
+            @Override public String apiHost() { return "api.example.invalid"; }
             @Override public dev.codespire.contract.scm.PullRequest fetchPullRequest(RepoRef r, long id) { return null; }
             @Override public dev.codespire.contract.scm.Diff fetchDiff(RepoRef r, long id, String commit) { return null; }
         };

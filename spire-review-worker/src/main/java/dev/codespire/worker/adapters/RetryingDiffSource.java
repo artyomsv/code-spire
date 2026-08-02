@@ -47,6 +47,7 @@ public class RetryingDiffSource implements DiffSource {
     private final DiffSource delegate;
     private final Sleeper sleeper;
     private final Random jitter;
+    private final ProviderCircuits circuits;
 
     /** Separated so a test can assert the backoff without spending it. */
     @FunctionalInterface
@@ -55,18 +56,24 @@ public class RetryingDiffSource implements DiffSource {
     }
 
     public RetryingDiffSource(DiffSource delegate) {
-        this(delegate, Thread::sleep, new Random());
+        this(delegate, Thread::sleep, new Random(), ProviderCircuits.shared());
     }
 
-    RetryingDiffSource(DiffSource delegate, Sleeper sleeper, Random jitter) {
+    RetryingDiffSource(DiffSource delegate, Sleeper sleeper, Random jitter, ProviderCircuits circuits) {
         this.delegate = delegate;
         this.sleeper = sleeper;
         this.jitter = jitter;
+        this.circuits = circuits;
     }
 
     @Override
     public ScmType type() {
         return delegate.type(); // local, never fails
+    }
+
+    @Override
+    public String apiHost() {
+        return delegate.apiHost(); // local, never fails — and the key this class's breaker uses
     }
 
     @Override
@@ -107,6 +114,15 @@ public class RetryingDiffSource implements DiffSource {
      * blind 100ms retry into a 429 spends an attempt to be refused again.
      */
     private <T> T withRetry(String operation, Supplier<T> call) {
+        // The breaker wraps the WHOLE ladder, not each attempt: one exhausted ladder is one failure
+        // against the threshold. Inside, three attempts of a single call would trip it almost at
+        // once and it would open on the first genuinely-bad minute rather than on a real outage.
+        // It counts the same failures this class retries — a 404 or 403 is the provider answering.
+        return circuits.guard(delegate.apiHost(), () -> retrying(operation, call),
+                RetryingDiffSource::isWorthRetrying);
+    }
+
+    private <T> T retrying(String operation, Supplier<T> call) {
         RuntimeException last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {

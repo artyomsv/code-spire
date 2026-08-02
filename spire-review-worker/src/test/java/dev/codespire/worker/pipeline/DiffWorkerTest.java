@@ -62,6 +62,11 @@ class DiffWorkerTest {
             }
 
             @Override
+            public String apiHost() {
+                return "api.example.invalid";
+            }
+
+            @Override
             public PullRequest fetchPullRequest(RepoRef repo, long prId) {
                 // DiffWorker fetches the PR before the diff (for ticket-key extraction);
                 // an SCM failure surfaces on this first call and classifies identically.
@@ -249,6 +254,22 @@ class DiffWorkerTest {
 
         ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
         assertFalse(failed.credentialRejected());
+    }
+
+    /**
+     * An open circuit means "this provider is down right now" — transient by definition. It must
+     * classify like a 503 so ADR-016 re-drives the review on the scheduled backoff. Terminal instead
+     * would turn one outage into a pile of permanently-failed reviews needing manual re-runs, which
+     * is worse than the retry waste the breaker exists to remove.
+     */
+    @Test
+    void anOpenCircuitIsRetryableSoTheReviewIsRedriven() {
+        List<IntegrationEvent> emitted = runDiffFetchFailing(
+                new dev.codespire.worker.adapters.ProviderCircuits.CircuitOpenException("api.example.invalid"));
+
+        ReviewFailed failed = assertInstanceOf(ReviewFailed.class, emitted.getFirst());
+        assertTrue(failed.retryable(), "an outage is transient, not a permanent failure");
+        assertFalse(failed.credentialRejected(), "the provider never answered, so it rejected nothing");
     }
 
     /**

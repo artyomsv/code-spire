@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,6 +28,10 @@ class RetryingDiffSourceTest {
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
 
     private final List<Long> slept = new ArrayList<>();
+
+    /** Time is driven by the test, so an open circuit's cooldown is reached without waiting for it. */
+    private final AtomicLong now = new AtomicLong();
+    private final ProviderCircuits circuits = new ProviderCircuits(now::get);
 
     @Test
     void retriesATransientFailureAndSucceeds() {
@@ -122,6 +127,54 @@ class RetryingDiffSourceTest {
     }
 
     /**
+     * The breaker wraps the WHOLE ladder, so one exhausted ladder is one failure against the
+     * threshold. Were it inside, three attempts of a single call would nearly trip it on their own
+     * and the circuit would open on the first bad minute rather than on an outage.
+     */
+    @Test
+    void anExhaustedRetryLadderCountsOnceTowardsOpeningTheCircuit() {
+        FailingDiffSource delegate = new FailingDiffSource(Integer.MAX_VALUE, 503);
+        RetryingDiffSource source = source(delegate);
+
+        for (int i = 0; i < ProviderCircuits.FAILURE_THRESHOLD; i++) {
+            assertThrows(TestScmException.class, () -> source.fetchPullRequest(REPO, 42));
+        }
+
+        assertEquals(RetryingDiffSource.MAX_ATTEMPTS * ProviderCircuits.FAILURE_THRESHOLD, delegate.calls,
+                "every ladder ran in full — the breaker counted ladders, not attempts");
+        assertThrows(ProviderCircuits.CircuitOpenException.class, () -> source.fetchPullRequest(REPO, 42));
+        assertEquals(RetryingDiffSource.MAX_ATTEMPTS * ProviderCircuits.FAILURE_THRESHOLD, delegate.calls,
+                "and now the provider is not called at all");
+    }
+
+    /** A settled answer is not ill health: a 404 per force-pushed commit must never open a circuit. */
+    @Test
+    void aSettledFailureNeverOpensTheCircuit() {
+        FailingDiffSource delegate = new FailingDiffSource(Integer.MAX_VALUE, 404);
+        RetryingDiffSource source = source(delegate);
+
+        for (int i = 0; i < ProviderCircuits.FAILURE_THRESHOLD * 2; i++) {
+            assertThrows(TestScmException.class, () -> source.fetchDiff(REPO, 42, "abc123"));
+        }
+
+        assertThrows(TestScmException.class, () -> source.fetchDiff(REPO, 42, "abc123"));
+    }
+
+    /** Circuits are keyed by the delegate's host, which is the whole reason apiHost() is on the port. */
+    @Test
+    void aDegradedHostDoesNotPauseAnother() {
+        RetryingDiffSource sick = source(new FailingDiffSource(Integer.MAX_VALUE, 503, "sick.invalid"));
+        RetryingDiffSource healthy = source(new FailingDiffSource(0, 200, "healthy.invalid"));
+
+        for (int i = 0; i < ProviderCircuits.FAILURE_THRESHOLD; i++) {
+            assertThrows(TestScmException.class, () -> sick.fetchPullRequest(REPO, 42));
+        }
+
+        assertThrows(ProviderCircuits.CircuitOpenException.class, () -> sick.fetchPullRequest(REPO, 42));
+        assertNotNull(healthy.fetchPullRequest(REPO, 42), "a different host is a different circuit");
+    }
+
+    /**
      * A decorator that forgets a method does not fall through to its delegate — it inherits
      * {@link DiffSource}'s own default and silently answers null, replacing the real adapter's
      * implementation with nothing. The call still succeeds, so the only symptom is a feature that
@@ -141,24 +194,37 @@ class RetryingDiffSourceTest {
         }
     }
 
+    /** A fresh breaker per test, so one test's failures cannot open a circuit for the next. */
     private RetryingDiffSource source(DiffSource delegate) {
-        return new RetryingDiffSource(delegate, slept::add, new Random(7)); // fixed seed: jitter is not the subject
+        // fixed seed: jitter is not the subject
+        return new RetryingDiffSource(delegate, slept::add, new Random(7), circuits);
     }
 
     /** Fails the first {@code failures} calls with {@code status}, then succeeds. */
     private static final class FailingDiffSource implements DiffSource {
         private final int failures;
         private final int status;
+        private final String host;
         int calls;
 
         FailingDiffSource(int failures, int status) {
+            this(failures, status, "api.example.invalid");
+        }
+
+        FailingDiffSource(int failures, int status, String host) {
             this.failures = failures;
             this.status = status;
+            this.host = host;
         }
 
         @Override
         public ScmType type() {
             return ScmType.GITHUB;
+        }
+
+        @Override
+        public String apiHost() {
+            return host;
         }
 
         @Override

@@ -947,6 +947,7 @@ public class ReviewWorker {
             }
             if (t instanceof UncheckedIOException || t instanceof java.io.IOException
                     || t instanceof java.util.concurrent.TimeoutException
+                    || t instanceof dev.codespire.worker.adapters.ProviderCircuits.CircuitOpenException
                     || isLangChain4jRetriable(t)) {
                 return true;
             }

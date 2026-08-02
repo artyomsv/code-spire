@@ -53,6 +53,11 @@ public class GitHubClient {
         return parse(send("GET", path, JSON_MEDIA, null));
     }
 
+    /** The API host, so callers can key per-instance operational state (see {@code DiffSource.apiHost}). */
+    public String apiHost() {
+        return baseUri.getHost() != null ? baseUri.getHost() : baseUri.toString();
+    }
+
     /** The PR's unified diff (vnd.github.diff media type). */
     public String getDiff(String path) {
         return send("GET", path, DIFF_MEDIA, null);

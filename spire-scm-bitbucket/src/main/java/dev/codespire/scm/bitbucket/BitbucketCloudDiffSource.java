@@ -34,6 +34,11 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
         return ScmType.BITBUCKET_CLOUD;
     }
 
+    @Override
+    public String apiHost() {
+        return client.apiHost(); // api.bitbucket.org, or a Data Center host — keyed per instance
+    }
+
     /** GET /2.0/user — the token owner (baseUrl already carries /2.0); {@code account_id} is the stable id. */
     @Override
     public Author whoami() {

@@ -159,6 +159,11 @@ class ReviewWorkerTest {
             }
 
             @Override
+            public String apiHost() {
+                return "api.example.invalid";
+            }
+
+            @Override
             public PullRequest fetchPullRequest(RepoRef repo, long prId) {
                 return new PullRequest(repo, prId, "TEST pr", "TEST", "feature/t", "main",
                         COMMIT, Author.of("TEST-id", "test", "Test"), "https://example.invalid");

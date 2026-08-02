@@ -105,9 +105,13 @@ public class DiffWorker {
         }
         // retryable=true lets the orchestrator's ResultSaga re-run the pipeline under its
         // bounded retry budget (ADR-016); transient (5xx / 429 / I/O) -> retryable, else terminal.
-        boolean retryable = e instanceof ScmApiException api
-                ? api.status() >= 500 || api.isRateLimited()
-                : e instanceof java.io.UncheckedIOException;
+        // An open circuit means the provider is down right now — transient by definition, so it
+        // classifies like a 503 and the saga re-drives on the scheduled backoff rather than failing
+        // the review outright (which would turn one outage into a pile of manual re-runs).
+        boolean retryable = e instanceof dev.codespire.worker.adapters.ProviderCircuits.CircuitOpenException
+                || (e instanceof ScmApiException api
+                        ? api.status() >= 500 || api.isRateLimited()
+                        : e instanceof java.io.UncheckedIOException);
         boolean credentialRejected = e instanceof ScmApiException api && api.isUnauthorized();
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
                 e.getMessage(), retryable, 1, credentialRejected));

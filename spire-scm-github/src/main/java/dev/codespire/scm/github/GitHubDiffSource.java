@@ -36,6 +36,11 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
         return ScmType.GITHUB;
     }
 
+    @Override
+    public String apiHost() {
+        return client.apiHost(); // github.com or a GitHub Enterprise host — keyed per instance
+    }
+
     /** GET /user — the token owner (SCM-MAPPING §GitHub); {@code id} is the stable numeric account id. */
     @Override
     public Author whoami() {

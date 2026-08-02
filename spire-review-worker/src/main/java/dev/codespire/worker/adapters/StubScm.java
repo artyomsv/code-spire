@@ -68,6 +68,12 @@ public final class StubScm {
             return ScmType.BITBUCKET_CLOUD;
         }
 
+        /** Never reaches a network, so its circuit is its own and can never usefully open. */
+        @Override
+        public String apiHost() {
+            return "stub.invalid";
+        }
+
         @Override
         public PullRequest fetchPullRequest(RepoRef repo, long prId) {
             // head=null: the stub cannot know the simulator's random commit, and a

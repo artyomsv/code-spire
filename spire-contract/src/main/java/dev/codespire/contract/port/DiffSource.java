@@ -9,6 +9,24 @@ public interface DiffSource {
 
     ScmType type();
 
+    /**
+     * The API host this adapter talks to — {@code api.github.com}, or {@code git.acme.example} for a
+     * self-managed instance.
+     *
+     * <p>Exists so operational state can be keyed per instance rather than per platform. The circuit
+     * breaker is the caller that needs it: two self-managed GitLab instances are independent, and one
+     * being down must not pause reviews on the other.
+     *
+     * <p><b>Deliberately not a {@code default} method</b>, unlike the three below. Those default to a
+     * value that MEANS something — "this provider cannot compare commits", "this repository has no
+     * rules file" — and an implementor who ignores them gets correct behaviour. There is no such value
+     * here. The obvious default, {@code type().name()}, would silently collapse every instance of a
+     * platform onto one key: nothing would fail, no test would break, and the first symptom would be
+     * one healthy instance paused because a different one was down. A compile error is the cheaper
+     * outcome, so every implementor answers for itself.
+     */
+    String apiHost();
+
     PullRequest fetchPullRequest(RepoRef repo, long prId);
 
     /** Canonical diff for the given head commit. A 404 means the commit was force-pushed away -> treat as superseded. */

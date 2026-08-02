@@ -47,6 +47,11 @@ public class GitLabClient {
         return parse(send("GET", path, null));
     }
 
+    /** The API host, so callers can key per-instance operational state (see {@code DiffSource.apiHost}). */
+    public String apiHost() {
+        return baseUri.getHost() != null ? baseUri.getHost() : baseUri.toString();
+    }
+
     /** A response read as text — the raw-file endpoints answer file bytes, not JSON. */
     public String getText(String path) {
         return send("GET", path, null);
