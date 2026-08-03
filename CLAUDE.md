@@ -350,13 +350,73 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `ReviewWorkerTest.assembledContextReachesThePromptSentToTheModel`, which fakes a `BlobStore`
   holding an `AssembledContext` and asserts the captured `Prompt` handed to the LLM client contains
   the context item's title and body; confirmed to discriminate (fails when `contextRef` is null).
-  The gap itself is tracked as tech debt, not just worked around
-  (`techdebt/spire-review-worker/2-2-no-visibility-into-rendered-llm-prompt.md`). 948 Java tests
+  The gap itself was tracked as tech debt rather than worked around, and has **since been closed** by
+  `PromptLog` (opt-in, off by default — the rendered prompt quotes source code and retrieved ticket
+  text, so it is an operator's explicit choice, not a default). 948 Java tests
   green across 114 suites; 152 `spire-ui` vitest tests across 26 files; `tsc --noEmit` silent.
   Runbook: SMOKE-TEST.md **Mode I**.
-- **Still pending from P1 scope:** SmallRye Fault Tolerance call-level retry budgets (tracked
-  in `techdebt/global/`); cost table for `ModelUsage.costMillicents`. Conversation-derived findings
-  (a discussion that surfaces a real defect doesn't register one) are tracked in `techdebt/global/`.
+- **Repo rules — the `.codespire` file (2026-08-01, Phase 2's last unbuilt item):** a repository states
+  its own conventions in a `.codespire` file at its root, contributed as
+  `ContextContributed{source=RULES}` / `ContextItem{kind=RULE}` by `RulesContextProvider` — a
+  credential-free provider, because the rules ride in on `DiffFetched.repoRules` rather than being
+  fetched by the aggregator. Read from the PR's **target branch, never the reviewed commit**: the head
+  is written by the change under review, so rules taken from it would let a PR rewrite the reviewer's
+  instructions in the same PR. Prompt fencing cannot cover that — rules are *meant* to steer the
+  review, so the defence has to be *where they are read from*, not how they are quoted. New SPI method
+  `DiffSource.fetchTextFileOnBranch` on all three adapters (absent file ⇒ empty, not an error). Format
+  and guidance in `docs/REPO-RULES.md`.
+- **Debt-and-guard wave (2026-08-02):** ten commits, no roadmap advance — three user-visible defects
+  and four *guards*, i.e. build checks that fail on a debt's **reintroduction**, not merely its
+  removal. Defects: `spire-diff` silently parsed a headerless diff to **zero files** (it keys on
+  `diff --git`; now falls back to a `---`/`+++`/`@@` detector and warns when a non-empty diff yields
+  no patches); the Context card never live-updated within a run (its only key was the commit, which
+  does not move mid-run — now also keyed to the Context stage completing, since the assembled context
+  lives in the *worker* while the socket carries only *orchestrator* state); the real adapters'
+  `apiHost()` was covered by fakes alone. Guards: `PureModulesAreFrameworkFreeTest` enforces the
+  framework-free boundary `spire-contract`/`spire-diff` claim, with **`jackson-annotations` as one
+  documented, allowlisted exception** (see Conventions); `RedirectHandlingHasOneHomeTest` fails a
+  *fourth* hand-rolled redirect loop (the three SCM clients' existing copies stay allowlisted and
+  tracked); `ContractSchemaSnapshotTest` had a **vacuity hole** — it iterated event types and
+  `continue`d on an empty list, so zero types read as zero failures — now asserted non-empty. Plus a
+  per-host **circuit breaker** (`ProviderCircuits`: 5 failures ⇒ 30s open, CAS-guarded single probe)
+  wrapping the whole SCM retry ladder, keyed by a new no-default `DiffSource.apiHost()` — deliberately
+  not a `default` method, since the obvious `type().name()` would collapse every instance of a
+  platform onto one key and let one self-hosted GitLab open the circuit for all of them. `spire-ui`
+  on React 19 + react-router 8 (`npm audit` 0). **1027 Java tests across 124 suites; 192 `spire-ui`
+  vitest tests across 31 files; `tsc --noEmit` silent.**
+- **Debt wave 2 (2026-08-03):** three tracked items closed, debt 6 → 4 with **nothing above Low**.
+  - **The two largest forms and the route shell are covered** (`SettingsProviders` 585 lines,
+    `RegisterPrDialog`, `App`) — validation, the secret-blank-on-edit rule (sending `secret: ''`
+    would wipe a stored token), bearer-only coercion, base-URL preservation, and both halves of the
+    cross-provider `providerType` carry. `App.routes.test.tsx` asserts each route mounts a screen via
+    `main .content`, **not** just the topbar title: the title is derived from the pathname, so a
+    deleted `<Route>` would leave it and the nav highlight looking right. A mutation also exposed
+    that `vi.spyOn` re-wraps the *same* module function, so call history leaked between tests in a
+    file and `not.toHaveBeenCalled()` was passing on test ordering — fixed centrally with
+    `vi.restoreAllMocks()` in `vitest.setup.ts`.
+  - **The circuit breaker now covers the LLM path** (`CircuitBreakingLlmProvider`, wrapping
+    `WorkerLlmProvider.clientFor` so review *and* follow-up are covered by one wrap). Health is
+    `LlmFailures.isProviderUnwell` — LangChain4j's `RetriableException` hierarchy plus I/O and
+    timeouts; a rejected key is an **answer** and never opens the circuit. Two traps: the provider
+    reports failure as a *failed future* rather than throwing (a naive wrap records every outage as
+    a success and never opens, while looking installed), and `FollowUpWorker.isTransient` recognised
+    neither `CircuitOpenException` nor LLM retriables, so an open circuit would have sent every
+    follow-up straight to `cs.dlq`. The debt entry's own suggestion — reuse the breaker *inside*
+    `spire-llm` — is not implementable: that module is Apache-2.0 and the breaker is worker-owned,
+    which ADR-021 forbids. Comment posting stays unguarded, by design (see `techdebt/global/`).
+  - **The reviews-list findings count is split into new vs carried-over** (`OpenCounts.carriedOver`
+    → `ReviewSummary.carriedOverFindings` → `findCell`), so a total moving 1 → 2 between rounds no
+    longer reads as "the fix made it worse". The halves always sum because the same anchor is counted
+    once, attributed to this run. Rendered only when something *is* carried over.
+  - **1039 Java tests across 125 suites; 228 `spire-ui` vitest tests across 35 files.** Every guard
+    added here was mutation-verified — break the production line, confirm exactly one test fails.
+- **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
+  ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
+  the review budget, and the same reasoning held for the call level. Model pricing is delivered and
+  deliberately operator-entered (ADR-018): a hardcoded cost table would silently mis-price every
+  review as prices drift, which is the no-fabricated-data rule applied to money. Conversation-derived
+  findings (a discussion that surfaces a real defect doesn't register one) remain open in
+  `techdebt/global/`.
 
 ## Build & run
 

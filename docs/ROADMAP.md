@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-07-30)
+## Current status & next-up backlog (updated 2026-08-02)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -191,6 +191,31 @@ down is the original design-time roadmap (kept for reference).
   branch adds (with `spire-context-github`/`spire-context-gitlab`), bringing the total to thirteen
   per `LICENSING.md`. See CLAUDE.md for the full write-up and test totals; SMOKE-TEST.md **Mode I**
   covers live verification across all four provider types, including the cross-platform negative pass.
+- **Repo rules — the `.codespire` file (2026-08-01)**: closes Phase 2's last unbuilt item. A repository
+  states its own conventions in a root `.codespire` file, contributed as `ContextContributed{source=RULES}`
+  / `ContextItem{kind=RULE}` by a credential-free `RulesContextProvider` — the rules ride in on
+  `DiffFetched.repoRules` rather than being fetched by the aggregator. Read from the PR's **target
+  branch, never the reviewed commit**, so a PR cannot rewrite the reviewer's instructions in the same
+  PR; prompt fencing cannot cover that, because rules are *meant* to steer the review. New SPI method
+  `DiffSource.fetchTextFileOnBranch` on all three adapters. Format and guidance: `docs/REPO-RULES.md`.
+- **Debt-and-guard wave (2026-08-02)**: ten commits closing tracked debt, with **no roadmap advance** —
+  the open items below are untouched. Three user-visible defects fixed (a headerless diff parsed to
+  **zero files**; the Context card never live-updated within a run; the real adapters' `apiHost()`
+  covered only by fakes) and four **guards** added — build checks that fail on a debt's
+  *reintroduction*, not merely its removal: the framework-free boundary of `spire-contract`/`spire-diff`
+  (`jackson-annotations` the one allowlisted exception), a fourth hand-rolled redirect loop, and a
+  **vacuity hole in the contract-compat gate itself** (it read zero event types as zero failures). Plus
+  a per-host circuit breaker over the SCM retry ladder, keyed by a new no-default `DiffSource.apiHost()`,
+  and `spire-ui` on React 19 + react-router 8 (`npm audit` 0). 1027 Java tests / 124 suites; 192 vitest
+  / 31 files. Tech debt 9 → 6 items, no high.
+- **Debt wave 2 (2026-08-03)**: three more tracked items closed, again with **no roadmap advance** —
+  tech debt 6 → 4, nothing above Low. Component tests for the two largest forms and the route shell
+  (which also exposed mock-state leaking between tests, so `not.toHaveBeenCalled()` was passing on
+  test ordering — fixed in the shared setup); the **circuit breaker extended to the LLM path**, the
+  one with money attached, including the trap that the provider reports failure as a *failed future*
+  rather than by throwing, and a fix to `FollowUpWorker` which would otherwise have DLQ'd every
+  follow-up during a cooldown; and the reviews-list findings count **split into new vs carried-over**
+  so its movement between rounds explains itself. 1039 Java tests / 125 suites; 228 vitest / 35 files.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -335,14 +360,22 @@ Open, by nature of the work rather than by section:
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
 | **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
-| — | Contract-compat CI gate | S | Round-trip + snapshot tests on `spire-contract`; fail a breaking change without an `eventVersion` bump + upcaster (ADR-013). Cheap, and it protects event-store replay. |
 | — | Packaging: image, Helm/ArgoCD manifests | M | Pairs with D10 — both are what "someone else can run this" requires. |
 | — | Fleet cost/abuse caps | M | Explicitly deferred from v1 and a **known operator-facing gap**: no per-repo rate limit, no daily spend cap, no hard giant-PR skip. |
 
-Also open and tracked outside this file: **9 techdebt items** in `techdebt/` — 1 high
-(`2-4-native-structured-output-response-schema`), 5 medium, 3 low — plus the still-pending P1 scope noted
-in CLAUDE.md (SmallRye Fault Tolerance call-level retry budgets; a cost table for
-`ModelUsage.costMillicents`).
+**Closed since this table was last written:** the **contract-compat CI gate** (round-trip + snapshot
+tests on `spire-contract`, failing a breaking change without an `eventVersion` bump + upcaster,
+ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it iterated event types and
+skipped an empty list, so zero types read as zero failures.
+
+Also open and tracked outside this file: **4 techdebt items** in `techdebt/`, all **Low** — nothing
+medium, high or critical. (A fifth option, tracking waived nits durably so a set-aside issue cannot
+return as its own finding, was considered and deliberately not built: it needs a store, a wire field
+and a prompt slot, which makes it a feature rather than debt. It sits closest to **E17**.) **No P1 scope remains pending**: the
+call-level resilience once framed as "SmallRye Fault Tolerance retry budgets" shipped as a hand-rolled
+retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for the review budget, and
+the same reasoning held one level down), and model pricing is delivered and deliberately
+operator-entered (ADR-018) rather than a hardcoded cost table that would silently drift.
 
 **Suggested order:** **D10 (OIDC)** first if this is ever to run anywhere but a single operator's machine —
 everything else is a feature on an open door. Otherwise **E16** is the cheapest remaining user-visible
@@ -372,7 +405,7 @@ Operator decides.
 - **Idempotent posting + stale-run pre-check** (ADR-013); ingress returns 202; fully async.
 - **Exit:** open a PR in a real Bitbucket repo → the bot posts a real inline review as one account.
 
-## Phase 2 — Context providers (~2–3 pw) — ✅ exit met; one item unbuilt
+## Phase 2 — Context providers (~2–3 pw) — ✅ complete (2026-08-01)
 - ✅ Context-provider pipeline + aggregator (completeness/timeout policy).
 - ✅ `spire-context-jira` and `spire-context-confluence` plugins.
 - ✅ **Repo rules provider (`.codespire` config) — delivered 2026-08-01.** A repository states its own
@@ -400,8 +433,8 @@ Operator decides.
 - Additional SCM adapters (GitHub, GitLab) — proves the port abstraction. ✅ GitHub + GitLab done.
 - Additional LLM providers — ✅ Anthropic + Gemini (native) done; OpenAI-compatible covers Azure/Ollama.
   Vertex still open.
-- **Contract-compat CI gate** — round-trip + snapshot tests on `spire-contract` events; fail on a
-  breaking change without an `eventVersion` bump + upcaster (ADR-013).
+- ✅ **Contract-compat CI gate** (`5bc593b`) — round-trip + snapshot tests on `spire-contract` events;
+  fails on a breaking change without an `eventVersion` bump + upcaster (ADR-013).
 - Packaging: container image, Helm chart / ArgoCD-friendly manifests, `.env.example` contract.
 - Docs site — still open. ✅ Contribution guide done (`CONTRIBUTING.md`, DCO + relicensing grant, ADR-021);
   the licence split it documents makes the grant a hard requirement, not a nicety.
