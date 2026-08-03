@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import io.quarkus.test.security.TestSecurity;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.quarkus.test.junit.QuarkusTest;
@@ -28,6 +29,7 @@ import static org.hamcrest.Matchers.nullValue;
  * rejected key is a 400, and the default can be switched.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class LlmProviderResourceTest {
 
     private static WireMockServer llm; // stands in for the LLM provider; baseUrl points here

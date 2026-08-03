@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.pipeline;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * not a {@code Thread.sleep}, so it is worth asserting rather than assuming.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewRetryScheduleIT {
 
     @Inject

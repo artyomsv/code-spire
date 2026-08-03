@@ -12,7 +12,7 @@ import jakarta.inject.Inject;
  * of every review; afterwards ReviewProjection pushes single updated summaries
  * as reviews change. Read-side transport only.
  */
-@WebSocket(path = "/ws/reviews")
+@WebSocket(path = "/api/ws/reviews")
 public class ReviewsSocket {
 
     @Inject

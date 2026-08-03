@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * cost a review's token usage (roadmap 11).
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class LlmModelResourceTest {
 
     @Inject

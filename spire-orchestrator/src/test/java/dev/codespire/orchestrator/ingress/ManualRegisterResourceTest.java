@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.ingress;
 
+import io.quarkus.test.security.TestSecurity;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.orchestrator.provider.ProviderInput;
@@ -26,6 +27,7 @@ import static org.hamcrest.Matchers.equalTo;
  * fetch the PR (verified against a WireMock Bitbucket).
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ManualRegisterResourceTest {
 
     @Inject

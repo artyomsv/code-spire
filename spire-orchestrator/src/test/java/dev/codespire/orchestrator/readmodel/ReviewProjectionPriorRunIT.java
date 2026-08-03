@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.readmodel;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewProjectionPriorRunIT {
 
     @Inject ReviewProjection projection;

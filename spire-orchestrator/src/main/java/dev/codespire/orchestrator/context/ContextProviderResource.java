@@ -20,6 +20,7 @@ import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -44,6 +45,7 @@ import java.util.UUID;
 
 /** CRUD for registered context providers (spire-ui Settings -> Context). */
 @Path("/api/context-providers")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ContextProviderResource {
@@ -116,6 +118,7 @@ public class ContextProviderResource {
     }
 
     @POST
+    @RolesAllowed("spire-admin")
     public Response create(ContextProviderInput in) {
         validate(in, true);
         validator.ping(in.type(), in.baseUrl(), in.authKind(), in.username(), in.secret());
@@ -127,6 +130,7 @@ public class ContextProviderResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public ContextProviderView update(@PathParam("id") String id, ContextProviderInput in) {
         validate(in, false);
@@ -148,6 +152,7 @@ public class ContextProviderResource {
     }
 
     @DELETE
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
         if (!registry.delete(uuid(id))) {
@@ -163,6 +168,7 @@ public class ContextProviderResource {
      * the first review. The secret is never returned; only a category of the failure.
      */
     @POST
+    @RolesAllowed("spire-admin")
     @Path("/{id}/check")
     @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
     public CheckResult check(@PathParam("id") String id) {
@@ -198,6 +204,7 @@ public class ContextProviderResource {
      * it ever reaches an LLM.
      */
     @POST
+    @RolesAllowed("spire-admin")
     @Path("/{id}/preview")
     public PreviewResult preview(@PathParam("id") String id, PreviewRequest body) {
         if (body == null || body.text() == null || body.text().isBlank()) {

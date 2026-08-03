@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator;
 
+import io.quarkus.test.security.TestSecurity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
@@ -45,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * NOTHING.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class OrchestratorChoreographyTest {
 
     private static final String COMMANDS_TOPIC = "cs.commands";

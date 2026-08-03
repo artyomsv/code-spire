@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.pipeline;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.review.ConversationLevel;

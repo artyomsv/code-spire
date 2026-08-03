@@ -6,6 +6,7 @@ import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @io.quarkus.arc.profile.UnlessBuildProfile("prod")
 @Path("/dev/simulate-pr")
+@RolesAllowed("spire-admin")
 public class DevSimulatorResource {
 
     private static final RepoRef TEST_REPO = new RepoRef("sandbox", "demo-repo");

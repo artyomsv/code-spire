@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.settings;
 
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
  * to 5 saw a review stop after 3, which is what put this on its own endpoint and its own Settings group.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewSettingsResourceTest {
 
     // Restore the seed default so sibling orchestrator tests see the budget they expect.

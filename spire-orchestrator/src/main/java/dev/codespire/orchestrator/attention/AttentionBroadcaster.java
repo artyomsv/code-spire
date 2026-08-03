@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AttentionBroadcaster {
 
     private static final Logger LOG = Logger.getLogger(AttentionBroadcaster.class);
-    private static final String PATH = "/ws/attention";
+    private static final String PATH = "/api/ws/attention";
 
     @Inject
     AttentionQueries queries;
@@ -89,7 +89,7 @@ public class AttentionBroadcaster {
 
     private void push(String json) {
         connections.stream()
-                .filter(c -> c.handshakeRequest().path().endsWith(PATH))
+                .filter(c -> PATH.equals(c.handshakeRequest().path()))
                 .forEach(c -> c.sendText(json).subscribe().with(v -> {
                 }, t -> LOG.debugf("Attention push failed: %s", t.getMessage())));
     }

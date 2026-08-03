@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -20,6 +21,7 @@ import java.util.UUID;
 
 /** CRUD for the LLM model catalog (spire-ui Settings -> LLM). */
 @Path("/api/llm-models")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmModelResource {
@@ -36,12 +38,14 @@ public class LlmModelResource {
     }
 
     @POST
+    @RolesAllowed("spire-admin")
     public Response create(LlmModelInput in) {
         validate(in);
         return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public LlmModelView update(@PathParam("id") String id, LlmModelInput in) {
         validate(in);
@@ -49,6 +53,7 @@ public class LlmModelResource {
     }
 
     @DELETE
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
         if (!registry.delete(uuid(id))) {

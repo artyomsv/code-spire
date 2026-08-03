@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.settings;
 
 import dev.codespire.orchestrator.policy.ReviewPolicy;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -21,6 +22,7 @@ import jakarta.ws.rs.core.MediaType;
  * toggle already owns it.
  */
 @Path("/api/settings/review")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ReviewSettingsResource {
@@ -37,6 +39,7 @@ public class ReviewSettingsResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     public ReviewSettingsView set(ReviewSettingsView body) {
         if (body == null) {
             throw new BadRequestException("maxAttempts, backoffBaseMs and backoffFactor are required");

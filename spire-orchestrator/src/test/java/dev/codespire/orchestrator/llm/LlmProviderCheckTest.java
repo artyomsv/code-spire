@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import io.quarkus.test.security.TestSecurity;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * credential signal rides on ScmApiException, which the LLM adapter does not raise.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class LlmProviderCheckTest {
 
     @Inject

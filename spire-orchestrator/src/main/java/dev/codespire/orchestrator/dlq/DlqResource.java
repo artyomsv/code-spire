@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.dlq;
 
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -19,8 +20,18 @@ import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
 
-/** Dead-letter queue inspection + manual replay/discard (Step 2). */
+/**
+ * Dead-letter queue inspection + manual replay/discard (Step 2).
+ *
+ * <p><b>Admin-only in full, the listing included.</b> A DLQ row carries the raw Kafka payload that
+ * failed, and those payloads are the wire records themselves — {@code cs.results} carries findings
+ * inline, quoting source, and {@code cs.commands} carries the brokered SCM credential. Replay is
+ * privileged because it re-triggers pipeline processing that reaches paid LLM calls; the listing is
+ * privileged for a different reason, which is disclosure. A role rule derived only from "can it
+ * change anything" would have let a viewer read all of it.
+ */
 @Path("/api/dlq")
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class DlqResource {

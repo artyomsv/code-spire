@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.attention;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.attention.AttentionView;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * would still look correct in every other test.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class AttentionQueriesTest {
 
     @Inject

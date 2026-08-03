@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.prompt;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.llm.PromptKind;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -10,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class PromptRegistryTest {
 
     @Inject

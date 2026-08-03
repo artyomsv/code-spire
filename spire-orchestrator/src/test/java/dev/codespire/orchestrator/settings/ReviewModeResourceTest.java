@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.settings;
 
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import static org.hamcrest.Matchers.oneOf;
  * so the app_setting round-trip is exercised.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewModeResourceTest {
 
     // Leave the shared setting on the seed default so sibling orchestrator tests

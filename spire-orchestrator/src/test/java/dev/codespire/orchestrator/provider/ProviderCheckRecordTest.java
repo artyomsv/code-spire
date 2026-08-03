@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.provider;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ScmApiException;
 import io.quarkus.test.junit.QuarkusTest;
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The outcome has to survive a round trip, since the panel reads it back on every poll. */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ProviderCheckRecordTest {
 
     @Inject

@@ -67,7 +67,7 @@ export function useLiveReviews(): LiveReviews {
 
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/ws/reviews`);
+      ws = new WebSocket(`${proto}//${location.host}/api/ws/reviews`);
       ws.onmessage = (ev) => {
         let data: unknown;
         try {

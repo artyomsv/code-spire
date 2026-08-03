@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.provider;
 
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Provider registry against real Postgres: encrypted-at-rest, keep/rotate, resolve, delete. */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ProviderRegistryTest {
 
     @Inject

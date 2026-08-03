@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.readmodel;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.scm.ThreadRef;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewThreadViewIT {
 
     @Inject

@@ -11,7 +11,7 @@ import jakarta.inject.Inject;
  * Read-side transport only (ARCHITECTURE §8): pushes timeline entries to the
  * dashboard. The domain flow never touches WebSockets.
  */
-@WebSocket(path = "/ws/timeline")
+@WebSocket(path = "/api/ws/timeline")
 public class TimelineSocket {
 
     @Inject

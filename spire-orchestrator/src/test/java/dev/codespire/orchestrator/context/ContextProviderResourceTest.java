@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.context;
 
+import io.quarkus.test.security.TestSecurity;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.quarkus.test.junit.QuarkusTest;
@@ -32,6 +33,7 @@ import static org.hamcrest.Matchers.nullValue;
  * default can be switched. Mirrors {@link dev.codespire.orchestrator.llm.LlmProviderResourceTest}.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ContextProviderResourceTest {
 
     private static WireMockServer jira; // stands in for Jira; baseUrl points here

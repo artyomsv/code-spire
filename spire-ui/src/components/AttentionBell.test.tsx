@@ -67,7 +67,7 @@ class FakeSocket {
   }
 }
 
-const ORCHESTRATOR = '/ws/attention';
+const ORCHESTRATOR = '/api/ws/attention';
 const GATEWAY = '/gw/ws/webhook-attention';
 
 const renderBell = () =>

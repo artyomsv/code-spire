@@ -1,7 +1,51 @@
 quarkus:
+  # Both are separate dev services and BOTH must be off, or either starts a Keycloak container of
+  # its own that then times out (~60s) on every build.
+  keycloak:
+    devservices:
+      enabled: false
+  oidc:
+    devservices:
+      enabled: false
+    # Operator authentication (D10 slice 3). Values measured in the phase-0 spike — see
+    # docs/D10-AUTH-PLAN.md §4; each comment says what breaks when the line is missing.
+    auth-server-url: ${SPIRE_OIDC_AUTH_SERVER_URL}
+    client-id: ${SPIRE_OIDC_CLIENT_ID:spire-orchestrator}
+    credentials:
+      secret: ${SPIRE_OIDC_CLIENT_SECRET}
+    # Cookie session for the browser AND the three WebSockets (a browser cannot set a header on a
+    # handshake); bearer for curl, CI and the SMOKE-TEST runbook.
+    application-type: hybrid
+    authentication:
+      # This service's whole surface lives under /api, sockets included, so one path scopes it. The
+      # browser therefore never sends this session to the gateway (/gw) or the worker (/wk).
+      cookie-path: /api
+      cookie-suffix: api
+      java-script-auto-redirect: false
+      # Without it the redirect_uri is the REQUESTED path, which no realm can enumerate; it must also
+      # sit INSIDE cookie-path or the callback never receives the state cookie.
+      redirect-path: /api/auth/callback
+      restore-path-after-redirect: true
+    # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
+    roles:
+      source: accesstoken
+    # Needs the realm's audience mapper, or login fails with "No Audience (aud) claim present".
+    token:
+      audience: ${SPIRE_OIDC_CLIENT_ID:spire-orchestrator}
   application:
     name: spire-orchestrator
   http:
+    # Deny by default: anything not named here requires authentication. The inverse fails OPEN, and
+    # this service holds the provider registry, the event store and the dead-letter queue.
+    auth:
+      permission:
+        public:
+          paths: /q/health,/q/health/*
+          policy: permit
+        operator:
+          # Covers the three sockets too — they moved under /api/ws/* so one policy governs them.
+          paths: /api/*,/dev/*
+          policy: authenticated
     port: ${ORCHESTRATOR_HTTP_PORT:34080}   # host-exposed port lives in the 34xxx project range
   datasource:
     db-kind: postgresql
@@ -149,10 +193,27 @@ spire:
   spire:
     security:
       allow-insecure-provider-urls: true   # local WireMock/simulator SCMs are http://localhost
+      # BOTH gates open together, or dev is half-authenticated: the permission policy decides whether
+      # an identity is required at all, and this governs the @RolesAllowed checks that run afterwards.
+      # Opening only one gave 403 on REST while a socket answered 101 — the API broken and the socket
+      # wide open, which is worse than either state alone.
+      auth-enabled: false
   kafka:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
   quarkus:
+    oidc:
+      # Dev runs without an identity provider, so the tenant has nothing to discover and the service
+      # would refuse to boot. Build-time disable is what works — `tenant-enabled: false` still demands
+      # an auth-server-url (measured in the spike).
+      enabled: false
+    http:
+      auth:
+        permission:
+          # The other half of the switch above: with OIDC off there is no mechanism to satisfy
+          # `authenticated`, so leaving it would 401 every dev request rather than open it.
+          operator:
+            policy: permit
     log:
       console:
         json:
@@ -176,6 +237,14 @@ spire:
       # The webhook keyset now lives only with the gateway (it owns webhook secrets).
       keyset: eyJwcmltYXJ5S2V5SWQiOjM4NjczMjQwMjIsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaURROXlLT0R1Y25mcFM1b0JyMlpaT3RYSkV0QmRwcmFwZkFzdUtpQUh5R1lBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjozODY3MzI0MDIyLCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K
   quarkus:
+    oidc:
+      # Build-time disable. `tenant-enabled: false` is NOT enough — the tenant still demands an
+      # auth-server-url and the app fails to BOOT, which surfaces as one failed test and every other
+      # one skipped rather than as a configuration error.
+      #
+      # Authorization itself stays ON: the behavioural suites carry a @TestSecurity identity, so they
+      # exercise the real permission policy and the real annotations.
+      enabled: false
     http:
       port: 0
       test-port: 0

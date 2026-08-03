@@ -17,7 +17,7 @@ import jakarta.inject.Inject;
  * <p>Read-side transport only, mirroring {@link ReviewsSocket}. The gateway serves its own conditions
  * on its own socket, because neither service reads the other's schema.
  */
-@WebSocket(path = "/ws/attention")
+@WebSocket(path = "/api/ws/attention")
 public class AttentionSocket {
 
     @Inject

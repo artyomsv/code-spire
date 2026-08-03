@@ -13,6 +13,7 @@ import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.readmodel.ReviewDetail;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewSummary;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
@@ -32,6 +33,7 @@ import java.util.Map;
 
 /** The reviews read API backing spire-ui (list + per-PR detail). */
 @Path("/api/reviews")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 public class ReviewsResource {
 
@@ -136,6 +138,7 @@ public class ReviewsResource {
 
     /** Re-run a review's pipeline on its stored commit (force restart; clears cached LLM result). */
     @POST
+    @RolesAllowed("spire-admin")
     @Path("/{workspace}/{slug}/{pr}/rerun")
     public Map<String, Object> rerun(@PathParam("workspace") String workspace,
                                      @PathParam("slug") String slug,
@@ -155,6 +158,8 @@ public class ReviewsResource {
      * same review raises the row again.
      */
     @POST
+    // Viewer: dismisses an attention row about a review that already failed. It changes what the
+    // panel shows, not what the system does, and the next failure raises the row again.
     @Path("/{workspace}/{slug}/{pr}/attention-ack")
     @Consumes(MediaType.WILDCARD) // no request body
     public Response acknowledgeAttention(@PathParam("workspace") String workspace,
@@ -169,6 +174,7 @@ public class ReviewsResource {
 
     /** Permanently delete a review and all of its data (row, timeline, event stream). */
     @DELETE
+    @RolesAllowed("spire-admin")
     @Path("/{workspace}/{slug}/{pr}")
     public Response delete(@PathParam("workspace") String workspace,
                            @PathParam("slug") String slug,

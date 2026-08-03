@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator;
 
+import io.quarkus.test.security.TestSecurity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.scm.Author;
@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * orchestrator's command. The worker half (FollowUpPosted) belongs to the review-worker deployable's tests.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ConversationE2ETest {
 
     private static final RepoRef REPO = new RepoRef("convo-ws", "convo-repo");

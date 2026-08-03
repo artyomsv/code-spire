@@ -11,6 +11,7 @@ import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -34,6 +35,7 @@ import java.util.regex.Pattern;
  * the allowlist, observe-mode and read-model registration all apply unchanged.
  */
 @Path("/api/reviews/register")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 public class ManualRegisterResource {
 
     private static final Logger LOG = Logger.getLogger(ManualRegisterResource.class);
@@ -65,6 +67,7 @@ public class ManualRegisterResource {
     }
 
     @POST
+    @RolesAllowed("spire-admin")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     public Map<String, Object> register(RegisterRequest req) {
@@ -144,6 +147,8 @@ public class ManualRegisterResource {
      * parser instead of duplicating the URL regexes client-side.
      */
     @POST
+    // Viewer: parses a pasted URL and reports which provider would handle it. No side effect, no
+    // spend -- an operator who may look at reviews may work out which one a URL refers to.
     @Path("/resolve")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)

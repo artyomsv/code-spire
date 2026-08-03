@@ -7,7 +7,6 @@ import react from '@vitejs/plugin-react';
 const orchestrator = process.env.ORCHESTRATOR_URL ?? 'http://localhost:34080';
 const gateway = process.env.GATEWAY_URL ?? 'http://localhost:34081';
 const worker = process.env.WORKER_URL ?? 'http://localhost:34082';
-const orchestratorWs = process.env.ORCHESTRATOR_WS_URL ?? 'ws://localhost:34080';
 
 export default defineConfig({
   plugins: [react()],
@@ -28,19 +27,18 @@ export default defineConfig({
       //
       // `ws: true` covers the attention socket under the same rule — one prefix, both protocols.
       //
-      // changeOrigin is deliberately NOT set here: it rewrites Host to the backend's own port, so
-      // the OIDC redirect_uri comes back as localhost:34081 instead of this origin and the login
-      // round-trip breaks. (proxy-address-forwarding does not fix it — Vite sends no
-      // x-forwarded-host.) The remaining /api rules keep it only because nothing there authenticates
-      // yet; they lose it when their services gain OIDC.
+      // changeOrigin is deliberately NOT set on any of these: it rewrites Host to the backend's own
+      // port, so the OIDC redirect_uri comes back as localhost:3408x instead of this origin and the
+      // login round-trip breaks. (proxy-address-forwarding does not fix it — Vite sends no
+      // x-forwarded-host.)
       '/gw': { target: gateway, ws: true },
       // The assembled context is the WORKER's data (:34082) — it owns the blob and is the only
-      // service that can address it. More specific than /api, so it must be listed first.
-      // The WORKER owns /wk — its own prefix, so its session cookie (cookie-path=/wk) never
-      // reaches the orchestrator or the gateway. changeOrigin omitted for the same reason as /gw.
+      // service that can address it. Its own prefix, so its session cookie (cookie-path=/wk) never
+      // reaches the orchestrator or the gateway.
       '/wk': { target: worker },
-      '/api': { target: orchestrator, changeOrigin: true },
-      '/ws': { target: orchestratorWs, ws: true },
+      // The ORCHESTRATOR owns /api, its three sockets included — they moved under /api/ws/* so one
+      // prefix, one cookie-path and one rule cover the whole service. `ws: true` carries the upgrades.
+      '/api': { target: orchestrator, ws: true },
     },
   },
 });

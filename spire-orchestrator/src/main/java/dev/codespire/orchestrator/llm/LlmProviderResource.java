@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.llm;
 
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -23,6 +24,7 @@ import java.util.UUID;
 
 /** CRUD for registered LLM providers (spire-ui Settings -> LLM). */
 @Path("/api/llm-providers")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmProviderResource {
@@ -52,6 +54,7 @@ public class LlmProviderResource {
     }
 
     @POST
+    @RolesAllowed("spire-admin")
     public Response create(LlmProviderInput in) {
         validate(in, true);
         validator.ping(in.type(), in.baseUrl(), in.apiKey());
@@ -63,6 +66,7 @@ public class LlmProviderResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public LlmProviderView update(@PathParam("id") String id, LlmProviderInput in) {
         validate(in, false);
@@ -84,6 +88,7 @@ public class LlmProviderResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     @Path("/{id}/default")
     public LlmProviderView makeDefault(@PathParam("id") String id) {
         return registry.setDefault(uuid(id))
@@ -91,6 +96,7 @@ public class LlmProviderResource {
     }
 
     @DELETE
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
         if (!registry.delete(uuid(id))) {
@@ -105,6 +111,7 @@ public class LlmProviderResource {
      * provider has started refusing. Never returns the key; only a safe category of the failure.
      */
     @POST
+    @RolesAllowed("spire-admin")
     @Path("/{id}/check")
     @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
     public CheckResult check(@PathParam("id") String id) {

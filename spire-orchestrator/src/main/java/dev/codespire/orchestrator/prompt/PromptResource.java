@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.prompt;
 
 import dev.codespire.contract.llm.PromptKind;
 import dev.codespire.contract.llm.PromptValidation;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -20,6 +21,7 @@ import java.util.List;
 
 /** CRUD + validation + preview for operator prompt overrides (spire-ui Settings -> Prompts). */
 @Path("/api/prompts")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class PromptResource {
@@ -43,6 +45,7 @@ public class PromptResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     @Path("/{kind}")
     public PromptView save(@PathParam("kind") String kind, PromptInput in) {
         PromptKind promptKind = parse(kind);
@@ -56,6 +59,7 @@ public class PromptResource {
     }
 
     @DELETE
+    @RolesAllowed("spire-admin")
     @Path("/{kind}")
     public Response reset(@PathParam("kind") String kind) {
         registry.reset(parse(kind));
@@ -63,6 +67,8 @@ public class PromptResource {
     }
 
     @POST
+    // Viewer: renders a candidate template and reports validation errors. It writes nothing and
+    // calls nothing external — the POST is only because the body carries the draft.
     @Path("/{kind}/preview")
     public PreviewResult preview(@PathParam("kind") String kind, PromptInput in) {
         PromptKind promptKind = parse(kind);

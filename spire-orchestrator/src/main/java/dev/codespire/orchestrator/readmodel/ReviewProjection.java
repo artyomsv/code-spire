@@ -1139,7 +1139,7 @@ public class ReviewProjection {
 
     private void push(String json) {
         connections.stream()
-                .filter(conn -> conn.handshakeRequest().path().endsWith("/ws/reviews"))
+                .filter(conn -> "/api/ws/reviews".equals(conn.handshakeRequest().path()))
                 .forEach(conn -> conn.sendText(json).subscribe().with(v -> {
                 }, t -> LOG.debugf("WS push failed: %s", t.getMessage())));
     }

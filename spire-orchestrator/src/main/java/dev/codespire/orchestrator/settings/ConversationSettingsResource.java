@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.settings;
 
 import dev.codespire.contract.review.ConversationLevel;
 import dev.codespire.orchestrator.provider.ConversationLevels;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -20,6 +21,7 @@ import java.util.Locale;
  * (which the UI still targets until its migration task); this is the backend + REST surface only.
  */
 @Path("/api/settings/conversation")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ConversationSettingsResource {
@@ -37,6 +39,7 @@ public class ConversationSettingsResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     public ConversationSettingsView set(ConversationSettingsView body) {
         if (body == null || body.level() == null || body.level().isBlank()) {
             throw new BadRequestException("level is required");

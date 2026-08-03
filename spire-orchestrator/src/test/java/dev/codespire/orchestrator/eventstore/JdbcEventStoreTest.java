@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.eventstore;
 
+import io.quarkus.test.security.TestSecurity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.DomainEvent;
 import dev.codespire.contract.event.EventEnvelope;
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ConcurrencyException), and the legacy key_id='none' plaintext read branch.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class JdbcEventStoreTest {
 
     @Inject

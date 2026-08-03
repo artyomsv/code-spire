@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.provider;
 
+import io.quarkus.test.security.TestSecurity;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.quarkus.test.junit.QuarkusTest;
@@ -25,6 +26,7 @@ import static org.hamcrest.Matchers.is;
  * when left blank.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ProviderResourceTest {
 
     private static WireMockServer scm; // stands in for the SCM; baseUrl points here

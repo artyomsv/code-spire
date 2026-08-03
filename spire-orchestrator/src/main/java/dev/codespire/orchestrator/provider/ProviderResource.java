@@ -4,6 +4,7 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -26,6 +27,7 @@ import java.util.UUID;
 
 /** CRUD for registered SCM providers (spire-ui Settings -> Providers). */
 @Path("/api/providers")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ProviderResource {
@@ -68,6 +70,7 @@ public class ProviderResource {
     }
 
     @POST
+    @RolesAllowed("spire-admin")
     public Response create(ProviderInput in) {
         validate(in, true);
         ProviderView created = registry.create(resolveIdentity(in));
@@ -78,6 +81,7 @@ public class ProviderResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public ProviderView update(@PathParam("id") String id, ProviderInput in) {
         validate(in, false);
@@ -133,6 +137,7 @@ public class ProviderResource {
      * first review. The token is never returned; only a category of the failure.
      */
     @POST
+    @RolesAllowed("spire-admin")
     @Path("/{id}/check")
     @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
     public CheckResult check(@PathParam("id") String id) {
@@ -167,6 +172,7 @@ public class ProviderResource {
      * returned. Repo scope only; org reachability is covered by {@link #check}.
      */
     @POST
+    @RolesAllowed("spire-admin")
     @Path("/{id}/verify-repo")
     public RepoCheck verifyRepo(@PathParam("id") String id, VerifyRepoRequest req) {
         RepoRef repo = parseRepo(req);
@@ -222,6 +228,7 @@ public class ProviderResource {
     }
 
     @DELETE
+    @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
         if (!registry.delete(uuid(id))) {

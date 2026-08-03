@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.readmodel;
 
+import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.LineRange;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * derived pipeline stages.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewProjectionTest {
 
     @Inject

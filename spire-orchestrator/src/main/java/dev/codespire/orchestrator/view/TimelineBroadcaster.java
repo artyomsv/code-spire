@@ -54,7 +54,7 @@ public class TimelineBroadcaster {
             return;
         }
         connections.stream()
-                .filter(c -> c.handshakeRequest().path().endsWith("/ws/timeline"))
+                .filter(c -> "/api/ws/timeline".equals(c.handshakeRequest().path()))
                 .forEach(c -> c.sendText(json).subscribe().with(v -> {
                 }, t -> LOG.debugf("WS push failed: %s", t.getMessage())));
     }

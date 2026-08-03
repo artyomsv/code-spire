@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.web;
 
+import io.quarkus.test.security.TestSecurity;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
@@ -28,6 +29,7 @@ import static org.hamcrest.Matchers.containsString;
  * empty description would read as "this pull request has no description", which is a different fact.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 // PER_CLASS so the cleanup below can be a plain @Inject-ed instance method — deleting through the
 // registry directly avoids depending on the app's own HTTP listener still being reachable by the
 // time @AfterAll runs.

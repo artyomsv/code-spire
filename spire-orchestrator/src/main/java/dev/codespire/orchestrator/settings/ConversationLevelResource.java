@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.settings;
 
 import dev.codespire.contract.review.ConversationLevel;
 import dev.codespire.orchestrator.provider.ConversationLevels;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -15,6 +16,7 @@ import java.util.Locale;
 
 /** Read and set the GLOBAL default conversation level (spire-ui Settings). Per-provider overrides live on the provider. */
 @Path("/api/settings/conversation-level")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ConversationLevelResource {
@@ -30,6 +32,7 @@ public class ConversationLevelResource {
     }
 
     @PUT
+    @RolesAllowed("spire-admin")
     public ConversationLevelView set(ConversationLevelView body) {
         if (body == null || body.level() == null || body.level().isBlank()) {
             throw new BadRequestException("level is required");
