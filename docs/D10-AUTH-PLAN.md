@@ -1,11 +1,20 @@
 # D10 — Authentication on the dashboard: corrected plan
 
-> **Status: planned, spike in progress (2026-08-03).** Roadmap item **D10**, the hard gate before
-> Code Spire runs anywhere but a single operator's machine. Three adversarial reviews each falsified a
-> premise of an earlier draft — see [§2](#2-what-review-falsified) so none is re-proposed.
+> **Status: DELIVERED (2026-08-03).** All five slices are in. The decision and its consequences are
+> recorded in **ADR-022**; the boundary and its residual risks in `SECURITY.md`; the live check in
+> `SMOKE-TEST.md` **Mode J**. This document is kept as the record of how it was reached — three
+> adversarial reviews each falsified a premise of an earlier draft ([§2](#2-what-review-falsified)),
+> and the phase-0 spike overturned two more ([§4](#4-phase-0--spike)).
 
-Today the UI and **every** REST and WebSocket endpoint are unauthenticated. There is no
-`quarkus-oidc` dependency and no `quarkus.http.auth` configuration anywhere.
+**What shipped:** hybrid OIDC on all three services, each its own client with its own cookie path and
+its own URL prefix (orchestrator `/api` including sockets at `/api/ws/*`, gateway `/gw`, worker
+`/wk`); deny-by-default permission policies with `/webhooks/*`, `/q/health*` and `/api/me` explicitly
+public; two roles across 21 resources and 4 sockets; a dashboard that knows its own session, hides
+what a viewer may not do, and asks *why* a socket closed before reconnecting; a dev realm and an
+opt-in Keycloak; and a development escape hatch that refuses to start anywhere else.
+
+**Still open, deliberately:** TLS (it arrives with the production edge — until then this stops casual
+access, not an on-path attacker) and the same-origin residual, both recorded in `SECURITY.md`.
 
 ## Verified inventory
 

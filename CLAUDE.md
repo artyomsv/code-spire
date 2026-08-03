@@ -412,6 +412,30 @@ The design is fully specified in `docs/` — **treat those files as the source o
     once, attributed to this run. Rendered only when something *is* carried over.
   - **1039 Java tests across 125 suites; 228 `spire-ui` vitest tests across 35 files.** Every guard
     added here was mutation-verified — break the production line, confirm exactly one test fails.
+- **Operator authentication delivered (D10, ADR-022, 2026-08-03):** the dashboard and every
+  REST/WebSocket endpoint now require an operator identity — the gate that blocked any deployment
+  beyond one machine. **Hybrid OIDC**, not the bearer design `SECURITY.md` originally specified: a
+  browser cannot set an `Authorization` header on a WebSocket handshake, and four live surfaces are
+  sockets, so the browser gets a cookie session while `curl`/CI keep bearer. Each service is its own
+  OIDC client with its own cookie name and `cookie-path`, and owns one URL prefix — orchestrator
+  `/api` (sockets moved to `/api/ws/*`), gateway `/gw`, worker `/wk`. **The prefixes are the security
+  mechanism, not tidying:** cookies scope by host+path, not by backend, so while the gateway sat at
+  `/api/webhook-repos` the browser sent the *orchestrator's* cookie to it; per-service encryption
+  secrets don't help because the encrypted cookie **is** the credential. Policies are deny-by-default
+  with `/webhooks/*` (an SCM has only an HMAC signature), `/q/health*` and `/api/me` explicitly
+  public. Two roles decided by two rules: *can it spend money* (register, re-run, DLQ replay) and
+  *what's in the payload* — the second is why `GET /api/dlq` is admin despite changing nothing, since
+  a dead-letter row carries the raw wire record. The UI knows its own session (`/api/me`), hides what
+  a viewer may not do, and asks *why* a socket closed before reconnecting: the old blind 1.5s retry
+  hammered the IdP on every routine 5-minute expiry while the attention panel reported it as a
+  gateway outage. `%dev` runs unauthenticated (both gates open together — opening one leaves REST
+  403ing while sockets still connect) and refuses to start that way outside dev/test. Realm +
+  opt-in Keycloak in `docker-compose.idp.yml` (a separate file, not a profile: compose interpolates
+  every service's vars regardless of profile, so a required credential would break a plain `up`).
+  Preceded by a spike that overturned two of the plan's own predictions — `tenant-enabled=false` does
+  not suffice (build-time `enabled=false` does), and `roles.source=accesstoken` is mandatory or login
+  succeeds with **zero** roles and denies every operator. **1066 Java tests; 243 vitest.** Runbook:
+  SMOKE-TEST **Mode J**. Open by design: TLS ships with the production edge.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

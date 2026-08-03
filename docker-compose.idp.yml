@@ -1,0 +1,54 @@
+# Development identity provider for operator authentication (D10).
+#
+# A SEPARATE file rather than a profile in the base compose: docker compose interpolates
+# variables for every service in a file, including ones whose profile is not active, so a
+# required credential here would break a plain `docker compose up` for everyone who never
+# wanted an identity provider. Keeping it out of the base file lets the credential stay
+# required (no default) without taxing the default path.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.idp.yml up -d
+#
+# Or point SPIRE_OIDC_AUTH_SERVER_URL at a Keycloak you already run and skip this entirely;
+# either way, import infra/keycloak/realm-spire.json.
+name: spire-dev
+
+services:
+
+  #
+  #   docker compose --profile idp up -d
+  #
+  # Two supported ways to get an IdP, both driven by the same knob:
+  #   A. this container            -> SPIRE_OIDC_AUTH_SERVER_URL=http://localhost:34567/realms/spire
+  #   B. a Keycloak you already run -> point that variable at it, and don't start this profile.
+  # Either way, import infra/keycloak/realm-spire.json: it defines the three clients (one per
+  # service, so no service can read another's session), both roles, the audience mappers each
+  # service's token check needs, and two obviously-synthetic dev users.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.0
+    container_name: spire-keycloak
+    command: start-dev --import-realm --http-port=8080
+    environment:
+      # Bootstrap admin for the dev container only — never a deployment credential.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?set in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in .env}
+      # The browser reaches Keycloak on the host port while the services reach it by container
+      # name. Without a fixed hostname the issuer in a token would not match the one discovered,
+      # and every login would fail validation.
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-34567}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports:
+      - "${KEYCLOAK_PORT:-34567}:8080"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      # Services fail fast when the issuer is unreachable, so anything depending on Keycloak must
+      # wait for the realm to exist rather than merely for the port to open.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /realms/spire/.well-known/openid-configuration HTTP/1.0\r\n\r\n' >&3 && grep -q issuer <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -71,3 +71,4 @@ services:
 volumes:
   spire-pgdata:
   spire-redpanda:
+

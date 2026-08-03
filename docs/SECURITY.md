@@ -17,17 +17,48 @@ Trust boundaries, authn/authz, encryption, and secrets.
 
 - **`quarkus-oidc`**, provider-pluggable via `quarkus.oidc.auth-server-url`. **Keycloak is the
   recommended/documented IdP but not required** — any compliant OIDC provider works.
-- Flow: auth-code + PKCE at the UI; JWT bearer validated per request against the issuer's JWKS.
-- **RBAC:** two roles to start — `spire-viewer` (read the dashboard) and `spire-admin` (manage config,
-  replay, rules). Enforced with `@RolesAllowed`. Roles map from the IdP (realm/client roles or a
-  `roles` claim).
+- **Flow: `application-type=hybrid`** — a cookie session for the browser and its four WebSockets,
+  bearer/JWKS for `curl`, CI and the runbook. This **supersedes** the pure bearer design this
+  document originally specified; a browser cannot set an `Authorization` header on a WebSocket
+  handshake, and a credential must not travel in a query string. See **ADR-022** for the full
+  reasoning and what it costs.
+- **Each service is its own OIDC client**, with its own cookie name and `cookie-path`, and owns one
+  URL prefix: orchestrator `/api` (sockets at `/api/ws/*`), gateway `/gw`, worker `/wk`. Cookies are
+  scoped by host+path, not by backend, so the prefixes are what stop one service receiving another's
+  session credential. The realm needs an **audience mapper per client**.
+- **RBAC:** two roles — `spire-viewer` (read the dashboard) and `spire-admin` (manage config, replay,
+  rules). Enforced with `@RolesAllowed`. Roles map from the IdP, read from the **access** token
+  (Keycloak puts `realm_access` there; reading the ID token yields an operator with no roles at all).
+- Two rules decide the matrix, and both are needed. *Can it spend money or change behaviour* makes
+  register, re-run and DLQ replay admin. *What does the payload contain* makes `GET /api/dlq` admin
+  despite changing nothing — a dead-letter row carries the raw wire record, quoting source or
+  carrying a brokered credential.
+- **Public by design:** `/webhooks/*` (an SCM presents an HMAC signature, not a token), `/q/health*`,
+  and `/api/me` (a browser must be able to ask whether it needs to log in before it has).
+- The policy is **deny-by-default**; the inverse fails open, and what sits unnamed on the gateway is
+  the registry of every repository's webhook secret.
+
+### Residual risks, stated plainly
+
+- **No TLS yet.** Until the production edge lands (see `CICD-AND-PACKAGING.md`), session cookies
+  travel in plaintext on a LAN and are sniffable and replayable. **This stops casual and unauthorised
+  access; it does not stop an on-path attacker.** TLS is a deployment requirement, not an optional
+  hardening step.
+- **Same-origin residual.** Path scoping stops a compromised service *receiving* another's cookie. It
+  does not stop one that achieves script execution in the shared browser origin from *using* it —
+  `HttpOnly` prevents reading a cookie, not using it.
+- **CSRF** applies where it would not with bearer tokens. The session cookie is `SameSite=Lax` and no
+  `GET` mutates (verified across all 21 resources).
 
 ## Service-to-service
 
 - Most inter-service traffic is **async over Kafka** → securing the bus (SASL/SCRAM or mTLS) covers
   the bulk. Topic-level ACLs per service principal.
-- The few synchronous calls (e.g. `spire-ui` → `spire-orchestrator` queries) use **OAuth2
-  client-credentials** (`quarkus-oidc-client`); each service is its own IdP client with a service account.
+- **There is no synchronous service-to-service HTTP.** Every outbound HTTP client in the services
+  calls an *external* host (an SCM, an LLM, a context source); the only inbound callers are the
+  browser and SCM webhooks. An earlier version of this document specified OAuth2 client-credentials
+  for `spire-ui` → `spire-orchestrator` calls — but `spire-ui` is a browser application, not a
+  service, so those are operator requests carrying an operator session, not machine-to-machine ones.
 
 ## Inbound webhook hardening (`spire-gateway`)
 

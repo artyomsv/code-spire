@@ -4,6 +4,52 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-022 — Operator auth is a cookie session per service, not a bearer token
+
+**Context.** SECURITY.md specified the shape years before it was built: *"auth-code + PKCE at the UI;
+JWT bearer validated per request against the issuer's JWKS."* That is the modern default, and for a
+plain REST API it would be right. Implementing it (D10) surfaced a constraint the original design did
+not account for: **the dashboard is not a plain REST API — four of its live surfaces are WebSockets**,
+and a browser cannot set an `Authorization` header on a WebSocket handshake. The alternatives are a
+credential in a query string (which lands in access logs, and the project forbids it) or the
+`Sec-WebSocket-Protocol` smuggle. Cookies, by contrast, are sent on the handshake automatically.
+
+**Decision.** `quarkus.oidc.application-type=hybrid`: a **cookie session** for the browser and its
+sockets, **bearer** for everything else. Each of the three services is its own OIDC client with its
+own cookie name and its own `cookie-path`, and each service's browser-facing surface was moved under
+a prefix of its own — the orchestrator to `/api` (sockets included, at `/api/ws/*`), the gateway to
+`/gw`, the worker to `/wk`.
+
+**Why the prefixes are load-bearing, not tidying.** Cookies are scoped by **host + path**, not by
+backend. All three services sit behind one browser origin, so while the gateway's API was nested at
+`/api/webhook-repos` the browser sent the *orchestrator's* session cookie to the gateway on every
+call, and the proxy forwarded it. Per-service encryption secrets do not help: the encrypted cookie
+**is** the credential, so a compromised gateway could replay it. Path scoping is what actually stops
+the credential arriving. Measured: the session cookie now reaches its own prefix and nothing else.
+
+**What hybrid buys beyond the sockets.** It preserves the bearer half of the original design, so
+`curl`, CI and the SMOKE-TEST runbook still authenticate the way SECURITY.md intended. The departure
+is therefore narrower than a pure cookie design — the ID token path is added, not substituted.
+
+**Consequences.**
+- **CSRF becomes a live concern** where bearer tokens were immune to it. The session cookie is
+  `SameSite=Lax` (measured), and no `GET` mutates — verified across all 21 resources.
+- **Sessions expire in five minutes** by default, so socket close-and-reconnect is the ordinary path
+  rather than an edge case. Both hooks ask *why* a socket closed before retrying; a blind retry
+  hammered the identity provider on every routine expiry.
+- **A same-origin residual remains.** Path scoping stops a compromised gateway *receiving* the
+  orchestrator's credential; it does not stop one that achieves script execution in the shared origin
+  from using it. `HttpOnly` prevents reading a cookie, not using it. Recorded in SECURITY.md.
+- **Three silent redirects on first load** — one per service — traded for the isolation above.
+- The realm must define an **audience mapper per client**, because pinning `token.audience` without
+  one fails login outright with `No Audience (aud) claim present`.
+
+**Rejected: terminate auth at the orchestrator and proxy to the others.** `/api/webhook-repos` carries
+plaintext webhook secrets on write; proxying them would route those through the one service holding
+the master keyset and the event store, destroying the boundary the gateway exists to create.
+
+---
+
 ## ADR-021 — Split licensing: Apache-2.0 libraries, FSL-1.1-ALv2 services
 
 **Context.** ADR-006 chose Apache-2.0 before the first commit, for a project with no commercial

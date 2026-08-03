@@ -804,3 +804,63 @@ closing before the next context provider lands; it is a two-line addition to `re
 Remove any provider added only for this pass in Settings → Context (or
 `DELETE /api/context-providers/{id}`). Context blobs vanish with their reviews — no separate cleanup.
 Flip Review-mode back to `observe`.
+
+---
+
+## Mode J — operator authentication (D10)
+
+Dev boots with authentication **off**, so every other mode in this document runs unchanged. This mode
+turns it on and checks the boundary from the outside.
+
+### Start an identity provider
+
+Either bring up the bundled one:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.idp.yml up -d keycloak
+```
+
+…or point at one you already run. Both need the realm imported once:
+
+```bash
+curl -s -X POST http://localhost:34567/admin/realms \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  --data-binary @infra/keycloak/realm-spire.json
+```
+
+It defines three clients (one per service), both roles, the audience mappers the services require, and
+two obviously-synthetic users: `dev-operator` (admin + viewer) and `dev-viewer` (viewer only).
+
+### Run a service with authentication on
+
+```bash
+export SPIRE_OIDC_AUTH_SERVER_URL=http://localhost:34567/realms/spire
+export SPIRE_OIDC_CLIENT_SECRET=<from the realm>
+./gradlew :spire-orchestrator:quarkusDev \
+  -Dquarkus.oidc.enabled=true \
+  -Dspire.security.auth-enabled=true \
+  -Dquarkus.http.auth.permission.operator.policy=authenticated
+```
+
+Both switches are needed together: the permission policy decides whether an identity is required at
+all, and `auth-enabled` governs the role checks that run after it. Setting one alone leaves the
+service half-authenticated — the API refusing while a socket still opens.
+
+### What to check
+
+| # | Check | Expected |
+|---|---|---|
+| 1 | `curl -i :34080/api/reviews` | **302** to the identity provider |
+| 2 | `curl -i -H 'X-Requested-With: JavaScript' :34080/api/reviews` | **499** + `WWW-Authenticate: OIDC` — the status the dashboard acts on |
+| 3 | `curl -i -H 'Authorization: Bearer bogus' :34080/api/reviews` | **401** — bearer is challenged as bearer, so scripted access still works |
+| 4 | `curl -i :34080/api/me` | **200**, `authenticated:false` — readable without a session by design |
+| 5 | `curl -i :34080/q/health` | **200** |
+| 6 | `curl -i -X POST :34081/webhooks/github/unknown-key` | **404**, never 401 — an SCM has no token to present |
+| 7 | Open the dashboard | redirected to the provider; sign in as `dev-operator` and land back on the dashboard |
+| 8 | Sign in as `dev-viewer` instead | no Register PR button, no re-run or delete on a review, no Dead-letter nav |
+| 9 | As `dev-viewer`, `curl` the DLQ with that session | **403** — the listing carries raw payloads |
+| 10 | Wait past the session lifetime (~5 min) with the dashboard open | it goes to a login, and does **not** sit reconnecting or claim the webhook gateway is down |
+| 11 | Sign out | returned to the provider's login, and signing in again asks for credentials rather than silently resuming |
+
+Check 10 is the one worth being patient for: it is the failure the socket lifecycle work exists to
+prevent, and the only way to see it is to let a session actually lapse.

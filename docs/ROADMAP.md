@@ -217,6 +217,22 @@ down is the original design-time roadmap (kept for reference).
   follow-up during a cooldown; and the reviews-list findings count **split into new vs carried-over**
   so its movement between rounds explains itself. 1039 Java tests / 125 suites; 228 vitest / 35 files.
 
+- **Operator authentication — D10 delivered (2026-08-03)**: the dashboard and every REST/WebSocket
+  endpoint now require an operator identity. **Hybrid OIDC** (ADR-022) — a cookie session for the
+  browser and its four sockets, bearer for `curl`/CI — because a browser cannot set a header on a
+  WebSocket handshake and a credential must not ride in a query string. Each service is its own OIDC
+  client under its own URL prefix (orchestrator `/api`, sockets at `/api/ws/*`; gateway `/gw`; worker
+  `/wk`): cookies scope by host+path, not by backend, so the prefixes are what stop one service
+  receiving another's session credential. Deny-by-default policies with `/webhooks/*`, `/q/health*`
+  and `/api/me` explicitly public; two roles across 21 resources, with `GET /api/dlq` admin because it
+  returns raw wire records. The dashboard knows its own session, hides what a viewer may not do, and
+  asks *why* a socket closed before reconnecting — the previous blind retry hammered the IdP on every
+  routine five-minute expiry while reporting it as a gateway outage. Dev runs unauthenticated by
+  default and refuses to start that way anywhere else. Preceded by a spike that overturned two of the
+  plan's own predictions and three adversarial reviews that each falsified a design; the record is in
+  [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md), the live check is SMOKE-TEST.md **Mode J**. **Open by design:**
+  TLS arrives with the production edge — until then this stops casual access, not an on-path attacker.
+
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
 **A. Finish the multi-SCM story (current thread)**
@@ -354,7 +370,6 @@ Open, by nature of the work rather than by section:
 
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
-| **D10** | **OIDC on the dashboard** | M–L | The UI and every REST/WS endpoint are **unauthenticated**. The one hard gate before the app is reachable by anyone but its operator — including a LAN or tunnel deployment. **Planned in detail: [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md)** (hybrid OIDC, per-service URL prefixes so cookie scoping is real, spike-first, gateway-first slices). Two earlier designs were falsified in review; the plan records why so they are not re-proposed. |
 | **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
 | **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
@@ -377,10 +392,10 @@ retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for 
 the same reasoning held one level down), and model pricing is delivered and deliberately
 operator-entered (ADR-018) rather than a hardcoded cost table that would silently drift.
 
-**Suggested order:** **D10 (OIDC)** first if this is ever to run anywhere but a single operator's machine —
-everything else is a feature on an open door. Otherwise **E16** is the cheapest remaining user-visible
-gain, and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs.
-Operator decides.
+**Suggested order:** with D10 delivered, the door is shut and the CI/CD work it was gating is now
+unblocked — that is what "someone else can run this" requires next. **E16** remains the cheapest
+user-visible gain, and **P3 (RAG)** is the one item that changes what the product *is* rather than how
+well it runs. Operator decides.
 
 ---
 
