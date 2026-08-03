@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { fetchMe, goToLogin, needsLogin } from '../auth';
 import type { AttentionItem } from '../api';
 
 /**
@@ -121,8 +122,20 @@ export function useAttention(): { items: AttentionItem[] } {
       // requires an actual close or error — never merely a socket that has yet to open.
       const onGone = () => {
         if (closed) return;
-        setFeeds((prev) => ({ ...prev, [key]: { status: 'down' } }));
-        timers.push(setTimeout(() => connect({ key, path }), RECONNECT_MS));
+        // Ask WHY it closed before reacting. An unauthenticated or expired handshake fails with no
+        // usable close code, and the session's default lifetime is five minutes — so without this
+        // check every expiry both reconnected forever and reported itself as an outage, telling the
+        // operator "the webhook gateway is not responding" when the gateway was fine and the
+        // session had simply lapsed. Diagnosing an auth problem as an outage is worse than silence.
+        void fetchMe().then((me) => {
+          if (closed) return;
+          if (needsLogin(me)) {
+            goToLogin();
+            return;
+          }
+          setFeeds((prev) => ({ ...prev, [key]: { status: 'down' } }));
+          timers.push(setTimeout(() => connect({ key, path }), RECONNECT_MS));
+        });
       };
       ws.onclose = onGone;
       ws.onerror = () => ws.close();

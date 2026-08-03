@@ -233,17 +233,51 @@ describe('useLiveReviews', () => {
     expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id]);
   });
 
-  it('reconnects after the socket closes', async () => {
+  /**
+   * A close now asks WHY before reconnecting — an expired session must send the operator to a login
+   * rather than reopening forever — so the reconnect is one promise later than it used to be.
+   */
+  it('reconnects after the socket closes for a reason that is not authentication', async () => {
+    // The shared harness already answers /api/reviews; this makes /api/me unreachable, so the hook
+    // must carry on rather than read "unknown session" as a login prompt.
     vi.useFakeTimers();
     renderHook(() => useLiveReviews());
     expect(FakeSocket.open).toHaveLength(1);
 
-    act(() => {
+    // The close handler now awaits a session check before scheduling anything, so the microtasks
+    // must be flushed before the timer it arms even exists.
+    await act(async () => {
       FakeSocket.latest.onclose?.();
+    });
+    act(() => {
       vi.advanceTimersByTime(1500);
     });
 
     expect(FakeSocket.open).toHaveLength(2);
+  });
+
+  /**
+   * The failure this replaced: a socket rejected because the session expired closes with no usable
+   * code, and the default session lifetime is five minutes — so a blind retry loop hammered the
+   * identity provider every 1.5 seconds, indefinitely, on an entirely ordinary expiry.
+   */
+  it('sends the operator to a login instead of reconnecting when the session has expired', async () => {
+    // Both the snapshot and /api/me come through this one stub; the session reads as expired.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ authEnabled: true, authenticated: false, user: '', roles: [] }),
+    }));
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
+
+    renderHook(() => useLiveReviews());
+    await act(async () => {
+      FakeSocket.latest.onclose?.();
+    });
+
+    expect(assign).toHaveBeenCalledWith('/api/auth/login');
+    expect(FakeSocket.open).toHaveLength(1);
+    vi.unstubAllGlobals();
   });
 
   /**

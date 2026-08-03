@@ -40,7 +40,9 @@ quarkus:
     auth:
       permission:
         public:
-          paths: /q/health,/q/health/*
+          # /api/me is the one deliberate hole in deny-by-default: a browser must be able to ask
+          # whether it needs to log in BEFORE it has. It describes the caller, not the system.
+          paths: /q/health,/q/health/*,/api/me
           policy: permit
         operator:
           # Covers the three sockets too — they moved under /api/ws/* so one policy governs them.

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReviews, type ReviewSummary } from './api';
+import { fetchMe, goToLogin, needsLogin } from './auth';
 
 function sortReviews(list: ReviewSummary[]): ReviewSummary[] {
   return [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -90,7 +91,20 @@ export function useLiveReviews(): LiveReviews {
       };
       ws.onclose = () => {
         if (closed) return;
-        reconnectTimer = setTimeout(connect, 1500);
+        // A closed socket is not automatically a network blip. An unauthenticated or expired
+        // handshake is answered with a redirect the browser cannot follow, so the socket fails with
+        // no useful close code — and the session cookie's default lifetime is five minutes, which
+        // makes expiry the ordinary case rather than the rare one. Reconnecting unconditionally
+        // therefore hammered the identity provider several times a second, forever, on every
+        // expiry. Ask why it closed before trying again.
+        void fetchMe().then((me) => {
+          if (closed) return;
+          if (needsLogin(me)) {
+            goToLogin();
+            return;
+          }
+          reconnectTimer = setTimeout(connect, 1500);
+        });
       };
       ws.onerror = () => {
         ws?.close();

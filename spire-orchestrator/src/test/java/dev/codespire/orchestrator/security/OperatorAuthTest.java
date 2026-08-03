@@ -5,6 +5,9 @@ import io.quarkus.test.security.TestSecurity;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.is;
 
 /**
  * The authorization boundary on the orchestrator (D10 slice 3) — the largest surface, and the one
@@ -100,5 +103,33 @@ class OperatorAuthTest {
     @TestSecurity(user = "stranger", roles = "some-other-app-role")
     void anIdentityWithoutASpireRoleIsRefused() {
         given().when().get("/api/reviews").then().statusCode(403);
+    }
+
+    // ---- /api/me: what the dashboard needs to know about its own session ----
+
+    /** Reachable without a session, or the interface could never learn that it needs one. */
+    @Test
+    void meIsReadableAnonymouslyAndReportsNotSignedIn() {
+        given().when().get("/api/me").then().statusCode(200)
+                .body("authenticated", is(false))
+                .body("user", is(""))
+                .body("roles", empty());
+    }
+
+    @Test
+    @TestSecurity(user = "dev-viewer", roles = "spire-viewer")
+    void meReportsTheSignedInOperatorAndTheirRoles() {
+        given().when().get("/api/me").then().statusCode(200)
+                .body("authenticated", is(true))
+                .body("user", is("dev-viewer"))
+                .body("roles", contains("spire-viewer"));
+    }
+
+    /** An operator's unrelated realm roles are not this application's business to report. */
+    @Test
+    @TestSecurity(user = "dev-operator", roles = {"spire-admin", "some-other-app-role"})
+    void meReportsOnlySpireRoles() {
+        given().when().get("/api/me").then().statusCode(200)
+                .body("roles", contains("spire-admin"));
     }
 }
