@@ -30,6 +30,7 @@ export interface ReviewSummary {
   stage: number; // 0..6 index into [Received, Diff, Context, Review, Comments, Done]
   findings: number;
   blockerCount: number; // number of blocker-severity (critical) findings — drives the outcome badge
+  carriedOverFindings: number; // how many of `findings` were already open before this run
   costMillicents: number; // review cost (1/100,000 dollar); 0 = unpriced/uncatalogued model
   model: string; // model that produced the review, e.g. "gemini-3.1-pro-preview" ('' if none yet)
   llmType: string; // LLM vendor from the catalog: 'openai' | 'anthropic' | 'gemini' | '' (uncatalogued)

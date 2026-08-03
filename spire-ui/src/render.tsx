@@ -325,13 +325,30 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
   );
 }
 
-export function findCell(status: ReviewStatus, findings: number) {
+/**
+ * The open-findings count, split so its movement explains itself.
+ *
+ * <p>A bare total going 1 → 2 between rounds reads as "my fix made things worse", when it is just
+ * as often one new finding beside one that was already open and never fixed. The breakdown is only
+ * rendered when something actually is carried over, so an ordinary first review still shows a plain
+ * number rather than paying for a distinction that does not apply to it.
+ */
+export function findCell(status: ReviewStatus, findings: number, carriedOver = 0) {
   // While a review is still running the running tally is noise (and "0 so far"
   // reads as a result). Show a neutral placeholder until the review completes.
   if (status === 'reviewing') return <span className="time">—</span>;
   if (status === 'failed' || status === 'cancelled') return <span className="time">—</span>;
   if (findings === 0) return <span className="findcount zero tnum">0</span>;
-  return <span className="findcount some tnum">{findings}</span>;
+  if (carriedOver <= 0) return <span className="findcount some tnum">{findings}</span>;
+  return (
+    <span
+      className="findcount some tnum"
+      title={`${findings - carriedOver} raised by this run · ${carriedOver} still open from an earlier run`}
+    >
+      {findings}
+      <small>{carriedOver} carried</small>
+    </span>
+  );
 }
 
 export function stepper(r: ReviewDetail) {

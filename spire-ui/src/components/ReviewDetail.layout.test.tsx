@@ -24,6 +24,7 @@ const review: ReviewDetailData = {
   stage: 5,
   findings: 0,
   blockerCount: 0,
+  carriedOverFindings: 0,
   costMillicents: 100,
   model: 'gpt-5',
   llmType: 'openai',

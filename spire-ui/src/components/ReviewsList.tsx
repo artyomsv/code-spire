@@ -198,7 +198,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                   <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
                 </div>
                 <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
-                <div className="cell-r">{findCell(r.status, r.findings)}</div>
+                <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings)}</div>
                 <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                 <div className="cell-r">
                   <span className="mono" title="Review cost">{formatCost(r.costMillicents)}</span>

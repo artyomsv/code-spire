@@ -72,6 +72,7 @@ function summary(id: string, updatedAt: string, over: Partial<ReviewSummary> = {
     stage: 6,
     findings: 0,
     blockerCount: 0,
+    carriedOverFindings: 0,
     costMillicents: 0,
     model: '',
     llmType: '',

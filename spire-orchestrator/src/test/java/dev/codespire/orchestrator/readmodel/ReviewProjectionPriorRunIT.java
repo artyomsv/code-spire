@@ -622,6 +622,59 @@ class ReviewProjectionPriorRunIT {
     }
 
     /**
+     * The list row's open count is split into what this run raised and what was already open, so a
+     * total moving 1 -> 2 between rounds does not read as "the fix made it worse" when it is really
+     * one new finding beside one that was never fixed.
+     */
+    @Test
+    void theListRowSplitsWhatThisRunRaisedFromWhatWasAlreadyOpen() {
+        String reviewId = "review::ws/list-recon-it#7";
+        projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 7L,
+                "t", "a", "aid", "src", "dst", "c7", "http://x", "github", "completed", 6);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/New.java", new LineRange(9, 9), Severity.MAJOR, "raised now", null)),
+                "sum", new ModelUsage("m", 1, 1, 0)), 6);
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict("t-old", "src/Old.java", 3,
+                        FindingVerdict.Status.STILL_OPEN, "still there")),
+                List.of(new PriorFinding("src/Old.java", 3, Severity.MAJOR, "raised earlier", "t-old")));
+
+        ReviewSummary row = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+
+        assertEquals(2, row.findings(), "both are open");
+        assertEquals(1, row.carriedOverFindings(), "one of them was already open before this run");
+    }
+
+    /**
+     * The two halves must always sum to the total, which is only true because the same anchor is
+     * counted once. A finding this run re-reports at a spot reconciliation also calls still-open is
+     * ONE open finding, attributed to this run — double-counting it would inflate the total and make
+     * the breakdown contradict the number beside it.
+     */
+    @Test
+    void aFindingReRaisedAtACarriedAnchorIsCountedOnceAsThisRunsWork() {
+        String reviewId = "review::ws/list-recon-it#8";
+        projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 8L,
+                "t", "a", "aid", "src", "dst", "c8", "http://x", "github", "completed", 6);
+        projection.recordOutcome(reviewId, new ReviewResult(
+                List.of(new Finding("src/Same.java", new LineRange(3, 3), Severity.MAJOR, "same spot", null)),
+                "sum", new ModelUsage("m", 1, 1, 0)), 6);
+        // Null thread ref on both sides, so each keys by location and they collide — the case where
+        // a carried finding and a freshly-raised one describe the same anchor.
+        projection.recordReconciliation(reviewId,
+                List.of(new FindingVerdict(null, "src/Same.java", 3,
+                        FindingVerdict.Status.STILL_OPEN, "still there")),
+                List.of(new PriorFinding("src/Same.java", 3, Severity.MAJOR, "same spot", null)));
+
+        ReviewSummary row = projection.listSummaries().stream()
+                .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
+
+        assertEquals(1, row.findings(), "one anchor, one open finding");
+        assertEquals(0, row.carriedOverFindings(), "attributed to this run, not counted twice");
+    }
+
+    /**
      * The PR's own Open/Merged/Closed state (fix: PR-state badge) — independent of the review
      * status: a new review's PR defaults OPEN, and setPrState updates it on both the list row and
      * the detail payload.

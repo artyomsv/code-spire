@@ -25,6 +25,8 @@ public record ReviewSummary(
         int stage,
         int findings,
         int blockerCount,
+        /** How many of {@code findings} were already open before this run — the rest are new here. */
+        int carriedOverFindings,
         long costMillicents,
         String model,
         String llmType,

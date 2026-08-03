@@ -1155,7 +1155,7 @@ public class ReviewProjection {
         ReviewSummary toSummary(String llmType, OpenCounts openCounts, long totalCostMillicents) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
-                    totalCostMillicents, model == null ? "" : model,
+                    openCounts.carriedOver(), totalCostMillicents, model == null ? "" : model,
                     llmType == null ? "" : llmType, updatedAt, answering, prState);
         }
     }
@@ -1182,7 +1182,13 @@ public class ReviewProjection {
                 .count();
     }
 
-    private record OpenCounts(int open, int openBlockers) {
+    /**
+     * @param carriedOver how many of {@code open} came from a previous run rather than this one.
+     *                    Split out because a bare total moving 1 -> 2 between rounds reads as a
+     *                    regression the author caused, when it can equally be one new finding beside
+     *                    one that was already open and simply never fixed.
+     */
+    private record OpenCounts(int open, int openBlockers, int carriedOver) {
     }
 
     /**
@@ -1200,13 +1206,18 @@ public class ReviewProjection {
         for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
             openSevByKey.putIfAbsent(keyOf(f.threadRef(), f.loc()), f.sev());
         }
+        // Everything keyed so far is this run's own work; anything the reconciliation loop adds
+        // beyond it was already open before this run started. `putIfAbsent` is what makes the
+        // subtraction exact — a carried finding re-reported at the same anchor stays counted once,
+        // as new, so the two halves always sum to the total.
+        int newlyRaised = openSevByKey.size();
         for (ReviewDetail.ReconciliationView r : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
             if ("still open".equals(r.status()) || "unchanged".equals(r.status())) {
                 openSevByKey.putIfAbsent(keyOf(r.threadRef(), r.loc()), r.sev());
             }
         }
         int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
-        return new OpenCounts(openSevByKey.size(), blockers);
+        return new OpenCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised);
     }
 
     private static String keyOf(String threadRef, String loc) {
