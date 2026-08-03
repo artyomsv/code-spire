@@ -166,6 +166,102 @@ lifecycle, token lifetime and reconnect policy are **one problem**, not three.
 
 Six questions. Nothing is built on an unmeasured answer.
 
+### Results so far (branch `spike/d10-oidc`, 2026-08-03)
+
+**Q6 — IdP-less boot: ANSWERED, and the plan's prediction was wrong.**
+
+- Adding `quarkus-oidc` alone makes Dev Services pull and start
+  `quay.io/keycloak/keycloak:26.6.4`, which then **timed out after ~60s**
+  (`Timed out waiting for log output matching '.*Keycloak.*started.*'`). The build survived, but at the
+  cost of a minute of dead time and a ~500MB pull. Both `quarkus.keycloak.devservices.enabled=false`
+  **and** `quarkus.oidc.devservices.enabled=false` must be set, **globally, not per-profile**.
+- With Dev Services off and no `auth-server-url`, the app **fails to boot**:
+  `ConfigurationException: 'quarkus.oidc.auth-server-url' property must be configured`. The first
+  `@QuarkusTest` fails and every later one is skipped ("Boot failed"), so one missing property reads as
+  46 broken tests.
+- **`quarkus.oidc.tenant-enabled=false` is NOT sufficient** — the plan predicted it would be. The
+  build-time **`quarkus.oidc.enabled=false`** is what works. `%dev` needs the same treatment.
+- **YAML trap:** adding a second `"%test":` block to a file that already has one silently discards the
+  new block (last key wins) — the config appears applied and is not. Merge into the existing block, and
+  assert profile keys are unique.
+
+Verified: with those settings, `:spire-gateway:test` is **green** with `quarkus-oidc` on the classpath
+and no Keycloak container started.
+
+**Q4 — cookie size: partially answered.** A `dev-operator` access token carrying both realm roles is
+**1154 bytes**. A session cookie holding ID + access + refresh will therefore sit near or past the 4KB
+chunking threshold before any custom claims. Chunking is the expected case, not the edge case.
+
+**Realm file defect found:** Keycloak 26's declarative user profile rejects a user with no `email`
+(`invalid_grant: Account is not fully set up`). Dev users need `email` and an explicit
+`"requiredActions": []`. The shipped `infra/keycloak/realm-spire.json` now has both.
+
+**Q2 — the unauthenticated-response contract: ANSWERED.** Measured against the running gateway:
+
+| Request style | Status | Header |
+|---|---|---|
+| plain navigation | **302** → IdP authorize endpoint | `location` |
+| `X-Requested-With: JavaScript` | **499** | `WWW-Authenticate: OIDC` |
+| `X-Requested-With: XMLHttpRequest` | **499** | `WWW-Authenticate: OIDC` |
+| bearer token present | **401** | `www-authenticate: Bearer` |
+
+Both marker values work. **Hybrid is confirmed**: a bearer request is challenged as bearer rather than
+redirected, so curl, CI and the runbook can authenticate — D2's stated purpose holds.
+
+**Q1 — cookie scoping: ANSWERED, and D1's mechanism is proven.** A full auth-code flow was driven
+end to end (`dev-operator` → `["spire-viewer","spire-admin"]`, `dev-viewer` → `["spire-viewer"]`).
+
+- `cookie-path: /gw` governs **all** OIDC cookies — the `q_auth_*` state cookie, the session cookie and
+  its chunks all carry `Path=/gw`. `cookie-suffix: gw` appears in every cookie name.
+- The session cookie is sent to `/gw/*` and **nowhere else** — verified negative against `/q/health`,
+  `/webhooks/*` and `/api/*`. A service under a different prefix never receives it.
+- Measured attributes: **`SameSite=Lax`** (the CSRF input), **`Max-Age=300`** — five minutes, which
+  confirms the session-lifetime problem is real and not theoretical.
+- The session cookie **arrived already chunked** (`…_chunk_1`, `…_chunk_2`) with only two realm roles
+  and no custom claims — settling Q4: chunking is the normal case.
+
+**Three defects found that would otherwise have shipped:**
+
+1. **`redirect-path` is mandatory, not optional.** Without it Quarkus uses the *requested path* as
+   `redirect_uri`, which no realm can enumerate — Keycloak returns **400** for every protected path.
+   It must also sit **inside** `cookie-path`, or the callback never receives the state cookie. Both
+   constraints at once: `redirect-path: /gw/auth/callback`.
+2. **`roles.source=accesstoken` is mandatory.** Without it, login **succeeds with zero roles** —
+   Keycloak puts `realm_access` in the access token while web-app mode reads the ID token. Every
+   `@RolesAllowed` would deny every operator: RBAC fails closed and presents as a config bug, not a
+   security error.
+3. **`token.audience` requires a Keycloak audience mapper.** The per-service audience recommended to
+   stop one service's token being valid at another breaks login on its own —
+   `No Audience (aud) claim present` — because Keycloak emits no matching `aud` by default. The shipped
+   realm now defines an `oidc-audience-mapper` per client.
+
+**Q3 — the WebSocket upgrade: ANSWERED.** Measured against a real `@WebSocket` endpoint under `/gw`:
+
+| Handshake | Result |
+|---|---|
+| unauthenticated | **302** to the IdP — the redirect a browser socket cannot follow |
+| unauthenticated + `X-Requested-With` | **499** + `WWW-Authenticate: OIDC` |
+| authenticated (session cookie) | **101 Switching Protocols** |
+| session older than `Max-Age=300` | **302** |
+
+Three things follow. **`quarkus.http.auth.permission.*` does secure the upgrade** — no annotation needed,
+and the session cookie authenticates the handshake, so D1 + cookie mode genuinely works for sockets.
+**The 499 contract does apply to the upgrade** — but only when the marker header is present, which
+`new WebSocket()` cannot set, so §3.4's problem stands exactly as stated. And the expired-session row
+was observed by accident, five minutes after a login: this is not a theoretical failure mode, it is
+the default one.
+
+**Q5 — `AuthorizationController` reach: ANSWERED, favourably.** With `spire.security.auth-enabled=false`
+the REST path returned **200** and the WebSocket upgrade **101**, both anonymous — where both had been
+302 with it enabled. The controller **does** govern `quarkus.http.auth.permission.*`, not merely
+annotation checks. The D3 kill-switch is therefore complete rather than partial: REST and sockets open
+together, so `%dev` cannot end up half-authenticated. This resolves the concern that the socket fix
+using HTTP permissions would escape the toggle.
+
+**Not measured, still open for the UI phase:** the close code a browser (rather than curl) observes on
+a rejected or expired socket, and whether the `quarkus-http-upgrade#header#value` sub-protocol carrier
+accepts a non-`Authorization` header. Both need a real WebSocket client, which this repo does not have.
+
 1. **Cookie scoping *and* the callback path — one experiment.** `cookie-path` governs the `q_auth_*`
    **state** cookie as well as the session cookie. So a `redirect-path` on a SPA route (`/`, `/reviews`)
    would never receive the state cookie and login would fail 100% of the time. Callbacks must live under
