@@ -354,7 +354,7 @@ Open, by nature of the work rather than by section:
 
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
-| **D10** | **OIDC on the dashboard** | M | The UI and every REST/WS endpoint are **unauthenticated**. This is the one hard gate before the app is reachable by anyone but its operator — including a LAN or tunnel deployment. Highest-priority open item for that reason alone. |
+| **D10** | **OIDC on the dashboard** | M–L | The UI and every REST/WS endpoint are **unauthenticated**. The one hard gate before the app is reachable by anyone but its operator — including a LAN or tunnel deployment. **Planned in detail: [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md)** (hybrid OIDC, per-service URL prefixes so cookie scoping is real, spike-first, gateway-first slices). Two earlier designs were falsified in review; the plan records why so they are not re-proposed. |
 | **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
 | **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |

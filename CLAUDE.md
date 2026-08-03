@@ -35,6 +35,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
+| `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (keep current)
 
@@ -447,7 +448,7 @@ cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
   (ADR-014), not app-layer crypto.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
-- Java 25 / Quarkus 3.36 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
+- Java 25 / Quarkus 3.37.1 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
   build-enforced for `spire-contract` and `spire-diff` by `PureModulesAreFrameworkFreeTest`
   (`spire-arch`), which permits only the JDK, those modules themselves, and one documented
   exception: **`jackson-annotations`** (annotations only, no databind) on the sealed
