@@ -6,6 +6,7 @@ import dev.codespire.contract.review.AssembledContext;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.worker.adapters.PostgresBlobStore;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -28,7 +29,8 @@ import java.util.Set;
  *
  * <p>Read-only and idempotent — nothing here writes, deletes or re-resolves anything.
  */
-@Path("/api/review-context")
+@Path("/wk/review-context")
+@RolesAllowed({"spire-viewer", "spire-admin"})
 @Produces(MediaType.APPLICATION_JSON)
 public class ReviewContextResource {
 

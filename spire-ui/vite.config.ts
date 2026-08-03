@@ -36,7 +36,9 @@ export default defineConfig({
       '/gw': { target: gateway, ws: true },
       // The assembled context is the WORKER's data (:34082) — it owns the blob and is the only
       // service that can address it. More specific than /api, so it must be listed first.
-      '/api/review-context': { target: worker, changeOrigin: true },
+      // The WORKER owns /wk — its own prefix, so its session cookie (cookie-path=/wk) never
+      // reaches the orchestrator or the gateway. changeOrigin omitted for the same reason as /gw.
+      '/wk': { target: worker },
       '/api': { target: orchestrator, changeOrigin: true },
       '/ws': { target: orchestratorWs, ws: true },
     },

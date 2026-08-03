@@ -1,7 +1,46 @@
 quarkus:
+  # Both are separate dev services and BOTH must be off, or either starts a Keycloak container of
+  # its own that then times out (~60s) on every build.
+  keycloak:
+    devservices:
+      enabled: false
+  oidc:
+    devservices:
+      enabled: false
+    # Operator authentication (D10 slice 2). Values measured in the phase-0 spike — see
+    # docs/D10-AUTH-PLAN.md §4; each comment says what breaks when the line is missing.
+    auth-server-url: ${SPIRE_OIDC_AUTH_SERVER_URL}
+    client-id: ${SPIRE_OIDC_CLIENT_ID:spire-review-worker}
+    credentials:
+      secret: ${SPIRE_OIDC_CLIENT_SECRET}
+    application-type: hybrid
+    authentication:
+      # This service's own prefix, so the browser never sends its session cookie to another service.
+      cookie-path: /wk
+      cookie-suffix: wk
+      java-script-auto-redirect: false
+      # Without it the redirect_uri is the REQUESTED path, which no realm can enumerate; it must also
+      # sit INSIDE cookie-path or the callback never receives the state cookie.
+      redirect-path: /wk/auth/callback
+      restore-path-after-redirect: true
+    # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
+    roles:
+      source: accesstoken
+    # Needs the realm's audience mapper, or login fails with "No Audience (aud) claim present".
+    token:
+      audience: ${SPIRE_OIDC_CLIENT_ID:spire-review-worker}
   application:
     name: spire-review-worker
   http:
+    # Deny by default — anything not named here requires authentication.
+    auth:
+      permission:
+        public:
+          paths: /q/health,/q/health/*
+          policy: permit
+        operator:
+          paths: /wk/*
+          policy: authenticated
     port: ${WORKER_HTTP_PORT:34082}   # health + review-context endpoints; 34xxx project range
   datasource:
     db-kind: postgresql
@@ -79,6 +118,18 @@ mp:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
   quarkus:
+    oidc:
+      # Dev runs without an identity provider, so the tenant has nothing to discover and the service
+      # would refuse to boot. Build-time disable is what works — `tenant-enabled: false` still
+      # demands an auth-server-url (measured in the spike).
+      enabled: false
+    http:
+      auth:
+        permission:
+          # The other half of the switch below: with OIDC disabled there is no mechanism to satisfy
+          # `authenticated`, so leaving it would 401 every dev request rather than open it.
+          operator:
+            policy: permit
     log:
       console:
         json:
@@ -89,6 +140,11 @@ mp:
       jdbc:
         url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
   spire:
+    security:
+      # BOTH gates open together, or dev is half-authenticated: the permission policy below decides
+      # whether an identity is required at all, and this governs the @RolesAllowed checks that run
+      # afterwards. Opening only one gave 403 on REST while the socket answered 101 on the gateway.
+      auth-enabled: false
     # scm.stub is false in dev -> real reviews against the brokered credential.
     # Export SPIRE_SCM_STUB=true for the canned stub demo (Mode A).
     llm:
@@ -97,6 +153,14 @@ mp:
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
   quarkus:
+    oidc:
+      # Build-time disable. `tenant-enabled: false` is NOT enough — the tenant still demands an
+      # auth-server-url and the app fails to BOOT, which surfaces as one failed test and every other
+      # one skipped rather than as a configuration error.
+      #
+      # Authorization itself stays ON: the behavioural suites carry a @TestSecurity identity, so they
+      # exercise the real permission policy and the real annotations.
+      enabled: false
     http:
       port: 0
       test-port: 0

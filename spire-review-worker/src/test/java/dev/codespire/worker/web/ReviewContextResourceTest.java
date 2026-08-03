@@ -1,5 +1,6 @@
 package dev.codespire.worker.web;
 
+import io.quarkus.test.security.TestSecurity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.review.AssembledContext;
@@ -23,6 +24,7 @@ import static org.hamcrest.Matchers.is;
  * the stored blob rather than re-resolving references against a live host.
  */
 @QuarkusTest
+@TestSecurity(user = "test-viewer", roles = "spire-viewer")
 class ReviewContextResourceTest {
 
     @Inject
@@ -43,7 +45,7 @@ class ReviewContextResourceTest {
                         "State: open\n\nMust reject above 50.", "https://example.invalid/issues/7")),
                 Set.of("github-issues"), Set.of()));
 
-        when().get("/api/review-context/acme/widgets/801")
+        when().get("/wk/review-context/acme/widgets/801")
                 .then().statusCode(200)
                 .body("items", hasSize(1))
                 .body("items[0].kind", is("ISSUE"))
@@ -56,7 +58,7 @@ class ReviewContextResourceTest {
     /** No blob is the normal path when nothing was referenced — an empty result, never an error. */
     @Test
     void returnsAnEmptyResultWhenTheReviewHasNoContext() {
-        when().get("/api/review-context/acme/widgets/802")
+        when().get("/wk/review-context/acme/widgets/802")
                 .then().statusCode(200)
                 .body("items", hasSize(0))
                 .body("contributingSources", hasSize(0));
@@ -68,7 +70,7 @@ class ReviewContextResourceTest {
         store(reviewId, new AssembledContext(null, List.of(),
                 Set.of(), Set.of("jira")));
 
-        when().get("/api/review-context/acme/widgets/803")
+        when().get("/wk/review-context/acme/widgets/803")
                 .then().statusCode(200)
                 .body("missingSources", hasItem("jira"));
 
@@ -81,7 +83,7 @@ class ReviewContextResourceTest {
         String reviewId = "review::acme/widgets#804";
         store.put(BlobStore.Kind.CONTEXT, reviewId, "not json".getBytes(StandardCharsets.UTF_8));
 
-        when().get("/api/review-context/acme/widgets/804")
+        when().get("/wk/review-context/acme/widgets/804")
                 .then().statusCode(200)
                 .body("items", hasSize(0));
 

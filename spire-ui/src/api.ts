@@ -932,7 +932,7 @@ export async function fetchReviewContext(
   slug: string,
   pr: number,
 ): Promise<ReviewContext> {
-  const res = await fetch(`/api/review-context/${seg(workspace)}/${seg(slug)}/${pr}`);
+  const res = await fetch(`/wk/review-context/${seg(workspace)}/${seg(slug)}/${pr}`);
   if (!res.ok) return throwResponse(res, 'Failed to load context');
   return res.json();
 }

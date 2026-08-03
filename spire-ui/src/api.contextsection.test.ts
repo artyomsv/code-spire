@@ -13,7 +13,7 @@ describe('context section api', () => {
 
     await fetchReviewContext('acme', 'widgets', 7);
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/review-context/acme/widgets/7');
+    expect(fetchMock).toHaveBeenCalledWith('/wk/review-context/acme/widgets/7');
   });
 
   it('reads a description from the orchestrator route', async () => {
@@ -31,6 +31,6 @@ describe('context section api', () => {
 
     await fetchReviewContext('acme corp', 'wid/gets', 7);
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/review-context/acme%20corp/wid%2Fgets/7');
+    expect(fetchMock).toHaveBeenCalledWith('/wk/review-context/acme%20corp/wid%2Fgets/7');
   });
 });

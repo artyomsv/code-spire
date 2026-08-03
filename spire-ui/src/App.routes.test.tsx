@@ -75,7 +75,8 @@ const detail = {
  * screen and its cards need are named explicitly.
  */
 function payloadFor(url: string): unknown {
-  if (/\/api\/review-context\//.test(url)) {
+  // The worker owns /wk — its own prefix, so its session cookie never reaches the other services.
+  if (/\/wk\/review-context\//.test(url)) {
     return { items: [], contributingSources: [], missingSources: [] };
   }
   if (/\/description$/.test(url)) return { description: null };

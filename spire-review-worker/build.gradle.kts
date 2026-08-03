@@ -37,6 +37,7 @@ dependencies {
 
     implementation("io.quarkus:quarkus-jackson")
     implementation("io.quarkus:quarkus-rest-jackson") // read-only context endpoint for the review detail page
+    implementation("io.quarkus:quarkus-oidc") // operator auth (D10)
     implementation("io.quarkus:quarkus-messaging-kafka")
     implementation("io.quarkus:quarkus-jdbc-postgresql")
     implementation("io.quarkus:quarkus-flyway")
@@ -45,6 +46,7 @@ dependencies {
     implementation("io.quarkus:quarkus-logging-json") // structured JSON logs in prod (plain console in dev/test)
 
     testImplementation("io.quarkus:quarkus-junit5")
+    testImplementation("io.quarkus:quarkus-test-security")
     testImplementation("io.rest-assured:rest-assured")
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
     testImplementation("org.wiremock:wiremock:3.13.2")
