@@ -45,18 +45,32 @@ public class OperatorAuthorization extends AuthorizationController {
     }
 
     void enforceProductionAuthentication(@Observes StartupEvent event) {
-        if (authEnabled) {
-            return;
-        }
         LaunchMode mode = LaunchMode.current();
-        if (mode == LaunchMode.DEVELOPMENT || mode == LaunchMode.TEST) {
-            LOG.warnf("spire.security.auth-enabled=false — the operator API and its WebSocket are "
-                    + "UNAUTHENTICATED. Permitted only in %s.", mode);
+        if (isPermitted(authEnabled, mode)) {
+            if (!authEnabled) {
+                LOG.warnf("spire.security.auth-enabled=false — the operator API and its WebSocket "
+                        + "are UNAUTHENTICATED. Permitted only in %s.", mode);
+            }
             return;
         }
-        throw new IllegalStateException(
-                "spire.security.auth-enabled=false is not permitted outside dev/test. The gateway "
-                        + "exposes the webhook registry, which holds every repository's webhook secret. "
-                        + "Unset it, or configure an OIDC provider via SPIRE_OIDC_AUTH_SERVER_URL.");
+        throw new IllegalStateException(REFUSAL);
+    }
+
+    static final String REFUSAL =
+            "spire.security.auth-enabled=false is not permitted outside dev/test. The gateway exposes "
+                    + "the webhook registry, which holds every repository's webhook secret. Unset it, "
+                    + "or configure an OIDC provider via SPIRE_OIDC_AUTH_SERVER_URL.";
+
+    /**
+     * Pure so it can be tested directly.
+     *
+     * <p>The container-level behaviour cannot be: {@code quarkus-test-security} contributes its own
+     * {@link AuthorizationController} that outranks this one on the test classpath, so a test that
+     * drives HTTP measures Quarkus's test controller rather than this class. The phase-0 spike
+     * verified the real path instead — with the flag off, a guarded request went from 302 to 200 and
+     * a WebSocket upgrade from 302 to 101.
+     */
+    static boolean isPermitted(boolean authEnabled, LaunchMode mode) {
+        return authEnabled || mode == LaunchMode.DEVELOPMENT || mode == LaunchMode.TEST;
     }
 }

@@ -115,6 +115,14 @@ mp:
           serializer: dev.codespire.gateway.IntegrationEventSerializer
 
 "%dev":
+  spire:
+    security:
+      # BOTH gates must open together, or dev ends up half-authenticated. They are independent: the
+      # permission policy below decides whether an identity is required at all, while this governs
+      # the @RolesAllowed checks that run afterwards. With only the policy opened, REST answered 403
+      # (anonymous identity, role check enforced) while the socket answered 101 (no annotation on it)
+      # — the API broken and the socket wide open, which is worse than either state alone.
+      auth-enabled: false
   quarkus:
     oidc:
       # Dev runs without an identity provider by default, so the tenant has nothing to discover and
