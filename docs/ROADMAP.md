@@ -383,10 +383,12 @@ tests on `spire-contract`, failing a breaking change without an `eventVersion` b
 ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it iterated event types and
 skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **4 techdebt items** in `techdebt/`, all **Low** — nothing
-medium, high or critical. (A fifth option, tracking waived nits durably so a set-aside issue cannot
-return as its own finding, was considered and deliberately not built: it needs a store, a wire field
-and a prompt slot, which makes it a feature rather than debt. It sits closest to **E17**.) **No P1 scope remains pending**: the
+Also open and tracked outside this file: **6 techdebt items** in `techdebt/` — 1 medium, 5 low,
+nothing high or critical. The medium one is D10's: the authorization guard is copied into all three
+services, and the drift check that was chosen instead of extracting a shared module has not been
+written yet. (Another option, tracking waived nits durably so a set-aside issue cannot return as its
+own finding, was considered and deliberately not built: it needs a store, a wire field and a prompt
+slot, which makes it a feature rather than debt. It sits closest to **E17**.) **No P1 scope remains pending**: the
 call-level resilience once framed as "SmallRye Fault Tolerance retry budgets" shipped as a hand-rolled
 retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for the review budget, and
 the same reasoning held one level down), and model pricing is delivered and deliberately
