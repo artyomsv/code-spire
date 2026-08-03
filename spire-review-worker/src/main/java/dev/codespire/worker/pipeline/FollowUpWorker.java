@@ -2,6 +2,8 @@ package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
+import dev.codespire.worker.adapters.LlmFailures;
+import dev.codespire.worker.adapters.ProviderCircuits;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
@@ -211,11 +213,16 @@ public class FollowUpWorker {
             if (t instanceof ScmApiException api && (api.status() >= 500 || api.isRateLimited())) {
                 return true;
             }
-            if (t instanceof UncheckedIOException || t instanceof IOException || t instanceof TimeoutException) {
+            if (t instanceof UncheckedIOException || t instanceof IOException || t instanceof TimeoutException
+                    || t instanceof ProviderCircuits.CircuitOpenException) {
                 return true;
             }
         }
-        return false;
+        // An LLM provider that is rate-limiting or 5xx-ing is transient here exactly as it is for a
+        // review. Without this a follow-up went straight to cs.dlq on the provider's first bad
+        // minute — and once the LLM call is behind a circuit breaker, so would every reply for the
+        // whole cooldown.
+        return LlmFailures.isProviderUnwell(cause);
     }
 
     /**

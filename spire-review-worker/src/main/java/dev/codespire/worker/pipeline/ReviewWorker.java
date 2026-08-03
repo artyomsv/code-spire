@@ -947,12 +947,11 @@ public class ReviewWorker {
             }
             if (t instanceof UncheckedIOException || t instanceof java.io.IOException
                     || t instanceof java.util.concurrent.TimeoutException
-                    || t instanceof dev.codespire.worker.adapters.ProviderCircuits.CircuitOpenException
-                    || isLangChain4jRetriable(t)) {
+                    || t instanceof dev.codespire.worker.adapters.ProviderCircuits.CircuitOpenException) {
                 return true;
             }
         }
-        return false;
+        return dev.codespire.worker.adapters.LlmFailures.isProviderUnwell(cause);
     }
 
     /**
@@ -968,20 +967,4 @@ public class ReviewWorker {
         return false;
     }
 
-    /**
-     * The worker never compiles against LangChain4j (it stays an implementation
-     * detail of spire-llm), so its transient provider failures — RateLimitException,
-     * InternalServerException and TimeoutException all extend RetriableException —
-     * are recognized by hierarchy name.
-     */
-    private static final String LANGCHAIN4J_RETRIABLE = "dev.langchain4j.exception.RetriableException";
-
-    private static boolean isLangChain4jRetriable(Throwable t) {
-        for (Class<?> c = t.getClass(); c != null; c = c.getSuperclass()) {
-            if (LANGCHAIN4J_RETRIABLE.equals(c.getName())) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

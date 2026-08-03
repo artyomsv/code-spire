@@ -68,7 +68,14 @@ public class WorkerLlmProvider {
         return clientFor(cred);
     }
 
-    /** Build the model from a decrypted credential (no network call — model init is lazy). */
+    /**
+     * Build the model from a decrypted credential (no network call — model init is lazy).
+     *
+     * <p>Wrapped in {@link CircuitBreakingLlmProvider} so a provider that is down stops being paid
+     * for on every review. Both LLM paths (GenerateReview and AnswerFollowUp) build their client
+     * here, so one wrap covers both; the breaker's state is per API host and shared across commands,
+     * which is the only scope at which it sees enough failures to open.
+     */
     static LlmClient clientFor(LlmCredential cred) {
         LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(), cred.temperature());
         LlmProvider provider = switch (cred.type()) {
@@ -77,7 +84,9 @@ public class WorkerLlmProvider {
             case "gemini" -> LangChain4jLlmProvider.gemini(config);
             default -> throw new IllegalStateException("Unsupported LLM provider type: " + cred.type());
         };
-        return new LlmClient(provider,
+        LlmProvider guarded = new CircuitBreakingLlmProvider(provider,
+                CircuitBreakingLlmProvider.hostFor(cred.baseUrl(), cred.type()), ProviderCircuits.shared());
+        return new LlmClient(guarded,
                 new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()));
     }
 
