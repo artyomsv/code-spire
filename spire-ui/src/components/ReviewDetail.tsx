@@ -5,6 +5,8 @@ import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';
 import { CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
 import ConfirmDialog from './ConfirmDialog';
+import { useMe } from '../hooks/useMe';
+import { canAdminister } from '../auth';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
 
@@ -20,6 +22,7 @@ export default function ReviewDetail({ reviews }: Props) {
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRerun, setConfirmRerun] = useState(false);
+  const admin = canAdminister(useMe());
 
   // Monotonic request id: a response only applies while it is still the latest
   // load for the current params — otherwise navigating A→B can let A's slower
@@ -136,7 +139,10 @@ export default function ReviewDetail({ reviews }: Props) {
               </a>
             </Tooltip>
           )}
-          {(r.status === 'completed' || r.status === 'failed') && (
+          {/* Both are admin: a re-run spends money on a fresh model call, and a delete is
+              irreversible. Hidden from a viewer rather than disabled — the API refuses them either
+              way, so offering a control that can only fail is noise. */}
+          {admin && (r.status === 'completed' || r.status === 'failed') && (
             <Tooltip label="Re-run review on the same commit">
               <button
                 className="icon-btn rerun"
@@ -147,15 +153,17 @@ export default function ReviewDetail({ reviews }: Props) {
               </button>
             </Tooltip>
           )}
-          <Tooltip label="Delete review">
-            <button
-              className="icon-btn danger"
-              aria-label="Delete review"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 size={16} />
-            </button>
-          </Tooltip>
+          {admin && (
+            <Tooltip label="Delete review">
+              <button
+                className="icon-btn danger"
+                aria-label="Delete review"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 size={16} />
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 

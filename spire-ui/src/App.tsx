@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { FileText, GitPullRequest } from 'lucide-react';
+import { FileText, GitPullRequest, LogOut } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import ReviewsList from './components/ReviewsList';
@@ -16,6 +16,8 @@ import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
 import PromptDetail from './components/PromptDetail';
 import { useLiveReviews } from './useLiveReviews';
+import { useMe } from './hooks/useMe';
+import { canAdminister, goToLogout } from './auth';
 
 function toggleTheme() {
   const root = document.documentElement;
@@ -55,6 +57,8 @@ export default function App() {
                 : onPrompts
                   ? 'Prompts'
                   : 'Reviews';
+  const me = useMe();
+  const admin = canAdminister(me);
   const [registerOpen, setRegisterOpen] = useState(false);
 
   return (
@@ -148,6 +152,11 @@ export default function App() {
             <FileText className="ic" />
             Prompts
           </a>
+          {/* Admin only, listing included: a dead-letter row carries the raw payload of the message
+              that failed, which is a wire record quoting source or carrying a brokered credential.
+              Hidden rather than shown-and-refused, so a viewer is not offered a page that can only
+              answer 403. */}
+          {admin && (
           <a className={onDlq ? 'active' : ''} href="#/settings/dlq">
             <svg
               className="ic"
@@ -164,6 +173,7 @@ export default function App() {
             </svg>
             Dead-letter
           </a>
+          )}
         </nav>
         <div className="spacer"></div>
         <ReviewModeToggle />
@@ -181,12 +191,24 @@ export default function App() {
             <span className="dot"></span>LIVE
           </span>
           <div className="grow"></div>
-          <Tooltip label="Register PR">
-            <button className="iconbtn pr" aria-label="Register PR" onClick={() => setRegisterOpen(true)}>
-              <GitPullRequest size={17} />
-            </button>
-          </Tooltip>
+          {/* Registering a pull request starts a review, which spends money — admin only. Hidden
+              rather than disabled: a control that is always refused is noise, and the API is still
+              the authority (it answers 403 regardless of what is rendered). */}
+          {admin && (
+            <Tooltip label="Register PR">
+              <button className="iconbtn pr" aria-label="Register PR" onClick={() => setRegisterOpen(true)}>
+                <GitPullRequest size={17} />
+              </button>
+            </Tooltip>
+          )}
           <AttentionBell />
+          {me?.authEnabled && me.authenticated && (
+            <Tooltip label={`Sign out ${me.user}`}>
+              <button className="iconbtn" aria-label={`Sign out ${me.user}`} onClick={goToLogout}>
+                <LogOut size={16} />
+              </button>
+            </Tooltip>
+          )}
           <Tooltip label="Toggle theme">
             <button className="iconbtn" id="themeBtn" aria-label="Toggle theme" onClick={toggleTheme}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

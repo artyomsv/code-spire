@@ -47,6 +47,18 @@ export function goToLogin(): void {
 }
 
 /**
+ * End the session — at the identity provider as well as here.
+ *
+ * Also a whole-window navigation, for the same reason as login: the provider's logout is a redirect
+ * chain, not something `fetch` can complete. Dropping only the local cookie would leave the
+ * provider's own session intact, so the next login would silently sign the operator straight back
+ * in — which reads as logout being broken.
+ */
+export function goToLogout(): void {
+  window.location.assign('/api/auth/logout');
+}
+
+/**
  * `fetch` for the dashboard's own API.
  *
  * Adds the script marker to every call, and converts an authentication failure into a login rather

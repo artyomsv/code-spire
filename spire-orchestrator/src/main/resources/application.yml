@@ -29,6 +29,12 @@ quarkus:
     # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
     roles:
       source: accesstoken
+    # RP-initiated logout: ends the session at the identity provider too, not just here. Without it
+    # the local cookie is dropped and the next login silently re-authenticates from the provider's
+    # own session — which looks to the operator like logout did nothing.
+    logout:
+      path: /api/auth/logout
+      post-logout-path: /
     # Needs the realm's audience mapper, or login fails with "No Audience (aud) claim present".
     token:
       audience: ${SPIRE_OIDC_CLIENT_ID:spire-orchestrator}
