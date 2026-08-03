@@ -1,5 +1,6 @@
 package dev.codespire.gateway;
 
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +15,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 /**
- * The gateway-owned /api/webhook-repos CRUD: create/rotate mint the secret
+ * The gateway-owned /gw/webhook-repos CRUD: create/rotate mint the secret
  * server-side and reveal it exactly once ({@code WebhookRepoSecret(repo, secret)} —
  * nested {@code repo.*} view + top-level {@code secret}); every other read (get,
  * list, update) returns the flat {@code WebhookRepoView} with no secret at all,
@@ -22,6 +23,7 @@ import static org.hamcrest.Matchers.nullValue;
  * supplied directly.
  */
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = "spire-admin")
 class WebhookRepoResourceTest {
 
     private static Map<String, Object> body(String providerType, String scope, String target, Object secret) {
@@ -39,7 +41,7 @@ class WebhookRepoResourceTest {
     @Test
     void createRepoScopeGeneratesAKeyAndRevealsTheSecretExactlyOnce() {
         given().contentType("application/json").body(body("github", "repo", "wh-create/repo", "hooksecret"))
-                .when().post("/api/webhook-repos")
+                .when().post("/gw/webhook-repos")
                 .then().statusCode(201)
                 .body("repo.scope", equalTo("repo"))
                 .body("repo.target", equalTo("wh-create/repo"))
@@ -52,7 +54,7 @@ class WebhookRepoResourceTest {
     @Test
     void createOrgScopeAcceptsAnOwnerTarget() {
         given().contentType("application/json").body(body("github", "org", "wh-org", "s"))
-                .when().post("/api/webhook-repos")
+                .when().post("/gw/webhook-repos")
                 .then().statusCode(201)
                 .body("repo.scope", equalTo("org"))
                 .body("repo.target", equalTo("wh-org"));
@@ -61,23 +63,23 @@ class WebhookRepoResourceTest {
     @Test
     void eachRegistrationGetsADistinctKey() {
         String k1 = given().contentType("application/json").body(body("github", "repo", "wh-distinct/a", "s1"))
-                .when().post("/api/webhook-repos").then().statusCode(201).extract().path("repo.webhookKey");
+                .when().post("/gw/webhook-repos").then().statusCode(201).extract().path("repo.webhookKey");
         String k2 = given().contentType("application/json").body(body("github", "repo", "wh-distinct/b", "s2"))
-                .when().post("/api/webhook-repos").then().statusCode(201).extract().path("repo.webhookKey");
+                .when().post("/gw/webhook-repos").then().statusCode(201).extract().path("repo.webhookKey");
         org.junit.jupiter.api.Assertions.assertNotEquals(k1, k2);
     }
 
     @Test
     void updateKeepsTheKeyAndRotatesSecretOnlyWhenSupplied() {
         String id = given().contentType("application/json").body(body("github", "repo", "wh-update/repo", "s1"))
-                .when().post("/api/webhook-repos").then().statusCode(201).extract().path("repo.id");
-        String key = given().when().get("/api/webhook-repos/" + id).then().statusCode(200)
+                .when().post("/gw/webhook-repos").then().statusCode(201).extract().path("repo.id");
+        String key = given().when().get("/gw/webhook-repos/" + id).then().statusCode(200)
                 .extract().path("webhookKey");
 
         // update() returns the flat WebhookRepoView (Optional<WebhookRepoView>, not WebhookRepoSecret) —
         // renaming never touches the secret, so there is nothing to reveal here.
         given().contentType("application/json").body(body("github", "repo", "wh-update/renamed", null))
-                .when().put("/api/webhook-repos/" + id)
+                .when().put("/gw/webhook-repos/" + id)
                 .then().statusCode(200)
                 .body("target", equalTo("wh-update/renamed"))
                 .body("hasSecret", is(true))
@@ -91,7 +93,7 @@ class WebhookRepoResourceTest {
         // never rejected and never honored.
         given().contentType("application/json")
                 .body(body("github", "repo", "wh-nosecret/repo", "client-supplied-value"))
-                .when().post("/api/webhook-repos")
+                .when().post("/gw/webhook-repos")
                 .then().statusCode(201)
                 .body("repo.hasSecret", is(true))
                 .body("secret", notNullValue())
@@ -102,33 +104,33 @@ class WebhookRepoResourceTest {
     void rejectsScopeTargetMismatch() {
         // repo scope needs owner/repo; org scope needs a bare owner.
         given().contentType("application/json").body(body("github", "repo", "wh-noslash", "s"))
-                .when().post("/api/webhook-repos").then().statusCode(400);
+                .when().post("/gw/webhook-repos").then().statusCode(400);
         given().contentType("application/json").body(body("github", "org", "wh/with-slash", "s"))
-                .when().post("/api/webhook-repos").then().statusCode(400);
+                .when().post("/gw/webhook-repos").then().statusCode(400);
         given().contentType("application/json").body(body("github", "repo", "../evil", "s"))
-                .when().post("/api/webhook-repos").then().statusCode(400);
+                .when().post("/gw/webhook-repos").then().statusCode(400);
     }
 
     @Test
     void rejectsAnUnknownProviderType() {
         given().contentType("application/json").body(body("gitea", "repo", "wh-badtype/repo", "s"))
-                .when().post("/api/webhook-repos")
+                .when().post("/gw/webhook-repos")
                 .then().statusCode(400);
     }
 
     @Test
     void deletesAndThenIsGone() {
         String id = given().contentType("application/json").body(body("github", "repo", "wh-delete/repo", "s"))
-                .when().post("/api/webhook-repos").then().statusCode(201).extract().path("repo.id");
-        given().when().delete("/api/webhook-repos/" + id).then().statusCode(204);
-        given().when().get("/api/webhook-repos/" + id).then().statusCode(404);
+                .when().post("/gw/webhook-repos").then().statusCode(201).extract().path("repo.id");
+        given().when().delete("/gw/webhook-repos/" + id).then().statusCode(204);
+        given().when().get("/gw/webhook-repos/" + id).then().statusCode(404);
     }
 
     @Test
     void listsCreatedRegistrationWithoutTheSecret() {
         given().contentType("application/json").body(body("github", "repo", "wh-list/repo", "s"))
-                .when().post("/api/webhook-repos").then().statusCode(201);
-        given().when().get("/api/webhook-repos")
+                .when().post("/gw/webhook-repos").then().statusCode(201);
+        given().when().get("/gw/webhook-repos")
                 .then().statusCode(200)
                 .body("findAll { it.target == 'wh-list/repo' }.size()", equalTo(1))
                 .body("find { it.target == 'wh-list/repo' }.webhookSecret", is(nullValue()));

@@ -388,13 +388,13 @@ export interface WebhookRepoSecret {
 }
 
 export async function fetchWebhookRepos(): Promise<WebhookRepoView[]> {
-  const res = await fetch('/api/webhook-repos');
+  const res = await fetch('/gw/webhook-repos');
   if (!res.ok) return throwResponse(res, 'Failed to load webhook repositories');
   return res.json();
 }
 
 export async function createWebhookRepo(input: WebhookRepoInput): Promise<WebhookRepoSecret> {
-  const res = await fetch('/api/webhook-repos', {
+  const res = await fetch('/gw/webhook-repos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -404,7 +404,7 @@ export async function createWebhookRepo(input: WebhookRepoInput): Promise<Webhoo
 }
 
 export async function updateWebhookRepo(id: string, input: WebhookRepoInput): Promise<WebhookRepoView> {
-  const res = await fetch(`/api/webhook-repos/${encodeURIComponent(id)}`, {
+  const res = await fetch(`/gw/webhook-repos/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -415,13 +415,13 @@ export async function updateWebhookRepo(id: string, input: WebhookRepoInput): Pr
 
 /** Mint a fresh secret for an existing registration — returned once (never on list/get). */
 export async function rotateWebhookSecret(id: string): Promise<WebhookRepoSecret> {
-  const res = await fetch(`/api/webhook-repos/${encodeURIComponent(id)}/rotate-secret`, { method: 'POST' });
+  const res = await fetch(`/gw/webhook-repos/${encodeURIComponent(id)}/rotate-secret`, { method: 'POST' });
   if (!res.ok) return throwResponse(res, 'Failed to rotate webhook secret');
   return res.json();
 }
 
 export async function deleteWebhookRepo(id: string): Promise<void> {
-  const res = await fetch(`/api/webhook-repos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await fetch(`/gw/webhook-repos/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete webhook repository');
 }
 
@@ -811,7 +811,7 @@ export async function fetchAttention(): Promise<AttentionItem[]> {
 
 /** The gateway's own feed. Served by a different service, so it can fail independently. */
 export async function fetchWebhookAttention(): Promise<AttentionItem[]> {
-  const res = await fetch('/api/webhook-repos/attention');
+  const res = await fetch('/gw/webhook-repos/attention');
   if (!res.ok) throw new Error(`Webhook attention request failed: ${res.status}`);
   return res.json();
 }

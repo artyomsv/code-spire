@@ -1,7 +1,60 @@
 quarkus:
+  # Both are separate dev services and BOTH must be off: with quarkus-oidc on the classpath either
+  # starts a Keycloak container of its own, which then times out (~60s) and slows every build.
+  keycloak:
+    devservices:
+      enabled: false
+  oidc:
+    devservices:
+      enabled: false
+    # Operator authentication (D10). Every value here was measured in the phase-0 spike — see
+    # docs/D10-AUTH-PLAN.md §4. Four of them fail silently or fail closed if omitted.
+    auth-server-url: ${SPIRE_OIDC_AUTH_SERVER_URL}
+    client-id: ${SPIRE_OIDC_CLIENT_ID:spire-gateway}
+    credentials:
+      secret: ${SPIRE_OIDC_CLIENT_SECRET}
+    # Cookie session for the browser AND the WebSocket upgrade (a browser cannot set a header on a
+    # handshake); bearer for curl, CI and the SMOKE-TEST runbook.
+    application-type: hybrid
+    authentication:
+      # Scopes the state cookie, the session cookie and its chunks to this service's own prefix, so
+      # the browser never sends this service's session to another one. Measured, not assumed.
+      cookie-path: /gw
+      cookie-suffix: gw
+      # Returns 499 + WWW-Authenticate to a script-initiated request instead of a 302 the SPA would
+      # see as an opaque CORS failure.
+      java-script-auto-redirect: false
+      # MANDATORY: without it the redirect_uri is the REQUESTED path, which no realm can enumerate,
+      # so the IdP rejects every protected path. It must also sit INSIDE cookie-path, or the callback
+      # never receives the state cookie.
+      redirect-path: /gw/auth/callback
+      restore-path-after-redirect: true
+    # MANDATORY: Keycloak puts realm_access in the ACCESS token while cookie mode reads the ID token.
+    # Omit this and login succeeds with ZERO roles — every @RolesAllowed denies every operator, which
+    # presents as a broken app rather than a security error.
+    roles:
+      source: accesstoken
+    # Stops a token minted for one service being accepted by another. Requires a matching audience
+    # mapper in the realm (infra/keycloak/realm-spire.json) — without one the IdP emits no `aud` and
+    # login fails outright with "No Audience (aud) claim present".
+    token:
+      audience: ${SPIRE_OIDC_CLIENT_ID:spire-gateway}
   application:
     name: spire-gateway
   http:
+    # Deny by default: anything not named here requires authentication. The inverse — permit-all with
+    # named exceptions — fails OPEN, and what sits unnamed on this service is the registry holding
+    # every repository's webhook secret.
+    auth:
+      permission:
+        public:
+          # An SCM cannot authenticate; the webhook edges verify an HMAC signature instead. This is
+          # the one place where ADDING authentication would be the defect.
+          paths: /webhooks/*,/q/health,/q/health/*
+          policy: permit
+        operator:
+          paths: /gw/*
+          policy: authenticated
     port: ${GATEWAY_HTTP_PORT:34081}   # host-exposed port in the 34xxx project range
     limits:
       # The /webhooks/{provider}/{key} edges are the only internet-facing, PRE-authentication
@@ -63,6 +116,24 @@ mp:
 
 "%dev":
   quarkus:
+    oidc:
+      # Dev runs without an identity provider by default, so the tenant has nothing to discover and
+      # the service would refuse to boot. Build-time disable is what works here — `tenant-enabled:
+      # false` still demands an auth-server-url (measured in the spike).
+      #
+      # To develop WITH auth: point SPIRE_OIDC_AUTH_SERVER_URL at a Keycloak (either the compose
+      # `--profile idp` one or your own), set SPIRE_OIDC_CLIENT_SECRET, and run with
+      # -Dquarkus.oidc.enabled=true -Dquarkus.http.auth.permission.operator.policy=authenticated.
+      enabled: false
+    http:
+      auth:
+        permission:
+          # Both gates open together. They are independent: this policy decides whether an identity
+          # is required at all, and the @RolesAllowed annotations are checked afterwards. With OIDC
+          # disabled there is no mechanism to satisfy `authenticated`, so leaving it would 401 every
+          # request in dev rather than open it.
+          operator:
+            policy: permit
     log:
       console:
         json:
@@ -78,6 +149,15 @@ mp:
 
 "%test":
   quarkus:
+    oidc:
+      # Build-time disable. `tenant-enabled: false` is NOT enough — the tenant still demands an
+      # auth-server-url and the app fails to boot, which surfaces as one failed test and every other
+      # one SKIPPED, reading as 46 broken tests rather than one missing property.
+      #
+      # Authorization itself stays ON: the behavioural suites carry a class-level @TestSecurity
+      # identity, so they exercise the real permission policy and the real @RolesAllowed annotations
+      # rather than a relaxed variant. OperatorAuthTest covers the unauthenticated and wrong-role cases.
+      enabled: false
     http:
       port: 0
       test-port: 0

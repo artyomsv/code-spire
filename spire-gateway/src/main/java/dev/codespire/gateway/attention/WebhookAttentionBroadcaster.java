@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WebhookAttentionBroadcaster {
 
     private static final Logger LOG = Logger.getLogger(WebhookAttentionBroadcaster.class);
-    private static final String PATH = "/ws/webhook-attention";
+    private static final String PATH = "/gw/ws/webhook-attention";
 
     @Inject
     WebhookAttentionRows rows;
@@ -64,7 +64,9 @@ public class WebhookAttentionBroadcaster {
             return;
         }
         connections.stream()
-                .filter(c -> c.handshakeRequest().path().endsWith(PATH))
+                // Exact match, not endsWith: a suffix test makes a path RENAME look safe while
+                // silently matching zero connections, so every push would be dropped with no error.
+                .filter(c -> PATH.equals(c.handshakeRequest().path()))
                 .forEach(c -> c.sendText(json).subscribe().with(v -> {
                 }, t -> LOG.debugf("Attention push failed: %s", t.getMessage())));
     }

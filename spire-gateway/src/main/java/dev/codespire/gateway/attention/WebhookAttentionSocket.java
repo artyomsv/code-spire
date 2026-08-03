@@ -14,7 +14,7 @@ import jakarta.inject.Inject;
  * exactly as it already did with the two HTTP feeds — neither service reads the other's schema, so
  * there is no aggregating service to hold a single socket.
  */
-@WebSocket(path = "/ws/webhook-attention")
+@WebSocket(path = "/gw/ws/webhook-attention")
 public class WebhookAttentionSocket {
 
     @Inject

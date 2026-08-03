@@ -8,7 +8,6 @@ const orchestrator = process.env.ORCHESTRATOR_URL ?? 'http://localhost:34080';
 const gateway = process.env.GATEWAY_URL ?? 'http://localhost:34081';
 const worker = process.env.WORKER_URL ?? 'http://localhost:34082';
 const orchestratorWs = process.env.ORCHESTRATOR_WS_URL ?? 'ws://localhost:34080';
-const gatewayWs = process.env.GATEWAY_WS_URL ?? 'ws://localhost:34081';
 
 export default defineConfig({
   plugins: [react()],
@@ -23,16 +22,22 @@ export default defineConfig({
     // poll when asked (VITE_USE_POLLING=true, set by the dev compose).
     watch: process.env.VITE_USE_POLLING === 'true' ? { usePolling: true } : undefined,
     proxy: {
-      // Webhook registrations are owned by the GATEWAY (:34081). More specific than
-      // /api, so it must be listed first. Everything else /api -> orchestrator.
-      '/api/webhook-repos': { target: gateway, changeOrigin: true },
+      // The GATEWAY (:34081) owns everything under /gw — its registry API and its attention socket.
+      // A prefix of its own, NOT nested under /api, is what makes cookie scoping real: its session
+      // cookie (cookie-path=/gw) is then never sent to the orchestrator or the worker.
+      //
+      // `ws: true` covers the attention socket under the same rule — one prefix, both protocols.
+      //
+      // changeOrigin is deliberately NOT set here: it rewrites Host to the backend's own port, so
+      // the OIDC redirect_uri comes back as localhost:34081 instead of this origin and the login
+      // round-trip breaks. (proxy-address-forwarding does not fix it — Vite sends no
+      // x-forwarded-host.) The remaining /api rules keep it only because nothing there authenticates
+      // yet; they lose it when their services gain OIDC.
+      '/gw': { target: gateway, ws: true },
       // The assembled context is the WORKER's data (:34082) — it owns the blob and is the only
       // service that can address it. More specific than /api, so it must be listed first.
       '/api/review-context': { target: worker, changeOrigin: true },
       '/api': { target: orchestrator, changeOrigin: true },
-      // The gateway pushes its own conditions, so the browser holds two attention sockets on one
-      // origin. More specific than /ws, so it must be listed first — same reason as webhook-repos.
-      '/ws/webhook-attention': { target: gatewayWs, ws: true },
       '/ws': { target: orchestratorWs, ws: true },
     },
   },

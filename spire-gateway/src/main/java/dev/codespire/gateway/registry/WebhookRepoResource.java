@@ -1,6 +1,7 @@
 package dev.codespire.gateway.registry;
 
 import dev.codespire.gateway.WebhookProviders;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
@@ -20,8 +21,14 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-/** CRUD for webhook registrations (spire-ui Settings -> Webhooks). Gateway-owned. */
-@Path("/api/webhook-repos")
+/**
+ * CRUD for webhook registrations (spire-ui Settings -> Webhooks). Gateway-owned.
+ *
+ * <p>Admin-only in full, reads included: a registration names the repository and the routing key that
+ * addresses it, and its secret is what authenticates an inbound SCM delivery.
+ */
+@Path("/gw/webhook-repos")
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class WebhookRepoResource {

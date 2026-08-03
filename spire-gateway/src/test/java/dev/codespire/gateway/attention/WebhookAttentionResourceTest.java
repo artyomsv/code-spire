@@ -1,5 +1,6 @@
 package dev.codespire.gateway.attention;
 
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
@@ -27,6 +28,7 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
+@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class WebhookAttentionResourceTest {
 
     @Inject
@@ -49,7 +51,7 @@ class WebhookAttentionResourceTest {
                 new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-att", true));
         registry.recordRejection(created.repo().webhookKey(), "bad_signature");
 
-        given().when().get("/api/webhook-repos/attention")
+        given().when().get("/gw/webhook-repos/attention")
                 .then().statusCode(200).contentType(ContentType.JSON)
                 .body("code", hasItem("WEBHOOK_DELIVERIES_REJECTED"))
                 .body("subject", hasItem("stub · TEST-OWNER/TEST-REPO-att"))
@@ -66,7 +68,7 @@ class WebhookAttentionResourceTest {
                 new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-one", true));
         registry.recordRejection(created.repo().webhookKey(), "bad_signature");
 
-        given().when().get("/api/webhook-repos/attention")
+        given().when().get("/gw/webhook-repos/attention")
                 .then().statusCode(200)
                 .body("find { it.subject == 'stub · TEST-OWNER/TEST-REPO-one' }.message",
                         allOf(containsString("1 webhook delivery was refused"), not(containsString("(s)"))));
@@ -83,8 +85,8 @@ class WebhookAttentionResourceTest {
         WebhookRepoSecret created = registry.create(
                 new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-shadow", true));
 
-        given().when().get("/api/webhook-repos/attention").then().statusCode(200);
-        given().when().get("/api/webhook-repos/" + created.repo().id()).then().statusCode(200);
+        given().when().get("/gw/webhook-repos/attention").then().statusCode(200);
+        given().when().get("/gw/webhook-repos/" + created.repo().id()).then().statusCode(200);
     }
 
     /**
@@ -98,7 +100,7 @@ class WebhookAttentionResourceTest {
         String target = "TEST-OWNER/TEST-REPO-nosecret";
         insertSecretlessRegistration(target);
 
-        given().when().get("/api/webhook-repos/attention")
+        given().when().get("/gw/webhook-repos/attention")
                 .then().statusCode(200).contentType(ContentType.JSON)
                 .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.severity",
                         is("WARNING"))
@@ -119,7 +121,7 @@ class WebhookAttentionResourceTest {
                 new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-rejecting-order", true));
         registry.recordRejection(rejecting.repo().webhookKey(), "bad_signature");
 
-        List<String> codes = given().when().get("/api/webhook-repos/attention")
+        List<String> codes = given().when().get("/gw/webhook-repos/attention")
                 .then().statusCode(200)
                 .extract().jsonPath().getList("code", String.class);
 

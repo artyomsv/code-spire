@@ -16,7 +16,7 @@ const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { BLOCKING: 0, 
  */
 const FEEDS = [
   { key: 'orchestrator', path: '/ws/attention' },
-  { key: 'gateway', path: '/ws/webhook-attention' },
+  { key: 'gateway', path: '/gw/ws/webhook-attention' },
 ] as const;
 
 type FeedKey = (typeof FEEDS)[number]['key'];
