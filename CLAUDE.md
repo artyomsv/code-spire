@@ -34,6 +34,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
+| `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 
 ## Status (keep current)
 

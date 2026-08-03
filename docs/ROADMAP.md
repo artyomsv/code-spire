@@ -360,7 +360,7 @@ Open, by nature of the work rather than by section:
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
 | **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
-| — | Packaging: image, Helm/ArgoCD manifests | M | Pairs with D10 — both are what "someone else can run this" requires. |
+| — | **CI/CD + packaging**: GitHub Actions, GHCR images, Helm/kustomize/ArgoCD manifests | M–L | **Analysed and planned — see [CICD-AND-PACKAGING.md](CICD-AND-PACKAGING.md).** Deliberately parked behind D10: there is no CI at all today and no production image, and shipping a one-command install for an unauthenticated app invites exposure. The plan (single-source Helm chart, kustomize inflating it, rendered manifests drift-checked in CI) is recorded so the analysis is not redone. |
 | — | Fleet cost/abuse caps | M | Explicitly deferred from v1 and a **known operator-facing gap**: no per-repo rate limit, no daily spend cap, no hard giant-PR skip. |
 
 **Closed since this table was last written:** the **contract-compat CI gate** (round-trip + snapshot
