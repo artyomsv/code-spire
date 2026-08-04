@@ -120,8 +120,17 @@ valid at all three — the same residual by another route.
 | Access | Endpoints |
 |---|---|
 | **public** | `/webhooks/**`; `/q/health*` **as an explicit permit rule**, not by absence of a rule |
-| **`spire-viewer`** | GETs that expose only review/config metadata, plus all 4 WebSockets |
-| **`spire-admin`** | every mutation — providers, llm-\*, context-providers, webhook-repos, prompts, settings, review delete — **plus** manual register, review re-run, and `POST /api/dlq/{id}/replay` + `DELETE /api/dlq/{id}` |
+| **`spire-viewer`** | review GETs (list, detail, timeline, threads, assembled context), attention, plus all 4 WebSockets |
+| **`spire-admin`** | every mutation — providers, llm-\*, context-providers, webhook-repos, prompts, settings, review delete — **plus** manual register, review re-run, `POST /api/dlq/{id}/replay` + `DELETE /api/dlq/{id}`, **and every configuration read** |
+
+> **Superseded after delivery (2026-08-04).** This table originally gave `spire-viewer` "GETs that
+> expose only review/**config** metadata", on the reasoning that a registry never returns a secret —
+> only `hasSecret`. That reasoning was correct and the conclusion was still wrong: a registry listing
+> is an inventory of every repository, inference endpoint, context source and model the deployment
+> reaches, which discloses its reach whether or not a credential is quoted. Configuration is now
+> admin-only **including its reads**, which is the third rule in the matrix below. The gateway had
+> already reached this conclusion independently for `/gw/webhook-repos` ("admin-only in full, reads
+> included") — the orchestrator's registries were simply inconsistent with it.
 
 The admin line is *"can it spend money or change behaviour"*. That partitions mutation and is **blind to
 disclosure**, which is how the following was missed:

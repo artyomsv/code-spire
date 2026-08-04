@@ -19,9 +19,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/** CRUD for the LLM model catalog (spire-ui Settings -> LLM). */
+/**
+ * CRUD for the LLM model catalog (spire-ui Settings -> LLM).
+ *
+ * <p>Admin-only in full, reads included: it carries the operator-entered prices every review is
+ * costed against (ADR-018), so it is configuration in the same sense the provider list is.
+ */
 @Path("/api/llm-models")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmModelResource {

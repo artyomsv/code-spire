@@ -814,24 +814,93 @@ turns it on and checks the boundary from the outside.
 
 ### Start an identity provider
 
-Either bring up the bundled one:
+**Option A — the bundled one.** Imports the realm on first boot, nothing else to do:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.idp.yml up -d keycloak
 ```
 
-…or point at one you already run. Both need the realm imported once:
+**Option B — one you already run.** Import the realm once, either through the admin console
+(Realms → Create realm → browse to the file) or over the admin API:
 
 ```bash
-curl -s -X POST http://localhost:34567/admin/realms \
+curl -s -X POST http://<your-keycloak>/admin/realms \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
   --data-binary @infra/keycloak/realm-spire.json
 ```
 
-It defines three clients (one per service), both roles, the audience mappers the services require, and
-two obviously-synthetic users: `dev-operator` (admin + viewer) and `dev-viewer` (viewer only).
+Either way the realm defines three clients (one per service), both roles, the audience mappers the
+services require, and two obviously-synthetic users.
 
-### Run a service with authentication on
+#### Dev logins
+
+Defined in `infra/keycloak/realm-spire.json`, so they exist in any Keycloak the realm is imported into.
+**Development fixtures only** — they are committed to this repository in plain text, which is exactly
+why they must never be created anywhere reachable from outside a workstation. Each password is the
+username.
+
+| User | Password | Roles | Can do |
+|---|---|---|---|
+| `dev-operator` | `dev-operator` | `spire-admin` + `spire-viewer` | everything — register a PR, re-run, delete, replay the DLQ, and every settings screen |
+| `dev-viewer` | `dev-viewer` | `spire-viewer` | read reviews only — the reviews list, a review's detail/timeline/threads/context, and the attention panel. **No Configure section at all** (General, Context, Repositories, Webhooks, LLM, Prompts, Dead-letter), no Register PR, no review-mode toggle, no re-run or delete |
+
+The viewer's limits are enforced by the API (`@RolesAllowed`), not by the interface: every
+configuration endpoint answers **403** for `spire-viewer`, reads included. The dashboard hides what it
+cannot use as a courtesy, and grants nothing until it knows the role — so nothing administrative
+appears even momentarily for a viewer.
+
+Both clients allow the direct-access grant, so a shell can hold either identity without a browser:
+
+```bash
+curl -s -X POST http://localhost:34567/realms/spire/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=spire-orchestrator \
+  -d client_secret=dev-only-orchestrator-secret \
+  -d scope=openid -d username=dev-viewer -d password=dev-viewer
+```
+
+The per-service client secrets are `dev-only-orchestrator-secret`, `dev-only-gateway-secret` and
+`dev-only-worker-secret` — likewise fixtures from the same file, and likewise never a deployment
+credential.
+
+#### The issuer has to be one value, and that is what picks the URL
+
+The browser and the service both talk to the identity provider, and Keycloak answers with whatever
+hostname it was *reached by* unless pinned. Get this wrong and login fails at the last step, with a
+token whose `iss` does not match what the service discovered — not at startup, where it would be
+obvious.
+
+- **Bundled (Option A):** already solved, and worth knowing how. `KC_HOSTNAME` pins the
+  *frontchannel* to `http://localhost:34567` while `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` lets the
+  backchannel follow the request, so discovery fetched from inside the compose network returns a
+  browser-reachable `authorization_endpoint` (`localhost:34567`), a container-reachable
+  `token_endpoint`/`jwks_uri` (`keycloak:8080`), and **one** `issuer` both sides agree on. A
+  containerized service therefore points at `http://keycloak:8080/realms/spire`; a host-run one at
+  `http://localhost:34567/realms/spire`.
+- **Your own (Option B)**, which typically has no `KC_HOSTNAME` pin: `localhost:<port>` from the
+  browser and `host.docker.internal:<port>` from a container are **two different issuers**, and every
+  login fails. Pick one name that resolves from both sides and use it everywhere —
+  `host.docker.internal` does on Docker Desktop, including from the Windows host, so
+  `SPIRE_OIDC_AUTH_SERVER_URL=http://host.docker.internal:<port>/realms/spire`. (A host-run stack
+  reaching a host-published Keycloak has no such split; `localhost` is already common to both.)
+
+Redirect URIs are unaffected by this choice — they name *the app's* origin, not the provider's.
+
+### Run with authentication on
+
+**The containerized stack** (`docker-compose.dev.yml`) — add the `docker-compose.auth.yml` overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+               -f docker-compose.idp.yml -f docker-compose.auth.yml up -d --build
+```
+
+`--build` is not optional. The dev images bake the source in and it is `--watch` that streams later
+edits; a plain `up -d` restarts the *existing image*, so a stack left running across a branch serves
+old code while looking perfectly healthy. The symptom here is authentication apparently refusing to
+switch on — because the endpoints the flags govern are not in the image yet. Drop the one `-f` and
+re-run to go back to an unauthenticated stack.
+
+**A host-run service** — the same three switches as `-D` flags:
 
 ```bash
 export SPIRE_OIDC_AUTH_SERVER_URL=http://localhost:34567/realms/spire
@@ -842,14 +911,21 @@ export SPIRE_OIDC_CLIENT_SECRET=<from the realm>
   -Dquarkus.http.auth.permission.operator.policy=authenticated
 ```
 
-Both switches are needed together: the permission policy decides whether an identity is required at
-all, and `auth-enabled` governs the role checks that run after it. Setting one alone leaves the
-service half-authenticated — the API refusing while a socket still opens.
+All three are needed together: `oidc.enabled` decides whether there is OIDC at all, the permission
+policy decides whether an identity is *required*, and `auth-enabled` governs the role checks that run
+afterwards. A subset leaves the service half-authenticated — the API refusing while a socket still
+opens, or every operator denied because no roles were read. (`oidc.enabled` is build-time config, but
+an environment variable still overrides the `%dev` default, which is how the compose overlay sets it
+without restating each service's gradle command.)
 
 ### What to check
 
+Ports below are the host-run stack (orchestrator `34080`, gateway `34081`, dashboard `34000`). On the
+containerized stack read them as `39280` / `39281` / `39285`.
+
 | # | Check | Expected |
 |---|---|---|
+| 0 | `curl -i :34081/webhooks/github/unknown-key` through the Cloudflare tunnel, if one is running | **404** — not 502. Recreating the gateway changes its container IP; this proves cloudflared re-resolved it, and that turning auth on left `/webhooks/*` public |
 | 1 | `curl -i :34080/api/reviews` | **302** to the identity provider |
 | 2 | `curl -i -H 'X-Requested-With: JavaScript' :34080/api/reviews` | **499** + `WWW-Authenticate: OIDC` — the status the dashboard acts on |
 | 3 | `curl -i -H 'Authorization: Bearer bogus' :34080/api/reviews` | **401** — bearer is challenged as bearer, so scripted access still works |
@@ -857,10 +933,21 @@ service half-authenticated — the API refusing while a socket still opens.
 | 5 | `curl -i :34080/q/health` | **200** |
 | 6 | `curl -i -X POST :34081/webhooks/github/unknown-key` | **404**, never 401 — an SCM has no token to present |
 | 7 | Open the dashboard | redirected to the provider; sign in as `dev-operator` and land back on the dashboard |
-| 8 | Sign in as `dev-viewer` instead | no Register PR button, no re-run or delete on a review, no Dead-letter nav |
-| 9 | As `dev-viewer`, `curl` the DLQ with that session | **403** — the listing carries raw payloads |
+| 8 | Sign in as `dev-viewer` instead | the rail shows **Reviews only** — the whole Configure section is gone, along with the Register PR button and the review-mode toggle; no re-run or delete on a review |
+| 8b | As `dev-viewer`, navigate straight to `#/settings/llm` | bounced to the reviews list. The nav is a courtesy; a bookmark reaches a route without it |
+| 9 | As `dev-viewer`, `curl` the DLQ and any registry (`/api/providers`, `/api/llm-providers`, `/api/prompts`, `/api/settings/review-mode`) with that session | **403** on every one — configuration is admin-only including its reads |
 | 10 | Wait past the session lifetime (~5 min) with the dashboard open | it goes to a login, and does **not** sit reconnecting or claim the webhook gateway is down |
 | 11 | Sign out | returned to the provider's login, and signing in again asks for credentials rather than silently resuming |
+| 11b | Sign in, then open **Webhooks** and any review's **Context** card | both load. They are served by the gateway and the worker, which are separate sessions — signing in mints `/api` only, so the dashboard establishes the siblings via `<prefix>/auth/login`. If either says "failed to fetch", that step did not happen |
+| 11c | With the dashboard open, check the attention bell reports no gateway outage | a missing `/gw` session used to present as "the webhook gateway is not responding", retried every 1.5s — a false BLOCKING row about a service that was fine |
+| 12 | Compare the `302` from `/api/…` with the one from `/gw/…`, both via the dashboard's origin | **different `client_id`s** (`spire-orchestrator` vs `spire-gateway`) and **different callback paths** — the per-service isolation, visible without reading any config |
+| 13 | Any `redirect_uri` in those redirects | the origin **you are browsing** (`:34000`/`:39285`), never a backend port — the dev-server proxy deliberately omits `changeOrigin`, which would rewrite `Host` and send the callback to the wrong origin |
+| 14 | On an unpinned provider (option B), mint a token from **each** hostname it answers on and call the API with both | the one matching `SPIRE_OIDC_AUTH_SERVER_URL` gives **200**, the other **401**. Same server, same realm, same user — the issuer is part of the token, so this is what "both sides must use one hostname" actually means, and it is worth seeing once rather than trusting |
 
 Check 10 is the one worth being patient for: it is the failure the socket lifecycle work exists to
 prevent, and the only way to see it is to let a session actually lapse.
+
+Checks 1–6, 9, 12 and 13 need no browser: the realm's clients allow the direct-access grant, so a
+token for either synthetic user comes back from `/protocol/openid-connect/token` with
+`grant_type=password`, and `Authorization: Bearer <it>` exercises the role split (`/api/dlq` **403**
+as `dev-viewer`, **200** as `dev-operator`) straight from the shell.

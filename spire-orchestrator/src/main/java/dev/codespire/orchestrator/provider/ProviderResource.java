@@ -25,9 +25,16 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/** CRUD for registered SCM providers (spire-ui Settings -> Providers). */
+/**
+ * CRUD for registered SCM providers (spire-ui Settings -> Providers).
+ *
+ * <p>Admin-only in full, reads included: the listing is an inventory of every repository host and
+ * workspace this deployment can reach, and of the bot identity acting in them. No secret is in the
+ * payload — that was the earlier reason to let a viewer read it, and it answers a narrower question
+ * than whether a viewer should know the deployment's reach.
+ */
 @Path("/api/providers")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ProviderResource {

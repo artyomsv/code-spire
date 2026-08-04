@@ -13,7 +13,7 @@ import static org.hamcrest.Matchers.is;
  * The authorization boundary on the orchestrator (D10 slice 3) — the largest surface, and the one
  * holding the provider registry, the event store and the dead-letter queue.
  *
- * <p>Two rules decide the role matrix, and they are different rules:
+ * <p>Three rules decide the role matrix, and they are different rules:
  * <ul>
  *   <li><b>Can it spend money or change behaviour?</b> Registering, re-running and replaying all
  *       re-trigger pipeline processing that reaches paid LLM calls, so they are admin even though
@@ -22,10 +22,35 @@ import static org.hamcrest.Matchers.is;
  *       entirely. {@code GET /api/dlq} changes nothing and was viewer-readable under the first
  *       rule alone — while returning raw wire records that carry findings quoting source and the
  *       brokered SCM credential.</li>
+ *   <li><b>Is it configuration?</b> A viewer reads <em>reviews</em>; how the system is wired is not
+ *       theirs to see. This rule supersedes an earlier decision that the registries were
+ *       viewer-readable because no secret is ever in the payload. That was true and is still true —
+ *       and it turned out to be the wrong test. A registry listing is an inventory of every
+ *       repository, endpoint, host and model an operator has connected, which describes the reach
+ *       of the deployment whether or not a credential is quoted. "No secrets in the body" answers a
+ *       narrower question than "should this reader know this".</li>
  * </ul>
  */
 @QuarkusTest
 class OperatorAuthTest {
+
+    /**
+     * Every configuration read the dashboard's Configure section is built from — one entry per
+     * settings screen. Listed here rather than asserted one-by-one so that adding a registry without
+     * deciding its role is a failing test rather than an oversight: a new screen whose endpoint is
+     * missing from this list is invisible to both tests below.
+     */
+    private static final String[] CONFIGURATION_READS = {
+            "/api/providers",
+            "/api/llm-providers",
+            "/api/llm-models",
+            "/api/context-providers",
+            "/api/prompts",
+            "/api/settings/review-mode",
+            "/api/settings/review",
+            "/api/settings/conversation",
+            "/api/settings/conversation-level",
+    };
 
     @Test
     void anUnauthenticatedCallerReachesNothing() {
@@ -46,11 +71,26 @@ class OperatorAuthTest {
         given().when().get("/api/attention").then().statusCode(200);
     }
 
-    /** Provider metadata is viewer-readable because secrets are never in the payload — only `hasSecret`. */
+    /**
+     * A viewer reads reviews and nothing about how the system is wired — not the repositories, the
+     * models, the context sources, the prompts or the global settings. Refused on the way IN, at the
+     * API: hiding the dashboard's Configure section is a courtesy to the operator, never the control.
+     */
     @Test
     @TestSecurity(user = "dev-viewer", roles = "spire-viewer")
-    void aViewerCanReadProviderMetadata() {
-        given().when().get("/api/providers").then().statusCode(200);
+    void aViewerCannotReadConfiguration() {
+        for (String path : CONFIGURATION_READS) {
+            given().when().get(path).then().statusCode(403);
+        }
+    }
+
+    /** The same reads, for the role that is allowed them — so the rule above is a boundary, not a wall. */
+    @Test
+    @TestSecurity(user = "dev-operator", roles = {"spire-viewer", "spire-admin"})
+    void anAdminCanReadConfiguration() {
+        for (String path : CONFIGURATION_READS) {
+            given().when().get(path).then().statusCode(200);
+        }
     }
 
     /**
@@ -93,6 +133,28 @@ class OperatorAuthTest {
     @TestSecurity(user = "dev-operator", roles = {"spire-viewer", "spire-admin"})
     void anAdminCanReadTheDeadLetterQueue() {
         given().when().get("/api/dlq").then().statusCode(200);
+    }
+
+    /**
+     * A code-flow callback the framework declined must land on the dashboard, not on a 404.
+     *
+     * <p>The OIDC mechanism claims the redirect path before routing sees it, but only while a state
+     * cookie exists to match the callback against — five minutes by default. A login page left open
+     * past that, or submitted twice, produced a 404 <em>immediately after valid credentials were
+     * accepted</em>. In dev it was worse than a bare 404: an unmatched path is answered with Quarkus's
+     * development "resources overview", which lists every endpoint in the service to any signed-in
+     * operator, viewer included.
+     *
+     * <p>This asserts only the fall-through. That the real callback is still intercepted cannot be
+     * shown here — it needs a live state cookie — and was verified against a running service: with a
+     * valid cookie and a bad code the mechanism answers 401, so this resource never sees it.
+     */
+    @Test
+    @TestSecurity(user = "dev-viewer", roles = "spire-viewer")
+    void anUnclaimedCallbackReturnsToTheDashboard() {
+        given().redirects().follow(false)
+                .when().get("/api/auth/callback?state=TEST-stale&code=TEST-stale")
+                .then().statusCode(303).header("Location", org.hamcrest.Matchers.endsWith("/"));
     }
 
     /**

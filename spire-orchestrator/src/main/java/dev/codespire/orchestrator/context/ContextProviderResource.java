@@ -43,9 +43,14 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/** CRUD for registered context providers (spire-ui Settings -> Context). */
+/**
+ * CRUD for registered context providers (spire-ui Settings -> Context).
+ *
+ * <p>Admin-only in full, reads included: the listing names the issue trackers and wikis a review
+ * pulls text from, and the preview endpoint returns retrieved ticket content verbatim.
+ */
 @Path("/api/context-providers")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ContextProviderResource {

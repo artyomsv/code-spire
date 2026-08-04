@@ -26,13 +26,42 @@ Trust boundaries, authn/authz, encryption, and secrets.
   URL prefix: orchestrator `/api` (sockets at `/api/ws/*`), gateway `/gw`, worker `/wk`. Cookies are
   scoped by host+path, not by backend, so the prefixes are what stop one service receiving another's
   session credential. The realm needs an **audience mapper per client**.
-- **RBAC:** two roles — `spire-viewer` (read the dashboard) and `spire-admin` (manage config, replay,
-  rules). Enforced with `@RolesAllowed`. Roles map from the IdP, read from the **access** token
-  (Keycloak puts `realm_access` there; reading the ID token yields an operator with no roles at all).
-- Two rules decide the matrix, and both are needed. *Can it spend money or change behaviour* makes
-  register, re-run and DLQ replay admin. *What does the payload contain* makes `GET /api/dlq` admin
-  despite changing nothing — a dead-letter row carries the raw wire record, quoting source or
-  carrying a brokered credential.
+- **A session is therefore per prefix, and each one has to be established.** Every service exposes
+  `GET <prefix>/auth/login` (`@RolesAllowed`, both roles, 303 back to `/`); the dashboard probes the
+  siblings once it knows it is signed in and navigates to any that refuse, which completes silently
+  against the existing provider session. This is not optional plumbing: neither `fetch` nor a WebSocket
+  handshake can follow the cross-origin redirect that a missing session produces, so without it the
+  gateway-backed screens reported *"failed to fetch"*, a review's Context card failed alone on an
+  otherwise working page, and the attention panel reported a healthy gateway as unreachable. All
+  dashboard calls go through one wrapper that carries the script marker and sends a refusal to the
+  login of **the service that refused** — sending it to the dashboard's own login re-mints a cookie
+  that was never missing.
+- **RBAC:** two roles — `spire-viewer` (read **reviews**) and `spire-admin` (everything else: manage
+  config, replay, rules). Enforced with `@RolesAllowed`. Roles map from the IdP, read from the
+  **access** token (Keycloak puts `realm_access` there; reading the ID token yields an operator with
+  no roles at all).
+- Three rules decide the matrix, and all three are needed. *Can it spend money or change behaviour*
+  makes register, re-run and DLQ replay admin. *What does the payload contain* makes `GET /api/dlq`
+  admin despite changing nothing — a dead-letter row carries the raw wire record, quoting source or
+  carrying a brokered credential. *Is it configuration* makes every registry admin-only **including
+  its reads**: SCM providers, LLM providers and models, context providers, prompt overrides, webhook
+  registrations and the global settings.
+- The third rule replaced an earlier decision that the registries were viewer-readable because no
+  secret is ever in the payload. That was true, and it was the wrong test: a registry listing is an
+  inventory of every repository, inference endpoint, context source and model the deployment reaches,
+  which describes its reach whether or not a credential is quoted. "No secret in the body" answers a
+  narrower question than "should this reader know this".
+- A viewer therefore sees the reviews list and any review's detail, timeline, threads and assembled
+  context, plus the attention panel — and no configuration screen at all. The dashboard hides what it
+  cannot use, but the refusal is the API's: hiding is a courtesy, `@RolesAllowed` is the control.
+- **The dashboard grants nothing by default.** Every privileged control is gated on a role the session
+  is known to hold, so the shell opens with nothing administrative offered and adds it once `/api/me`
+  answers — never the reverse. `hasRole(null, …)` is `false`, and guarded routes have a third state
+  ("unknown") that renders neither the page nor a refusal. An earlier version defaulted to *permitted*
+  on the reasoning that the API is the real authority; sound about security, wrong about interface —
+  it showed every operator the full admin surface for as long as the session took to load. An option
+  disappearing reads as a malfunction, one appearing reads as loading. Only `authEnabled: false` (dev,
+  where there are no roles to hold) grants without a role.
 - **Public by design:** `/webhooks/*` (an SCM presents an HMAC signature, not a token), `/q/health*`,
   and `/api/me` (a browser must be able to ask whether it needs to log in before it has).
 - The policy is **deny-by-default**; the inverse fails open, and what sits unnamed on the gateway is
@@ -49,6 +78,14 @@ Trust boundaries, authn/authz, encryption, and secrets.
   `HttpOnly` prevents reading a cookie, not using it.
 - **CSRF** applies where it would not with bearer tokens. The session cookie is `SameSite=Lax` and no
   `GET` mutates (verified across all 21 resources).
+- **A dev-mode stack discloses its route names.** Running under `quarkusDev`, an unmatched path is
+  answered with Quarkus's development "resources overview" — every endpoint, listed — to any
+  authenticated caller, so a viewer can read the API inventory even though every configuration read is
+  refused. Never anonymous (`/api/*` is `authenticated`), route names only, and absent from a
+  production build (`…runtime.devmode.ResourceNotFoundHandler`). Tracked in `techdebt/global/`; the
+  consequence is that **the local auth test bed is a workstation tool, not a shared environment**.
+  The one path that reached it by accident — an OIDC callback the framework declined, because the
+  state cookie had expired while a login page sat open — now answers `303` to `/` in every profile.
 
 ## Service-to-service
 

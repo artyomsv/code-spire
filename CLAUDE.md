@@ -423,9 +423,26 @@ The design is fully specified in `docs/` — **treat those files as the source o
   `/api/webhook-repos` the browser sent the *orchestrator's* cookie to it; per-service encryption
   secrets don't help because the encrypted cookie **is** the credential. Policies are deny-by-default
   with `/webhooks/*` (an SCM has only an HMAC signature), `/q/health*` and `/api/me` explicitly
-  public. Two roles decided by two rules: *can it spend money* (register, re-run, DLQ replay) and
-  *what's in the payload* — the second is why `GET /api/dlq` is admin despite changing nothing, since
-  a dead-letter row carries the raw wire record. The UI knows its own session (`/api/me`), hides what
+  public. Two roles decided by **three** rules: *can it spend money* (register, re-run, DLQ replay),
+  *what's in the payload* — why `GET /api/dlq` is admin despite changing nothing, since a dead-letter
+  row carries the raw wire record — and *is it configuration*, which makes **every registry admin-only
+  including its reads** (SCM/LLM/context providers, models, prompts, webhook registrations, global
+  settings). That third rule replaced an earlier call that the registries were viewer-readable because
+  no secret is in the payload: true, but the wrong test — a listing is an inventory of every repo,
+  endpoint and model the deployment reaches. A viewer sees reviews (list, detail, timeline, threads,
+  context) and the attention panel; the dashboard hides the whole Configure section and bounces its
+  routes, but `@RolesAllowed` is the control and hiding is only a courtesy.
+  **A session is per prefix, and each must be established:** every service exposes
+  `GET <prefix>/auth/login` (both roles, 303 to `/`) and the dashboard probes the siblings once signed
+  in, navigating to any that refuse (silent SSO, `sessionStorage`-guarded against looping). Without
+  this the gateway/worker screens were unreachable — neither `fetch` nor a WS handshake can follow the
+  cross-origin redirect a missing session produces, so Webhooks reported "failed to fetch", a review's
+  Context card failed alone, and the attention panel called a healthy gateway unreachable. All UI calls
+  go through `apiFetch`, which carries the script marker and sends a refusal to the login of *the
+  service that refused*. The UI **grants nothing by default** — `hasRole(null, …)` is false and guarded
+  routes have an explicit unknown state, since defaulting to permitted flashed the full admin surface
+  at a viewer for ~200ms; only `authEnabled:false` (dev) grants without a role.
+  The UI knows its own session (`/api/me`), hides what
   a viewer may not do, and asks *why* a socket closed before reconnecting: the old blind 1.5s retry
   hammered the IdP on every routine 5-minute expiry while the attention panel reported it as a
   gateway outage. `%dev` runs unauthenticated (both gates open together — opening one leaves REST

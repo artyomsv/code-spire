@@ -19,9 +19,14 @@ import jakarta.ws.rs.core.Response;
 
 import java.util.List;
 
-/** CRUD + validation + preview for operator prompt overrides (spire-ui Settings -> Prompts). */
+/**
+ * CRUD + validation + preview for operator prompt overrides (spire-ui Settings -> Prompts).
+ *
+ * <p>Admin-only in full, reads included: a prompt override is the instruction set every review is
+ * conducted under, and the preview renders it against real input.
+ */
 @Path("/api/prompts")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class PromptResource {

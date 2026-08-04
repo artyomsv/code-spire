@@ -16,7 +16,7 @@ import java.util.Locale;
 
 /** Read and set the GLOBAL default conversation level (spire-ui Settings). Per-provider overrides live on the provider. */
 @Path("/api/settings/conversation-level")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ConversationLevelResource {

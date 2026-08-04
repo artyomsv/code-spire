@@ -22,9 +22,14 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/** CRUD for registered LLM providers (spire-ui Settings -> LLM). */
+/**
+ * CRUD for registered LLM providers (spire-ui Settings -> LLM).
+ *
+ * <p>Admin-only in full, reads included: the listing names every inference endpoint the deployment
+ * sends code to, which is where the "does code leave the boundary" question is actually answered.
+ */
 @Path("/api/llm-providers")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class LlmProviderResource {

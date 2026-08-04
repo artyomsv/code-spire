@@ -18,7 +18,10 @@ import java.util.Locale;
  * observe &lt;-&gt; active and is picked up by the next PR event — no restart.
  */
 @Path("/api/settings/review-mode")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+// Admin-only including the GET: the mode decides whether the bot posts at all, so it is the single
+// switch that says what this deployment currently does. The sidebar toggle is hidden for a viewer
+// rather than shown refusing to move.
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ReviewModeResource {

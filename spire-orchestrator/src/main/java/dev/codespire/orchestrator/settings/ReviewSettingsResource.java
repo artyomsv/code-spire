@@ -22,7 +22,7 @@ import jakarta.ws.rs.core.MediaType;
  * toggle already owns it.
  */
 @Path("/api/settings/review")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ReviewSettingsResource {

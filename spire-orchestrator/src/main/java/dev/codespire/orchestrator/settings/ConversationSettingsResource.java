@@ -21,7 +21,7 @@ import java.util.Locale;
  * (which the UI still targets until its migration task); this is the backend + REST surface only.
  */
 @Path("/api/settings/conversation")
-@RolesAllowed({"spire-viewer", "spire-admin"})
+@RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class ConversationSettingsResource {
