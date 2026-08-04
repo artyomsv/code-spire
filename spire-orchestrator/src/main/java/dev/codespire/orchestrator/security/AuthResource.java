@@ -80,4 +80,31 @@ public class AuthResource {
     public Response login() {
         return Response.seeOther(URI.create("/")).build();
     }
+
+    /**
+     * A code-flow callback the framework did not claim — send the operator to the dashboard.
+     *
+     * <p>The redirect path is normally intercepted by the OIDC mechanism before routing ever sees it,
+     * but only while there is a state cookie to match the callback's {@code state} against. That cookie
+     * lives five minutes by default, so a login page left open past it — or submitted twice — produces
+     * a callback the mechanism declines, which then falls through to ordinary routing and finds no
+     * resource here. The result was a **404 immediately after entering valid credentials**, which reads
+     * as the sign-in being broken.
+     *
+     * <p>Nothing is authenticated by this method: reaching it at all means the request already
+     * satisfied the policy on this prefix, so the session exists and the sensible answer is the page
+     * the operator was trying to get to. A genuine callback still never arrives here.
+     *
+     * <p>In dev the fall-through was worse than a bare 404: Quarkus answers an unmatched path with its
+     * development "resources overview" page, which lists every endpoint in the service. It is
+     * dev-mode-only ({@code io.quarkus.vertx.http.runtime.devmode}) and was never publicly reachable —
+     * the policy answers an anonymous request with a redirect — but it did disclose the API surface to
+     * any signed-in operator, including a viewer.
+     */
+    @GET
+    @Path("/auth/callback")
+    @RolesAllowed({"spire-viewer", "spire-admin"})
+    public Response staleCallback() {
+        return Response.seeOther(URI.create("/")).build();
+    }
 }

@@ -1,3 +1,5 @@
+import { apiFetch } from './auth';
+
 export type ReviewStatus =
   | 'reviewing'
   | 'completed'
@@ -82,7 +84,7 @@ export async function fetchThreadMessages(
   pr: string | number,
   threadRef: string,
 ): Promise<ThreadMessage[]> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/reviews/${workspace}/${slug}/${pr}/threads/${encodeURIComponent(threadRef)}`,
   );
   if (!res.ok) throw new Error(`Failed to load thread (${res.status})`);
@@ -141,7 +143,7 @@ export interface ReviewDetail extends ReviewSummary {
 }
 
 export async function fetchReviews(): Promise<ReviewSummary[]> {
-  const res = await fetch('/api/reviews');
+  const res = await apiFetch('/api/reviews');
   if (!res.ok) throw new Error(`Failed to load reviews (${res.status})`);
   return res.json();
 }
@@ -151,7 +153,7 @@ export async function fetchReviewDetail(
   slug: string,
   pr: string | number,
 ): Promise<ReviewDetail> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}`,
   );
   if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
@@ -164,7 +166,7 @@ export async function deleteReview(
   slug: string,
   pr: string | number,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}`,
     { method: 'DELETE' },
   );
@@ -177,7 +179,7 @@ export async function rerunReview(
   slug: string,
   pr: string | number,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}/rerun`,
     { method: 'POST' },
   );
@@ -201,7 +203,7 @@ export async function registerPr(body: {
   // resolves the right provider when registering by fields. Omitted when unknown.
   providerType?: string;
 }): Promise<RegisterResult> {
-  const res = await fetch('/api/reviews/register', {
+  const res = await apiFetch('/api/reviews/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -225,7 +227,7 @@ export interface ResolvedUrl {
  * unparseable URL (HTTP 400) — callers treat that as "keep typing".
  */
 export async function resolvePrUrl(url: string): Promise<ResolvedUrl> {
-  const res = await fetch('/api/reviews/register/resolve', {
+  const res = await apiFetch('/api/reviews/register/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
@@ -297,13 +299,13 @@ async function throwResponse(res: Response, fallback: string): Promise<never> {
 }
 
 export async function fetchProviders(): Promise<ProviderView[]> {
-  const res = await fetch('/api/providers');
+  const res = await apiFetch('/api/providers');
   if (!res.ok) return throwResponse(res, 'Failed to load providers');
   return res.json();
 }
 
 export async function createProvider(input: ProviderInput): Promise<ProviderView> {
-  const res = await fetch('/api/providers', {
+  const res = await apiFetch('/api/providers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -313,7 +315,7 @@ export async function createProvider(input: ProviderInput): Promise<ProviderView
 }
 
 export async function updateProvider(id: string, input: ProviderInput): Promise<ProviderView> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -323,7 +325,7 @@ export async function updateProvider(id: string, input: ProviderInput): Promise<
 }
 
 export async function deleteProvider(id: string): Promise<void> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete provider');
 }
 
@@ -335,7 +337,7 @@ export interface ProviderCheck {
 
 // Live connectivity check: contacts the SCM with the stored token (whoami).
 export async function checkProvider(id: string): Promise<ProviderCheck> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) await throwResponse(res, 'Failed to check provider');
   return res.json();
 }
@@ -347,7 +349,7 @@ export interface RepoCheck {
 
 // Live check that a repo exists and is reachable with the provider's token (no webhook is created).
 export async function verifyRepo(providerId: string, repo: string): Promise<RepoCheck> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/verify-repo`, {
+  const res = await apiFetch(`/api/providers/${encodeURIComponent(providerId)}/verify-repo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ repo }),
@@ -388,13 +390,13 @@ export interface WebhookRepoSecret {
 }
 
 export async function fetchWebhookRepos(): Promise<WebhookRepoView[]> {
-  const res = await fetch('/gw/webhook-repos');
+  const res = await apiFetch('/gw/webhook-repos');
   if (!res.ok) return throwResponse(res, 'Failed to load webhook repositories');
   return res.json();
 }
 
 export async function createWebhookRepo(input: WebhookRepoInput): Promise<WebhookRepoSecret> {
-  const res = await fetch('/gw/webhook-repos', {
+  const res = await apiFetch('/gw/webhook-repos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -404,7 +406,7 @@ export async function createWebhookRepo(input: WebhookRepoInput): Promise<Webhoo
 }
 
 export async function updateWebhookRepo(id: string, input: WebhookRepoInput): Promise<WebhookRepoView> {
-  const res = await fetch(`/gw/webhook-repos/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/gw/webhook-repos/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -415,13 +417,13 @@ export async function updateWebhookRepo(id: string, input: WebhookRepoInput): Pr
 
 /** Mint a fresh secret for an existing registration — returned once (never on list/get). */
 export async function rotateWebhookSecret(id: string): Promise<WebhookRepoSecret> {
-  const res = await fetch(`/gw/webhook-repos/${encodeURIComponent(id)}/rotate-secret`, { method: 'POST' });
+  const res = await apiFetch(`/gw/webhook-repos/${encodeURIComponent(id)}/rotate-secret`, { method: 'POST' });
   if (!res.ok) return throwResponse(res, 'Failed to rotate webhook secret');
   return res.json();
 }
 
 export async function deleteWebhookRepo(id: string): Promise<void> {
-  const res = await fetch(`/gw/webhook-repos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/gw/webhook-repos/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete webhook repository');
 }
 
@@ -434,13 +436,13 @@ export interface ReviewModeView {
 }
 
 export async function getReviewMode(): Promise<ReviewModeView> {
-  const res = await fetch('/api/settings/review-mode');
+  const res = await apiFetch('/api/settings/review-mode');
   if (!res.ok) return throwResponse(res, 'Failed to load review mode');
   return res.json();
 }
 
 export async function setReviewMode(mode: ReviewMode): Promise<ReviewModeView> {
-  const res = await fetch('/api/settings/review-mode', {
+  const res = await apiFetch('/api/settings/review-mode', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode }),
@@ -462,13 +464,13 @@ export interface ConversationSettings {
 }
 
 export async function getConversationSettings(): Promise<ConversationSettings> {
-  const res = await fetch('/api/settings/conversation');
+  const res = await apiFetch('/api/settings/conversation');
   if (!res.ok) return throwResponse(res, 'Failed to load conversation settings');
   return res.json();
 }
 
 export async function setConversationSettings(settings: ConversationSettings): Promise<ConversationSettings> {
-  const res = await fetch('/api/settings/conversation', {
+  const res = await apiFetch('/api/settings/conversation', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
@@ -488,13 +490,13 @@ export interface ReviewSettings {
 }
 
 export async function getReviewSettings(): Promise<ReviewSettings> {
-  const res = await fetch('/api/settings/review');
+  const res = await apiFetch('/api/settings/review');
   if (!res.ok) return throwResponse(res, 'Failed to load review settings');
   return res.json();
 }
 
 export async function setReviewSettings(settings: ReviewSettings): Promise<ReviewSettings> {
-  const res = await fetch('/api/settings/review', {
+  const res = await apiFetch('/api/settings/review', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
@@ -537,13 +539,13 @@ export interface LlmProviderInput {
 }
 
 export async function fetchLlmProviders(): Promise<LlmProviderView[]> {
-  const res = await fetch('/api/llm-providers');
+  const res = await apiFetch('/api/llm-providers');
   if (!res.ok) return throwResponse(res, 'Failed to load LLM providers');
   return res.json();
 }
 
 export async function createLlmProvider(input: LlmProviderInput): Promise<LlmProviderView> {
-  const res = await fetch('/api/llm-providers', {
+  const res = await apiFetch('/api/llm-providers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -553,7 +555,7 @@ export async function createLlmProvider(input: LlmProviderInput): Promise<LlmPro
 }
 
 export async function updateLlmProvider(id: string, input: LlmProviderInput): Promise<LlmProviderView> {
-  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -563,19 +565,19 @@ export async function updateLlmProvider(id: string, input: LlmProviderInput): Pr
 }
 
 export async function setDefaultLlmProvider(id: string): Promise<LlmProviderView> {
-  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
+  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
   if (!res.ok) return throwResponse(res, 'Failed to set default LLM provider');
   return res.json();
 }
 
 export async function deleteLlmProvider(id: string): Promise<void> {
-  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM provider');
 }
 
 // Live connectivity check: probes the stored API key against the provider.
 export async function checkLlmProvider(id: string): Promise<{ ok: boolean; detail: string | null }> {
-  const res = await fetch(`/api/llm-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) throw new Error(`LLM provider check failed: ${res.status}`);
   return res.json();
 }
@@ -630,7 +632,7 @@ export interface ContextPreviewResult {
 
 // Test the integration: resolve the input to a ticket via the pattern and fetch its context, live.
 export async function previewContextProvider(id: string, text: string): Promise<ContextPreviewResult> {
-  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/preview`, {
+  const res = await apiFetch(`/api/context-providers/${encodeURIComponent(id)}/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -640,13 +642,13 @@ export async function previewContextProvider(id: string, text: string): Promise<
 }
 
 export async function fetchContextProviders(): Promise<ContextProviderView[]> {
-  const res = await fetch('/api/context-providers');
+  const res = await apiFetch('/api/context-providers');
   if (!res.ok) return throwResponse(res, 'Failed to load context providers');
   return res.json();
 }
 
 export async function createContextProvider(input: ContextProviderInput): Promise<ContextProviderView> {
-  const res = await fetch('/api/context-providers', {
+  const res = await apiFetch('/api/context-providers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -656,7 +658,7 @@ export async function createContextProvider(input: ContextProviderInput): Promis
 }
 
 export async function updateContextProvider(id: string, input: ContextProviderInput): Promise<ContextProviderView> {
-  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/context-providers/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -666,7 +668,7 @@ export async function updateContextProvider(id: string, input: ContextProviderIn
 }
 
 export async function deleteContextProvider(id: string): Promise<void> {
-  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/context-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete context provider');
 }
 
@@ -678,7 +680,7 @@ export interface ContextProviderCheck {
 
 // Live connectivity check: contacts the source with the stored credential (/myself).
 export async function checkContextProvider(id: string): Promise<ContextProviderCheck> {
-  const res = await fetch(`/api/context-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
+  const res = await apiFetch(`/api/context-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) await throwResponse(res, 'Failed to check context provider');
   return res.json();
 }
@@ -717,13 +719,13 @@ export interface LlmModelInput {
 }
 
 export async function fetchLlmModels(): Promise<LlmModelView[]> {
-  const res = await fetch('/api/llm-models');
+  const res = await apiFetch('/api/llm-models');
   if (!res.ok) return throwResponse(res, 'Failed to load LLM models');
   return res.json();
 }
 
 export async function createLlmModel(input: LlmModelInput): Promise<LlmModelView> {
-  const res = await fetch('/api/llm-models', {
+  const res = await apiFetch('/api/llm-models', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -733,7 +735,7 @@ export async function createLlmModel(input: LlmModelInput): Promise<LlmModelView
 }
 
 export async function updateLlmModel(id: string, input: LlmModelInput): Promise<LlmModelView> {
-  const res = await fetch(`/api/llm-models/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/llm-models/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -743,7 +745,7 @@ export async function updateLlmModel(id: string, input: LlmModelInput): Promise<
 }
 
 export async function deleteLlmModel(id: string): Promise<void> {
-  const res = await fetch(`/api/llm-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/llm-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM model');
 }
 
@@ -762,21 +764,21 @@ export interface DlqEntry {
 
 /** List dead-letter entries, newest first. `pending = false` returns replayed/discarded ones too. */
 export async function getDlqEntries(pending = true): Promise<DlqEntry[]> {
-  const res = await fetch(`/api/dlq?pending=${pending}`);
+  const res = await apiFetch(`/api/dlq?pending=${pending}`);
   if (!res.ok) return throwResponse(res, 'Failed to load dead-letter entries');
   return res.json();
 }
 
 /** Re-publish a dead-lettered message to its original topic and mark it replayed. */
 export async function replayDlqEntry(id: string): Promise<DlqEntry> {
-  const res = await fetch(`/api/dlq/${encodeURIComponent(id)}/replay`, { method: 'POST' });
+  const res = await apiFetch(`/api/dlq/${encodeURIComponent(id)}/replay`, { method: 'POST' });
   if (!res.ok) return throwResponse(res, 'Failed to replay dead-letter entry');
   return res.json();
 }
 
 /** Mark a dead-lettered message discarded — it will not be replayed. */
 export async function discardDlqEntry(id: string): Promise<void> {
-  const res = await fetch(`/api/dlq/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/dlq/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to discard dead-letter entry');
 }
 
@@ -799,19 +801,19 @@ export interface AttentionItem {
 
 /** Acknowledge one row. The server decides what that means; the UI just posts where it was told. */
 export async function dismissAttention(path: string): Promise<void> {
-  const res = await fetch(path, { method: 'POST' });
+  const res = await apiFetch(path, { method: 'POST' });
   if (!res.ok) throw new Error(`Dismiss failed: ${res.status}`);
 }
 
 export async function fetchAttention(): Promise<AttentionItem[]> {
-  const res = await fetch('/api/attention');
+  const res = await apiFetch('/api/attention');
   if (!res.ok) throw new Error(`Attention request failed: ${res.status}`);
   return res.json();
 }
 
 /** The gateway's own feed. Served by a different service, so it can fail independently. */
 export async function fetchWebhookAttention(): Promise<AttentionItem[]> {
-  const res = await fetch('/gw/webhook-repos/attention');
+  const res = await apiFetch('/gw/webhook-repos/attention');
   if (!res.ok) throw new Error(`Webhook attention request failed: ${res.status}`);
   return res.json();
 }
@@ -845,13 +847,13 @@ export interface PromptPreview {
 }
 
 export async function fetchPrompts(): Promise<PromptView[]> {
-  const res = await fetch('/api/prompts');
+  const res = await apiFetch('/api/prompts');
   if (!res.ok) return throwResponse(res, 'Failed to load prompts');
   return res.json();
 }
 
 export async function fetchPrompt(kind: string): Promise<PromptView> {
-  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}`);
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`);
   if (!res.ok) return throwResponse(res, 'Failed to load prompt');
   return res.json();
 }
@@ -884,7 +886,7 @@ async function saveErrorMessage(res: Response): Promise<string> {
 }
 
 export async function savePrompt(kind: string, system: string, body: string): Promise<PromptView> {
-  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}`, {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ system, body }),
@@ -895,12 +897,12 @@ export async function savePrompt(kind: string, system: string, body: string): Pr
 
 /** Reset a kind back to its built-in default. Callers must re-fetch to get the default text. */
 export async function resetPrompt(kind: string): Promise<void> {
-  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to reset prompt');
 }
 
 export async function previewPrompt(kind: string, system: string, body: string): Promise<PromptPreview> {
-  const res = await fetch(`/api/prompts/${encodeURIComponent(kind)}/preview`, {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ system, body }),
@@ -932,7 +934,7 @@ export async function fetchReviewContext(
   slug: string,
   pr: number,
 ): Promise<ReviewContext> {
-  const res = await fetch(`/wk/review-context/${seg(workspace)}/${seg(slug)}/${pr}`);
+  const res = await apiFetch(`/wk/review-context/${seg(workspace)}/${seg(slug)}/${pr}`);
   if (!res.ok) return throwResponse(res, 'Failed to load context');
   return res.json();
 }
@@ -947,7 +949,7 @@ export async function fetchPrDescription(
   slug: string,
   pr: number,
 ): Promise<string | null> {
-  const res = await fetch(`/api/reviews/${seg(workspace)}/${seg(slug)}/${pr}/description`);
+  const res = await apiFetch(`/api/reviews/${seg(workspace)}/${seg(slug)}/${pr}/description`);
   if (!res.ok) return throwResponse(res, 'Failed to load the description');
   const body: DescriptionResponse = await res.json();
   return body.description ?? null;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReviews, type ReviewSummary } from './api';
-import { fetchMe, goToLogin, needsLogin } from './auth';
+import { fetchMe, goToLogin, isLeavingForAuth, needsLogin } from './auth';
 
 function sortReviews(list: ReviewSummary[]): ReviewSummary[] {
   return [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -52,6 +52,11 @@ export function useLiveReviews(): LiveReviews {
       })
       .catch((e: unknown) => {
         if (!active || wsDelivered.current) return;
+        // Not an error worth showing: the window is already on its way to a login or a logout, and
+        // this call failed *because* of that. Reporting it painted a red failure over the dashboard
+        // for the moment before the page went away — most visibly on logout, where the operator got
+        // an alarming message for doing exactly what they intended.
+        if (isLeavingForAuth()) return;
         setError(e instanceof Error ? e.message : 'Failed to load reviews');
         setLoading(false);
       });
@@ -91,6 +96,7 @@ export function useLiveReviews(): LiveReviews {
       };
       ws.onclose = () => {
         if (closed) return;
+        if (isLeavingForAuth()) return; // the session is being handed back; nothing to diagnose
         // A closed socket is not automatically a network blip. An unauthenticated or expired
         // handshake is answered with a redirect the browser cannot follow, so the socket fails with
         // no useful close code — and the session cookie's default lifetime is five minutes, which

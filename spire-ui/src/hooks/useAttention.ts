@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchMe, goToLogin, needsLogin } from '../auth';
+import { ensureServiceSessions, fetchMe, goToLogin, isLeavingForAuth, needsLogin } from '../auth';
 import type { AttentionItem } from '../api';
 
 /**
@@ -122,17 +122,27 @@ export function useAttention(): { items: AttentionItem[] } {
       // requires an actual close or error — never merely a socket that has yet to open.
       const onGone = () => {
         if (closed) return;
+        // A logout closes every socket. Without this the panel raised BLOCKING rows claiming the
+        // services were unreachable, over the top of a page that was already navigating away.
+        if (isLeavingForAuth()) return;
         // Ask WHY it closed before reacting. An unauthenticated or expired handshake fails with no
         // usable close code, and the session's default lifetime is five minutes — so without this
         // check every expiry both reconnected forever and reported itself as an outage, telling the
         // operator "the webhook gateway is not responding" when the gateway was fine and the
         // session had simply lapsed. Diagnosing an auth problem as an outage is worse than silence.
-        void fetchMe().then((me) => {
+        void fetchMe().then(async (me) => {
           if (closed) return;
           if (needsLogin(me)) {
             goToLogin();
             return;
           }
+          // Signed in here does not mean signed in THERE: each service is a separate session behind
+          // its own prefix, and a handshake cannot follow the redirect that says so. Without this
+          // check a lapsed — or never-established — gateway session read as "the webhook gateway is
+          // not responding", which is the same false-outage report this whole branch exists to avoid,
+          // arrived at from the other direction.
+          if (await ensureServiceSessions()) return;
+          if (closed) return;
           setFeeds((prev) => ({ ...prev, [key]: { status: 'down' } }));
           timers.push(setTimeout(() => connect({ key, path }), RECONNECT_MS));
         });

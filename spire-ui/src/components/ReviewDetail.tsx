@@ -22,7 +22,7 @@ export default function ReviewDetail({ reviews }: Props) {
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRerun, setConfirmRerun] = useState(false);
-  const admin = canAdminister(useMe());
+  const admin = canAdminister(useMe().me);
 
   // Monotonic request id: a response only applies while it is still the latest
   // load for the current params — otherwise navigating A→B can let A's slower

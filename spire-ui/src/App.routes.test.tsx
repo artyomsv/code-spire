@@ -74,7 +74,22 @@ const detail = {
  * the reverse default `{}` would crash any `.map`/`.filter`); the object-shaped endpoints the detail
  * screen and its cards need are named explicitly.
  */
+/**
+ * Who the shell thinks is signed in. Mutable because the rail and the settings routes are gated on
+ * it: an admin sees the Configure section, a viewer must not, and both have to be renderable from
+ * the same fixture. Defaults to an admin so the route table below covers every screen.
+ */
+const ADMIN_SESSION = {
+  authEnabled: true,
+  authenticated: true,
+  user: 'dev-operator',
+  roles: ['spire-admin', 'spire-viewer'],
+};
+const VIEWER_SESSION = { authEnabled: true, authenticated: true, user: 'dev-viewer', roles: ['spire-viewer'] };
+let session: unknown = ADMIN_SESSION;
+
 function payloadFor(url: string): unknown {
+  if (/\/api\/me$/.test(url)) return session;
   // The worker owns /wk — its own prefix, so its session cookie never reaches the other services.
   if (/\/wk\/review-context\//.test(url)) {
     return { items: [], contributingSources: [], missingSources: [] };
@@ -111,6 +126,7 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
 
 describe('App — routing shell', () => {
   beforeEach(() => {
+    session = ADMIN_SESSION;
     vi.stubGlobal('WebSocket', SilentSocket);
     // jsdom implements no media queries; the reviews list asks about reduced motion on mount.
     vi.stubGlobal(
@@ -173,5 +189,154 @@ describe('App — routing shell', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Reviews'),
     );
+  });
+});
+
+/**
+ * A viewer operates the dashboard; they do not see how it is wired. The API is the authority and
+ * refuses every configuration read with a 403 — these cover the interface's side of that, which is
+ * not to leave a viewer looking at controls and pages that can only fail.
+ */
+describe('App — what a viewer may see', () => {
+  beforeEach(() => {
+    vi.stubGlobal('WebSocket', SilentSocket);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+    );
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
+    session = VIEWER_SESSION;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const rail = () => document.querySelector('.nav') as HTMLElement;
+
+  it('shows Reviews but not the Configure section', async () => {
+    renderAt('/');
+
+    // Wait on the section going away rather than on its absence: `admin` starts true while /api/me
+    // is in flight, so asserting immediately would pass against the pre-answer render and never
+    // exercise the gate at all.
+    await waitFor(() => expect(within(rail()).queryByText('Configure')).not.toBeInTheDocument());
+    expect(within(rail()).getByText('Reviews')).toBeInTheDocument();
+    for (const label of ['General', 'Context', 'Repositories', 'Webhooks', 'LLM', 'Prompts', 'Dead-letter']) {
+      expect(within(rail()).queryByText(label)).not.toBeInTheDocument();
+    }
+  });
+
+  /** Spending money is admin, and so is the mode switch — its GET is refused too, so it cannot render a state. */
+  it('offers neither Register PR nor the review-mode toggle', async () => {
+    renderAt('/');
+
+    // Wait for the RAIL, not for the absence. The shell renders a placeholder until the session
+    // arrives, so asserting straight away would pass against a screen with nothing on it at all.
+    await waitFor(() => expect(rail()).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /register pr/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /observe|active/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The nav is a courtesy; the routes are the reachable surface. A bookmark, a pasted link or the
+   * back button arrives at a settings path without ever passing the rail. Said plainly rather than
+   * redirected: a silent bounce to another screen is indistinguishable from a broken link.
+   */
+  it.each(['/settings/general', '/settings/providers', '/settings/llm', '/settings/dlq'])(
+    'tells a viewer at %s that the page is not theirs',
+    async (path) => {
+      renderAt(path);
+
+      expect(await screen.findByText('Not available to your role')).toBeInTheDocument();
+      // The screen itself must not have mounted — a guard that renders the page and then covers it
+      // has already fired its requests.
+      expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
+    },
+  );
+
+  /** The same paths still render for an admin — so the guard is a boundary and not a blanket. */
+  it('still renders a configuration screen for an admin', async () => {
+    session = ADMIN_SESSION;
+    renderAt('/settings/llm');
+
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('LLM');
+    await waitFor(() => expect(within(rail()).getByText('Configure')).toBeInTheDocument());
+    expect(screen.queryByText('Not available to your role')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The regression this exists for: with `/api/me` unanswered, the shell used to render as though the
+ * operator were an admin and withdraw it all a fraction of a second later — so a viewer saw, and
+ * could click, every administrative control. Nothing privileged may appear before the role is known,
+ * for anybody.
+ */
+describe('App — before the session is known', () => {
+  beforeEach(() => {
+    vi.stubGlobal('WebSocket', SilentSocket);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+    );
+    // /api/me never settles, holding the shell in its unknown state for the whole test. Every other
+    // endpoint answers normally, so anything privileged that renders here did so on an assumption.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        /\/api\/me$/.test(url) ? new Promise(() => {}) : Promise.resolve(jsonResponse(payloadFor(url))),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('renders no dashboard at all, privileged or otherwise', async () => {
+    renderAt('/');
+
+    // Not "the admin controls are hidden" but "there is no shell yet". The previous behaviour
+    // rendered the whole dashboard here and corrected itself once the answer arrived, which is what
+    // made an unauthenticated visit flash the interface before jumping to the identity provider.
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(document.querySelector('.nav')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /register pr/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /observe|active/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The reported glitch: an unauthenticated visit showed the dashboard for a fraction of a second and
+   * then jumped to the identity provider. `/api/me` had already said a login was needed — nothing acted
+   * on it, so the redirect waited for a REST call to be refused or a socket to close, whichever lost.
+   */
+  it('shows no dashboard and heads for a login when nobody is signed in', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        Promise.resolve(
+          jsonResponse(/\/api\/me$/.test(url) ? { authEnabled: true, authenticated: false, user: '', roles: [] } : payloadFor(url)),
+        ),
+      ),
+    );
+
+    renderAt('/');
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/api/auth/login'));
+    expect(screen.getByText('Signing in…')).toBeInTheDocument();
+    expect(document.querySelector('.nav')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
+
+  /** A guarded route waits rather than guessing in either direction — no page, and no accusation. */
+  it('neither renders nor refuses a configuration screen until the role is known', async () => {
+    renderAt('/settings/llm');
+
+    await waitFor(() => expect(screen.getByText('Loading…')).toBeInTheDocument());
+    expect(screen.queryByText('Not available to your role')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
   });
 });

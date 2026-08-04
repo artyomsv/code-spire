@@ -286,8 +286,13 @@ describe('AttentionBell', () => {
 
     screen.getByRole('button', { name: /^Dismiss:/ }).click();
 
+    // The script marker rides along because the call goes through `apiFetch`: an expired session must
+    // answer with a status the app can act on, not a redirect the browser turns into "failed to fetch".
     await waitFor(() =>
-      expect(globalThis.fetch).toHaveBeenCalledWith(failed.dismiss, { method: 'POST' }),
+      expect(globalThis.fetch).toHaveBeenCalledWith(failed.dismiss, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'JavaScript' },
+      }),
     );
     // Still shown: the row goes when the server says so, not because the UI edited its own list.
     expect(screen.getByText(failed.message)).toBeInTheDocument();

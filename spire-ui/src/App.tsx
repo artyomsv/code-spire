@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { FileText, GitPullRequest, LogOut } from 'lucide-react';
 import Tooltip from './components/Tooltip';
@@ -15,9 +15,10 @@ import SettingsWebhookRepos from './components/SettingsWebhookRepos';
 import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
 import PromptDetail from './components/PromptDetail';
+import RequireRole from './components/RequireRole';
 import { useLiveReviews } from './useLiveReviews';
 import { useMe } from './hooks/useMe';
-import { canAdminister, goToLogout } from './auth';
+import { canAdminister, ensureServiceSessions, goToLogin, goToLogout, needsLogin } from './auth';
 
 function toggleTheme() {
   const root = document.documentElement;
@@ -57,9 +58,72 @@ export default function App() {
                 : onPrompts
                   ? 'Prompts'
                   : 'Reviews';
-  const me = useMe();
+  const { me, loading: sessionLoading } = useMe();
+  /**
+   * Go to a login as soon as `/api/me` says one is needed — the answer the app already has.
+   *
+   * Previously nothing acted on it: the redirect happened when a REST call was refused or a socket
+   * closed, whichever lost first. So an unauthenticated visit rendered the whole dashboard and then
+   * jumped to the identity provider a fraction of a second later, which reads as the application
+   * having second thoughts. The session state was known before any of that; it simply was not used.
+   */
+  useEffect(() => {
+    if (needsLogin(me)) goToLogin();
+  }, [me]);
+
+  /**
+   * Obtain the gateway's and the worker's sessions as soon as we know we have our own.
+   *
+   * Each service is a separate OIDC client with a cookie scoped to its own prefix (ADR-022), so
+   * signing in to the dashboard mints `/api` and nothing else. Every call to `/gw` or `/wk` then
+   * answered with a redirect that `fetch` cannot follow — the Webhooks screen reported "failed to
+   * fetch", a review's Context card failed alone on an otherwise working page, and the attention
+   * socket declared the gateway down. Done here, once, rather than on first use: the attention panel
+   * opens its gateway socket on every page, so first use is immediately.
+   */
+  useEffect(() => {
+    if (!me?.authEnabled || !me.authenticated) return;
+    void ensureServiceSessions();
+  }, [me]);
+  /**
+   * False until the session is known, not true. Every admin control below is gated on this, so the
+   * shell opens with nothing privileged offered and adds it once the role is in hand — never the
+   * reverse. Showing the admin surface to a viewer for the ~200ms before `/api/me` answers, then
+   * withdrawing it, looks like the application malfunctioning.
+   */
   const admin = canAdminister(me);
   const [registerOpen, setRegisterOpen] = useState(false);
+
+  /**
+   * A configuration screen behind its role. Hiding the nav is not enough on its own — a bookmark, a
+   * pasted link or the back button reaches a route without ever passing the rail — and every one of
+   * these screens loads by calling an endpoint a viewer is refused, so unguarded they would render as
+   * a page of failed requests. {@link RequireRole} owns the three-state logic; this is only shorthand
+   * for the eight routes that share the same requirement.
+   */
+  const configure = (screen: ReactElement) => <RequireRole role="spire-admin">{screen}</RequireRole>;
+
+  /**
+   * Nothing of the dashboard until we know whose it is.
+   *
+   * Every hook above has already run, so this is a render decision only — the early return is what
+   * stops protected content existing on screen before the session is established. Two states share
+   * it: the answer has not arrived, and the answer was "log in first" (the effect above is already
+   * navigating). Rendering the shell in either case is what produced the flash.
+   */
+  if (sessionLoading || needsLogin(me)) {
+    return (
+      <div className="app">
+        <main className="main">
+          <section className="content">
+            <div style={{ color: 'var(--text-3)', fontSize: 13 }}>
+              {needsLogin(me) ? 'Signing in…' : 'Loading…'}
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -83,6 +147,13 @@ export default function App() {
             </svg>
             Reviews
           </a>
+          {/* Configuration is admin-only in full, reads included — the registries describe every
+              repository, inference endpoint and context source this deployment reaches. A viewer
+              gets Reviews and nothing else here. Hidden rather than shown-and-refused: the API
+              answers 403 regardless of what is rendered, so a nav entry that can only lead to a
+              refusal is noise. */}
+          {admin && (
+          <>
           <div className="label">Configure</div>
           <a className={onGeneral ? 'active' : ''} href="#/settings/general">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
@@ -152,11 +223,9 @@ export default function App() {
             <FileText className="ic" />
             Prompts
           </a>
-          {/* Admin only, listing included: a dead-letter row carries the raw payload of the message
-              that failed, which is a wire record quoting source or carrying a brokered credential.
-              Hidden rather than shown-and-refused, so a viewer is not offered a page that can only
-              answer 403. */}
-          {admin && (
+          {/* A dead-letter row carries the raw payload of the message that failed — a wire record
+              quoting source or carrying a brokered credential. It was admin-only before the rest of
+              this section was, and for a second reason: not merely configuration, but disclosure. */}
           <a className={onDlq ? 'active' : ''} href="#/settings/dlq">
             <svg
               className="ic"
@@ -173,10 +242,13 @@ export default function App() {
             </svg>
             Dead-letter
           </a>
+          </>
           )}
         </nav>
         <div className="spacer"></div>
-        <ReviewModeToggle />
+        {/* Reads as well as writes: the mode endpoint is admin-only, so for a viewer this control
+            could only render an error where a state belongs. */}
+        {admin && <ReviewModeToggle />}
         <div className="foot">
           spire-orchestrator
           <br />
@@ -226,14 +298,14 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ReviewsList reviews={reviews} loading={loading} error={error} />} />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
-          <Route path="/settings/general" element={<SettingsGeneral />} />
-          <Route path="/settings/providers" element={<SettingsProviders />} />
-          <Route path="/settings/webhooks" element={<SettingsWebhookRepos />} />
-          <Route path="/settings/llm" element={<SettingsLlmProviders />} />
-          <Route path="/settings/context" element={<SettingsContextProviders />} />
-          <Route path="/settings/prompts" element={<PromptsSettings />} />
-          <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
-          <Route path="/settings/dlq" element={<SettingsDlq />} />
+          <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
+          <Route path="/settings/providers" element={configure(<SettingsProviders />)} />
+          <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
+          <Route path="/settings/llm" element={configure(<SettingsLlmProviders />)} />
+          <Route path="/settings/context" element={configure(<SettingsContextProviders />)} />
+          <Route path="/settings/prompts" element={configure(<PromptsSettings />)} />
+          <Route path="/settings/prompts/:kind" element={configure(<PromptDetail />)} />
+          <Route path="/settings/dlq" element={configure(<SettingsDlq />)} />
         </Routes>
       </main>
 
