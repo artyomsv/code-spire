@@ -383,7 +383,7 @@ tests on `spire-contract`, failing a breaking change without an `eventVersion` b
 ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it iterated event types and
 skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **6 techdebt items** in `techdebt/` — 1 medium, 5 low,
+Also open and tracked outside this file: **7 techdebt items** in `techdebt/` — 1 medium, 6 low,
 nothing high or critical. The medium one is D10's: the authorization guard is copied into all three
 services, and the drift check that was chosen instead of extracting a shared module has not been
 written yet. (Another option, tracking waived nits durably so a set-aside issue cannot return as its
@@ -477,6 +477,15 @@ Kept for provenance. **This is not a to-do list** — for what to do next, see
 2. Event store: **DECIDED = Postgres append-only** (ADR-007).
 3. Domain formalism: **DECIDED = hand-rolled** Decider/View/Saga (ADR, minimal deps).
 4. Domain contract: **DONE** — see CONTRACT.md (`spire-contract`).
-5. Local dev: **DECIDED = docker-compose** (Redpanda + Postgres; Keycloak still unused — see D10).
+5. Local dev: **DECIDED = docker-compose** (Redpanda + Postgres). ✅ **Keycloak now wired and
+   verified live** — the base file stays IdP-free, and authentication is opted into per file:
+   `docker-compose.idp.yml` runs a bundled Keycloak (realm auto-imported from
+   `infra/keycloak/realm-spire.json`), `docker-compose.auth.yml` flips the containerized dev stack's
+   three services on. Both supported IdP options were exercised end to end against the same realm:
+   the bundled instance, and an externally-running one reached by pointing
+   `SPIRE_OIDC_AUTH_SERVER_URL` at it. They need **opposite hostname strategies**, which is the one
+   thing to remember — a pinned `KC_HOSTNAME` lets front- and backchannel differ while the issuer
+   stays fixed; an unpinned instance derives its issuer from the Host it was called on, so browser
+   and containers must use one name that resolves for both. Runbook: SMOKE-TEST **Mode J**.
 6. ✅ **Phase 0 scaffolded and long superseded** — Gradle multi-module, `spire-contract`, and the
    gateway→orchestrator→worker path on Redpanda all shipped; there are now 13 modules and 29 migrations.

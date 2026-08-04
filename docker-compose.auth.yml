@@ -1,0 +1,69 @@
+# Turns operator authentication ON for the containerized dev stack (D10 / ADR-022).
+#
+# The dev overlay runs quarkusDev, whose `%dev` profile deliberately boots with
+# authentication OFF so every other runbook mode works unchanged. This file is the
+# opt-in that flips it, layered last so its `environment:` wins:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#                  -f docker-compose.idp.yml -f docker-compose.auth.yml up -d --build
+#
+# Drop this one `-f` and re-run to go back to an unauthenticated stack.
+#
+# `--build` is not optional the first time, and the reason is worth knowing: the dev
+# images BAKE the source in (Dockerfile.dev), and it is `--watch` that streams later
+# edits into a running container. A plain `up -d` therefore starts whatever source the
+# existing image was built from — silently, and with a perfectly healthy service. A
+# stack left running across a feature branch will happily serve code from days ago,
+# which for THIS file looks like authentication refusing to switch on at all: the
+# endpoints the flags govern are not in the image yet.
+#
+# Why environment variables rather than -D flags on the gradle command: the command
+# lines live in docker-compose.dev.yml and overriding them here would duplicate the
+# whole quarkusDev invocation. Environment variables sit at a higher config ordinal
+# than application.yml, so they override the `%dev` block without restating it.
+#
+# ALL THREE switches are required together, per service:
+#   quarkus.oidc.enabled                            - build-time; without it there is no OIDC at all
+#   quarkus.http.auth.permission.operator.policy     - decides whether an identity is REQUIRED
+#   spire.security.auth-enabled                      - governs the @RolesAllowed checks that run after
+# Setting a subset leaves a service half-authenticated: REST refusing while a
+# WebSocket still opens, or every operator denied because no roles were read.
+
+# Each service authenticates as its OWN OIDC client so a session minted for one
+# cannot be replayed against another (the cookie-path prefixes do the rest).
+#
+# The default secrets below are the dev realm's own values, published in
+# infra/keycloak/realm-spire.json in this repository. They are not deployment
+# credentials and there is nothing to leak; override the variables to point the
+# stack at a Keycloak whose clients carry different ones.
+x-auth-on: &auth-on
+  QUARKUS_OIDC_ENABLED: "true"
+  SPIRE_SECURITY_AUTH_ENABLED: "true"
+  QUARKUS_HTTP_AUTH_PERMISSION_OPERATOR_POLICY: authenticated
+  # Backchannel URL, reachable from inside the compose network. Keycloak's
+  # KC_HOSTNAME_BACKCHANNEL_DYNAMIC makes discovery answer this host with
+  # container-reachable token/JWKS endpoints while keeping the browser-facing
+  # authorization endpoint and the issuer on the published host port — so the
+  # token's `iss` matches what the service discovered. Point this at your own
+  # Keycloak to reuse one you already run (see docs/SMOKE-TEST.md Mode J).
+  SPIRE_OIDC_AUTH_SERVER_URL: ${SPIRE_OIDC_AUTH_SERVER_URL:-http://keycloak:8080/realms/spire}
+
+services:
+
+  orchestrator:
+    environment:
+      <<: *auth-on
+      SPIRE_OIDC_CLIENT_ID: spire-orchestrator
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_ORCHESTRATOR_SECRET:-dev-only-orchestrator-secret}
+
+  gateway:
+    environment:
+      <<: *auth-on
+      SPIRE_OIDC_CLIENT_ID: spire-gateway
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_GATEWAY_SECRET:-dev-only-gateway-secret}
+
+  worker:
+    environment:
+      <<: *auth-on
+      SPIRE_OIDC_CLIENT_ID: spire-review-worker
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_WORKER_SECRET:-dev-only-worker-secret}

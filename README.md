@@ -80,6 +80,30 @@ encrypted at rest. For GitHub/GitLab, add a per-repo webhook in Settings -> Webh
 repo's webhook at `https://<gateway>/webhooks/{provider}/{key}`; the bot then reviews real PRs. See
 [docs/SMOKE-TEST.md](docs/SMOKE-TEST.md) for the safe observe-only first-contact flow.
 
+### Operator authentication
+
+**Dev runs with authentication off**, so everything above works as written. Any other run requires an
+operator identity, and a service refuses to start with it disabled outside dev/test (ADR-022).
+
+To exercise it locally, start an identity provider — the bundled one, or point
+`SPIRE_OIDC_AUTH_SERVER_URL` at a Keycloak you already run — and import
+`infra/keycloak/realm-spire.json`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.idp.yml up -d keycloak   # :34567
+```
+
+The realm ships two synthetic operators. **Development fixtures only** — they are committed to this
+repository in plain text, so they must never exist anywhere reachable from outside a workstation.
+
+| User | Password | Roles | Can do |
+|---|---|---|---|
+| `dev-operator` | `dev-operator` | `spire-admin` + `spire-viewer` | everything — register a PR, re-run, delete, replay the DLQ, all settings |
+| `dev-viewer` | `dev-viewer` | `spire-viewer` | read reviews only — no Configure section at all, no Register PR, no re-run or delete |
+
+Turning it on for a running stack, what a viewer may and may not reach, and the reason the two IdP
+options need different URLs, are all in [docs/SMOKE-TEST.md](docs/SMOKE-TEST.md) **Mode J**.
+
 ## Docs
 
 | Doc | What |
