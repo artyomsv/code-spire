@@ -1,10 +1,13 @@
-# Auto-merges the two update classes that are maintenance rather than decisions.
+# Auto-merges the update classes that are maintenance rather than decisions.
 #
-# Narrow on purpose: action references and patch-level npm bumps. A minor Quarkus, React or
-# react-router bump changes behaviour and deserves a human — this project has already been bitten by a
-# framework upgrade that needed real work.
+# **Never major, for any ecosystem.** The first version of this rule scoped npm to patch but scoped
+# github_actions by ecosystem alone, so within minutes of being enabled it merged three MAJOR action
+# bumps unreviewed — setup-node 4→7, build-push-action 6→7, gitleaks-action 2→3. Those happened to be
+# fine; the rule that let them through was not. A major bump is a decision by definition.
 #
-# --auto means it merges only once required checks pass, so ci.yml still gates every one of these.
+# --auto merges only once required checks pass, so ci.yml still gates every one of these. Note that
+# with no branch protection configured there are no *required* checks, which is why the update-type
+# guard has to carry the weight on its own.
 name: dependabot-auto-merge
 
 on: pull_request_target
@@ -23,10 +26,14 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Approve and enable auto-merge
+        # Major is excluded first and for every ecosystem, so no later clause can readmit it.
         if: |
-          steps.meta.outputs.package-ecosystem == 'github_actions' ||
-          (steps.meta.outputs.package-ecosystem == 'npm_and_yarn' &&
-           steps.meta.outputs.update-type == 'version-update:semver-patch')
+          steps.meta.outputs.update-type != 'version-update:semver-major' &&
+          (
+            (steps.meta.outputs.package-ecosystem == 'github_actions' &&
+             steps.meta.outputs.update-type == 'version-update:semver-minor') ||
+            steps.meta.outputs.update-type == 'version-update:semver-patch'
+          )
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
