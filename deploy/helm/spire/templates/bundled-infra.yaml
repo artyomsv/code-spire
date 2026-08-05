@@ -45,6 +45,13 @@ spec:
             # which is what makes an in-place pg_upgrade --link possible later.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          # 999 is the postgres user in the official image.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           readinessProbe:
             exec:
               command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
@@ -119,6 +126,13 @@ spec:
           ports:
             - name: kafka
               containerPort: 9092
+          # 101 is the redpanda user in the official image.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           readinessProbe:
             exec:
               command: ["sh", "-c", "rpk cluster health --exit-when-healthy"]
@@ -201,6 +215,13 @@ spec:
               containerPort: 8080
             - name: management
               containerPort: 9000
+          # 1000 is the keycloak user in the official image.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           readinessProbe:
             httpGet:
               path: /health/ready

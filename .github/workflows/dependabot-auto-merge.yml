@@ -1,0 +1,33 @@
+# Auto-merges the two update classes that are maintenance rather than decisions.
+#
+# Narrow on purpose: action references and patch-level npm bumps. A minor Quarkus, React or
+# react-router bump changes behaviour and deserves a human — this project has already been bitten by a
+# framework upgrade that needed real work.
+#
+# --auto means it merges only once required checks pass, so ci.yml still gates every one of these.
+name: dependabot-auto-merge
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dependabot/fetch-metadata@v2
+        id: meta
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Approve and enable auto-merge
+        if: |
+          steps.meta.outputs.package-ecosystem == 'github_actions' ||
+          (steps.meta.outputs.package-ecosystem == 'npm_and_yarn' &&
+           steps.meta.outputs.update-type == 'version-update:semver-patch')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

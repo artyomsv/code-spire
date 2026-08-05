@@ -1,0 +1,65 @@
+# Extends gitleaks' default ruleset. Only the noisy entropy rule, `generic-api-key`, is narrowed —
+# every specific rule (cloud tokens, private keys, provider-shaped keys) stays fully in force.
+#
+# Suppressions are by SHAPE, not by fingerprint. A gitleaks fingerprint is commit:file:rule:line, so it
+# stops matching the moment a line moves and the finding silently returns as new — which turns the
+# ignore file into a treadmill and eventually into a reason to stop reading the output.
+#
+# All eight findings this replaces were verified individually before being allowlisted.
+title = "Code Spire"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+description = "Detected a Generic API Key, potentially exposing access to various services and sensitive operations."
+# Same regex and entropy as the default rule; only the allowlists below are added.
+regex = '''(?i)(?:key|api|token|secret|client|passwd|password|auth|access)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:{1,3}=|\|\|:|<=|=>|:|\?=)(?:'|\"|\s|=|\x60){0,5}([0-9a-z\-_.=]{10,150})(?:['|\"|\n|\r|\s|\x60|;]|$)'''
+entropy = 3.5
+keywords = ["key", "api", "token", "secret", "client", "passwd", "password", "auth", "access"]
+secretGroup = 1
+
+  [[rules.allowlists]]
+  description = """
+  A config value that is an environment-variable REFERENCE cannot itself be a secret. This is the
+  no-defaults contract showing up in the scanner: every credential in these files is ${VAR} with no
+  fallback precisely so the value lives outside the repository.
+  """
+  regexTarget = "line"
+  regexes = ['''\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}''']
+
+  [[rules.allowlists]]
+  description = """
+  The WebSocket handshake nonce from RFC 6455 section 1.3. It is a published example constant, required
+  verbatim by the spec for a handshake to be well-formed, and is used here to prove an upgrade
+  traverses the reverse proxy.
+  """
+  # Tested against the whole LINE, not the match: the rule's own regex starts at the keyword, so the
+  # match text is "Key: dGhl..." and never contains the Sec-WebSocket- prefix that identifies it.
+  regexTarget = "line"
+  regexes = ['''Sec-WebSocket-Key:\s*dGhlIHNhbXBsZSBub25jZQ==''']
+
+  [[rules.allowlists]]
+  description = """
+  Prose. The entropy rule fires on English following the word "credential", "secret" or "key" in
+  design documents. Narrowed to markdown only, and only for this one rule: the ~150 specific rules
+  still apply to these files, so a real provider token pasted into a document is still caught.
+
+  Residual risk, stated rather than hidden: a HIGH-ENTROPY secret of no recognisable shape, pasted into
+  a markdown file, would not be flagged.
+  """
+  paths = ['''.*\.md$''']
+
+  [[rules.allowlists]]
+  description = """
+  Obviously-synthetic fixture values. The realm's three dev client secrets must be present in the file
+  for it to import at all, and every deployment overrides them. TEST- and CANARY- prefixes are the
+  project's convention for values that cannot be mistaken for real ones.
+  """
+  regexTarget = "match"
+  regexes = [
+    '''dev-only-[a-z-]+-secret''',
+    '''(TEST|CANARY)-[A-Za-z0-9-]+''',
+    '''(CHANGE_ME|REPLACE_ME)''',
+  ]

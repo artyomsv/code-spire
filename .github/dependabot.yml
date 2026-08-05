@@ -1,0 +1,34 @@
+# Weekly dependency updates across all four ecosystems this repository actually uses.
+#
+# `github-actions` is not incidental: it is what keeps action references current, and it is the
+# prerequisite for pinning them to commit SHAs (techdebt/global/4-2). An unmaintained pin is a
+# permanently unpatched action, which is worse than a moving tag.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /spire-ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Two docker directories: the service image at the root, the dashboard's in spire-ui.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /spire-ui
+    schedule:
+      interval: weekly

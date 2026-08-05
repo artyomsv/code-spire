@@ -1,0 +1,52 @@
+# CodeQL over both languages. Free on a public repository.
+#
+# Java needs a manual build because the project is Gradle multi-module with a Java 25 toolchain, which
+# autobuild cannot infer; `assemble` is enough and matches what ci.yml already proves works.
+name: codeql
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    # Weekly, so new queries reach existing code rather than only new code.
+    - cron: '41 4 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - if: matrix.build-mode == 'manual'
+        run: ./gradlew assemble --no-daemon --console=plain
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
