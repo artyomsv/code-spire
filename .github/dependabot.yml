@@ -1,8 +1,15 @@
 # Weekly dependency updates across all four ecosystems this repository actually uses.
 #
-# `github-actions` is not incidental: it is what keeps action references current, and it is the
-# prerequisite for pinning them to commit SHAs (techdebt/global/4-2). An unmaintained pin is a
-# permanently unpatched action, which is worse than a moving tag.
+# `github-actions` is not incidental: it is what keeps action references current, and it is what makes
+# pinning them to commit SHAs safe. Every `uses:` in .github/workflows/ is a 40-character SHA with the
+# version in a trailing comment; Dependabot reads that comment, so its PRs move both together. Without
+# this ecosystem enabled a SHA pin is a permanently unpatched action, which is worse than a moving tag.
+#
+# Every entry carries a cooldown. It is the other half of the same defence: pinning stops a published
+# tag being repointed at a malicious commit, cooldown stops a freshly published version being proposed
+# before anyone has had a chance to look at it — the window several real registry compromises were
+# caught in. It costs nothing on the path that matters, because GitHub applies cooldown to version
+# updates only: a Dependabot *security* update raised from an advisory ignores it and lands at once.
 version: 2
 updates:
   - package-ecosystem: gradle
@@ -10,25 +17,35 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: npm
     directory: /spire-ui
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   # Two docker directories: the service image at the root, the dashboard's in spire-ui.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: docker
     directory: /spire-ui
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
