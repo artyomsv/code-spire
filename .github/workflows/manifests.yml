@@ -55,16 +55,16 @@ jobs:
           helm lint deploy/helm/spire -f deploy/helm/spire/values-production.yaml
 
       - name: Invariants
-        run: ./deploy/helm/spire/tests/render.sh
+        run: bash ./deploy/helm/spire/tests/render.sh
 
       # Proves each assertion above catches its own break. Four of them are negative — the value must
       # be ABSENT where it does not belong — and a negative assertion passes trivially when a key is
       # renamed, so a green run is otherwise indistinguishable from greps that matched nothing.
       - name: Invariants discriminate
-        run: ./deploy/helm/spire/tests/render.sh --self-test
+        run: bash ./deploy/helm/spire/tests/render.sh --self-test
 
       - name: No drift between the chart and the rendered manifests
-        run: ./deploy/render-manifests.sh --check
+        run: bash ./deploy/render-manifests.sh --check
 
       # LoadRestrictionsNone is required: the chart and its preset values deliberately live outside the
       # kustomization directory, because duplicating them there would give one preset two sources.

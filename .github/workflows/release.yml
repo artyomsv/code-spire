@@ -81,7 +81,7 @@ jobs:
         run: |
           set -a; . deploy/.env; set +a
           export SPIRE_COMPOSE_FILE=deploy/compose.ghcr.yml
-          ./deploy/e2e.sh http://localhost:34700 http://localhost:34767
+          bash ./deploy/e2e.sh http://localhost:34700 http://localhost:34767
 
       - name: Logs on failure
         if: failure()
