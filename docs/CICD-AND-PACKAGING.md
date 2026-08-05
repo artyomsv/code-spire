@@ -1,8 +1,14 @@
 # CI/CD and packaging — analysis and plan
 
-> **Status: parked (2026-08-03), not started.** Deliberately sequenced *after* **D10 (OIDC)** —
-> see [Why this is parked](#why-this-is-parked). This document exists so the analysis does not have
-> to be redone; it records what was found, what was decided, and what is still open.
+> **Status: delivered 2026-08-05.** Nine workflows, four published images, and a `deploy/` tree
+> covering Compose, Helm and kustomize from one source of truth. The design is
+> `docs/superpowers/specs/2026-08-05-cicd-and-packaging-design.md`; the build order is
+> `docs/superpowers/plans/2026-08-05-cicd-and-packaging.md`.
+>
+> The analysis below is kept as written, because most of it held. Where reality disagreed it is marked
+> **[delivered]** rather than quietly edited — §6's ordering argument in particular turned out to be
+> only half the story: D10 did not merely *gate* this work, it **added scope to it**, and the biggest
+> single piece of the delivery is a thing this document did not anticipate at all.
 
 Scope: GitHub Actions to verify the work, and installation manifests covering local Docker,
 Kubernetes/kustomize, Helm/ArgoCD and (a decision on) Terraform, with images published to the GitHub
@@ -11,6 +17,12 @@ Container Registry as a public repository.
 ---
 
 ## 1. Starting point
+
+**Historical.** Every row below was true on 2026-08-03 and none of it is true now: `.github/` holds
+nine workflows, four production images publish to GHCR, and `deploy/` carries the Compose, Helm,
+kustomize and rendered-manifest tree. Kept because "there was no CI at all" explains several later
+decisions — notably why nothing here adopted a stricter quality gate at the same time as adding the
+scanner that surfaced it.
 
 | | State (2026-08-03) |
 |---|---|
@@ -178,7 +190,12 @@ These are where the work is, and where copying blindly would go wrong.
 
 ---
 
-## 6. Why this is parked
+## 6. Why this was parked
+
+**Historical, and the ordering was right for a reason this section did not state.** D10 landed on
+2026-08-03 and this work followed on 2026-08-05. See §8: authentication first was not merely politeness
+about inviting strangers in — the packaging *depends* on D10's design, because the single origin the
+cookie scoping needs is produced by an artifact this document did not know it had to build.
 
 **D10 (OIDC) is still open: the dashboard and every REST and WebSocket endpoint are
 unauthenticated.**
@@ -200,14 +217,63 @@ When this is picked up, regardless of D10's state:
 
 ---
 
-## 7. Open decisions
+## 7. Decisions, as taken
 
-| Question | Status |
+| Question | Decision |
 |---|---|
-| First-pass scope: CI + images only, or the full `deploy/` tree too? | **Undecided.** |
-| Terraform | Recommended **no** (§4). Not overridden. |
-| Bundled vs external Kafka as the `simple` default | Leaning bundled single-node Redpanda, matching `docker-compose.yml`. |
-| Whether to gate PRs on Testcontainers-backed split tests, or move them to a slower workflow | Leaning: run them in `ci.yml` but as a separate job. |
+| First-pass scope | **Everything** — nine workflows plus the full `deploy/` tree. |
+| Terraform | **No**, per §4. Not overridden. |
+| Bundled vs external Kafka as the `simple` default | **Bundled** single-node Redpanda, matching `docker-compose.yml`. Bundled Postgres and **Keycloak** too — the services refuse to boot without an issuer, so a preset aimed at evaluation that expected one already running would not install. |
+| Testcontainers tests on the PR path | **Yes, as their own job.** The seam already existed on module boundaries: 13 modules run on a bare JVM, three deployables boot Dev Services. It lives in Gradle (`testFast` / `testServices`) rather than a workflow file, so it stays runnable locally and can be guarded — a module in neither tier would otherwise be tested by nothing while CI reported green. |
+| Does `docker.yml` push? | **Yes, `:edge`** — reversing §2's marauder precedent. `e2e.yml` consumes GHCR images, so with releases as the only publisher the topology check could not run until after the release it exists to protect. |
+| Release notes | **Auto-generated** from commits. No CHANGELOG file: this repo's commit discipline already reads as release notes, and a maintained file can fail a release by omission. |
+
+## 8. What D10 added — the part §6 missed **[delivered]**
+
+§6 argued that authentication should precede packaging. Correct, but incomplete: ADR-022's isolation
+mechanism is a property of the **deployment topology**, not of the code.
+
+Each service scopes its session cookie to its own URL path, and cookies scope by host **and** path — so
+that only isolates anything while all four services answer on **one origin**. In dev, the Vite
+dev-server proxy silently supplies that origin. A packaged run has no Vite.
+
+So §3's "a separate static-serving image for the UI" is **wrong as written**. The dashboard image is a
+**reverse proxy**, and its routing is a security control. Consequences:
+
+- **`/webhooks` must route to the gateway.** Missing, an SCM delivery reaches the SPA fallback instead.
+  Measured, not assumed: it answers **405** (nginx refuses POST to a static file), so the SCM sees a
+  failure and retries — every delivery fails and no review ever starts, noisily rather than silently.
+- **Upstreams must resolve at request time.** With a literal hostname nginx resolves while parsing and
+  refuses to start, so the dashboard crash-loops whenever it starts before its siblings.
+- **`X-Forwarded-Proto` must pass an upstream value through**, never be derived from `$scheme`. Behind a
+  TLS-terminating Ingress that forwards over http, deriving it yields an `http://` redirect_uri and a
+  cookie with no `Secure` — broken only behind TLS, where a plaintext compose check passes clean.
+- **`proxy-address-forwarding` needs `trusted-proxies`**, per `D10-AUTH-PLAN.md`. And writing
+  `${SPIRE_TRUSTED_PROXIES}` with no default does **not** enforce it: an `Optional` config value
+  swallows an unresolvable expression, and the image was observed starting cleanly with the variable
+  absent — forwarding on, nothing restricting it. It is now a startup refusal.
+- **The dashboard must sit at the origin root.** Every redirect target in the services is `/` and the
+  cookie paths are absolute, so there is no sub-path deployment.
+
+§5's complications all held. §5.3's Flyway worry was **misdiagnosed**, though: three services own three
+schemas with three independent history tables, so there is no cross-service race. The real first-boot
+constraint is that the gateway cannot connect at all until its scoped role exists — a Helm hook-ordering
+problem, now a pre-install Job.
+
+## 9. Two gates that looked stronger than they were **[delivered]**
+
+Both were caught by measuring rather than trusting, and both are the same shape as the
+`ContractSchemaSnapshotTest` vacuity hole:
+
+- **`helm lint` reports missing required values as WARNINGS and exits 0.** A lint gate would pass a
+  chart that cannot install. It is now informational; `tests/render.sh` assertion 8 requires
+  `helm template` to fail without its required values, mutation-verified by giving them defaults.
+- **The repository is not Semgrep-clean** under `p/default + p/secrets` — 54 findings, two pre-existing
+  and 45 the advice to pin actions to commit SHAs. Semgrep therefore reports rather than blocks, and the
+  pinning decision is `techdebt/global/4-2`. The four findings this work introduced were fixed.
+
+`tests/render.sh --self-test` exists for the same reason: four of its eight invariants are *negative*
+("this value must be absent"), and a negative assertion passes trivially when a key is renamed.
 
 ---
 

@@ -233,6 +233,25 @@ down is the original design-time roadmap (kept for reference).
   [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md), the live check is SMOKE-TEST.md **Mode J**. **Open by design:**
   TLS arrives with the production edge — until then this stops casual access, not an on-path attacker.
 
+- **CI/CD + packaging delivered (2026-08-05):** nine GitHub Actions workflows, four images on GHCR, and
+  a `deploy/` tree covering Compose, Helm and kustomize from one source of truth (chart → kustomize
+  inflation → rendered YAML, drift-checked). The fast/slow test seam already existed on module
+  boundaries and now lives in Gradle as `testFast` / `testServices`, guarded so a module in neither tier
+  fails the build instead of being tested by nothing. **What the analysis in
+  [CICD-AND-PACKAGING.md](CICD-AND-PACKAGING.md) did not anticipate is the largest piece of it:** D10 did
+  not merely gate this work, it added scope, because ADR-022's cookie-path isolation is a property of the
+  *deployment topology* and the single origin it needs was being supplied by the Vite dev proxy. The
+  dashboard image is therefore a **reverse proxy**, not a static server, and its routing is a security
+  control — `/webhooks` missing from it means every SCM delivery fails and no review ever starts. Six
+  things were corrected by running rather than reasoning: the services resolve their datasource and
+  broker only under `%dev`; nginx refuses to *start* on an unresolvable upstream; a `${VAR}` expression
+  with no default does not enforce presence when the target is `Optional`, which had shipped forwarded
+  header trust wide open; bearer tokens are audience-scoped per service, the counterpart of per-path
+  cookies; `helm lint` exits 0 with every required value missing; and the repo is not Semgrep-clean, so
+  Semgrep reports rather than blocks. 21 end-to-end checks pass against the packaged stack, including a
+  WebSocket upgrade through nginx and the gateway's role being denied on the orchestrator schema by
+  Postgres itself. **1074 Java tests / 130 suites; 265 vitest / 37 files.**
+
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
 **A. Finish the multi-SCM story (current thread)**
@@ -375,7 +394,6 @@ Open, by nature of the work rather than by section:
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
 | **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
-| — | **CI/CD + packaging**: GitHub Actions, GHCR images, Helm/kustomize/ArgoCD manifests | M–L | **Analysed and planned — see [CICD-AND-PACKAGING.md](CICD-AND-PACKAGING.md).** Deliberately parked behind D10: there is no CI at all today and no production image, and shipping a one-command install for an unauthenticated app invites exposure. The plan (single-source Helm chart, kustomize inflating it, rendered manifests drift-checked in CI) is recorded so the analysis is not redone. |
 | — | Fleet cost/abuse caps | M | Explicitly deferred from v1 and a **known operator-facing gap**: no per-repo rate limit, no daily spend cap, no hard giant-PR skip. |
 
 **Closed since this table was last written:** the **contract-compat CI gate** (round-trip + snapshot

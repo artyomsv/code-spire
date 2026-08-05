@@ -453,6 +453,38 @@ The design is fully specified in `docs/` — **treat those files as the source o
   not suffice (build-time `enabled=false` does), and `roles.source=accesstoken` is mandatory or login
   succeeds with **zero** roles and denies every operator. **1066 Java tests; 243 vitest.** Runbook:
   SMOKE-TEST **Mode J**. Open by design: TLS ships with the production edge.
+- **CI/CD + packaging delivered (2026-08-05):** nine GitHub Actions workflows, four production images on
+  GHCR, and a `deploy/` tree covering Compose, Helm and kustomize from one source of truth (chart →
+  kustomize inflation → rendered YAML in `deploy/k8s/`, drift-checked by `render-manifests.sh --check`).
+  The two things a future reader most needs, because both are invisible until they break:
+  - **The `spire-ui` image is a reverse proxy, not a static server**, and its nginx config
+    (`spire-ui/nginx/default.conf.template`) is a **security control**. ADR-022 scopes each service's
+    session cookie to its own URL path, cookies scope by host *and* path, so the isolation only exists
+    while all four services answer on **one origin** — which in dev is the Vite proxy and in a packaged
+    run is that file. Three rules in it are load-bearing: `/webhooks` must route to the gateway and
+    precede the SPA fallback (missing, every SCM delivery fails with 405 and no review starts);
+    `X-Forwarded-Proto` must pass an upstream value through rather than derive from `$scheme` (deriving
+    it breaks login *only* behind a TLS Ingress, where a plaintext check passes clean); and upstreams
+    resolve at request time via a variable in `proxy_pass`, because a literal hostname makes nginx
+    refuse to start when a sibling is not up yet.
+  - **The chart never generates a secret**, and that is a refusal rather than an omission. Helm's
+    `randAlphaNum` idiom would rotate `SPIRE_ENCRYPTION_KEYSET` on `helm upgrade` and make every
+    encrypted event payload, provider secret and context blob permanently unreadable. Secret generation
+    is safe for shared state and catastrophic for keys to existing data.
+
+  `deploy/helm/spire/tests/render.sh` asserts eight invariants across **two** sources — rendered
+  manifests for what the chart decides, in-repo config for what is baked into an image — and
+  `--self-test` proves each catches its own break, because four are *negative* ("this value must be
+  absent") and those pass trivially when a key is renamed. `deploy/e2e.sh` runs 21 checks against a
+  running stack, covering what dev cannot: WebSocket upgrade through nginx, a token minted for one
+  service refused by another, and the gateway's role denied on the `orchestrator` schema by Postgres
+  itself. Two gates were weaker than they looked and were measured rather than trusted: **`helm lint`
+  exits 0 with every required value missing** (so assertion 8 requires `helm template` to fail instead),
+  and **the repo is not Semgrep-clean** under `p/default + p/secrets` — 45 of 54 findings are
+  action-SHA-pinning advice, filed as `techdebt/global/4-2`, so Semgrep reports rather than blocks.
+  A `%prod` lesson worth generalising: **`${VAR}` with no default does not enforce presence when the
+  target is `Optional`** — `trusted-proxies` was silently empty with `proxy-address-forwarding` on, so
+  the pairing is now a startup refusal. **1074 Java tests / 130 suites; 265 vitest / 37 files.**
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
@@ -473,6 +505,24 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 ./gradlew :spire-gateway:quarkusDev       # webhook edge :34081
 ./gradlew :spire-review-worker:quarkusDev # worker :34082
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
+```
+
+**Fast local verification** — the same two tiers CI runs, so this is the pre-commit loop:
+
+```bash
+./gradlew testFast                        # 13 Docker-free modules, ~25s
+./gradlew testServices                    # the 3 deployables (Dev Services: Postgres + Kafka)
+```
+
+**The packaged stack** (`deploy/`, host ports 347xx — distinct from dev's 34xxx and 392xx):
+
+```bash
+cp deploy/.env.example deploy/.env        # every value required, no defaults
+docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build   # built here
+docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d      # from GHCR
+./deploy/e2e.sh http://localhost:34700 http://localhost:34767               # 21 checks
+./deploy/helm/spire/tests/render.sh --self-test                             # chart invariants
+./deploy/render-manifests.sh --check                                        # rendered-manifest drift
 ```
 
 ## Conventions (enforced by design docs — do not regress)

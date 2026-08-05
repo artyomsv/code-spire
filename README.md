@@ -104,6 +104,33 @@ repository in plain text, so they must never exist anywhere reachable from outsi
 Turning it on for a running stack, what a viewer may and may not reach, and the reason the two IdP
 options need different URLs, are all in [docs/SMOKE-TEST.md](docs/SMOKE-TEST.md) **Mode J**.
 
+## Deployment
+
+> **Do not expose a deployment without TLS.** Operator sessions are cookies, and in plaintext they are
+> sniffable and **replayable** — authentication stops casual access, not an on-path attacker. Bind the
+> dashboard to `localhost`, or put a TLS terminator in front of it.
+
+```bash
+cp deploy/.env.example deploy/.env      # every value is required; none has a default
+docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d
+```
+
+Dashboard on `http://localhost:34700`. Images are published to
+`ghcr.io/artyomsv/spire-{gateway,orchestrator,review-worker,ui}` — `:edge` tracks `master`.
+
+Two presets, for Compose and for Kubernetes alike: **`simple`** bundles Postgres, Redpanda and Keycloak
+for self-hosting or evaluation; **`production`** expects all three externally. The Helm chart is the
+single source of truth — kustomize inflates it and the plain YAML in `deploy/k8s/` is rendered from it,
+with a drift check in CI so the three cannot diverge.
+
+One thing to know before changing anything: **the dashboard image is also the reverse proxy**, routing
+`/webhooks`, `/api`, `/gw` and `/wk` to the services. That is what puts all four on one origin, which is
+what makes the per-service session cookies isolate (ADR-022) — so it must stay at the origin root, and
+`/webhooks` must keep reaching the gateway or no review ever starts.
+
+Full guide, including the realm contract for bringing your own identity provider and why nothing here
+generates an encryption keyset: [deploy/README.md](deploy/README.md).
+
 ## Docs
 
 | Doc | What |
