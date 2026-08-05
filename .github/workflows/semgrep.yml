@@ -47,7 +47,7 @@ jobs:
     container:
       image: semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b # 1.172.0
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # --baseline-commit walks history back to the PR's base. The default shallow clone has none
           # of it, and Semgrep reports the miss as a scan error rather than falling back to a full run.
