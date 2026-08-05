@@ -1,0 +1,172 @@
+# The one-command install. Pulls published images and builds nothing.
+#
+#   cp deploy/.env.example deploy/.env     # then fill it in
+#   docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d
+#
+# NO TLS. The dashboard is the only published port; bind it to localhost or put a terminator in front
+# of it. See deploy/README.md.
+#
+# The dashboard image is also the reverse proxy: it serves the SPA and routes /webhooks, /api, /gw and
+# /wk to the three services, which is what puts them on ONE origin. That is not tidiness — ADR-022
+# scopes each service's session cookie to its own URL path, and cookies scope by host AND path, so a
+# split origin would hand one service another's credential.
+name: spire
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Wiring every service needs. Note the datasource and broker: all three services resolve these only
+# under %dev in their own config, so a packaged run MUST be told them here or Flyway fails at boot and
+# the Kafka connector silently falls back to localhost.
+x-service-env: &service-env
+  QUARKUS_PROFILE: prod
+  QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?set in .env}
+  KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+  SPIRE_OIDC_AUTH_SERVER_URL: ${SPIRE_OIDC_AUTH_SERVER_URL:?set in .env}
+  SPIRE_TRUSTED_PROXIES: ${SPIRE_TRUSTED_PROXIES:?set in .env}
+
+x-service-common: &service-common
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  logging: *logging
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redpanda:
+      condition: service_healthy
+    keycloak:
+      condition: service_healthy
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v26.1.12
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      # One listener only: nothing outside this network talks to the broker.
+      - --kafka-addr=INTERNAL://0.0.0.0:9092
+      - --advertise-kafka-addr=INTERNAL://redpanda:9092
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    logging: *logging
+
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      # Read only by the init script below, which provisions the schema-scoped gateway role.
+      GATEWAY_POSTGRES_USER: ${GATEWAY_POSTGRES_USER:?set in .env}
+      GATEWAY_POSTGRES_PASSWORD: ${GATEWAY_POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      # postgres:18+ convention: mount the PARENT directory (data lives in a versioned subdirectory,
+      # which is what enables an in-place pg_upgrade --link).
+      - pgdata:/var/lib/postgresql
+      # Runs once on a fresh volume. On an existing volume, run the two statements by hand — see
+      # .env.example. The gateway cannot connect at all until its role exists.
+      - ../infra/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    logging: *logging
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5.5
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?set in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in .env}
+      # Pinned so the issuer stays fixed while front- and backchannel differ. An UNPINNED instance
+      # derives its issuer from the Host header it was reached by, so the browser (host port) and the
+      # containers (service name) would disagree and every token would fail validation.
+      KC_HOSTNAME: http://host.docker.internal:${SPIRE_KEYCLOAK_PORT:-34767}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "${SPIRE_KEYCLOAK_PORT:-34767}:8080"
+    healthcheck:
+      # The health endpoint lives on the management port (9000) and the image has no curl or wget, so
+      # this speaks HTTP over bash's /dev/tcp.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+  orchestrator:
+    image: ghcr.io/artyomsv/spire-orchestrator:${SPIRE_VERSION:-edge}
+    <<: *service-common
+    environment:
+      <<: *service-env
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER:?set in .env}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      SPIRE_ENCRYPTION_KEYSET: ${SPIRE_ENCRYPTION_KEYSET:?set in .env}
+      SPIRE_OIDC_CLIENT_ID: spire-orchestrator
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_ORCHESTRATOR_SECRET:?set in .env}
+
+  gateway:
+    image: ghcr.io/artyomsv/spire-gateway:${SPIRE_VERSION:-edge}
+    <<: *service-common
+    environment:
+      <<: *service-env
+      # The schema-scoped role, never the owner of the orchestrator schema.
+      QUARKUS_DATASOURCE_USERNAME: ${GATEWAY_POSTGRES_USER:?set in .env}
+      QUARKUS_DATASOURCE_PASSWORD: ${GATEWAY_POSTGRES_PASSWORD:?set in .env}
+      # The dedicated webhook keyset ONLY. The gateway never receives SPIRE_ENCRYPTION_KEYSET, so a
+      # compromised edge cannot decrypt SCM or LLM API tokens.
+      SPIRE_ENCRYPTION_WEBHOOK_KEYSET: ${SPIRE_ENCRYPTION_WEBHOOK_KEYSET:?set in .env}
+      SPIRE_OIDC_CLIENT_ID: spire-gateway
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_GATEWAY_SECRET:?set in .env}
+
+  worker:
+    image: ghcr.io/artyomsv/spire-review-worker:${SPIRE_VERSION:-edge}
+    <<: *service-common
+    environment:
+      <<: *service-env
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER:?set in .env}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      SPIRE_ENCRYPTION_KEYSET: ${SPIRE_ENCRYPTION_KEYSET:?set in .env}
+      SPIRE_OIDC_CLIENT_ID: spire-review-worker
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_WORKER_SECRET:?set in .env}
+
+  # The ONLY published application port, which is what makes SPIRE_TRUSTED_PROXIES meaningful: no
+  # service port is reachable, so nothing can bypass this proxy to forge a forwarded header.
+  ui:
+    image: ghcr.io/artyomsv/spire-ui:${SPIRE_VERSION:-edge}
+    depends_on: [orchestrator, gateway, worker]
+    environment:
+      SPIRE_ORCHESTRATOR_URL: http://orchestrator:8080
+      SPIRE_GATEWAY_URL: http://gateway:8080
+      SPIRE_WORKER_URL: http://worker:8080
+    ports:
+      - "${SPIRE_UI_PORT:-34700}:8080"
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  pgdata:
+  redpanda:
