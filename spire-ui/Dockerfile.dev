@@ -5,7 +5,7 @@
 # debugging the dev server (NODE_OPTIONS=--inspect is set in docker-compose.dev.yml).
 #
 # Node 22 satisfies Vite 7's engine floor (>= 20.19 / >= 22.12).
-FROM node:22-alpine
+FROM node:25-alpine
 
 WORKDIR /app
 
