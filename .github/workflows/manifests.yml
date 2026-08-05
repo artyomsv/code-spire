@@ -20,6 +20,9 @@ on:
       - 'deploy/**'
       - 'spire-ui/nginx/**'
       - 'spire-*/src/main/resources/application.yml'
+      # The workflow's own file, or a change to it lands on master unexercised — which is exactly what
+      # happened to the Helm pin: it was pushed and nothing ran to confirm it.
+      - '.github/workflows/manifests.yml'
 
 permissions:
   contents: read

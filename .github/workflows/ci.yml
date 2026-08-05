@@ -61,9 +61,9 @@ jobs:
   services:
     name: service tests + packaging
     runs-on: ubuntu-latest
-    # Measured at 40+ minutes on a cold runner against ~100s locally: Dev Services pulls and boots
-    # Postgres and Kafka per test JVM. Bounded so a hung job fails in an hour rather than burning the
-    # six-hour default. See techdebt/global/3-2.
+    # Cold-cache runs pull the whole Gradle graph and every Dev Services image and took 40+ minutes;
+    # warm they finish in under three. Bounded so a hung job fails in an hour rather than burning the
+    # six-hour default. See techdebt/global/4-3.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
