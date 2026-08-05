@@ -1,0 +1,97 @@
+# The single origin.
+#
+# ADR-022 scopes each service's session cookie to its own URL path, so one service can never receive
+# another's credential. Cookies scope by host AND path, which only isolates anything while all four
+# services answer on ONE origin. In dev that origin is the Vite proxy (spire-ui/vite.config.ts); in a
+# packaged run it is this file. The routing below is a security control, not a convenience.
+#
+# Substituted at container start by the nginx image's entrypoint. NGINX_ENVSUBST_FILTER restricts it
+# to SPIRE_-prefixed names, so nginx's own $host, $scheme and $http_* survive untouched.
+
+# Never clobber an upstream TLS terminator. Behind a Kubernetes Ingress that terminates TLS and
+# forwards over http, $scheme here is "http": deriving X-Forwarded-Proto from it would overwrite the
+# controller's "https", and the services (which trust forwarded headers in prod) would then mint an
+# http:// redirect_uri and drop the session cookie's Secure attribute. That breaks ONLY behind TLS,
+# so a plaintext compose check would pass clean — the verified-locally-broken-in-cluster failure.
+map $http_x_forwarded_proto $spire_fwd_proto {
+    default $http_x_forwarded_proto;
+    ''      $scheme;
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    # Resolve upstreams at REQUEST time, not at startup.
+    #
+    # With a literal hostname in proxy_pass, nginx resolves it while parsing the config and refuses to
+    # start at all if it does not yet resolve ("host not found in upstream") — so the dashboard would
+    # crash-loop whenever it started before its siblings, and would hold a stale address if a Service
+    # were recreated. Assigning the upstream to a variable defers resolution to each request; because
+    # the value carries no path component, the original request URI is still passed through unchanged.
+    #
+    # NGINX_LOCAL_RESOLVERS is derived from /etc/resolv.conf by the image's own entrypoint, so this is
+    # correct for Docker's embedded DNS and for cluster DNS without being told which one it is.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;
+
+    set $spire_orchestrator ${SPIRE_ORCHESTRATOR_URL};
+    set $spire_gateway      ${SPIRE_GATEWAY_URL};
+    set $spire_worker       ${SPIRE_WORKER_URL};
+
+    # An SCM webhook body for a large pull request.
+    client_max_body_size 25m;
+
+    # Host is NEVER rewritten: OIDC derives redirect_uri from it, so rewriting sends the login
+    # round-trip to a backend port instead of this origin. vite.config.ts documents the same trap.
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Forwarded-Proto $spire_fwd_proto;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+    # SCM ingress. MUST precede the SPA fallback: a delivery that fell through to try_files would be
+    # answered 200 with index.html, so the SCM records a successful delivery, never retries, and the
+    # review is lost with nothing logged anywhere. The gateway's own policy makes /webhooks/* public
+    # because an SCM presents an HMAC signature rather than a session.
+    location /webhooks {
+        proxy_pass $spire_gateway;
+    }
+
+    # The orchestrator owns /api, its three WebSockets included — they live under /api/ws/* so one
+    # prefix, one cookie-path and one policy rule cover the whole service.
+    location /api {
+        proxy_pass $spire_orchestrator;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # nginx defaults to 60s, which would cut the idle timeline and attention sockets and produce
+        # reconnect churn the dashboard reports as an outage.
+        proxy_read_timeout 3600s;
+    }
+
+    # The gateway owns /gw — its webhook-repo registry API and its attention socket.
+    location /gw {
+        proxy_pass $spire_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+
+    # The worker owns /wk — a review's assembled context, which only it can address.
+    location /wk {
+        proxy_pass $spire_worker;
+    }
+
+    # Health of the proxy itself, not of anything behind it.
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    # The dashboard is a client-routed SPA and must sit at the origin ROOT: every redirect target in
+    # the services is "/" and the three cookie paths are absolute.
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri /index.html;
+    }
+}

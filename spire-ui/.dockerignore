@@ -1,5 +1,7 @@
+# Keep the build context lean and never bake host output or secrets into the image.
 node_modules
 dist
-.git
-.DS_Store
+.env
+.env.*
+*.log
 Dockerfile*
