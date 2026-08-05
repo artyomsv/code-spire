@@ -1,0 +1,25 @@
+# The `simple` preset: everything bundled. For self-hosting, a homelab, or evaluating.
+#
+# Bundles an identity provider on purpose. The services refuse to boot without an issuer, so a preset
+# aimed at evaluation that expected one to already exist would not install at all.
+
+postgres:
+  bundled: true
+
+kafka:
+  bundled: true
+
+oidc:
+  bundled: true
+  # Both must name the SAME host the browser will use, or the browser's issuer and the pods' disagree
+  # and every token fails validation. Override both for your own hostname.
+  issuerHost: http://spire.example.invalid:34767
+  authServerUrl: http://spire.example.invalid:34767/realms/spire
+
+ingress:
+  enabled: true
+  host: spire.example.invalid
+  tls:
+    # OFF for a localhost evaluation only. Session cookies then travel in plaintext and are
+    # replayable: do not put this on a network you do not control.
+    enabled: false

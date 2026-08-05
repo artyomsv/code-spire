@@ -1,0 +1,48 @@
+{{/*
+ONE rule, to the dashboard, at the origin root.
+
+There is deliberately no per-prefix routing here and no sub-path option. Every redirect target in the
+services is "/" and the three cookie paths are absolute, so the dashboard must sit at the root; and the
+prefix routing belongs in the dashboard image, so that compose and Kubernetes share one topology and
+the login round-trip is verified locally before a cluster ever sees it.
+
+Routing the prefixes here instead would mean two topologies to keep in sync, with any drift landing on
+authentication — where it is invisible until a login silently fails.
+*/}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spire
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+  annotations:
+    # WebSocket connections on /api/ws/* and /gw/ws/* are long-lived; a controller's default read
+    # timeout would cut them and produce reconnect churn the dashboard reports as an outage.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required." .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required." .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spire-ui
+                port:
+                  name: http
+{{- end }}

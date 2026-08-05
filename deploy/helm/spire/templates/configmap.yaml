@@ -1,0 +1,15 @@
+{{/*
+Non-secret configuration. The two usernames live here rather than inline so each service references a
+DISTINCT key — which is what tests/render.sh assertion 3 checks, and what keeps the gateway's
+schema-scoped role from quietly becoming the same role as everyone else's.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-config
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+data:
+  POSTGRES_USER: {{ .Values.postgres.user | quote }}
+  GATEWAY_POSTGRES_USER: {{ .Values.postgres.gatewayUser | quote }}
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}

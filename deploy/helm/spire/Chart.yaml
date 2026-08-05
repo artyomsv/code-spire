@@ -1,0 +1,10 @@
+apiVersion: v2
+name: spire
+description: Code Spire — self-hosted, source-available AI code reviewer (FSL-1.1-ALv2)
+type: application
+# The chart's own version. appVersion tracks the images and is set from the git tag at release.
+version: 0.1.0
+appVersion: "edge"
+home: https://github.com/artyomsv/code-spire
+sources:
+  - https://github.com/artyomsv/code-spire

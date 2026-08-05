@@ -1,0 +1,51 @@
+Code Spire {{ .Chart.AppVersion }} installed as "{{ .Release.Name }}".
+
+{{ if not .Values.ingress.tls.enabled }}
+================================ READ THIS =================================
+
+  TLS IS OFF (ingress.tls.enabled=false).
+
+  Operator sessions are cookies. In plaintext they are sniffable and
+  REPLAYABLE, so authentication here stops casual and unauthorised access
+  but does NOT stop an on-path attacker.
+
+  This is only appropriate for a localhost evaluation. Enable TLS before
+  this reaches any network you do not control.
+
+============================================================================
+{{ end }}
+Dashboard:
+{{- if .Values.ingress.enabled }}
+  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+  kubectl port-forward svc/spire-ui 34700:8080     then http://localhost:34700
+{{- end }}
+
+The dashboard is also the reverse proxy for /webhooks, /api, /gw and /wk, which
+is what puts all four services on one origin. Two things follow:
+
+  * It must stay at the origin ROOT. Every redirect target in the services is
+    "/" and the session cookie paths are absolute, so there is no sub-path
+    deployment.
+  * No service port is exposed, which is what makes trustedProxies meaningful:
+    nothing can bypass the proxy to forge a forwarded header.
+
+Check it:
+
+  kubectl get pods -l app.kubernetes.io/name=spire
+  kubectl port-forward svc/spire-ui 34700:8080
+  ./deploy/e2e.sh http://localhost:34700 <your-idp-url>
+
+{{ if not .Values.oidc.bundled }}
+Using your own identity provider. It must offer three confidential clients
+(spire-orchestrator, spire-gateway, spire-review-worker), each with an audience
+mapper, plus the roles spire-viewer and spire-admin readable from the ACCESS
+token. See deploy/README.md; deploy/keycloak/realm-spire.json is a worked
+example.
+{{ end }}
+{{- if .Values.gateway.giveMasterKeyset }}
+
+WARNING: gateway.giveMasterKeyset=true. That flag exists only so the chart's own
+test suite can render a shape it must reject, and it hands the internet-facing
+edge the keyset that decrypts every SCM and LLM token. Unset it.
+{{- end }}

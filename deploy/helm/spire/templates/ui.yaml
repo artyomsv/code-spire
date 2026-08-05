@@ -1,0 +1,82 @@
+{{/*
+The dashboard — and the reverse proxy that puts all four services on ONE origin.
+
+That is the mechanism ADR-022 depends on, not a convenience: each service scopes its session cookie to
+its own URL path, cookies scope by host AND path, so a split origin would hand one service another's
+credential. The routing itself lives in spire-ui/nginx/default.conf.template, which tests/render.sh
+asserts over directly because it is baked into the image rather than templated here.
+
+This is the only workload reachable from outside the cluster.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-ui
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: ui
+    spec:
+      containers:
+        - name: ui
+          image: "{{ .Values.image.registry }}/spire-ui:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Service DNS, resolved at REQUEST time by the template's resolver — so this pod does not
+            # crash-loop when it starts before its siblings, and does not pin a stale address if a
+            # Service is recreated.
+            - name: SPIRE_ORCHESTRATOR_URL
+              value: http://spire-orchestrator:8080
+            - name: SPIRE_GATEWAY_URL
+              value: http://spire-gateway:8080
+            - name: SPIRE_WORKER_URL
+              value: http://spire-worker:8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources.ui | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-ui
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -1,0 +1,108 @@
+# Defaults shared by both presets. Nothing here is a credential, and nothing here is generated.
+#
+# Pick a preset rather than editing this file:
+#   helm install spire . -f values-simple.yaml       bundled Postgres, Redpanda and Keycloak
+#   helm install spire . -f values-production.yaml   external everything
+
+image:
+  registry: ghcr.io/artyomsv
+  # `edge` tracks master. Pin a release tag for a deployment you intend to keep.
+  tag: edge
+  pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Secrets: NAMES ONLY. This chart never generates a secret value, and that is a
+# deliberate refusal rather than an omission.
+#
+# SPIRE_ENCRYPTION_KEYSET decrypts data already at rest — event payloads,
+# provider credentials, assembled context. Helm's usual idiom for this is
+# `randAlphaNum` behind an `if not existingSecret`, which here would mint a new
+# keyset on the next `helm upgrade` and make every encrypted row permanently
+# unreadable. Secret generation is safe for shared state (a database password
+# both sides read from one Secret) and catastrophic for keys to existing data.
+#
+# Create the two Secrets yourself, then name them here.
+#
+#   existingSecret must hold:
+#     POSTGRES_PASSWORD
+#     SPIRE_ENCRYPTION_KEYSET
+#     SPIRE_OIDC_ORCHESTRATOR_SECRET
+#     SPIRE_OIDC_GATEWAY_SECRET
+#     SPIRE_OIDC_WORKER_SECRET
+#
+#   gatewayExistingSecret must hold:
+#     GATEWAY_POSTGRES_PASSWORD
+#     SPIRE_ENCRYPTION_WEBHOOK_KEYSET
+#
+# They must be two DIFFERENT Secrets: the gateway mounts only the second, so a
+# compromised internet-facing edge can decrypt webhook secrets and nothing else.
+# ---------------------------------------------------------------------------
+secrets:
+  existingSecret: ""
+  gatewayExistingSecret: ""
+
+postgres:
+  # true bundles a single Postgres with a PVC. false expects `host` to be reachable.
+  bundled: true
+  host: ""
+  port: 5432
+  database: spire
+  user: spire
+  # The gateway's schema-scoped role. It owns only the `gateway` schema and is never granted the
+  # `orchestrator` one, so the edge cannot read the token registry or the event store.
+  gatewayUser: gateway
+  # A pre-install hook creates the gateway role and its schema, idempotently. It needs credentials that
+  # can create a role; against an external database some operators will not grant that, in which case
+  # set this false and run the two statements by hand (deploy/README.md). The gateway cannot connect at
+  # all until the role exists, so one or the other must happen.
+  provisionGatewayRole: true
+  storage: 10Gi
+  image: postgres:18.4-alpine
+
+kafka:
+  bundled: true
+  bootstrapServers: ""
+  storage: 10Gi
+  image: redpandadata/redpanda:v26.1.12
+
+oidc:
+  # true bundles Keycloak and imports the shipped realm. Suitable for evaluation, not for a cluster
+  # that already has an identity provider.
+  bundled: false
+  authServerUrl: ""
+  # Required when bundled: the issuer must be reachable under ONE name from both the browser and the
+  # pods, or their issuers disagree and every token fails validation.
+  issuerHost: ""
+  image: quay.io/keycloak/keycloak:26.5.5
+
+# The network the dashboard pod runs on, e.g. the cluster's pod CIDR. Required, no default: the value
+# is cluster-specific. The services believe X-Forwarded-For and -Proto in prod and REFUSE TO START
+# unless told who may be believed — unrestricted, anything able to reach a service port could forge
+# its apparent client address. Nothing else is exposed, which is what makes this meaningful.
+trustedProxies: ""
+
+ingress:
+  enabled: true
+  className: ""
+  host: spire.example.invalid
+  annotations: {}
+  tls:
+    # Operator sessions are cookies. In plaintext they are sniffable and replayable, so TLS is a
+    # deployment requirement rather than a hardening step.
+    enabled: true
+    secretName: spire-tls
+
+resources:
+  services:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 1Gi}
+  ui:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+gateway:
+  # TEST-ONLY, and it exists for one reason: tests/render.sh --self-test needs to render the forbidden
+  # shape to prove the "master keyset never reaches the gateway" assertion can actually catch it. A
+  # negative assertion passes trivially when a key is renamed, so it must be shown to fail.
+  # Never set this in a preset or a real install.
+  giveMasterKeyset: false

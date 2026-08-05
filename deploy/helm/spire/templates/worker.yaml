@@ -1,0 +1,75 @@
+{{/*
+The review worker: diff, context and review work, plus the assembled-context reads the dashboard's
+Context card needs. Holds the master keyset because it decrypts the per-command SCM credential the
+orchestrator brokers to it (ADR-015).
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-worker
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.registry }}/spire-review-worker:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- include "spire.commonEnv" . | nindent 12 }}
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: spire-config
+                  key: POSTGRES_USER
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: SPIRE_ENCRYPTION_KEYSET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.secretName" . }}
+                  key: SPIRE_ENCRYPTION_KEYSET
+            - name: SPIRE_OIDC_CLIENT_ID
+              value: spire-review-worker
+            - name: SPIRE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.secretName" . }}
+                  key: SPIRE_OIDC_WORKER_SECRET
+          {{- include "spire.probes" . | nindent 10 }}
+          {{- include "spire.securityContext" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.resources.services | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-worker
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

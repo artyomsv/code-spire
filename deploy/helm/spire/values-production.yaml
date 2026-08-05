@@ -1,0 +1,29 @@
+# The `production` preset: nothing bundled. For a cluster that already runs its own Postgres, Kafka
+# and identity provider — or that will run them via CloudNativePG and Strimzi.
+#
+# Every empty value below is required and has no default. The chart fails the render naming whichever
+# is missing, rather than installing something subtly wrong.
+
+postgres:
+  bundled: false
+  host: ""            # e.g. spire-db-rw.databases.svc.cluster.local
+  database: spire
+  user: spire
+  gatewayUser: gateway
+
+kafka:
+  bundled: false
+  bootstrapServers: ""   # e.g. spire-kafka-bootstrap.kafka.svc.cluster.local:9092
+
+oidc:
+  bundled: false
+  # Must be reachable from the pods AND be the issuer the browser sees. See deploy/README.md for the
+  # realm contract: three confidential clients, an audience mapper each, both roles on the access token.
+  authServerUrl: ""
+
+ingress:
+  enabled: true
+  host: ""
+  tls:
+    enabled: true
+    secretName: spire-tls

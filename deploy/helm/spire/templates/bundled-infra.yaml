@@ -1,0 +1,227 @@
+{{/*
+The `simple` preset's bundled dependencies: Postgres, Redpanda and Keycloak. All three are
+single-replica with no backup story, which is why `production` expects external ones.
+
+Every Service here is ClusterIP. Nothing but the dashboard is reachable from outside the cluster.
+*/}}
+{{- if .Values.postgres.bundled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: spire-postgres
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: spire-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            # postgres:18+ wants the PARENT directory mounted: data lives in a versioned subdirectory,
+            # which is what makes an in-place pg_upgrade --link possible later.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-postgres
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+{{- end }}
+
+{{- if .Values.kafka.bundled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: spire-redpanda
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka
+spec:
+  serviceName: spire-redpanda
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: kafka
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: kafka
+    spec:
+      containers:
+        - name: redpanda
+          image: {{ .Values.kafka.image }}
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp=1
+            - --memory=1G
+            - --reserve-memory=0M
+            - --node-id=0
+            - --check=false
+            # One listener: nothing outside the cluster talks to the broker.
+            - --kafka-addr=INTERNAL://0.0.0.0:9092
+            - --advertise-kafka-addr=INTERNAL://spire-redpanda:9092
+          ports:
+            - name: kafka
+              containerPort: 9092
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "rpk cluster health --exit-when-healthy"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.kafka.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-redpanda
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+{{- end }}
+
+{{- if .Values.oidc.bundled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-keycloak
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: oidc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: oidc
+    spec:
+      containers:
+        - name: keycloak
+          image: {{ .Values.oidc.image }}
+          args: ["start-dev", "--http-port=8080"]
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.secretName" . }}
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            # PINNED. An unpinned instance derives its issuer from the Host it was reached by, so the
+            # browser's issuer and the pods' would disagree and every token would fail validation.
+            # BACKCHANNEL_DYNAMIC lets in-cluster callers use the Service name while the issuer stays
+            # the browser-facing one.
+            - name: KC_HOSTNAME
+              value: {{ required "oidc.issuerHost is required when oidc.bundled is true: the browser-facing URL of the identity provider. Without it Keycloak derives its issuer from whichever Host it was called on, and the browser and the pods disagree on every token." .Values.oidc.issuerHost | quote }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 24
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-keycloak
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: oidc
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

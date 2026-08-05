@@ -1,0 +1,88 @@
+{{/*
+Provisions the gateway's schema-scoped Postgres role, idempotently.
+
+This is the real first-boot ordering constraint, and it is not a Flyway one: the three services own
+three schemas with three independent history tables, so there is no cross-service migration race. What
+there is, is that the gateway cannot connect AT ALL until this role exists.
+
+Runs as a pre-install/pre-upgrade hook so it completes before the gateway Deployment starts. The
+compose stack gets this from infra/postgres-init, which only fires on a fresh volume — a Helm install
+onto an existing database must not silently skip it, hence CREATE ... IF NOT EXISTS semantics.
+
+Needs credentials that can create a role. For the `production` preset against an external database
+that is a real ask, and some operators will refuse it: deploy/README.md documents the two statements
+to run by hand instead, in which case skip this with --set postgres.provisionGatewayRole=false.
+*/}}
+{{- if and .Values.postgres.provisionGatewayRole (not (eq (include "spire.postgresHost" .) "")) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spire-gateway-role
+  labels:
+    {{- include "spire.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: gateway-role
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: provision
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: PGHOST
+              value: {{ include "spire.postgresHost" . | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: PGUSER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: GATEWAY_USER
+              value: {{ .Values.postgres.gatewayUser | quote }}
+            - name: GATEWAY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "spire.gatewaySecretName" . }}
+                  key: GATEWAY_POSTGRES_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # The database may still be starting on a first install.
+              for _ in $(seq 1 60); do pg_isready -q && break; sleep 2; done
+
+              # CREATE ROLE has no IF NOT EXISTS, so the existence check is a separate query. Driven
+              # from the shell rather than a DO block because a psql variable cannot be interpolated
+              # into the block's string body.
+              if [ "$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$GATEWAY_USER'")" != "1" ]; then
+                psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"$GATEWAY_USER\" LOGIN PASSWORD '$GATEWAY_PASSWORD'"
+              fi
+
+              # Deliberately grants NOTHING on the orchestrator schema. Widening this to clear a
+              # permission error collapses the boundary while leaving every piece of configuration
+              # looking correct — which is why deploy/e2e.sh probes the live privileges rather than
+              # trusting the manifests.
+              psql -v ON_ERROR_STOP=1 \
+                   -c "CREATE SCHEMA IF NOT EXISTS gateway AUTHORIZATION \"$GATEWAY_USER\""
+              echo "gateway role and schema present"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+{{- end }}
