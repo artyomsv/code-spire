@@ -5,9 +5,22 @@ This is the real first-boot ordering constraint, and it is not a Flyway one: the
 three schemas with three independent history tables, so there is no cross-service migration race. What
 there is, is that the gateway cannot connect AT ALL until this role exists.
 
-Runs as a pre-install/pre-upgrade hook so it completes before the gateway Deployment starts. The
-compose stack gets this from infra/postgres-init, which only fires on a fresh volume — a Helm install
-onto an existing database must not silently skip it, hence CREATE ... IF NOT EXISTS semantics.
+Whether it is a HOOK depends on where Postgres comes from, and getting that wrong deadlocks the
+install — which is exactly how it was found, by the kind job:
+
+  - EXTERNAL Postgres: a pre-install hook is right. The database already exists, so the role can be
+    provisioned before anything tries to connect.
+  - BUNDLED Postgres: a pre-install hook CANNOT work. Helm runs pre-install hooks before creating the
+    release's own resources, so the database this Job waits for does not exist yet; it times out,
+    restarts, and `helm install --wait` fails with "Job in progress / context deadline exceeded".
+    A post-install hook is no better: with --wait, Helm waits for the Deployments to be ready first,
+    and the gateway cannot become ready until this Job has run — a deadlock in the other direction.
+
+    So for the bundled case it is an ordinary resource, applied alongside everything else. The gateway
+    restarts until the role appears, which Kubernetes handles and --wait accommodates.
+
+The compose stack gets this from infra/postgres-init, which only fires on a fresh volume — a Helm
+install onto an existing database must not silently skip it, hence CREATE ... IF NOT EXISTS semantics.
 
 Needs credentials that can create a role. For the `production` preset against an external database
 that is a real ask, and some operators will refuse it: deploy/README.md documents the two statements
@@ -17,13 +30,17 @@ to run by hand instead, in which case skip this with --set postgres.provisionGat
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: spire-gateway-role
+  # The name carries the revision when this is an ordinary resource: a completed Job's pod template is
+  # immutable, so re-applying the same name on `helm upgrade` is rejected.
+  name: spire-gateway-role{{ if .Values.postgres.bundled }}-{{ .Release.Revision }}{{ end }}
   labels:
     {{- include "spire.labels" . | nindent 4 }}
   annotations:
+    {{- if not .Values.postgres.bundled }}
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- end }}
 spec:
   backoffLimit: 6
   template:
@@ -62,8 +79,12 @@ spec:
             - -c
             - |
               set -e
-              # The database may still be starting on a first install.
-              for _ in $(seq 1 60); do pg_isready -q && break; sleep 2; done
+              # A bundled Postgres is created at the same time as this Job and has to pull its image,
+              # initialise a data directory and accept connections first, so the wait is generous.
+              # Failing here rather than looping forever is deliberate: the Job's backoffLimit then
+              # surfaces it, instead of a pod sitting Running until the install times out.
+              for _ in $(seq 1 150); do pg_isready -q && break; sleep 2; done
+              pg_isready || { echo "postgres at $PGHOST:$PGPORT never accepted connections"; exit 1; }
 
               # CREATE ROLE has no IF NOT EXISTS, so the existence check is a separate query. Driven
               # from the shell rather than a DO block because a psql variable cannot be interpolated

@@ -469,6 +469,8 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
+  # The name carries the revision when this is an ordinary resource: a completed Job's pod template is
+  # immutable, so re-applying the same name on `helm upgrade` is rejected.
   name: spire-gateway-role
   labels:
     app.kubernetes.io/name: spire
@@ -517,8 +519,12 @@ spec:
             - -c
             - |
               set -e
-              # The database may still be starting on a first install.
-              for _ in $(seq 1 60); do pg_isready -q && break; sleep 2; done
+              # A bundled Postgres is created at the same time as this Job and has to pull its image,
+              # initialise a data directory and accept connections first, so the wait is generous.
+              # Failing here rather than looping forever is deliberate: the Job's backoffLimit then
+              # surfaces it, instead of a pod sitting Running until the install times out.
+              for _ in $(seq 1 150); do pg_isready -q && break; sleep 2; done
+              pg_isready || { echo "postgres at $PGHOST:$PGPORT never accepted connections"; exit 1; }
 
               # CREATE ROLE has no IF NOT EXISTS, so the existence check is a separate query. Driven
               # from the shell rather than a DO block because a psql variable cannot be interpolated

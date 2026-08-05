@@ -693,48 +693,19 @@ spec:
           requests:
             storage: 10Gi
 ---
-# Source: spire/templates/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: spire
-  labels:
-    app.kubernetes.io/name: spire
-    app.kubernetes.io/instance: spire
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "edge"
-  annotations:
-    # WebSocket connections on /api/ws/* and /gw/ws/* are long-lived; a controller's default read
-    # timeout would cut them and produce reconnect churn the dashboard reports as an outage.
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-spec:
-  rules:
-    - host: "spire.example.invalid"
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: spire-ui
-                port:
-                  name: http
----
 # Source: spire/templates/gateway-role-job.yaml
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: spire-gateway-role
+  # The name carries the revision when this is an ordinary resource: a completed Job's pod template is
+  # immutable, so re-applying the same name on `helm upgrade` is rejected.
+  name: spire-gateway-role-1
   labels:
     app.kubernetes.io/name: spire
     app.kubernetes.io/instance: spire
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "edge"
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 6
   template:
@@ -773,8 +744,12 @@ spec:
             - -c
             - |
               set -e
-              # The database may still be starting on a first install.
-              for _ in $(seq 1 60); do pg_isready -q && break; sleep 2; done
+              # A bundled Postgres is created at the same time as this Job and has to pull its image,
+              # initialise a data directory and accept connections first, so the wait is generous.
+              # Failing here rather than looping forever is deliberate: the Job's backoffLimit then
+              # surfaces it, instead of a pod sitting Running until the install times out.
+              for _ in $(seq 1 150); do pg_isready -q && break; sleep 2; done
+              pg_isready || { echo "postgres at $PGHOST:$PGPORT never accepted connections"; exit 1; }
 
               # CREATE ROLE has no IF NOT EXISTS, so the existence check is a separate query. Driven
               # from the shell rather than a DO block because a psql variable cannot be interpolated
@@ -796,3 +771,32 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+
+---
+# Source: spire/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spire
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+  annotations:
+    # WebSocket connections on /api/ws/* and /gw/ws/* are long-lived; a controller's default read
+    # timeout would cut them and produce reconnect churn the dashboard reports as an outage.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  rules:
+    - host: "spire.example.invalid"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spire-ui
+                port:
+                  name: http
