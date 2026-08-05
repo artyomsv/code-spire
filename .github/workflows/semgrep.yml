@@ -1,21 +1,17 @@
 # Semgrep, reporting to the Security tab rather than blocking.
 #
-# The plan called for this to block, on the basis that the repository is already Semgrep-clean. It is
-# not, under p/default + p/secrets: a measured run found 54 findings across six rules. Two are
-# pre-existing (a formatted SQL string in AttentionQueries, and detect-insecure-websocket matching the
-# word ws:// inside a COMMENT in vite.config.ts), and 45 are github-actions-mutable-action-tag — the
-# advice to pin every action to a commit SHA rather than a moving @v4 tag.
+# The baseline this deferred is now clean. Every action reference is pinned to a commit SHA, the
+# formatted SQL string in AttentionQueries is gone, and the three detect-insecure-websocket hits were
+# all the scheme literal appearing in PROSE — a comment here, a comment in vite.config.ts, and a
+# techdebt entry — which is why they are now written without it rather than suppressed.
 #
-# Blocking would therefore mean either fixing a pre-existing baseline as part of adding CI, or pinning
-# 45 action references in the same change. Both are real decisions with their own scope; bundling them
-# into "add a scanner" is how adding a scanner turns into a cleanup nobody asked for. The SHA-pinning
-# decision is recorded in techdebt/global/ instead.
+# It still does not block, and that is a separate decision from a clean baseline. p/default and
+# p/secrets are resolved from the Semgrep registry at run time, so the rule set can change without a
+# commit in this repository: a blocking gate would turn a rule addition upstream into a red PR on an
+# untouched branch. Reporting to the Security tab surfaces the same findings and leaves triage here.
 #
-# The four findings this work introduced were fixed rather than filed: a securityContext on each of the
-# three bundled infrastructure workloads, and a `curl | bash` installer replaced with pinned release
-# archives.
-#
-# Flip --error on once the baseline is clean and the pinning decision is made.
+# Making it block wants a pinned rule set first — vendored rules, or a semgrep version and ruleset
+# digest recorded in this file. Until then --error stays off deliberately, not by omission.
 name: semgrep
 
 on:
@@ -35,7 +31,7 @@ jobs:
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Scan
         # p/default and p/secrets explicitly, not --config=auto: auto requires metrics to be enabled and
         # resolves its ruleset over the network, so what it checks can change without a commit here.
@@ -46,7 +42,7 @@ jobs:
             --metrics=off \
             --sarif --output=semgrep.sarif \
             --skip-unknown-extensions .
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
         if: always()
         with:
           sarif_file: semgrep.sarif

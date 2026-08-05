@@ -32,7 +32,7 @@ jobs:
     name: invariants and drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Read the required Helm from render-manifests.sh so there is ONE source of truth. Two reasons it
       # must be pinned at all: `kustomize --enable-helm` detects helm via `helm version -c --short` and
@@ -40,7 +40,7 @@ jobs:
       # different version turns the drift check into whitespace noise. Both were observed, not guessed.
       - id: helm-version
         run: echo "v=v$(sed -n 's/^REQUIRED_HELM=//p' deploy/render-manifests.sh)" >> "$GITHUB_OUTPUT"
-      - uses: azure/setup-helm@v5
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: ${{ steps.helm-version.outputs.v }}
       # Pinned release archives rather than `curl | bash`. Piping an installer script straight into a
@@ -99,8 +99,8 @@ jobs:
     name: kind install (simple preset)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           # Pinned to Helm 3. `kustomize --enable-helm` detects helm by running `helm version -c
           # --short`, and Helm 4 removed the -c flag, so the action's default (latest) breaks chart
@@ -108,15 +108,15 @@ jobs:
           # ran inside a container image bundling its own Helm 3 — the host helm is 4.x and fails
           # identically, so the local run was not evidence about CI.
           version: v3.21.3
-      - uses: helm/kind-action@v1
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
 
       # Obviously-synthetic values. The two keysets are real Tink keysets because the services validate
       # them; everything else is a TEST- placeholder.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: '25'
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Secrets
         run: |
           kubectl create secret generic spire-secrets \
