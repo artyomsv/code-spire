@@ -113,6 +113,26 @@ mp:
         value:
           serializer: dev.codespire.worker.pipeline.IntegrationEventSerializer
 
+# Prod: the packaged deployment runs behind the dashboard image's nginx, which is the ONLY ingress
+# and puts all four services on one origin so ADR-022's cookie-path scoping actually isolates them.
+"%prod":
+  quarkus:
+    http:
+      proxy:
+        # Without this the service sees the proxy's address rather than the client's, and OIDC derives
+        # redirect_uri from the wrong host. Nothing in dev needed it: Vite forwards no X-Forwarded-*.
+        proxy-address-forwarding: true
+        # Paired deliberately. docs/D10-AUTH-PLAN.md records the setting above as a header-spoofing
+        # vector while service ports stay directly reachable — unpaired, anything that can reach this
+        # port forges X-Forwarded-For and -Proto. No deploy artifact publishes a service port, and
+        # deploy/helm/spire/tests/render.sh asserts that. No default: the value is topology-specific.
+        trusted-proxies: ${SPIRE_TRUSTED_PROXIES}
+    oidc:
+      authentication:
+        # A TLS terminator that forwards over plain http would otherwise yield a session cookie with
+        # no Secure attribute, on a credential SECURITY.md already calls replayable in plaintext.
+        cookie-force-secure: true
+
 "%dev":
   kafka:
     bootstrap:

@@ -73,4 +73,45 @@ public class OperatorAuthorization extends AuthorizationController {
     static boolean isPermitted(boolean authEnabled, LaunchMode mode) {
         return authEnabled || mode == LaunchMode.DEVELOPMENT || mode == LaunchMode.TEST;
     }
+
+    @ConfigProperty(name = "quarkus.http.proxy.proxy-address-forwarding", defaultValue = "false")
+    boolean proxyAddressForwarding;
+
+    /**
+     * Empty when unset — and also when its {@code ${SPIRE_TRUSTED_PROXIES}} expression cannot be
+     * resolved, because an {@link java.util.Optional} config value swallows an unresolvable expression
+     * instead of failing. That is precisely why this guard exists rather than a no-default expression:
+     * the service was observed starting cleanly with the variable absent, leaving forwarded headers
+     * trusted from anywhere.
+     */
+    @ConfigProperty(name = "quarkus.http.proxy.trusted-proxies")
+    java.util.Optional<String> trustedProxies;
+
+    /**
+     * Forwarding and a trusted-proxy list are only safe together.
+     *
+     * <p>{@code proxy-address-forwarding} makes the service believe {@code X-Forwarded-For} and
+     * {@code -Proto}. Unrestricted, anything that can reach this port can therefore forge its apparent
+     * client address and scheme — the vector {@code docs/D10-AUTH-PLAN.md} names when it records the
+     * setting as safe "for the future edge only". Refusing here rather than warning follows the same
+     * reasoning as the switch above: the deploy artifacts do enforce the pairing, but a hand-rolled
+     * {@code docker run} does not, and the unsafe combination must not be silently runnable.
+     */
+    void enforceTrustedProxyPairing(@Observes StartupEvent event) {
+        if (isForwardingSafe(proxyAddressForwarding, trustedProxies.orElse(""))) {
+            return;
+        }
+        throw new IllegalStateException(FORWARDING_REFUSAL);
+    }
+
+    static final String FORWARDING_REFUSAL =
+            "quarkus.http.proxy.proxy-address-forwarding=true with no quarkus.http.proxy.trusted-proxies: "
+                    + "forwarded client addresses and schemes would be trusted from ANY source that can "
+                    + "reach this port. Set SPIRE_TRUSTED_PROXIES to the network the dashboard proxy runs "
+                    + "on (the pod or bridge CIDR), or turn forwarding off.";
+
+    /** Pure so it can be tested directly, like {@link #isPermitted}. */
+    static boolean isForwardingSafe(boolean forwarding, String trustedProxies) {
+        return !forwarding || !trustedProxies.isBlank();
+    }
 }

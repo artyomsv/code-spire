@@ -39,4 +39,30 @@ class OperatorAuthorizationTest {
     void authenticationOffIsRefusedInProduction() {
         assertFalse(OperatorAuthorization.isPermitted(false, LaunchMode.NORMAL));
     }
+
+    // ---- forwarded-header trust: the two settings are only safe together ----
+
+    /**
+     * The case this rule exists for, and it is not hypothetical: the prod profile reads
+     * {@code trusted-proxies} from {@code ${SPIRE_TRUSTED_PROXIES}}, and an {@code Optional} config
+     * value swallows an unresolvable expression rather than failing. The service was observed starting
+     * cleanly with the variable absent — forwarding enabled, nothing restricting it — so an
+     * expression with no default is not a control here and this check is.
+     */
+    @Test
+    void forwardingWithNoTrustedProxiesIsRefused() {
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, ""));
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "   "));
+    }
+
+    @Test
+    void forwardingWithATrustedProxyIsFine() {
+        assertTrue(OperatorAuthorization.isForwardingSafe(true, "10.244.0.0/16"));
+    }
+
+    /** Nothing to spoof when the service does not believe forwarded headers in the first place. */
+    @Test
+    void notForwardingNeedsNoTrustedProxies() {
+        assertTrue(OperatorAuthorization.isForwardingSafe(false, ""));
+    }
 }
