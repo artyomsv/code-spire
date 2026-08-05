@@ -1,0 +1,71 @@
+# Fast feedback on every change. Three jobs, split by what each one needs:
+#
+#   fast     - the 13 modules whose tests run on a bare JVM. Budgeted under 3 minutes.
+#   ui       - exactly the three commands spire-ui already has. No linter is added here: the project
+#              has no eslint baseline, and bundling one into CI onboarding would turn "add CI" into
+#              "clean up every lint violation".
+#   services - the three deployables, whose tests boot Postgres + Kafka Dev Services containers,
+#              plus `assemble`.
+#
+# Why `assemble` and not just tests: Gradle's `test` task uses the toolchain while Quarkus PACKAGING
+# runs on the daemon's JVM. With an older JAVA_HOME every test passes and packaging then fails with
+# `UnsupportedClassVersionError ... class file version 69.0`, so only packaging exercises that path.
+# `assemble` rather than `build` because `build` would re-run the fast tier the first job covered.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: fast tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew testFast --no-daemon --console=plain
+
+  ui:
+    name: dashboard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spire-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: spire-ui/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run test
+      - run: npm run build
+
+  services:
+    name: service tests + packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      # Dev Services needs a Docker daemon; ubuntu-latest provides one.
+      - run: ./gradlew testServices --no-daemon --console=plain
+      - run: ./gradlew assemble --no-daemon --console=plain
