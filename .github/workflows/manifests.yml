@@ -1,0 +1,124 @@
+# Everything under deploy/ gets a real check, because "remember to regenerate" is not a mechanism.
+#
+# The load-bearing gates are render-manifests.sh --check (Helm, kustomize and kubectl-apply users must
+# receive the same manifests) and tests/render.sh (the invariants that exist only as configuration
+# shape). `helm lint` runs but is NOT a gate: it reports every missing required value as a WARNING and
+# exits 0 — measured, not assumed — so a lint-only check would pass a chart that cannot install. That
+# property is enforced by assertion 8 in tests/render.sh instead.
+name: manifests
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - 'spire-ui/nginx/**'
+      - 'spire-*/src/main/resources/application.yml'
+      - '.github/workflows/manifests.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/**'
+      - 'spire-ui/nginx/**'
+      - 'spire-*/src/main/resources/application.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: invariants and drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Install kustomize and kubeconform
+        run: |
+          curl -sSfL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz" \
+            | tar xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      # Informational: see the header. Kept because it still catches malformed templates.
+      - name: helm lint (informational)
+        run: |
+          helm lint deploy/helm/spire -f deploy/helm/spire/values-simple.yaml
+          helm lint deploy/helm/spire -f deploy/helm/spire/values-production.yaml
+
+      - name: Invariants
+        run: ./deploy/helm/spire/tests/render.sh
+
+      # Proves each assertion above catches its own break. Four of them are negative — the value must
+      # be ABSENT where it does not belong — and a negative assertion passes trivially when a key is
+      # renamed, so a green run is otherwise indistinguishable from greps that matched nothing.
+      - name: Invariants discriminate
+        run: ./deploy/helm/spire/tests/render.sh --self-test
+
+      - name: No drift between the chart and the rendered manifests
+        run: ./deploy/render-manifests.sh --check
+
+      # LoadRestrictionsNone is required: the chart and its preset values deliberately live outside the
+      # kustomization directory, because duplicating them there would give one preset two sources.
+      - name: kustomize builds both overlays
+        run: |
+          for preset in simple production; do
+            kustomize build --enable-helm --load-restrictor LoadRestrictionsNone \
+              "deploy/kustomize/overlays/$preset" > "/tmp/$preset.yaml"
+            echo "$preset: $(grep -c '^kind:' "/tmp/$preset.yaml") resources"
+          done
+
+      - name: Schemas
+        run: |
+          kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            deploy/k8s/simple/spire.yaml deploy/k8s/production/spire.yaml
+
+  kind-install:
+    name: kind install (simple preset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: helm/kind-action@v1
+
+      # Obviously-synthetic values. The two keysets are real Tink keysets because the services validate
+      # them; everything else is a TEST- placeholder.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Secrets
+        run: |
+          kubectl create secret generic spire-secrets \
+            --from-literal=POSTGRES_PASSWORD=TEST-postgres-password \
+            --from-literal=KEYCLOAK_ADMIN_PASSWORD=TEST-keycloak-admin \
+            --from-literal=SPIRE_ENCRYPTION_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" \
+            --from-literal=SPIRE_OIDC_ORCHESTRATOR_SECRET=dev-only-orchestrator-secret \
+            --from-literal=SPIRE_OIDC_GATEWAY_SECRET=dev-only-gateway-secret \
+            --from-literal=SPIRE_OIDC_WORKER_SECRET=dev-only-worker-secret
+          kubectl create secret generic spire-gateway-secrets \
+            --from-literal=GATEWAY_POSTGRES_PASSWORD=TEST-gateway-password \
+            --from-literal=SPIRE_ENCRYPTION_WEBHOOK_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+
+      # Proves the manifests apply AND the pods reach ready — including that the gateway-role hook
+      # completes before the gateway starts, which is the real first-boot ordering constraint.
+      - name: Install
+        run: |
+          helm install spire deploy/helm/spire \
+            -f deploy/helm/spire/values-simple.yaml \
+            --set secrets.existingSecret=spire-secrets \
+            --set secrets.gatewayExistingSecret=spire-gateway-secrets \
+            --set trustedProxies=10.244.0.0/16 \
+            --set oidc.issuerHost=http://spire-keycloak:8080 \
+            --set oidc.authServerUrl=http://spire-keycloak:8080/realms/spire \
+            --wait --timeout 12m
+
+      - name: Diagnose on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe pods
+          kubectl get jobs
+          kubectl logs -l app.kubernetes.io/name=spire --all-containers --tail=100 || true

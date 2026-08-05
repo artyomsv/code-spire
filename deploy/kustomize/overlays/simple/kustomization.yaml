@@ -1,0 +1,26 @@
+# Inflates the chart rather than duplicating it, so a kustomize user and a Helm user cannot receive
+# different manifests:
+#
+#   kustomize build --enable-helm --load-restrictor LoadRestrictionsNone deploy/kustomize/overlays/simple
+#
+# LoadRestrictionsNone is required, not optional: kustomize refuses by default to read files outside the
+# kustomization directory, and the chart plus its preset values deliberately live outside it. The
+# alternative is copying the preset values in here, which would give the same preset two sources and
+# reintroduce exactly the drift this derivation chain exists to prevent.
+#
+# There is deliberately NO shared base here. With Helm inflation the preset is a render-time input —
+# postgres.bundled and oidc.bundled decide which resources exist at all — so it cannot be expressed as
+# a post-render patch over a common base. Two self-contained overlays are honest about that; a base
+# that both patched would have to re-state chart content, which is drift waiting to happen.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+helmGlobals:
+  chartHome: ../../../helm
+
+helmCharts:
+  - name: spire
+    releaseName: spire
+    valuesFile: ../../../helm/spire/values-simple.yaml
+    additionalValuesFiles:
+      - values-required.yaml

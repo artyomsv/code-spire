@@ -1,0 +1,13 @@
+# The values the chart refuses to render without. Placeholders here are obviously non-real: a
+# kustomize user overrides them, and committed manifests must never look like a live deployment.
+#
+# The Secrets themselves are NOT created here, by design. They hold the Tink keysets, which decrypt
+# data already at rest — see the chart's values.yaml for why nothing in this repo generates one.
+secrets:
+  existingSecret: spire-secrets
+  gatewayExistingSecret: spire-gateway-secrets
+
+trustedProxies: 10.244.0.0/16
+
+ingress:
+  host: spire.example.invalid

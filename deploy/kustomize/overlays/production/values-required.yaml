@@ -1,0 +1,22 @@
+# The values the chart refuses to render without, for the external-everything preset. Placeholders are
+# obviously non-real (example.invalid): a real deployment overrides all of them.
+#
+# The Secrets themselves are NOT created here, by design. They hold the Tink keysets, which decrypt
+# data already at rest — see the chart's values.yaml for why nothing in this repo generates one.
+secrets:
+  existingSecret: spire-secrets
+  gatewayExistingSecret: spire-gateway-secrets
+
+trustedProxies: 10.244.0.0/16
+
+postgres:
+  host: postgres.example.invalid
+
+kafka:
+  bootstrapServers: kafka.example.invalid:9092
+
+oidc:
+  authServerUrl: https://idp.example.invalid/realms/spire
+
+ingress:
+  host: spire.example.invalid

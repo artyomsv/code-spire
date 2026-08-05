@@ -1,0 +1,542 @@
+---
+# Source: spire/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-config
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+data:
+  POSTGRES_USER: "spire"
+  GATEWAY_POSTGRES_USER: "gateway"
+  POSTGRES_DB: "spire"
+
+---
+# Source: spire/templates/gateway.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-gateway
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+# Source: spire/templates/orchestrator.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-orchestrator
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+spec:
+  # ClusterIP deliberately: the dashboard is the only ingress, which is what makes trustedProxies
+  # meaningful — nothing can bypass the proxy to forge a forwarded header.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: orchestrator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+# Source: spire/templates/ui.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-ui
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+# Source: spire/templates/worker.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-worker
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/component: worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+# Source: spire/templates/gateway.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-gateway
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: "ghcr.io/artyomsv/spire-gateway:edge"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: QUARKUS_PROFILE
+              value: prod
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://postgres.example.invalid:5432/spire
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.example.invalid:9092"
+            - name: SPIRE_OIDC_AUTH_SERVER_URL
+              value: "https://idp.example.invalid/realms/spire"
+            - name: SPIRE_TRUSTED_PROXIES
+              value: "10.244.0.0/16"
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: spire-config
+                  key: GATEWAY_POSTGRES_USER
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spire-gateway-secrets
+                  key: GATEWAY_POSTGRES_PASSWORD
+            - name: SPIRE_ENCRYPTION_WEBHOOK_KEYSET
+              valueFrom:
+                secretKeyRef:
+                  name: spire-gateway-secrets
+                  key: SPIRE_ENCRYPTION_WEBHOOK_KEYSET
+            - name: SPIRE_OIDC_CLIENT_ID
+              value: spire-gateway
+            - name: SPIRE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: SPIRE_OIDC_GATEWAY_SECRET
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 12
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 512Mi
+---
+# Source: spire/templates/orchestrator.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-orchestrator
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/component: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: "ghcr.io/artyomsv/spire-orchestrator:edge"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: QUARKUS_PROFILE
+              value: prod
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://postgres.example.invalid:5432/spire
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.example.invalid:9092"
+            - name: SPIRE_OIDC_AUTH_SERVER_URL
+              value: "https://idp.example.invalid/realms/spire"
+            - name: SPIRE_TRUSTED_PROXIES
+              value: "10.244.0.0/16"
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: spire-config
+                  key: POSTGRES_USER
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: POSTGRES_PASSWORD
+            - name: SPIRE_ENCRYPTION_KEYSET
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: SPIRE_ENCRYPTION_KEYSET
+            - name: SPIRE_OIDC_CLIENT_ID
+              value: spire-orchestrator
+            - name: SPIRE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: SPIRE_OIDC_ORCHESTRATOR_SECRET
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 12
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 512Mi
+---
+# Source: spire/templates/ui.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-ui
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/component: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: ui
+    spec:
+      containers:
+        - name: ui
+          image: "ghcr.io/artyomsv/spire-ui:edge"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Service DNS, resolved at REQUEST time by the template's resolver — so this pod does not
+            # crash-loop when it starts before its siblings, and does not pin a stale address if a
+            # Service is recreated.
+            - name: SPIRE_ORCHESTRATOR_URL
+              value: http://spire-orchestrator:8080
+            - name: SPIRE_GATEWAY_URL
+              value: http://spire-gateway:8080
+            - name: SPIRE_WORKER_URL
+              value: http://spire-worker:8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 25m
+              memory: 64Mi
+---
+# Source: spire/templates/worker.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spire-worker
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spire
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: "ghcr.io/artyomsv/spire-review-worker:edge"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: QUARKUS_PROFILE
+              value: prod
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://postgres.example.invalid:5432/spire
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.example.invalid:9092"
+            - name: SPIRE_OIDC_AUTH_SERVER_URL
+              value: "https://idp.example.invalid/realms/spire"
+            - name: SPIRE_TRUSTED_PROXIES
+              value: "10.244.0.0/16"
+            - name: QUARKUS_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: spire-config
+                  key: POSTGRES_USER
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: POSTGRES_PASSWORD
+            - name: SPIRE_ENCRYPTION_KEYSET
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: SPIRE_ENCRYPTION_KEYSET
+            - name: SPIRE_OIDC_CLIENT_ID
+              value: spire-review-worker
+            - name: SPIRE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: SPIRE_OIDC_WORKER_SECRET
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 12
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 512Mi
+---
+# Source: spire/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spire
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+  annotations:
+    # WebSocket connections on /api/ws/* and /gw/ws/* are long-lived; a controller's default read
+    # timeout would cut them and produce reconnect churn the dashboard reports as an outage.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  tls:
+    - hosts:
+        - "spire.example.invalid"
+      secretName: spire-tls
+  rules:
+    - host: "spire.example.invalid"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spire-ui
+                port:
+                  name: http
+---
+# Source: spire/templates/gateway-role-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spire-gateway-role
+  labels:
+    app.kubernetes.io/name: spire
+    app.kubernetes.io/instance: spire
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "edge"
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spire
+        app.kubernetes.io/component: gateway-role
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: provision
+          image: postgres:18.4-alpine
+          env:
+            - name: PGHOST
+              value: "postgres.example.invalid"
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: "spire"
+            - name: PGUSER
+              value: "spire"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spire-secrets
+                  key: POSTGRES_PASSWORD
+            - name: GATEWAY_USER
+              value: "gateway"
+            - name: GATEWAY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: spire-gateway-secrets
+                  key: GATEWAY_POSTGRES_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # The database may still be starting on a first install.
+              for _ in $(seq 1 60); do pg_isready -q && break; sleep 2; done
+
+              # CREATE ROLE has no IF NOT EXISTS, so the existence check is a separate query. Driven
+              # from the shell rather than a DO block because a psql variable cannot be interpolated
+              # into the block's string body.
+              if [ "$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$GATEWAY_USER'")" != "1" ]; then
+                psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"$GATEWAY_USER\" LOGIN PASSWORD '$GATEWAY_PASSWORD'"
+              fi
+
+              # Deliberately grants NOTHING on the orchestrator schema. Widening this to clear a
+              # permission error collapses the boundary while leaving every piece of configuration
+              # looking correct — which is why deploy/e2e.sh probes the live privileges rather than
+              # trusting the manifests.
+              psql -v ON_ERROR_STOP=1 \
+                   -c "CREATE SCHEMA IF NOT EXISTS gateway AUTHORIZATION \"$GATEWAY_USER\""
+              echo "gateway role and schema present"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
