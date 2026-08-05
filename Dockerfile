@@ -69,6 +69,19 @@ ENV QUARKUS_HTTP_PORT=8080 \
     QUARKUS_HTTP_HOST=0.0.0.0 \
     QUARKUS_PROFILE=prod
 
+# eclipse-temurin retags on its own cadence, which is slower than Alpine's package index moves. The
+# gap is where every OS-level CVE Trivy reports on these three images comes from — libexpat and
+# p11-kit, neither of which this image installs or uses directly, both inherited from the base. An
+# upgrade here closes them at build time instead of waiting for an upstream retag that may never come
+# for a given tag.
+#
+# It does cost reproducibility: two builds of the same commit a week apart can now carry different
+# package versions. That is the accepted trade — the alternative is pinning each package to a version
+# that itself goes stale, which is the same treadmill with an extra step. The image digest is what
+# deployments pin (deploy/ resolves to sha-<short>), so a given deployed artifact is still exact.
+# spire-ui's base needs none of this: it is scanned by the same job and reports clean.
+RUN apk --no-cache upgrade
+
 RUN addgroup -g 1001 spire && adduser -u 1001 -G spire -s /bin/sh -D spire
 WORKDIR /app
 
