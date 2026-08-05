@@ -29,3 +29,14 @@ spire-ui
 # The dev compose/Dockerfiles themselves don't need to be inside the image.
 docker-compose*.yml
 Dockerfile*
+
+# Production build context (Dockerfile): none of this reaches a running service. `infra` is
+# bind-mounted at RUNTIME by the compose files, so excluding it from the image is correct.
+deploy
+docs
+techdebt
+licenses
+infra
+.github
+.claude
+.superpowers
