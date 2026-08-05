@@ -6,6 +6,47 @@ allprojects {
 }
 
 /**
+ * Versions forced ahead of the Quarkus platform because the platform's choice carries a published
+ * advisory and no platform release yet contains the fix.
+ *
+ * Most of what the 2026-08 Trivy sweep flagged is not here, because the better lever was the platform
+ * itself: 3.37.1 -> 3.38.1 closes netty (CVE-2026-55831 and eight siblings), PostgreSQL
+ * (CVE-2026-54291) and OpenTelemetry (CVE-2026-45292). Each of those ships as a stack whose modules
+ * must move together — thirty-odd netty artifacts, the whole `io.opentelemetry` group — and Quarkus
+ * imports its BOM with `enforcedPlatform`, so overriding one coordinate by hand means overriding all
+ * of them and hoping the combination was tested. Upstream already did that work and published it as
+ * a platform release.
+ *
+ * Two have no such release yet:
+ *
+ *  - `com.fasterxml.jackson.core` 2.22.0 -> 2.22.1 (CVE-2026-54515, CVE-2026-59889)
+ *  - `at.yawk.lz4:lz4-java` 1.10.1 -> 1.11.1 (CVE-2026-59949)
+ *
+ * jackson-core moves with jackson-databind because a Jackson patch publishes them as a pair.
+ * jackson-annotations does not: it versions only on a minor, and 2.22 is current.
+ *
+ * Remove an entry once the platform catches up. A force does not go quiet when it becomes
+ * unnecessary — it starts pinning the version DOWN. `./gradlew :spire-orchestrator:dependencyInsight
+ * --configuration runtimeClasspath --dependency <name>` shows what actually resolved.
+ */
+val advisoryOverrides = mapOf(
+    "com.fasterxml.jackson.core:jackson-core" to "2.22.1",
+    "com.fasterxml.jackson.core:jackson-databind" to "2.22.1",
+    "at.yawk.lz4:lz4-java" to "1.11.1",
+)
+
+subprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            advisoryOverrides["${requested.group}:${requested.name}"]?.let { fixed ->
+                useVersion(fixed)
+                because("published advisory against the version the Quarkus platform selects")
+            }
+        }
+    }
+}
+
+/**
  * Reaps the throwaway Postgres containers Quarkus Dev Services boots for `@QuarkusTest`.
  *
  * Nothing else does. Those containers are labelled `io.quarkus.devservice.launch-mode=TEST` but
