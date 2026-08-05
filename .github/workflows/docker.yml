@@ -1,0 +1,95 @@
+# Builds all four images on master, scans them, and publishes :edge.
+#
+# It publishes on purpose. The prior analysis copied a build-but-do-not-push precedent, but e2e.yml
+# consumes GHCR images: with releases as the only publisher, the topology check could not run until
+# after the release it exists to protect, and a nightly e2e would exercise the last release rather
+# than current master. :edge is also the tag someone tracking the tip wants.
+#
+# amd64 only here. arm64 goes through QEMU and costs tens of minutes on a JVM image, which is why it
+# belongs in release.yml and not on any path that runs per merge.
+name: docker
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: spire-gateway
+            context: .
+            dockerfile: Dockerfile
+            service: gateway
+          - name: spire-orchestrator
+            context: .
+            dockerfile: Dockerfile
+            service: orchestrator
+          - name: spire-review-worker
+            context: .
+            dockerfile: Dockerfile
+            service: review-worker
+          - name: spire-ui
+            context: ./spire-ui
+            dockerfile: ./spire-ui/Dockerfile
+            service: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
+          platforms: linux/amd64
+          load: true
+          tags: ghcr.io/artyomsv/${{ matrix.name }}:edge
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+      # Report-only, and the reasoning is recorded rather than assumed: the residual HIGH/CRITICALs on
+      # a fully patched image are language-stdlib CVEs fixed only in unreleased toolchain versions — an
+      # advisory treadmill no bump can clear. Fixable module and OS CVEs are bumped promptly and
+      # triaged from the Security tab, which is what the SARIF upload is for.
+      - name: Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/artyomsv/${{ matrix.name }}:edge
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+      - name: Report
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
+
+      - name: Push
+        run: |
+          short="${GITHUB_SHA::7}"
+          docker tag "ghcr.io/artyomsv/${{ matrix.name }}:edge" \
+                     "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
+          docker push "ghcr.io/artyomsv/${{ matrix.name }}:edge"
+          docker push "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
