@@ -36,7 +36,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew testFast --no-daemon --console=plain
 
   ui:
@@ -71,7 +71,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # Dev Services needs a Docker daemon; ubuntu-latest provides one.
       - run: ./gradlew testServices --no-daemon --console=plain
       - run: ./gradlew assemble --no-daemon --console=plain
