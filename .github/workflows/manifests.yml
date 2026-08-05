@@ -33,14 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Read the required Helm from render-manifests.sh so there is ONE source of truth. Two reasons it
+      # must be pinned at all: `kustomize --enable-helm` detects helm via `helm version -c --short` and
+      # Helm 4 removed -c, and Helm's rendered output is not byte-identical across majors, so a
+      # different version turns the drift check into whitespace noise. Both were observed, not guessed.
+      - id: helm-version
+        run: echo "v=v$(sed -n 's/^REQUIRED_HELM=//p' deploy/render-manifests.sh)" >> "$GITHUB_OUTPUT"
       - uses: azure/setup-helm@v4
         with:
-          # Pinned to Helm 3. `kustomize --enable-helm` detects helm by running `helm version -c
-          # --short`, and Helm 4 removed the -c flag, so the action's default (latest) breaks chart
-          # inflation with "unknown shorthand flag: 'c'". This passed locally only because that check
-          # ran inside a container image bundling its own Helm 3 — the host helm is 4.x and fails
-          # identically, so the local run was not evidence about CI.
-          version: v3.21.3
+          version: ${{ steps.helm-version.outputs.v }}
       # Pinned release archives rather than `curl | bash`. Piping an installer script straight into a
       # shell means whatever that URL serves at the moment CI runs executes with the job's permissions,
       # and the version is whatever HEAD happens to be.

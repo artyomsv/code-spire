@@ -13,9 +13,30 @@
 # committed manifests must never look like a live deployment.
 set -euo pipefail
 
+# The single source of truth for which Helm renders these manifests. manifests.yml reads this exact
+# line to pin its setup-helm version, so CI and a workstation cannot disagree.
+#
+# It has to be pinned at all because Helm's output is not byte-identical across major versions — Helm 4
+# emits document separators with different surrounding blank lines than Helm 3, which shows up as
+# whitespace-only "drift" in a check whose whole job is to be trustworthy. That was not theoretical:
+# these manifests were first generated with Helm 4 and failed CI under Helm 3.
+REQUIRED_HELM=3.21.3
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
+
+actual_helm="$(helm version --template '{{.Version}}' 2>/dev/null | sed 's/^v//')"
+if [ "$actual_helm" != "$REQUIRED_HELM" ]; then
+    echo "This script needs Helm $REQUIRED_HELM; found ${actual_helm:-none}." >&2
+    echo "Helm versions do not render byte-identical output, so a different one produces spurious" >&2
+    echo "drift. Either install it, or run through the pinned image:" >&2
+    echo >&2
+    echo "  docker run --rm -v \"\$PWD:/w\" -w /w alpine/helm:$REQUIRED_HELM \\" >&2
+    echo "    template spire deploy/helm/spire -f deploy/helm/spire/values-simple.yaml \\" >&2
+    echo "    -f deploy/kustomize/overlays/simple/values-required.yaml > deploy/k8s/simple/spire.yaml" >&2
+    exit 2
+fi
 
 status=0
 for preset in simple production; do

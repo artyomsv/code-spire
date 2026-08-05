@@ -13,7 +13,6 @@ data:
   POSTGRES_USER: "spire"
   GATEWAY_POSTGRES_USER: "gateway"
   POSTGRES_DB: "spire"
-
 ---
 # Source: spire/templates/gateway.yaml
 apiVersion: v1
@@ -34,7 +33,6 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-
 ---
 # Source: spire/templates/orchestrator.yaml
 apiVersion: v1
@@ -57,7 +55,6 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-
 ---
 # Source: spire/templates/ui.yaml
 apiVersion: v1
@@ -78,7 +75,6 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-
 ---
 # Source: spire/templates/worker.yaml
 apiVersion: v1
@@ -99,7 +95,6 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-
 ---
 # Source: spire/templates/gateway.yaml
 apiVersion: apps/v1
