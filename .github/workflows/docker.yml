@@ -73,7 +73,8 @@ jobs:
       # advisory treadmill no bump can clear. Fixable module and OS CVEs are bumped promptly and
       # triaged from the Security tab, which is what the SARIF upload is for.
       - name: Scan
-        uses: aquasecurity/trivy-action@0.28.0
+        # Tag is v-prefixed; an unprefixed one does not resolve and fails the whole job at setup.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/artyomsv/${{ matrix.name }}:edge
           format: sarif
