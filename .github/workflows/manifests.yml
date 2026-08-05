@@ -40,7 +40,7 @@ jobs:
       # different version turns the drift check into whitespace noise. Both were observed, not guessed.
       - id: helm-version
         run: echo "v=v$(sed -n 's/^REQUIRED_HELM=//p' deploy/render-manifests.sh)" >> "$GITHUB_OUTPUT"
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: ${{ steps.helm-version.outputs.v }}
       # Pinned release archives rather than `curl | bash`. Piping an installer script straight into a
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           # Pinned to Helm 3. `kustomize --enable-helm` detects helm by running `helm version -c
           # --short`, and Helm 4 removed the -c flag, so the action's default (latest) breaks chart
