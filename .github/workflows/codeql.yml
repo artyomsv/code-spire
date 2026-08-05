@@ -37,7 +37,7 @@ jobs:
           distribution: temurin
           java-version: '25'
       - if: matrix.language == 'java-kotlin'
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           # CodeQL builds a database by watching the compiler run. A restored build cache makes every
           # compile task up-to-date, so nothing is watched and analysis fails with "didn't build any of
