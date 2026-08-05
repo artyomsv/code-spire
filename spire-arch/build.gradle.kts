@@ -41,4 +41,12 @@ tasks.test {
             include("spire-*/src/main/java/**/*.java")
         }
     ).withPropertyName("scannedSources").withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // TestTierCoverageTest reads these two files as text. Undeclared, they are invisible to the
+    // up-to-date check, so adding a module to settings.gradle.kts without assigning it a CI tier
+    // would report a cached PASS — from the very edit the check exists to catch.
+    inputs.files(
+        rootProject.file("settings.gradle.kts"),
+        rootProject.file("build.gradle.kts")
+    ).withPropertyName("buildDeclarations").withPathSensitivity(PathSensitivity.RELATIVE)
 }

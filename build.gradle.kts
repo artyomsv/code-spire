@@ -86,3 +86,49 @@ tasks.register("cleanDevServices") {
     description = "Removes every leftover Quarkus Dev Services test container and its volume."
     doLast { DevServicesReaper.remove(DevServicesReaper.testModeContainers()) }
 }
+
+/**
+ * The two CI test tiers, split by whether a module's tests need Docker.
+ *
+ * `fastTestModules` run on a bare JVM. The three deployables in `serviceTestModules` boot Postgres
+ * and Kafka through Quarkus Dev Services and are the slow half of the suite, so CI runs them as their
+ * own job rather than making a typo fix wait behind them.
+ *
+ * Declared here rather than as a list of module paths inside a workflow file for two reasons. It stays
+ * runnable locally — `./gradlew testFast` is the pre-commit loop — and `TestTierCoverageTest` in
+ * spire-arch can read it, so a module that joins neither tier fails the build instead of being
+ * silently tested by nothing while CI reports green.
+ */
+val fastTestModules = listOf(
+    "spire-contract",
+    "spire-arch",
+    "spire-encryption",
+    "spire-diff",
+    "spire-http",
+    "spire-llm",
+    "spire-scm-bitbucket",
+    "spire-scm-github",
+    "spire-scm-gitlab",
+    "spire-context-jira",
+    "spire-context-confluence",
+    "spire-context-github",
+    "spire-context-gitlab",
+)
+
+val serviceTestModules = listOf(
+    "spire-gateway",
+    "spire-orchestrator",
+    "spire-review-worker",
+)
+
+tasks.register("testFast") {
+    group = "verification"
+    description = "Runs every module whose tests need no Docker. The fast half of CI."
+    dependsOn(fastTestModules.map { ":$it:test" })
+}
+
+tasks.register("testServices") {
+    group = "verification"
+    description = "Runs the three deployables' tests (Quarkus Dev Services: Postgres + Kafka)."
+    dependsOn(serviceTestModules.map { ":$it:test" })
+}
