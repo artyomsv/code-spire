@@ -18,7 +18,7 @@ repositories {
 }
 
 dependencies {
-    api("com.fasterxml.jackson.core:jackson-databind:2.22.0")
+    api("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
     testImplementation(platform("org.junit:junit-bom:6.1.1"))
     testImplementation("org.junit.jupiter:junit-jupiter")
