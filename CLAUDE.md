@@ -485,6 +485,34 @@ The design is fully specified in `docs/` — **treat those files as the source o
   A `%prod` lesson worth generalising: **`${VAR}` with no default does not enforce presence when the
   target is `Optional`** — `trusted-proxies` was silently empty with `proxy-address-forwarding` on, so
   the pairing is now a startup refusal. **1074 Java tests / 130 suites; 265 vitest / 37 files.**
+- **Code-scanning backlog cleared (2026-08-05):** the Security tab's 120 open alerts are closed at
+  source, in seven classes. **Every action reference is now a commit SHA** with the version in a
+  trailing comment — the comment is not decoration, it is what Dependabot's `github-actions`
+  ecosystem parses, and without it a pin is a permanently unpatched action. Tags were dereferenced
+  through `repos/{owner}/{repo}/commits/{tag}`, not read off the ref: an annotated tag's ref points at
+  the *tag object*, and pinning that SHA fails at runtime. Every dependabot entry gained a `cooldown`
+  — the complementary defence, since pinning stops a tag being repointed while cooldown stops a
+  freshly published version being proposed before anyone has looked at it, and it delays nothing that
+  matters because GitHub exempts security updates from it. `AttentionQueries` no longer concatenates a
+  table name into its SQL: a table name cannot be a bind parameter, so the old form could only assert
+  its safety in a comment, and three whole-literal queries on a private enum make it checkable
+  instead. All three `detect-insecure-websocket` hits were the scheme literal in **prose**, so they
+  are written out rather than suppressed.
+  **The Trivy half split by who can fix it.** The 39 OS-package alerts (libexpat, p11-kit) are
+  inherited from `eclipse-temurin:25-jre-alpine`, which retags more slowly than Alpine's package index
+  moves; `apk --no-cache upgrade` in the runtime stage closes them at build time, trading
+  build-to-build reproducibility that the deployed digest still pins. `spire-ui` needs none of it —
+  same scan job, clean base. The 24 Java-dependency alerts were mostly closed by the **platform**,
+  3.37.1 → 3.38.1: netty, PostgreSQL and OpenTelemetry each ship as a stack whose modules must move
+  together, and Quarkus imports its BOM with `enforcedPlatform`, so a `constraints` block loses every
+  conflict and hand-forcing means overriding thirty-odd coordinates and hoping the combination was
+  tested — upstream already did that and published it. Only jackson-core/databind (2.22.1) and
+  lz4-java (1.11.1) have no platform release yet; they are forced in the root build, each with the CVE
+  it closes and the warning that **a force does not go quiet when it stops being necessary — it starts
+  pinning the version DOWN**. `techdebt/global/4-2` is deleted (debt 9 → 8). `semgrep.yml` still
+  reports rather than blocks, now for the one honest remaining reason: `p/default` resolves from the
+  Semgrep registry at run time, so a blocking gate would let a rule added upstream redden an untouched
+  branch. Blocking wants a pinned ruleset first.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
@@ -539,7 +567,7 @@ docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d      # fr
   (ADR-014), not app-layer crypto.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
-- Java 25 / Quarkus 3.37.1 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
+- Java 25 / Quarkus 3.38.1 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
   build-enforced for `spire-contract` and `spire-diff` by `PureModulesAreFrameworkFreeTest`
   (`spire-arch`), which permits only the JDK, those modules themselves, and one documented
   exception: **`jackson-annotations`** (annotations only, no databind) on the sealed
