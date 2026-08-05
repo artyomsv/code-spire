@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react';
 
 // Proxy targets default to the host-based quarkusDev ports (unchanged for local
 // `npm run dev`). docker-compose.dev.yml overrides them with the in-network
-// service names (http://orchestrator:39280, http://gateway:39281, ws://...).
+// service names (http://orchestrator:39280, http://gateway:39281, and the
+// websocket equivalents).
 const orchestrator = process.env.ORCHESTRATOR_URL ?? 'http://localhost:34080';
 const gateway = process.env.GATEWAY_URL ?? 'http://localhost:34081';
 const worker = process.env.WORKER_URL ?? 'http://localhost:34082';

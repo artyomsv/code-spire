@@ -198,26 +198,63 @@ public class AttentionQueries {
      * they cannot break a review.
      */
     private void credentialRows(Connection c, List<AttentionView> rows) throws SQLException {
-        credentialRows(c, rows, "scm_provider", "/settings/providers", "source-control provider");
-        credentialRows(c, rows, "llm_provider", "/settings/llm", "LLM provider");
-        credentialRows(c, rows, "context_provider", "/settings/context", "context provider");
+        for (Registry registry : Registry.values()) {
+            credentialRows(c, rows, registry);
+        }
     }
 
-    private void credentialRows(Connection c, List<AttentionView> rows, String table,
-                                String action, String kind) throws SQLException {
-        // The table name is a compile-time constant from the private call sites above, never
-        // caller input, so it cannot carry injection.
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT id, name, last_check_error FROM " + table
-                        + " WHERE enabled = TRUE AND last_check_ok = FALSE ORDER BY name");
+    private void credentialRows(Connection c, List<AttentionView> rows, Registry registry)
+            throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(registry.rejectedCredentials);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 String detail = rs.getString("last_check_error");
                 rows.add(new AttentionView("CREDENTIAL_REJECTED", Severity.WARNING, rs.getString("name"),
-                        "The " + kind + "'s credential was rejected"
+                        "The " + registry.kind + "'s credential was rejected"
                                 + (detail == null || detail.isBlank() ? "." : ": " + detail),
-                        editLink(action, rs.getObject("id", UUID.class))));
+                        editLink(registry.settingsPath, rs.getObject("id", UUID.class))));
             }
+        }
+    }
+
+    /**
+     * The three registries that hold a credential, each carrying the whole query that reads it.
+     *
+     * <p>One query per registry rather than one query with the table name concatenated in. A table
+     * name cannot be a bind parameter — {@link PreparedStatement} binds values, not identifiers — so
+     * the previous form had no way to state its safety except a comment asserting the argument was
+     * always a constant. That is true and unverifiable, and it is the shape a scanner cannot tell
+     * apart from the injectable version. Written out, there is no runtime string building left to
+     * reason about, and the cost is three lines of near-identical SQL.
+     */
+    private enum Registry {
+
+        SCM("""
+                SELECT id, name, last_check_error FROM scm_provider
+                 WHERE enabled = TRUE AND last_check_ok = FALSE
+                 ORDER BY name""",
+                "/settings/providers", "source-control provider"),
+
+        LLM("""
+                SELECT id, name, last_check_error FROM llm_provider
+                 WHERE enabled = TRUE AND last_check_ok = FALSE
+                 ORDER BY name""",
+                "/settings/llm", "LLM provider"),
+
+        CONTEXT("""
+                SELECT id, name, last_check_error FROM context_provider
+                 WHERE enabled = TRUE AND last_check_ok = FALSE
+                 ORDER BY name""",
+                "/settings/context", "context provider");
+
+        private final String rejectedCredentials;
+        private final String settingsPath;
+        private final String kind;
+
+        Registry(String rejectedCredentials, String settingsPath, String kind) {
+            this.rejectedCredentials = rejectedCredentials;
+            this.settingsPath = settingsPath;
+            this.kind = kind;
         }
     }
 
