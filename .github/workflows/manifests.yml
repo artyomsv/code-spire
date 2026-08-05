@@ -7,13 +7,18 @@
 # property is enforced by assertion 8 in tests/render.sh instead.
 name: manifests
 
+#
+# The pull_request trigger carries NO paths filter, and that is deliberate rather than an oversight.
+# A path-filtered workflow cannot supply a required status check: on a pull request that misses the
+# filter the context is never produced at all, and a required context that never arrives leaves the
+# pull request pending forever rather than passing. It reads as stuck CI, not as a settings mistake.
+# So the filter moved inside — `changes` decides, the two expensive jobs skip when nothing relevant
+# moved, and `manifests gate` always reports. The gate is the context to require.
+#
+# push keeps its filter: nothing requires a status check there, and a master push that touches no
+# manifest has no reason to spend a kind cluster.
 on:
   pull_request:
-    paths:
-      - 'deploy/**'
-      - 'spire-ui/nginx/**'
-      - 'spire-*/src/main/resources/application.yml'
-      - '.github/workflows/manifests.yml'
   push:
     branches: [master]
     paths:
@@ -28,8 +33,39 @@ permissions:
   contents: read
 
 jobs:
+  # The paths filter that used to live on the pull_request trigger. Same set, evaluated here so the
+  # workflow always runs and always reports, whether or not it had anything to do.
+  changes:
+    name: detect manifest changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The diff reaches back to the pull request's base; a shallow clone cannot see it.
+          fetch-depth: 0
+      - id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Anything that is not a pull request already passed the trigger's own paths filter, so
+          # there is nothing left to decide: run.
+          if [ -z "$BASE" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE"...HEAD | grep -qE \
+               '^deploy/|^spire-ui/nginx/|^spire-[A-Za-z0-9-]+/src/main/resources/application\.yml$|^\.github/workflows/manifests\.yml$'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   verify:
     name: invariants and drift
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -97,6 +133,8 @@ jobs:
 
   kind-install:
     name: kind install (simple preset)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -150,3 +188,28 @@ jobs:
           kubectl describe pods
           kubectl get jobs
           kubectl logs -l app.kubernetes.io/name=spire --all-containers --tail=100 || true
+
+  # The one context to require. It runs on every pull request, including those that touch nothing
+  # under deploy/, which is exactly what the jobs above cannot promise.
+  #
+  # `skipped` has to pass and `failure` has to not, so this cannot be a bare `needs:` — a needed job
+  # that is skipped would skip this one too, and a skipped required check never reports. Hence
+  # `if: always()` plus an explicit read of the results.
+  gate:
+    name: manifests gate
+    if: always()
+    needs: [changes, verify, kind-install]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any manifests job failed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "upstream results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*)
+              echo "A manifests job did not succeed."
+              exit 1
+              ;;
+          esac
+          echo "OK — every manifests job either succeeded or was skipped as irrelevant."

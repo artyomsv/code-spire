@@ -1,17 +1,33 @@
-# Semgrep, reporting to the Security tab rather than blocking.
+# Semgrep: gates on what a change introduces, reports everything else.
 #
-# The baseline this deferred is now clean. Every action reference is pinned to a commit SHA, the
-# formatted SQL string in AttentionQueries is gone, and the three detect-insecure-websocket hits were
-# all the scheme literal appearing in PROSE — a comment here, a comment in vite.config.ts, and a
-# techdebt entry — which is why they are now written without it rather than suppressed.
+# The baseline is clean. Every action reference is pinned to a commit SHA, the formatted SQL string in
+# AttentionQueries is gone, and the three detect-insecure-websocket hits were all the scheme literal
+# appearing in PROSE — a comment here, a comment in vite.config.ts, and a techdebt entry — which is
+# why they are now written without it rather than suppressed.
 #
-# It still does not block, and that is a separate decision from a clean baseline. p/default and
-# p/secrets are resolved from the Semgrep registry at run time, so the rule set can change without a
-# commit in this repository: a blocking gate would turn a rule addition upstream into a red PR on an
-# untouched branch. Reporting to the Security tab surfaces the same findings and leaves triage here.
+# Two passes, because they answer different questions and only one of them can safely be a gate:
 #
-# Making it block wants a pinned rule set first — vendored rules, or a semgrep version and ruleset
-# digest recorded in this file. Until then --error stays off deliberately, not by omission.
+#   The GATE (pull requests only) runs --error against --baseline-commit, so it fails on findings the
+#   change INTRODUCES and stays silent on findings that were already there. That distinction is what
+#   makes blocking safe at all. p/default and p/secrets resolve from the Semgrep registry at run
+#   time, so a rule added upstream can flag untouched code with no commit in this repository; a flat
+#   --error would turn that into a red PR nobody caused and cannot fix in scope. Measured against a
+#   baseline the same finding appears on both sides and cancels out, and only what the PR actually
+#   adds turns the check red.
+#
+#   The REPORT (always) runs the full scan and uploads SARIF, so the Security tab keeps describing
+#   the whole repository rather than the last diff — including whatever a new upstream rule finds in
+#   code nobody touched. Report-only there on purpose: that is a queue to triage, not a gate.
+#
+# Order matters. The gate runs FIRST, while the working tree is still clean, because
+# --baseline-commit aborts on a dirty tree and the report pass writes semgrep.sarif into the
+# workspace.
+#
+# The scanner image is pinned by digest for the same reason every `uses:` is — and it is the one
+# mutable reference the SHA-pinning sweep missed, because Semgrep's own mutable-action-tag rule
+# inspects `uses:` and not `container:`. Worth knowing: `semgrep/semgrep:latest` is built from
+# `develop`, so the previous unpinned form ran a development build over the whole source tree. The
+# pin below is a released version.
 name: semgrep
 
 on:
@@ -29,12 +45,36 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      image: semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b # 1.172.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Scan
-        # p/default and p/secrets explicitly, not --config=auto: auto requires metrics to be enabled and
-        # resolves its ruleset over the network, so what it checks can change without a commit here.
+        with:
+          # --baseline-commit walks history back to the PR's base. The default shallow clone has none
+          # of it, and Semgrep reports the miss as a scan error rather than falling back to a full run.
+          fetch-depth: 0
+
+      # checkout writes the workspace as a different uid than the container runs as, so git refuses
+      # it as dubiously owned and every baseline lookup fails. Cheap, and the failure it prevents
+      # surfaces as an opaque Semgrep error rather than a git one.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # p/default and p/secrets explicitly, not --config=auto: auto requires metrics to be enabled and
+      # resolves its ruleset over the network, so what it checks could change without a commit here.
+      - name: Gate on findings this change introduces
+        if: github.event_name == 'pull_request'
+        run: |
+          semgrep scan \
+            --config=p/default \
+            --config=p/secrets \
+            --metrics=off \
+            --skip-unknown-extensions \
+            --error \
+            --baseline-commit "${{ github.event.pull_request.base.sha }}" \
+            .
+
+      - name: Scan everything
+        if: always()
         run: |
           semgrep scan \
             --config=p/default \
@@ -42,6 +82,7 @@ jobs:
             --metrics=off \
             --sarif --output=semgrep.sarif \
             --skip-unknown-extensions .
+
       - uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
         if: always()
         with:
