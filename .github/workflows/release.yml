@@ -6,16 +6,38 @@
 #
 # arm64 goes through QEMU and costs tens of minutes on a JVM image, which is exactly why this is
 # tag-triggered rather than on any per-merge path.
+#
+# It can also be run by hand, and a manual run is ALWAYS a dry run. That exists because this workflow
+# is otherwise untestable: it triggers only on a tag, so nothing that changes it — a bumped action, an
+# edited step — is exercised until a real release is already under way, which is the worst possible
+# moment to discover a break. Three Dependabot majors on this path (setup-qemu, cosign-installer,
+# action-gh-release) were what made the gap concrete: each was green on checks that never ran a line
+# of this file.
+#
+# A dry run does everything the real one does except the parts that cannot be taken back. It still
+# builds both architectures through QEMU, still installs cosign, still packages the chart and still
+# calls the release action — because those are the steps whose bumps break — but it pushes no image,
+# signs nothing, and leaves no published release behind.
+#
+# The manual trigger deliberately has NO "really publish" switch, which is where this departs from
+# marauder's release.yml (that one takes a tag input and publishes for real, as a recovery path). This
+# job holds `packages: write` and `id-token: write`; a dispatch that could publish would let any ref
+# push and SIGN an image under this repository's identity. Real releases come from tags only.
 name: release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write      # the GitHub Release
   packages: write      # GHCR
   id-token: write      # cosign keyless
+
+env:
+  # One definition, read by every job. Manual run ⇒ dry run, with nothing else able to set it.
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
   gate:
@@ -125,8 +147,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
-      - name: Version from the tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      # A dry run has no tag to read, so it invents a semver-shaped one. It must stay valid semver:
+      # the chart is packaged with it further down and `helm package` rejects anything else.
+      - name: Version
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "VERSION=0.0.0-dryrun.${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          fi
+
+      # Proves the installer actually produced a working binary. Without it a dry run would report
+      # success for cosign-installer while only ever having downloaded something.
+      - name: cosign is usable
+        run: cosign version
 
       - name: Build and push
         id: push
@@ -135,8 +169,10 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           build-args: ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
+          # Both architectures even on a dry run: arm64 is what exercises QEMU, so dropping it would
+          # make the dry run silent about the one action it is most needed to check.
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'workflow_dispatch' }}
           provenance: true
           sbom: true
           tags: |
@@ -146,7 +182,11 @@ jobs:
 
       # Keyless, so there is no signing key to hold or rotate: the signature is bound to this
       # workflow's OIDC identity.
+      #
+      # Skipped on a dry run, and not for tidiness: cosign signs a digest in a registry, and a dry
+      # run pushed nothing there to sign. `cosign version` above is what covers the installer bump.
       - name: Sign
+        if: env.DRY_RUN != 'true'
         run: cosign sign --yes "ghcr.io/artyomsv/${{ matrix.name }}@${{ steps.push.outputs.digest }}"
 
   github-release:
@@ -163,13 +203,35 @@ jobs:
 
       - name: Package the chart at this version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$DRY_RUN" = "true" ]; then
+            VERSION="0.0.0-dryrun.${GITHUB_SHA::7}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           helm package deploy/helm/spire --version "$VERSION" --app-version "$VERSION" -d dist/
 
       # Auto-generated notes rather than a CHANGELOG file: the commit discipline here already reads as
       # release notes, and a maintained file is one more thing that can go stale or fail a release by
       # omission.
+      #
+      # This step runs on a dry run as well, and that is the point: a major bump of this action breaks
+      # on renamed or removed inputs, which only a real invocation surfaces. Skipping it would report
+      # success for a step that was never called. `draft: true` keeps it out of the public releases
+      # list and creates no git tag — a draft's tag_name is only realised when it is published.
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          tag_name: ${{ env.DRY_RUN == 'true' && format('dry-run-{0}', github.sha) || github.ref_name }}
+          draft: ${{ env.DRY_RUN == 'true' }}
           generate_release_notes: true
           files: dist/*.tgz
+
+      # always(), because the draft this must not leave behind is likeliest to survive a run that
+      # failed after creating it. No tag exists to unwind — see above.
+      - name: Remove the dry-run draft
+        if: always() && env.DRY_RUN == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "dry-run-${GITHUB_SHA}" --yes \
+            && echo "removed the dry-run draft" \
+            || echo "no dry-run draft to remove"
