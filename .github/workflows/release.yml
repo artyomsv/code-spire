@@ -156,6 +156,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+        with:
+          # Same Helm 3 pin as manifests.yml, so the chart is packaged by the version the invariants
+          # and the rendered manifests were verified against rather than by whatever is latest.
+          version: v3.21.3
 
       - name: Package the chart at this version
         run: |

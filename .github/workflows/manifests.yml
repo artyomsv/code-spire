@@ -31,6 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+        with:
+          # Pinned to Helm 3. `kustomize --enable-helm` detects helm by running `helm version -c
+          # --short`, and Helm 4 removed the -c flag, so the action's default (latest) breaks chart
+          # inflation with "unknown shorthand flag: 'c'". This passed locally only because that check
+          # ran inside a container image bundling its own Helm 3 — the host helm is 4.x and fails
+          # identically, so the local run was not evidence about CI.
+          version: v3.21.3
       # Pinned release archives rather than `curl | bash`. Piping an installer script straight into a
       # shell means whatever that URL serves at the moment CI runs executes with the job's permissions,
       # and the version is whatever HEAD happens to be.
@@ -89,6 +96,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+        with:
+          # Pinned to Helm 3. `kustomize --enable-helm` detects helm by running `helm version -c
+          # --short`, and Helm 4 removed the -c flag, so the action's default (latest) breaks chart
+          # inflation with "unknown shorthand flag: 'c'". This passed locally only because that check
+          # ran inside a container image bundling its own Helm 3 — the host helm is 4.x and fails
+          # identically, so the local run was not evidence about CI.
+          version: v3.21.3
       - uses: helm/kind-action@v1
 
       # Obviously-synthetic values. The two keysets are real Tink keysets because the services validate
