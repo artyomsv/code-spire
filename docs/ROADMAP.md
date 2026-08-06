@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-02)
+## Current status & next-up backlog (updated 2026-08-06)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -252,6 +252,35 @@ down is the original design-time roadmap (kept for reference).
   WebSocket upgrade through nginx and the gateway's role being denied on the orchestrator schema by
   Postgres itself. **1074 Java tests / 130 suites; 265 vitest / 37 files.**
 
+- **Code-scanning backlog cleared (2026-08-05):** the Security tab's 120 open alerts closed at source in
+  seven classes. **Every action reference is now a commit SHA** with the version in a trailing comment —
+  the comment is not decoration, it is what Dependabot's `github_actions` ecosystem parses, and without
+  it a pin is a permanently unpatched action. Tags were dereferenced through the commits API rather than
+  read off the ref, because an annotated tag's ref points at the *tag object* and pinning that SHA fails
+  at runtime. Every Dependabot entry gained a `cooldown` — the complementary defence, since pinning stops
+  a tag being repointed while cooldown stops a freshly published version being proposed before anyone has
+  looked at it, and it delays nothing that matters because security updates are exempt. The Trivy half
+  split by **who can fix it**: 39 OS-package alerts inherited from the JRE base image close at build time
+  with an `apk upgrade`, while 24 Java-dependency alerts were mostly closed by the *platform* moving
+  3.37.1 → 3.38.1 — netty, PostgreSQL and OpenTelemetry each ship as a stack whose modules must move
+  together, so hand-forcing thirty-odd coordinates loses to importing a combination upstream already
+  tested. Semgrep still reports rather than blocks, now for the one honest reason: `p/default` resolves
+  from the registry at run time, so a blocking gate would let a rule added upstream redden an untouched
+  branch.
+- **Operator sessions correct on every prefix (2026-08-06, PR #38):** three defects that all came from
+  treating a session as per-browser when ADR-022 makes it per-prefix. A sibling login could be *recorded
+  without running* — two callers race on a fresh page and `goToLogin` is first-caller-wins, so the loser
+  wrote its `sessionStorage` mark while its navigation did nothing, retiring that prefix for the life of
+  the tab and making the attention panel report the gateway unreachable every 1.5s. **Signing out ended
+  `/api` alone**: measured, the gateway still answered its attention feed 200 afterwards and both sibling
+  cookies were still held, because neither sibling had a logout endpoint at all. And a cold sign-in cost
+  **three renders**, each booting the dashboard only to discover the next prefix missing; the login
+  endpoints now hand each hop to the next under an opt-in `chain=1`, so one redirect sequence paints once.
+  Opt-in is load-bearing — the unchained answer is what the session probes read, and chaining it would
+  make a healthy service look unauthenticated because a *later* prefix had none. The call that actually
+  decides a cold sign-in turned out to be `apiFetch`'s, not the shell's: the first data fetch is refused
+  before `/api/me` answers and wins the race. **271 vitest / 37 files; 1074 Java tests / 130 suites.**
+
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
 **A. Finish the multi-SCM story (current thread)**
@@ -368,7 +397,12 @@ down is the original design-time roadmap (kept for reference).
     open count, or the next round's exclusion set. Tracked in `techdebt/global/`.
 
 **D. Infra & security hardening**
-10. **OIDC on the dashboard** · M. UI/API is unauthenticated — matters before any shared deployment.
+10. ✅ **OIDC on the dashboard** — **delivered 2026-08-03** as D10 / ADR-022 · M. Every REST and
+    WebSocket endpoint now requires an operator identity; hybrid OIDC (cookie for the browser and its
+    sockets, bearer for `curl`/CI), each service its own client under its own URL prefix, two roles,
+    deny-by-default. See the D10 entry above and SMOKE-TEST.md **Mode J**. This line read "UI/API is
+    unauthenticated" for three days after that shipped — the delivered list said one thing and the
+    backlog the opposite, which is the failure mode a live view exists to prevent.
 11. ✅ **`costMillicents` LLM pricing** (2026-07-07). LLM model catalog with operator-entered token
     pricing (`llm_model`); a review's real token usage is priced into `review_status.cost_millicents`
     and shown on the detail page + a Cost column in the reviews list. Model is now a dropdown from the
@@ -380,7 +414,8 @@ down is the original design-time roadmap (kept for reference).
 
 ### What is actually left
 
-**Every numbered item in A, B, C and E is now closed** (1–9, 11, 13, 14, 15). The product loop —
+**Every numbered item in A, B and C is now closed, and all of D bar one** (1–11, 13, 14, 15 — item 10
+closed with D10 on 2026-08-03). Only **D12**, **E16** and **E17** remain numbered. The product loop —
 webhook → diff → context → review → conversation → reconciliation — is complete and live-verified on
 GitHub, GitLab **and** Bitbucket, with operator-editable prompts and an attention panel over its health,
 and reviews now understand a linked issue/PR/epic on every supported platform.
@@ -401,7 +436,7 @@ tests on `spire-contract`, failing a breaking change without an `eventVersion` b
 ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it iterated event types and
 skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **7 techdebt items** in `techdebt/` — 1 medium, 6 low,
+Also open and tracked outside this file: **8 techdebt items** in `techdebt/` — 1 medium, 7 low,
 nothing high or critical. The medium one is D10's: the authorization guard is copied into all three
 services, and the drift check that was chosen instead of extracting a shared module has not been
 written yet. (Another option, tracking waived nits durably so a set-aside issue cannot return as its
@@ -412,10 +447,11 @@ retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for 
 the same reasoning held one level down), and model pricing is delivered and deliberately
 operator-entered (ADR-018) rather than a hardcoded cost table that would silently drift.
 
-**Suggested order:** with D10 delivered, the door is shut and the CI/CD work it was gating is now
-unblocked — that is what "someone else can run this" requires next. **E16** remains the cheapest
-user-visible gain, and **P3 (RAG)** is the one item that changes what the product *is* rather than how
-well it runs. Operator decides.
+**Suggested order:** D10 and the CI/CD work it was gating are both delivered, so "someone else can run
+this" is answered except for **TLS at the production edge**, which is the one remaining thing between the
+current state and a deployment that is not a single trusted machine. After that, **E16** remains the
+cheapest user-visible gain and **P3 (RAG)** is the one item that changes what the product *is* rather
+than how well it runs. Operator decides.
 
 ---
 
@@ -470,7 +506,9 @@ well it runs. Operator decides.
   Vertex still open.
 - ✅ **Contract-compat CI gate** (`5bc593b`) — round-trip + snapshot tests on `spire-contract` events;
   fails on a breaking change without an `eventVersion` bump + upcaster (ADR-013).
-- Packaging: container image, Helm chart / ArgoCD-friendly manifests, `.env.example` contract.
+- ✅ **Packaging** — delivered 2026-08-05: four images on GHCR, a Helm chart, kustomize overlays and
+  rendered `kubectl apply` manifests from one source of truth (drift-checked), plus the `.env.example`
+  contract for both the dev and the packaged stack. See the CI/CD entry above and `deploy/`.
 - Docs site — still open. ✅ Contribution guide done (`CONTRIBUTING.md`, DCO + relicensing grant, ADR-021);
   the licence split it documents makes the grant a hard requirement, not a nicety.
 
@@ -506,4 +544,7 @@ Kept for provenance. **This is not a to-do list** — for what to do next, see
    stays fixed; an unpinned instance derives its issuer from the Host it was called on, so browser
    and containers must use one name that resolves for both. Runbook: SMOKE-TEST **Mode J**.
 6. ✅ **Phase 0 scaffolded and long superseded** — Gradle multi-module, `spire-contract`, and the
-   gateway→orchestrator→worker path on Redpanda all shipped; there are now 13 modules and 29 migrations.
+   gateway→orchestrator→worker path on Redpanda all shipped; there are now **16 Gradle modules** (13
+   Apache-2.0 libraries and adapters plus the three services — `spire-ui` is the fourth deployable but
+   not a Gradle module) and the orchestrator is on migration **V29**, with V2 on the gateway and V4 on
+   the worker, each service owning its own schema.
