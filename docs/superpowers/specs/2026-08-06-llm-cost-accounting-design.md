@@ -29,13 +29,29 @@ Four places turn *unknown* into *zero*. Each verified in the current source.
 
 | # | Hole | Location | Effect |
 |---|---|---|---|
-| 1 | Blank price coerced to `0L` on save | `LlmModelRegistry.java:78,79,106,107` | "operator did not enter a price" is persisted as "free", permanently |
+| 1 | A blank price becomes a **zero** price across three layers, none of which is individually wrong | see below | "operator did not enter a price" is persisted as "free", permanently |
 | 2 | A provider's `model` is free text, never checked against the catalog | `LlmProviderResource.java:153` — `requireField` checks non-blank only | a provider can reference a model that cannot be priced; the Settings dropdown is a courtesy, not a control |
 | 3 | Catalog `delete` has no referential check | `LlmModelRegistry.java:123` | deleting an entry silently orphans every provider using it, defeating #2 *after* it passed |
 | 4 | `costMillicents` returns `0L` on `SQLException` | `LlmModelRegistry.java:155` | a transient DB blip prices a real, paid call at zero — permanently, behind a `WARN` |
 
 The database was never at fault: V9 already declares both price columns `NOT NULL`. Absence is
 unrepresentable in storage and gets manufactured on the way in.
+
+**Hole #1 in full, because the mechanism matters more than the symptom.** Three layers hand the value
+along, and each is defensible alone:
+
+| Layer | Code | What it does |
+|---|---|---|
+| UI | `SettingsLlmProviders.tsx:602,603` | `dollarsToMillicentsPerMillion(Number(inputPrice) \|\| 0)` — a blank field becomes `0` |
+| REST | `LlmModelResource.java:81,82,91` | `requireNonNegative` rejects `null` but **accepts `0`** as valid |
+| Registry | `LlmModelRegistry.java:78,79,106,107` | `null → 0L` coercion — unreachable from REST, since null never gets past validation |
+
+So the API's null-check is real and the registry's coercion is dead code; the laundering happens in the
+**gap between the layers**, where the UI's convenience default meets a validator that has no way to
+tell a deliberate zero from an empty box. Fixing any single layer would not close it: the UI must stop
+defaulting, *and* the server must reject zero when the model is metered, because the UI is not the
+control. This is why the fix is `pricing_mode` rather than a stricter number check — no amount of
+validating a number distinguishes "free" from "unknown" when both arrive as `0`.
 
 **#4 is the one to understand.** #1–#3 are configuration faults: wrong state persists until someone
 fixes the config, and the damage is bounded by how long that takes. #4 is a *transient* fault causing
@@ -207,8 +223,11 @@ decision can still change an outcome:
 
 Concretely:
 
-1. **Reject a blank or zero rate under `METERED`.** The `null → 0L` coercions at
-   `LlmModelRegistry.java:78,79,106,107` are deleted, not replaced.
+1. **Reject a zero rate under `METERED`, at all three layers of hole #1.** The UI stops defaulting a
+   blank field to `0` (`SettingsLlmProviders.tsx:602,603`) and surfaces it as a validation error; the
+   REST layer rejects `0` for a `METERED` model rather than merely rejecting negatives
+   (`LlmModelResource.java:91`); and the now-dead `null → 0L` coercions at
+   `LlmModelRegistry.java:78,79,106,107` are deleted rather than left to mislead the next reader.
 2. **Reject a provider whose `model` is not in the catalog** — `LlmProviderResource.java:153`
    currently checks non-blank only.
 3. **Refuse to delete a catalogued model a provider references.** Without this, guard 2 is defeated

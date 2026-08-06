@@ -1,0 +1,2465 @@
+# LLM Cost Accounting Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Record every LLM call's token usage per type, priced at the rate in force when the call happened, so cost history is reproducible, immune to later price edits, and never confuses "this was free" with "nobody told us the price".
+
+**Architecture:** The LLM adapter (`spire-llm`) maps each vendor's token-usage subclass onto one neutral partition and reports **no money**. The orchestrator prices that usage against the catalog and appends one **charge line per token type per call** to a single ledger table, snapshotting the rate onto each line. A `METERED`/`UNMETERED` pricing mode makes an asserted zero (self-hosted inference) distinguishable from an absent price, and guards at config time, pre-spend and post-hoc make an unpriceable model impossible to select rather than silently free.
+
+**Tech Stack:** Java 25, Quarkus 3.38.1, Gradle Kotlin DSL, Postgres + Flyway, LangChain4j 1.18.1, React 19 + Vite + vitest.
+
+**Spec:** `docs/superpowers/specs/2026-08-06-llm-cost-accounting-design.md` — read it before Task 1. It carries the reasoning; this plan carries the steps.
+
+**Branch:** `feat/llm-cost-accounting` already exists with the spec committed (`13fb7fc`). Work on it.
+
+## Global Constraints
+
+- **Java:** 4-space indent, explicit types over `var`, **max 3 method parameters**, methods ≤30 lines, classes ≤300 lines, guard clauses over nesting, max 2 levels of nesting.
+- **TypeScript:** 2-space indent, `interface` over `type` for object shapes, React components ≤250 lines, ≤8 props.
+- **Icons:** lucide-react only. **Never emoji.**
+- **Money in millicents** (1/100,000 dollar). Fields carrying it are suffixed `Millicents`.
+- **`spire-contract` and `spire-diff` stay framework-free** — build-enforced by `PureModulesAreFrameworkFreeTest`. Only the JDK plus `jackson-annotations` (annotations only, on the sealed `IntegrationEvent`/`ActionCommand` hierarchies). Do not add an import that breaks this.
+- **ADR-021:** no Apache-2.0 module may depend on a service module. `spire-contract`/`spire-llm` are Apache-2.0; the three services are FSL. Pricing and the ledger are orchestrator-owned.
+- **No synthetic data.** Test fixtures use `example.invalid` hosts, `TEST-`/`CANARY-` prefixes, and obviously-synthetic values. Never a plausible real price or a recalled market figure.
+- **No secrets in logs.** Never log a provider response body on an auth failure.
+- **Commit messages:** imperative, ≤72 chars on the first line, body for non-trivial changes. **Never mention AI/agentic authoring** — no `Co-Authored-By`, no model or vendor names, no "generated with".
+- **Migration:** orchestrator Flyway version **V30**. One migration for the whole schema change.
+- **ADR:** this work is **ADR-023**.
+- **Verification loop:** `./gradlew testFast` (13 Docker-free modules, ~25s) then `./gradlew testServices` (the 3 deployables, needs Docker). UI: `cd spire-ui && npx vitest run && npx tsc --noEmit`.
+- **Every guard added here must be mutation-verified**: break the production line, confirm exactly one test fails, restore. This is the standard set by the 2026-08-02/03 debt waves.
+
+---
+
+## File Structure
+
+**`spire-contract`** (Apache-2.0, framework-free) — the neutral vocabulary only. No money.
+
+| File | Responsibility |
+|---|---|
+| `review/TokenType.java` (create) | The neutral token-type enum |
+| `review/TokenCount.java` (create) | One type's token count |
+| `review/ModelUsage.java` (modify) | Reshaped: model + counts + reportedTotal + reconciled. **Cost field removed.** |
+| `src/test/resources/contract-schema.txt` (modify) | ADR-013 snapshot, regenerated |
+
+**`spire-llm`** (Apache-2.0) — vendor → neutral mapping.
+
+| File | Responsibility |
+|---|---|
+| `TokenUsageMapper.java` (create) | Maps each vendor's `TokenUsage` subclass to a disjoint partition |
+| `LangChain4jLlmProvider.java` (modify:138-153) | Calls the mapper instead of building a 2-field usage |
+
+**`spire-orchestrator`** (FSL) — pricing, the ledger, the guards.
+
+| File | Responsibility |
+|---|---|
+| `db/migration/V30__llm_charge_ledger.sql` (create) | Whole schema change |
+| `llm/PricingMode.java` (create) | `METERED` / `UNMETERED` / `UNKNOWN` |
+| `llm/ChargeLine.java` (create) | One priced token-type line |
+| `llm/ChargeCall.java` (create) | One call's lines plus its identity |
+| `llm/CallRefs.java` (create) | Deterministic `call_ref` derivation |
+| `llm/LlmModelRegistry.java` (modify) | Rates CRUD, pricing mode, `priceCall`, delete guard. **Split if it passes 300 lines** — extract rates into `LlmModelRateRepository`. |
+| `llm/LlmModelInput.java` / `LlmModelView.java` (modify) | Pricing mode + per-type rates replace the two price fields |
+| `llm/LlmModelResource.java` (modify:70-95) | Reject zero rates under `METERED` |
+| `llm/LlmProviderResource.java` (modify:153) | Reject an uncatalogued model |
+| `llm/WorkerLlmCredentials.java` (modify) | `defaultModelName()` for the pre-spend guard |
+| `readmodel/ReviewProjection.java` (modify:346-395) | Write charge lines; stop writing `review_status` cost; aggregate reads |
+| `pipeline/ResultSaga.java` (modify:136-250, 422-444) | Pre-spend guard; record charge lines |
+| `attention/AttentionQueries.java` (modify) | `LLM_COST_UNPRICED`, `LLM_USAGE_UNRECONCILED` rows |
+
+**`spire-ui`** — three surfaces.
+
+| File | Responsibility |
+|---|---|
+| `api.ts` (modify:693-719, 106-111) | Types follow the server |
+| `components/SettingsLlmProviders.tsx` (modify:560-680) | Pricing-mode choice, per-type rates, **no blank→0** |
+| `components/ReviewCostCard.tsx` (create) | Per-type cost breakdown, extracted so no component passes 250 lines |
+
+---
+
+## Task 1: Neutral token vocabulary on the contract
+
+Reshape `ModelUsage` and update every call site so the build is green. Behaviour is unchanged — still `INPUT`/`OUTPUT` only — so this task is purely structural and reviewable on its own.
+
+**Files:**
+- Create: `spire-contract/src/main/java/dev/codespire/contract/review/TokenType.java`
+- Create: `spire-contract/src/main/java/dev/codespire/contract/review/TokenCount.java`
+- Modify: `spire-contract/src/main/java/dev/codespire/contract/review/ModelUsage.java`
+- Modify: `spire-contract/src/test/resources/contract-schema.txt`
+- Modify: `spire-llm/src/main/java/dev/codespire/llm/LangChain4jLlmProvider.java:147-152`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ResultSaga.java:422-444`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:346-395`
+- Test: `spire-contract/src/test/java/dev/codespire/contract/review/ModelUsageTest.java`
+
+**Interfaces:**
+- Produces: `TokenType` enum with constants `INPUT, CACHED_INPUT, CACHE_WRITE, OUTPUT, REASONING, TOTAL`; `record TokenCount(TokenType type, int tokens)`; `record ModelUsage(String model, List<TokenCount> counts, int reportedTotal, boolean reconciled)` with `int tokensOf(TokenType)` and static `ModelUsage of(String model, int input, int output)`.
+
+- [ ] **Step 1: Write the failing test**
+
+`spire-contract/src/test/java/dev/codespire/contract/review/ModelUsageTest.java`:
+
+```java
+package dev.codespire.contract.review;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * ModelUsage carries a PARTITION of a call's tokens and no money at all. Both properties are load
+ * bearing: the partition is what makes summing charge lines correct, and the absence of a cost field
+ * is what stops the worker — which holds no price catalog — from reporting one.
+ */
+class ModelUsageTest {
+
+    @Test
+    void tokensOfReturnsTheCountForATypeAndZeroForOneTheVendorDidNotReport() {
+        ModelUsage usage = new ModelUsage("TEST-MODEL",
+                List.of(new TokenCount(TokenType.INPUT, 120),
+                        new TokenCount(TokenType.OUTPUT, 30)),
+                150, true);
+
+        assertEquals(120, usage.tokensOf(TokenType.INPUT));
+        assertEquals(30, usage.tokensOf(TokenType.OUTPUT));
+        assertEquals(0, usage.tokensOf(TokenType.CACHED_INPUT));
+    }
+
+    @Test
+    void theConvenienceFactoryBuildsATwoTypePartitionThatReconciles() {
+        ModelUsage usage = ModelUsage.of("TEST-MODEL", 120, 30);
+
+        assertEquals(150, usage.reportedTotal());
+        assertTrue(usage.reconciled());
+        assertEquals(2, usage.counts().size());
+    }
+
+    /** Defensive copy: a caller mutating its list afterwards must not change a recorded usage. */
+    @Test
+    void countsAreCopiedNotAliased() {
+        List<TokenCount> mutable = new java.util.ArrayList<>();
+        mutable.add(new TokenCount(TokenType.INPUT, 5));
+        ModelUsage usage = new ModelUsage("TEST-MODEL", mutable, 5, true);
+
+        mutable.clear();
+
+        assertEquals(1, usage.counts().size());
+    }
+
+    /** A null counts list is an empty partition, never a NullPointerException downstream. */
+    @Test
+    void nullCountsBecomeEmpty() {
+        assertEquals(0, new ModelUsage("TEST-MODEL", null, 0, true).counts().size());
+    }
+}
+```
+
+- [ ] **Step 2: Run it to confirm it fails**
+
+Run: `./gradlew :spire-contract:test --tests 'dev.codespire.contract.review.ModelUsageTest'`
+Expected: FAIL — compilation error, `TokenType` and `TokenCount` do not exist and `ModelUsage` has the old shape.
+
+- [ ] **Step 3: Create the two new contract types**
+
+`TokenType.java`:
+
+```java
+package dev.codespire.contract.review;
+
+/**
+ * The neutral token-billing dimensions, as a PARTITION: every token a call consumed belongs to
+ * exactly one of these. Vendors disagree on whether their detail counts are included in or additional
+ * to the headline numbers, so each adapter subtracts as needed to produce disjoint counts — see
+ * {@code TokenUsageMapper}.
+ *
+ * <p>{@link #TOTAL} is the degraded case, not a dimension: it carries a call's whole token count when
+ * the per-type breakdown could not be reconciled against the vendor's own total. A TOTAL line can
+ * never be priced at a metered rate, because there is no split to apply rates to.
+ */
+public enum TokenType {
+    /** Fresh prompt tokens — the vendor's input count minus any cached portion. */
+    INPUT,
+    /** Prompt tokens served from the vendor's cache, billed at a reduced rate. */
+    CACHED_INPUT,
+    /** Prompt tokens written INTO the vendor's cache, billed at a premium. */
+    CACHE_WRITE,
+    /** Generated tokens — the vendor's output count minus any separately reported reasoning. */
+    OUTPUT,
+    /** Reasoning/thinking tokens, where the vendor reports them apart from output. */
+    REASONING,
+    /** Degraded: an unreconcilable call's whole token count. Never metered. */
+    TOTAL
+}
+```
+
+`TokenCount.java`:
+
+```java
+package dev.codespire.contract.review;
+
+/** One token-billing dimension's count for a single LLM call. */
+public record TokenCount(TokenType type, int tokens) {
+}
+```
+
+- [ ] **Step 4: Reshape `ModelUsage`**
+
+Replace the whole file:
+
+```java
+package dev.codespire.contract.review;
+
+import java.util.List;
+
+/**
+ * What an LLM adapter reports about one call: which model, and how many tokens of each billing
+ * dimension.
+ *
+ * <p><b>No money.</b> Pricing needs the operator-entered catalog, which only the orchestrator owns
+ * (ADR-018), so an adapter cannot compute a cost and — after this type lost its cost field — cannot
+ * express one either. The field it replaced was always zero and its own comment said pricing happened
+ * elsewhere, which is the kind of documented lie that eventually gets believed.
+ *
+ * @param counts        a partition — each token counted once, under exactly one {@link TokenType}
+ * @param reportedTotal the vendor's OWN total for the call, kept as the independent check on the
+ *                      partition rather than as a derived convenience
+ * @param reconciled    whether {@code counts} sums to {@code reportedTotal}. False means the
+ *                      breakdown could not be trusted and {@code counts} holds a single
+ *                      {@link TokenType#TOTAL} line instead.
+ */
+public record ModelUsage(String model, List<TokenCount> counts, int reportedTotal, boolean reconciled) {
+
+    public ModelUsage {
+        counts = counts == null ? List.of() : List.copyOf(counts);
+    }
+
+    /** Tokens recorded for one dimension; 0 when the vendor did not report it. */
+    public int tokensOf(TokenType type) {
+        int total = 0;
+        for (TokenCount count : counts) {
+            if (count.type() == type) {
+                total += count.tokens();
+            }
+        }
+        return total;
+    }
+
+    /** A plain input/output call — the shape every vendor reports and most tests need. */
+    public static ModelUsage of(String model, int input, int output) {
+        return new ModelUsage(model,
+                List.of(new TokenCount(TokenType.INPUT, input), new TokenCount(TokenType.OUTPUT, output)),
+                input + output, true);
+    }
+}
+```
+
+- [ ] **Step 5: Run the new test to confirm it passes**
+
+Run: `./gradlew :spire-contract:test --tests 'dev.codespire.contract.review.ModelUsageTest'`
+Expected: PASS.
+
+- [ ] **Step 6: Update every call site so the build compiles**
+
+Production sites:
+
+`LangChain4jLlmProvider.java:147-152` — temporarily keep the two-bucket behaviour; Task 2 replaces it:
+
+```java
+        ChatResponse response = model.chat(request);
+        TokenUsage usage = response.tokenUsage();
+        return new Completion(
+                response.aiMessage().text(),
+                ModelUsage.of(params.model(),
+                        usage != null && usage.inputTokenCount() != null ? usage.inputTokenCount() : 0,
+                        usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0));
+```
+
+`ResultSaga.java` — delete `priced(ReviewResult)` (lines 422-435) and `priceUsage(ModelUsage)` (437-444) entirely, and at lines 163-169 stop pricing for now:
+
+```java
+            case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
+                projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
+                        e.result().findings().size() + " findings");
+                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+```
+
+Also remove the `recordLlmCall` calls at 166, 168 and 235, and the now-unused `llmModels` injection if nothing else uses it. Task 8 reinstates recording against the new ledger.
+
+`ReviewProjection.java` — in `recordOutcome` (346-372) replace the usage columns with the new accessors, keeping the same SQL for now:
+
+```java
+            } else {
+                ps.setString(3, usage.model());
+                ps.setInt(4, usage.tokensOf(dev.codespire.contract.review.TokenType.INPUT));
+                ps.setInt(5, usage.tokensOf(dev.codespire.contract.review.TokenType.OUTPUT));
+                ps.setLong(6, 0L); // priced in Task 8 against llm_charge
+            }
+```
+
+and delete `recordLlmCall` (379-395) plus `llmCalls(String)` (1078-1091) — both are replaced in Task 8, and `review_llm_call` is dropped in Task 3.
+
+Test sites — replace `new ModelUsage("m", 1, 1, 0)` with `ModelUsage.of("m", 1, 1)` in each of:
+`spire-gateway/.../WireFormatRoundTripTest.java:52`, `spire-review-worker/.../WorkerPipelineTest.java:125`,
+`spire-contract/.../ReconciliationTypesTest.java:71`, `spire-review-worker/.../ReviewWorkerTest.java:207,228,235,274,557`,
+`spire-review-worker/.../FollowUpWorkerTest.java:52,86,201`, `spire-review-worker/.../FollowUpWorkerPromptTest.java:52`,
+`spire-llm/.../FindingsParserTest.java:14`, `spire-review-worker/.../CircuitBreakingLlmProviderTest.java:152`,
+`spire-orchestrator/.../ResultSagaRetryTest.java:293,340`, `spire-orchestrator/.../ReviewProjectionTest.java:79,385`,
+`spire-orchestrator/.../ReviewProjectionPriorRunIT.java:109,133`.
+
+`ReviewProjectionTest.java:79` and `:385` assert a cost; change those assertions to expect `0` with a comment that pricing moves to `llm_charge` in Task 8, and delete any assertion on `review_llm_call`.
+
+- [ ] **Step 7: Regenerate the ADR-013 contract snapshot**
+
+Run: `./gradlew :spire-contract:test --tests 'dev.codespire.contract.ContractSchemaSnapshotTest'`
+Expected: FAIL with a diff naming `src/test/resources/contract-schema.txt`.
+
+This is a **deliberate** wire change, safe because `DomainEvent` carries no usage field, so the event store is untouched and no upcaster is needed. Copy the actual shape the failure prints into `spire-contract/src/test/resources/contract-schema.txt`, then re-run.
+
+Expected: PASS.
+
+- [ ] **Step 8: Run the Docker-free tier**
+
+Run: `./gradlew testFast`
+Expected: PASS, all 13 modules.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add spire-contract spire-llm spire-orchestrator spire-review-worker spire-gateway
+git commit -m "Carry token usage as a typed partition, not two counts
+
+ModelUsage becomes model + a list of per-type counts + the vendor's own
+total + whether the two reconcile, and loses its cost field entirely. The
+field was always zero on the wire and its comment said pricing happened
+elsewhere; an adapter that holds no price catalog should not be able to
+report a cost at all.
+
+Behaviour is unchanged here — still INPUT and OUTPUT only. The vendor
+mapping and the pricing that use the new shape follow.
+
+The contract snapshot is regenerated deliberately: DomainEvent carries no
+usage, so the event store is untouched and no upcaster is needed."
+```
+
+---
+
+## Task 2: Map each vendor's usage onto the partition
+
+**Files:**
+- Create: `spire-llm/src/main/java/dev/codespire/llm/TokenUsageMapper.java`
+- Modify: `spire-llm/src/main/java/dev/codespire/llm/LangChain4jLlmProvider.java:145-153`
+- Test: `spire-llm/src/test/java/dev/codespire/llm/TokenUsageMapperTest.java`
+
+**Interfaces:**
+- Consumes: `ModelUsage`, `TokenCount`, `TokenType` from Task 1.
+- Produces: `TokenUsageMapper.map(String model, TokenUsage usage) -> ModelUsage` (static, 2 params).
+
+**Read before starting:** the vendor accessors, confirmed present in LangChain4j 1.18.1 by inspecting the jars:
+
+| Neutral | OpenAI (`OpenAiTokenUsage`) | Anthropic (`AnthropicTokenUsage`) | Gemini (`GoogleAiGeminiTokenUsage`) |
+|---|---|---|---|
+| `INPUT` | `inputTokenCount()` − cached | `inputTokenCount()` (already excludes cache) | `inputTokenCount()` − cached |
+| `CACHED_INPUT` | `inputTokensDetails().cachedTokens()` | `cacheReadInputTokens()` | `cachedContentTokenCount()` |
+| `CACHE_WRITE` | not reported | `cacheCreationInputTokens()` | not reported |
+| `OUTPUT` | `outputTokenCount()` − reasoning | `outputTokenCount()` | `outputTokenCount()` |
+| `REASONING` | `outputTokensDetails().reasoningTokens()` | not reported | `thoughtsTokenCount()` |
+
+**If the reconciliation test fails for a vendor, the subtraction above is wrong for it — flip that vendor's inclusive/exclusive assumption. Do NOT relax the assertion.** Getting this wrong is precisely what the invariant exists to catch, and a relaxed assertion converts a caught bug into a silent mispricing.
+
+- [ ] **Step 1: Write the failing test**
+
+`spire-llm/src/test/java/dev/codespire/llm/TokenUsageMapperTest.java`:
+
+```java
+package dev.codespire.llm;
+
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.TokenType;
+import dev.langchain4j.model.anthropic.AnthropicTokenUsage;
+import dev.langchain4j.model.googleai.GoogleAiGeminiTokenUsage;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
+import dev.langchain4j.model.output.TokenUsage;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * The mapper's one invariant: every token lands in exactly one bucket, and the buckets sum to the
+ * total the VENDOR computed. That cross-check is what makes the mapping trustworthy without trusting
+ * anyone's memory of each vendor's caching semantics — the vendors disagree on whether detail counts
+ * are included in or additional to the headline numbers, and a wrong guess yields a plausible number.
+ *
+ * <p>All counts here are obviously-synthetic round numbers driving a pure function; none becomes
+ * user-visible state.
+ */
+class TokenUsageMapperTest {
+
+    private static void assertPartitions(ModelUsage usage) {
+        int summed = 0;
+        for (TokenType type : TokenType.values()) {
+            summed += usage.tokensOf(type);
+        }
+        assertTrue(usage.reconciled(), "buckets must reconcile against the vendor total");
+        assertEquals(usage.reportedTotal(), summed,
+                "every token must be counted exactly once across the buckets");
+    }
+
+    @Test
+    void openAiSplitsCachedOutOfInputAndReasoningOutOfOutput() {
+        OpenAiTokenUsage vendor = OpenAiTokenUsage.builder()
+                .inputTokenCount(1000)
+                .inputTokensDetails(OpenAiTokenUsage.InputTokensDetails.builder().cachedTokens(400).build())
+                .outputTokenCount(300)
+                .outputTokensDetails(OpenAiTokenUsage.OutputTokensDetails.builder().reasoningTokens(100).build())
+                .totalTokenCount(1300)
+                .build();
+
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", vendor);
+
+        assertEquals(600, usage.tokensOf(TokenType.INPUT));
+        assertEquals(400, usage.tokensOf(TokenType.CACHED_INPUT));
+        assertEquals(200, usage.tokensOf(TokenType.OUTPUT));
+        assertEquals(100, usage.tokensOf(TokenType.REASONING));
+        assertPartitions(usage);
+    }
+
+    @Test
+    void anthropicTreatsCacheCountsAsAdditiveLineItems() {
+        AnthropicTokenUsage vendor = AnthropicTokenUsage.builder()
+                .inputTokenCount(600)
+                .cacheReadInputTokens(400)
+                .cacheCreationInputTokens(50)
+                .outputTokenCount(200)
+                .totalTokenCount(1250)
+                .build();
+
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", vendor);
+
+        assertEquals(600, usage.tokensOf(TokenType.INPUT));
+        assertEquals(400, usage.tokensOf(TokenType.CACHED_INPUT));
+        assertEquals(50, usage.tokensOf(TokenType.CACHE_WRITE));
+        assertEquals(200, usage.tokensOf(TokenType.OUTPUT));
+        assertPartitions(usage);
+    }
+
+    @Test
+    void geminiSplitsCachedContentOutOfInputAndReportsThoughtsSeparately() {
+        GoogleAiGeminiTokenUsage vendor = GoogleAiGeminiTokenUsage.builder()
+                .inputTokenCount(1000)
+                .cachedContentTokenCount(250)
+                .outputTokenCount(300)
+                .thoughtsTokenCount(120)
+                .totalTokenCount(1420)
+                .build();
+
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", vendor);
+
+        assertEquals(750, usage.tokensOf(TokenType.INPUT));
+        assertEquals(250, usage.tokensOf(TokenType.CACHED_INPUT));
+        assertEquals(300, usage.tokensOf(TokenType.OUTPUT));
+        assertEquals(120, usage.tokensOf(TokenType.REASONING));
+        assertPartitions(usage);
+    }
+
+    /** A vendor we have no mapping for still yields a usable two-bucket partition. */
+    @Test
+    void aPlainTokenUsageMapsToInputAndOutput() {
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", new TokenUsage(700, 300, 1000));
+
+        assertEquals(700, usage.tokensOf(TokenType.INPUT));
+        assertEquals(300, usage.tokensOf(TokenType.OUTPUT));
+        assertPartitions(usage);
+    }
+
+    /**
+     * The degraded path. When the buckets cannot be made to sum to the vendor's total — a new billing
+     * dimension we do not map yet — record the vendor's own total and say so, rather than publishing a
+     * breakdown that quietly loses tokens.
+     */
+    @Test
+    void anIrreconcilableBreakdownCollapsesToASingleUnreconciledTotal() {
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", new TokenUsage(700, 300, 1500));
+
+        assertFalse(usage.reconciled());
+        assertEquals(1500, usage.reportedTotal());
+        assertEquals(1500, usage.tokensOf(TokenType.TOTAL));
+        assertEquals(1, usage.counts().size());
+    }
+
+    /** No usage at all is still a countable call, not a crash and not an invented number. */
+    @Test
+    void nullUsageYieldsAZeroTotalLine() {
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", null);
+
+        assertEquals(0, usage.reportedTotal());
+        assertEquals(1, usage.counts().size());
+        assertEquals(0, usage.tokensOf(TokenType.TOTAL));
+    }
+}
+```
+
+- [ ] **Step 2: Run it to confirm it fails**
+
+Run: `./gradlew :spire-llm:test --tests 'dev.codespire.llm.TokenUsageMapperTest'`
+Expected: FAIL — `TokenUsageMapper` does not exist.
+
+- [ ] **Step 3: Write the mapper**
+
+`spire-llm/src/main/java/dev/codespire/llm/TokenUsageMapper.java`:
+
+```java
+package dev.codespire.llm;
+
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.TokenCount;
+import dev.codespire.contract.review.TokenType;
+import dev.langchain4j.model.anthropic.AnthropicTokenUsage;
+import dev.langchain4j.model.googleai.GoogleAiGeminiTokenUsage;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
+import dev.langchain4j.model.output.TokenUsage;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Maps a vendor's token accounting onto the neutral {@link TokenType} partition.
+ *
+ * <p>The detail counts live on vendor subclasses, not on the base {@link TokenUsage}, and the vendors
+ * disagree about whether those details are INCLUDED in the headline input/output numbers or
+ * ADDITIONAL to them. OpenAI's input count includes its cached portion; Anthropic's excludes cache
+ * reads entirely. Summing naively would double-count one and undercount the other, and both produce a
+ * number that looks right.
+ *
+ * <p>So every mapping is checked against {@code totalTokenCount()} — arithmetic the vendor computed
+ * independently. A mismatch is not smoothed over: the breakdown is discarded in favour of a single
+ * {@link TokenType#TOTAL} line marked unreconciled, which is visible to an operator and cannot be
+ * mistaken for a priced call.
+ */
+public final class TokenUsageMapper {
+
+    private TokenUsageMapper() {
+    }
+
+    public static ModelUsage map(String model, TokenUsage usage) {
+        if (usage == null) {
+            return unreconciled(model, 0);
+        }
+        List<TokenCount> counts = partition(usage);
+        int summed = counts.stream().mapToInt(TokenCount::tokens).sum();
+        Integer reported = usage.totalTokenCount();
+        // No vendor total means nothing contradicts the partition — trust it and record our own sum.
+        if (reported == null) {
+            return new ModelUsage(model, counts, summed, true);
+        }
+        if (reported != summed) {
+            return unreconciled(model, reported);
+        }
+        return new ModelUsage(model, counts, reported, true);
+    }
+
+    private static ModelUsage unreconciled(String model, int total) {
+        return new ModelUsage(model, List.of(new TokenCount(TokenType.TOTAL, total)), total, false);
+    }
+
+    private static List<TokenCount> partition(TokenUsage usage) {
+        int input = zeroIfNull(usage.inputTokenCount());
+        int output = zeroIfNull(usage.outputTokenCount());
+        return switch (usage) {
+            case OpenAiTokenUsage u -> openAi(u, input, output);
+            case AnthropicTokenUsage u -> anthropic(u, input, output);
+            case GoogleAiGeminiTokenUsage u -> gemini(u, input, output);
+            default -> nonEmpty(new TokenCount(TokenType.INPUT, input), new TokenCount(TokenType.OUTPUT, output));
+        };
+    }
+
+    /** Cached is a SUBSET of the input count, and reasoning a subset of output — both subtracted out. */
+    private static List<TokenCount> openAi(OpenAiTokenUsage u, int input, int output) {
+        int cached = u.inputTokensDetails() == null ? 0 : zeroIfNull(u.inputTokensDetails().cachedTokens());
+        int reasoning = u.outputTokensDetails() == null ? 0
+                : zeroIfNull(u.outputTokensDetails().reasoningTokens());
+        return nonEmpty(new TokenCount(TokenType.INPUT, input - cached),
+                new TokenCount(TokenType.CACHED_INPUT, cached),
+                new TokenCount(TokenType.OUTPUT, output - reasoning),
+                new TokenCount(TokenType.REASONING, reasoning));
+    }
+
+    /** Cache reads and writes are ADDITIONAL to the input count — nothing to subtract. */
+    private static List<TokenCount> anthropic(AnthropicTokenUsage u, int input, int output) {
+        return nonEmpty(new TokenCount(TokenType.INPUT, input),
+                new TokenCount(TokenType.CACHED_INPUT, zeroIfNull(u.cacheReadInputTokens())),
+                new TokenCount(TokenType.CACHE_WRITE, zeroIfNull(u.cacheCreationInputTokens())),
+                new TokenCount(TokenType.OUTPUT, output));
+    }
+
+    /** Cached content is a SUBSET of the input count; thoughts are reported apart from output. */
+    private static List<TokenCount> gemini(GoogleAiGeminiTokenUsage u, int input, int output) {
+        int cached = zeroIfNull(u.cachedContentTokenCount());
+        return nonEmpty(new TokenCount(TokenType.INPUT, input - cached),
+                new TokenCount(TokenType.CACHED_INPUT, cached),
+                new TokenCount(TokenType.OUTPUT, output),
+                new TokenCount(TokenType.REASONING, zeroIfNull(u.thoughtsTokenCount())));
+    }
+
+    /** Only dimensions that actually occurred, so a call without caching carries no zero rows. */
+    private static List<TokenCount> nonEmpty(TokenCount... candidates) {
+        List<TokenCount> kept = new ArrayList<>(candidates.length);
+        for (TokenCount candidate : candidates) {
+            if (candidate.tokens() > 0) {
+                kept.add(candidate);
+            }
+        }
+        return List.copyOf(kept);
+    }
+
+    private static int zeroIfNull(Integer value) {
+        return value == null ? 0 : value;
+    }
+}
+```
+
+- [ ] **Step 4: Run the test**
+
+Run: `./gradlew :spire-llm:test --tests 'dev.codespire.llm.TokenUsageMapperTest'`
+Expected: PASS. If a vendor case fails on the reconciliation assertion, flip that vendor's subtraction as instructed above and re-run — the assertion stays.
+
+If a vendor builder method named in the test does not exist, inspect the jar rather than guessing:
+
+```bash
+find ~/.gradle/caches/modules-2/files-2.1/dev.langchain4j -name "langchain4j-openai-1.18.1.jar" \
+  -o -name "langchain4j-open-ai-1.18.1.jar" | head -1 | \
+  xargs -I{} javap -cp {} 'dev.langchain4j.model.openai.OpenAiTokenUsage$Builder'
+```
+
+- [ ] **Step 5: Wire the provider to the mapper**
+
+`LangChain4jLlmProvider.java:145-153`:
+
+```java
+        ChatResponse response = model.chat(request);
+        return new Completion(
+                response.aiMessage().text(),
+                TokenUsageMapper.map(params.model(), response.tokenUsage()));
+```
+
+Remove the now-unused `TokenUsage` import if nothing else in the file uses it.
+
+- [ ] **Step 6: Run the module and the fast tier**
+
+Run: `./gradlew :spire-llm:test && ./gradlew testFast`
+Expected: PASS.
+
+- [ ] **Step 7: Mutation-verify the invariant**
+
+Temporarily change `openAi` to not subtract `cached` (`new TokenCount(TokenType.INPUT, input)`).
+Run: `./gradlew :spire-llm:test --tests 'dev.codespire.llm.TokenUsageMapperTest'`
+Expected: exactly the OpenAI case fails, on the partition assertion. Restore the subtraction and confirm green.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add spire-llm
+git commit -m "Map vendor token usage onto a checked partition
+
+Each vendor reports its billing detail on its own TokenUsage subclass, and
+they disagree on whether those details are included in or additional to the
+headline input/output counts. OpenAI's input includes its cached portion,
+Anthropic's excludes cache reads. Summing naively double-counts one and
+undercounts the other, and both yield a plausible number.
+
+Every mapping is therefore reconciled against the vendor's own
+totalTokenCount. A mismatch discards the breakdown for a single TOTAL line
+marked unreconciled, rather than publishing a split that loses tokens — so
+an unmapped new dimension announces itself instead of mispricing quietly."
+```
+
+---
+
+## Task 3: The V30 schema
+
+**Files:**
+- Create: `spire-orchestrator/src/main/resources/db/migration/V30__llm_charge_ledger.sql`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java`
+
+**Interfaces:**
+- Produces: tables `llm_model_rate`, `llm_charge`; column `llm_model.pricing_mode`. Drops `review_llm_call`, `llm_model.input_price_millicents_per_million`, `llm_model.output_price_millicents_per_million`, and `review_status.{model,tokens_in,tokens_out,cost_millicents}`.
+
+- [ ] **Step 1: Write the failing test**
+
+`spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.Test;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+
+/**
+ * The ledger's CHECK constraints are the backstop, so they are asserted at the SQL layer rather than
+ * assumed from the service that writes them. Four of these are NEGATIVE assertions — "this must be
+ * rejected" — and a negative assertion passes trivially if the constraint is simply absent, so each
+ * one below is paired with the positive case that proves the insert path works at all.
+ */
+@QuarkusTest
+class LlmChargeSchemaIT {
+
+    @Inject
+    DataSource dataSource;
+
+    private void exec(String sql) throws SQLException {
+        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
+            s.executeUpdate(sql);
+        }
+    }
+
+    private String insert(String mode, String tokenType, String rate, String cost) {
+        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+                + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
+                + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-" + tokenType + mode
+                + "', 'review', 'TEST-MODEL', '" + mode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")";
+    }
+
+    @Test
+    void aMeteredLineWithARateAndACostIsAccepted() {
+        assertDoesNotThrow(() -> exec(insert("METERED", "INPUT", "250000", "2")));
+    }
+
+    @Test
+    void aMeteredLineWithoutARateIsRejected() {
+        assertThrows(SQLException.class, () -> exec(insert("METERED", "OUTPUT", "NULL", "2")));
+    }
+
+    @Test
+    void anUnknownLineMustCarryNoCostAndNoRate() {
+        assertDoesNotThrow(() -> exec(insert("UNKNOWN", "INPUT", "NULL", "NULL")));
+        assertThrows(SQLException.class, () -> exec(insert("UNKNOWN", "OUTPUT", "NULL", "0")));
+    }
+
+    /** An asserted zero must be exactly zero on both columns — never a stray rate. */
+    @Test
+    void anUnmeteredLineMustBeZeroRateAndZeroCost() {
+        assertDoesNotThrow(() -> exec(insert("UNMETERED", "INPUT", "0", "0")));
+        assertThrows(SQLException.class, () -> exec(insert("UNMETERED", "OUTPUT", "250000", "0")));
+    }
+
+    /** An unreconciled call has no split, so no metered rate can apply to it. */
+    @Test
+    void aTotalLineCannotBeMetered() {
+        assertThrows(SQLException.class, () -> exec(insert("METERED", "TOTAL", "250000", "2")));
+        assertDoesNotThrow(() -> exec(insert("UNMETERED", "TOTAL", "0", "0")));
+    }
+
+    /** The redelivery guard: one call's dimension can be charged exactly once. */
+    @Test
+    void theSameCallAndTokenTypeCannotBeChargedTwice() throws SQLException {
+        String sql = insert("METERED", "CACHE_WRITE", "300000", "3");
+        exec(sql);
+        assertThrows(SQLException.class, () -> exec(sql));
+    }
+
+    @Test
+    void theDroppedTablesAndColumnsAreGone() {
+        assertThrows(SQLException.class, () -> exec("SELECT 1 FROM review_llm_call"));
+        assertThrows(SQLException.class, () -> exec("SELECT cost_millicents FROM review_status"));
+        assertThrows(SQLException.class,
+                () -> exec("SELECT input_price_millicents_per_million FROM llm_model"));
+    }
+}
+```
+
+- [ ] **Step 2: Run it to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
+Expected: FAIL — `llm_charge` does not exist.
+
+- [ ] **Step 3: Write the migration**
+
+`spire-orchestrator/src/main/resources/db/migration/V30__llm_charge_ledger.sql`:
+
+```sql
+-- LLM cost accounting (ADR-023): one ledger, one row per token type per call, carrying the rate that
+-- priced it.
+--
+-- Two problems this closes. First, cost was stored WITHOUT the rate it came from, so no historical
+-- figure was reproducible and a change in the numbers could not be attributed to usage or to a price
+-- edit. Second, and worse: an unpriceable call was recorded as costing ZERO, indistinguishable from a
+-- genuinely free one, so a spend cap reading these totals would have installed cleanly and never
+-- fired. A pricing MODE fixes that -- an asserted zero for self-hosted inference is now a category,
+-- not a value someone typed to get past validation.
+
+-- 1. The catalog states which world a model is in.
+ALTER TABLE llm_model ADD COLUMN pricing_mode VARCHAR(16) NOT NULL DEFAULT 'METERED';
+ALTER TABLE llm_model ALTER COLUMN pricing_mode DROP DEFAULT;
+ALTER TABLE llm_model ADD CONSTRAINT llm_model_pricing_mode_chk
+    CHECK (pricing_mode IN ('METERED', 'UNMETERED'));
+
+-- 2. Rates move to a child table: five fixed columns would need a migration per vendor billing
+--    change, and could not express "this model does not bill for cache writes" at all.
+CREATE TABLE llm_model_rate (
+    model_id                    UUID        NOT NULL REFERENCES llm_model(id) ON DELETE CASCADE,
+    token_type                  VARCHAR(32) NOT NULL,
+    rate_millicents_per_million BIGINT      NOT NULL CHECK (rate_millicents_per_million > 0),
+    PRIMARY KEY (model_id, token_type),
+    -- TOTAL is deliberately absent: an unreconciled call has no split to price.
+    CHECK (token_type IN ('INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'))
+);
+
+-- 3. Preserve only UNAMBIGUOUS rates. A rate > 0 can only have been operator-entered, because the
+--    old path coerced a blank to 0. A model with any zero rate cannot be migrated honestly, so it is
+--    left without rates and the new guards treat it as unpriceable until an operator fixes it.
+INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million)
+SELECT id, 'INPUT', input_price_millicents_per_million FROM llm_model
+ WHERE input_price_millicents_per_million > 0 AND output_price_millicents_per_million > 0;
+INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million)
+SELECT id, 'OUTPUT', output_price_millicents_per_million FROM llm_model
+ WHERE input_price_millicents_per_million > 0 AND output_price_millicents_per_million > 0;
+
+ALTER TABLE llm_model DROP COLUMN input_price_millicents_per_million;
+ALTER TABLE llm_model DROP COLUMN output_price_millicents_per_million;
+
+-- 4. The ledger. Grain = charge line; a call is the set of rows sharing call_ref.
+CREATE TABLE llm_charge (
+    id            UUID         PRIMARY KEY,
+    review_id     TEXT         NOT NULL,
+    call_ref      TEXT         NOT NULL,
+    kind          VARCHAR(16)  NOT NULL,   -- review | reconcile | followup
+    model         VARCHAR(255) NOT NULL,
+    pricing_mode  VARCHAR(16)  NOT NULL,
+    token_type    VARCHAR(32)  NOT NULL,
+    tokens        INT          NOT NULL CHECK (tokens >= 0),
+    rate_millicents_per_million BIGINT,
+    cost_millicents             BIGINT,
+    priced_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    -- One call's dimension is charged exactly once. recordLlmCall used to be an unguarded INSERT
+    -- whose only protection was a STALENESS check, so a redelivered result between ReviewGenerated
+    -- and ReviewCompleted inserted a second row for a call that happened once.
+    UNIQUE (call_ref, token_type),
+    CHECK (pricing_mode IN ('METERED', 'UNMETERED', 'UNKNOWN')),
+    CHECK ((pricing_mode = 'UNKNOWN') = (cost_millicents IS NULL)),
+    CHECK (pricing_mode <> 'UNKNOWN'   OR rate_millicents_per_million IS NULL),
+    CHECK (pricing_mode <> 'METERED'   OR rate_millicents_per_million IS NOT NULL),
+    CHECK (pricing_mode <> 'UNMETERED'
+           OR (rate_millicents_per_million = 0 AND cost_millicents = 0)),
+    -- An unreconciled call has no per-type split, so a METERED rate cannot be applied to it.
+    -- UNMETERED stays valid: cost is zero whatever the split turns out to be.
+    CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')
+);
+CREATE INDEX llm_charge_review_idx ON llm_charge (review_id, priced_at);
+CREATE INDEX llm_charge_priced_idx ON llm_charge (priced_at);
+
+-- 5. The old ledger and its denormalized rollup go. Every 0 in review_llm_call is ambiguous -- the
+--    coercion means "was unpriced at the time", not "was free" -- and the distinguishing information
+--    was never written, so no migration can recover it. These are development smoke-test rows.
+DROP TABLE review_llm_call;
+ALTER TABLE review_status
+    DROP COLUMN model,
+    DROP COLUMN tokens_in,
+    DROP COLUMN tokens_out,
+    DROP COLUMN cost_millicents;
+```
+
+- [ ] **Step 4: Run the schema test**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
+Expected: PASS. `gen_random_uuid()` needs `pgcrypto` on Postgres < 13; if it errors, replace it in the test helper with a literal `'00000000-0000-0000-0000-0000000000NN'::uuid` per case.
+
+- [ ] **Step 5: Prove the negative assertions can fail**
+
+Temporarily delete the `CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')` line, re-run, and confirm `aTotalLineCannotBeMetered` fails. Restore it. Repeat for the `UNMETERED` check. Four of these assertions pass trivially if a constraint is renamed away, which is exactly the vacuity hole `ContractSchemaSnapshotTest` had.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spire-orchestrator/src/main/resources/db/migration spire-orchestrator/src/test
+git commit -m "Add the LLM charge ledger and pricing mode (V30)
+
+One row per token type per call, carrying the rate that priced it, so every
+historical figure is reproducible as tokens x rate and a later price edit
+cannot reach it. A UNIQUE (call_ref, token_type) closes a real double-count
+window: the old insert's only guard was a staleness check, so a redelivered
+result between ReviewGenerated and ReviewCompleted charged one call twice.
+
+pricing_mode makes zero a category rather than a value. An asserted zero for
+self-hosted inference is now distinguishable from an absent price, which is
+what a spend cap needs to be more than decorative.
+
+CHECK constraints make the illegal combinations unrepresentable at the
+storage layer, not just in the service that writes them.
+
+review_llm_call and review_status's cost columns are dropped: every zero in
+them is ambiguous, the information to disambiguate was never written, and
+they hold development smoke-test rows."
+```
+
+---
+
+## Task 4: Pricing types and the registry's rate storage
+
+**Files:**
+- Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/PricingMode.java`
+- Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/ChargeLine.java`
+- Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/ChargeCall.java`
+- Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/CallRefs.java`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelInput.java`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelView.java`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelRegistry.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmModelRegistryPricingTest.java`
+
+**Interfaces:**
+- Consumes: `TokenType`, `ModelUsage` (Task 1).
+- Produces:
+  - `enum PricingMode { METERED, UNMETERED, UNKNOWN }`
+  - `record ChargeLine(TokenType tokenType, int tokens, Long rateMillicentsPerMillion, Long costMillicents, PricingMode mode)`
+  - `record ChargeCall(String reviewId, String callRef, String kind, String model, List<ChargeLine> lines)`
+  - `CallRefs.of(String reviewId, String slot, String kind) -> String`
+  - `LlmModelRegistry.priceCall(String model, ModelUsage usage) -> List<ChargeLine>`
+  - `LlmModelRegistry.isPriceable(String model) -> boolean`
+  - `LlmModelInput(String type, String name, String label, String pricingMode, Map<String, Long> rates, String outputTokenParam, Boolean supportsTemperature, String reasoningEffort, Map<String, Object> extraParams, Boolean enabled)`
+  - `LlmModelView(..., String pricingMode, Map<String, Long> rates, ...)` — the two price fields replaced
+
+**Note on class size:** `LlmModelRegistry` is 256 lines today and this adds rate CRUD plus pricing. If it passes 300, extract the rate table into `LlmModelRateRepository` (`ratesFor`, `replaceRates`) and have the registry delegate. Do not let it sprawl.
+
+- [ ] **Step 1: Write the failing test**
+
+`spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmModelRegistryPricingTest.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.TokenCount;
+import dev.codespire.contract.review.TokenType;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Pricing turns a token partition into charge lines. The cases that matter are the ones where a price
+ * is NOT simply available: an uncatalogued model, a dimension with no rate, and an asserted zero. Each
+ * must be distinguishable in the result, because collapsing any of them to a plain 0 is the defect
+ * this whole change exists to remove.
+ *
+ * <p>Rates below are obviously-synthetic round numbers, not any vendor's real published price.
+ */
+@QuarkusTest
+class LlmModelRegistryPricingTest {
+
+    @Inject
+    LlmModelRegistry registry;
+
+    private LlmModelView metered(String name, Map<String, Long> rates) {
+        return registry.create(new LlmModelInput("openai", name, "TEST " + name, "METERED", rates,
+                null, null, null, Map.of(), true));
+    }
+
+    @Test
+    void aMeteredCallIsPricedPerTypeAtTheStoredRate() {
+        metered("TEST-METERED-1", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L));
+
+        List<ChargeLine> lines = registry.priceCall("TEST-METERED-1",
+                new ModelUsage("TEST-METERED-1",
+                        List.of(new TokenCount(TokenType.INPUT, 1_000_000),
+                                new TokenCount(TokenType.OUTPUT, 500_000)),
+                        1_500_000, true));
+
+        assertEquals(2, lines.size());
+        ChargeLine input = lines.stream().filter(l -> l.tokenType() == TokenType.INPUT).findFirst().orElseThrow();
+        assertEquals(PricingMode.METERED, input.mode());
+        assertEquals(200_000L, input.rateMillicentsPerMillion());
+        assertEquals(200_000L, input.costMillicents()); // 1M tokens at 200000/1M
+        ChargeLine output = lines.stream().filter(l -> l.tokenType() == TokenType.OUTPUT).findFirst().orElseThrow();
+        assertEquals(200_000L, output.costMillicents()); // 500k tokens at 400000/1M
+    }
+
+    /**
+     * The partial case. A dimension the operator never priced must not silently cost zero, and must
+     * not take the rest of the call down with it.
+     */
+    @Test
+    void aDimensionWithNoRateIsUnknownWhileTheRestOfTheCallPrices() {
+        metered("TEST-METERED-2", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L));
+
+        List<ChargeLine> lines = registry.priceCall("TEST-METERED-2",
+                new ModelUsage("TEST-METERED-2",
+                        List.of(new TokenCount(TokenType.INPUT, 1_000_000),
+                                new TokenCount(TokenType.CACHE_WRITE, 1_000_000)),
+                        2_000_000, true));
+
+        ChargeLine cacheWrite = lines.stream()
+                .filter(l -> l.tokenType() == TokenType.CACHE_WRITE).findFirst().orElseThrow();
+        assertEquals(PricingMode.UNKNOWN, cacheWrite.mode());
+        assertNull(cacheWrite.costMillicents());
+        assertNull(cacheWrite.rateMillicentsPerMillion());
+
+        ChargeLine input = lines.stream()
+                .filter(l -> l.tokenType() == TokenType.INPUT).findFirst().orElseThrow();
+        assertEquals(PricingMode.METERED, input.mode());
+        assertEquals(200_000L, input.costMillicents());
+    }
+
+    /** Self-hosted inference: an ASSERTED zero, which must read differently from an absent price. */
+    @Test
+    void anUnmeteredModelChargesAnExplicitZero() {
+        registry.create(new LlmModelInput("openai", "TEST-UNMETERED", "TEST self-hosted", "UNMETERED",
+                Map.of(), null, null, null, Map.of(), true));
+
+        List<ChargeLine> lines = registry.priceCall("TEST-UNMETERED",
+                ModelUsage.of("TEST-UNMETERED", 1_000_000, 500_000));
+
+        assertEquals(2, lines.size());
+        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.UNMETERED));
+        assertTrue(lines.stream().allMatch(l -> l.costMillicents() == 0L));
+        assertTrue(lines.stream().allMatch(l -> l.rateMillicentsPerMillion() == 0L));
+    }
+
+    /**
+     * The regression that motivated the change: an uncatalogued model used to be priced at 0, which
+     * froze forever as "free". It must be UNKNOWN.
+     */
+    @Test
+    void anUncataloguedModelIsUnknownAndNeverZero() {
+        List<ChargeLine> lines = registry.priceCall("TEST-NOT-IN-CATALOG",
+                ModelUsage.of("TEST-NOT-IN-CATALOG", 1_000, 500));
+
+        assertFalse(lines.isEmpty());
+        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.UNKNOWN));
+        assertTrue(lines.stream().allMatch(l -> l.costMillicents() == null));
+    }
+
+    /** An unreconciled call has no split, so it cannot be metered even for a priced model. */
+    @Test
+    void anUnreconciledCallYieldsASingleUnknownTotalLine() {
+        metered("TEST-METERED-3", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L));
+
+        List<ChargeLine> lines = registry.priceCall("TEST-METERED-3",
+                new ModelUsage("TEST-METERED-3", List.of(new TokenCount(TokenType.TOTAL, 900)), 900, false));
+
+        assertEquals(1, lines.size());
+        assertEquals(TokenType.TOTAL, lines.get(0).tokenType());
+        assertEquals(PricingMode.UNKNOWN, lines.get(0).mode());
+    }
+
+    @Test
+    void aMeteredModelWithoutInputOrOutputRatesIsRejectedOnSave() {
+        assertThrows(IllegalArgumentException.class, () -> registry.create(new LlmModelInput(
+                "openai", "TEST-NO-RATES", "TEST no rates", "METERED", Map.of("INPUT", 200_000L),
+                null, null, null, Map.of(), true)));
+    }
+
+    @Test
+    void aMeteredModelWithAZeroRateIsRejectedOnSave() {
+        assertThrows(IllegalArgumentException.class, () -> registry.create(new LlmModelInput(
+                "openai", "TEST-ZERO-RATE", "TEST zero", "METERED",
+                Map.of("INPUT", 0L, "OUTPUT", 400_000L), null, null, null, Map.of(), true)));
+    }
+
+    @Test
+    void isPriceableIsTrueForAMeteredModelWithBothMandatoryRatesAndForAnUnmeteredOne() {
+        metered("TEST-PRICEABLE", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L));
+        registry.create(new LlmModelInput("openai", "TEST-PRICEABLE-FREE", "TEST free", "UNMETERED",
+                Map.of(), null, null, null, Map.of(), true));
+
+        assertTrue(registry.isPriceable("TEST-PRICEABLE"));
+        assertTrue(registry.isPriceable("TEST-PRICEABLE-FREE"));
+        assertFalse(registry.isPriceable("TEST-STILL-NOT-IN-CATALOG"));
+    }
+}
+```
+
+- [ ] **Step 2: Run it to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmModelRegistryPricingTest'`
+Expected: FAIL — compilation error; `PricingMode`, `ChargeLine` and the new `LlmModelInput` shape do not exist.
+
+- [ ] **Step 3: Create the pricing value types**
+
+`PricingMode.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+/**
+ * How a model's tokens are costed. Pricing is orchestrator-owned (ADR-018), so this deliberately does
+ * not live in the shared contract.
+ */
+public enum PricingMode {
+    /** Operator-entered rates apply. Every rate must be greater than zero. */
+    METERED,
+    /**
+     * Self-hosted or otherwise unbilled inference: cost is an ASSERTED zero. Distinct from
+     * {@link #UNKNOWN} on purpose — conflating the two is what let an unpriced model read as free.
+     */
+    UNMETERED,
+    /** Pricing could not be determined. Cost is NULL, never zero. */
+    UNKNOWN
+}
+```
+
+`ChargeLine.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import dev.codespire.contract.review.TokenType;
+
+/**
+ * One token dimension of one LLM call, priced.
+ *
+ * <p>The rate is carried, not just the cost, so the figure is reproducible as
+ * {@code tokens x rate / 1_000_000} and a later catalog edit cannot reach it.
+ *
+ * @param rateMillicentsPerMillion null exactly when {@code mode} is {@link PricingMode#UNKNOWN}
+ * @param costMillicents           null exactly when {@code mode} is {@link PricingMode#UNKNOWN} —
+ *                                 never 0, which would be indistinguishable from an asserted zero
+ */
+public record ChargeLine(TokenType tokenType, int tokens, Long rateMillicentsPerMillion,
+                         Long costMillicents, PricingMode mode) {
+
+    /** A priced line. Rounds once, at the end, per the money rule. */
+    public static ChargeLine metered(TokenType type, int tokens, long rate) {
+        return new ChargeLine(type, tokens, rate, (long) tokens * rate / 1_000_000L, PricingMode.METERED);
+    }
+
+    public static ChargeLine unmetered(TokenType type, int tokens) {
+        return new ChargeLine(type, tokens, 0L, 0L, PricingMode.UNMETERED);
+    }
+
+    public static ChargeLine unknown(TokenType type, int tokens) {
+        return new ChargeLine(type, tokens, null, null, PricingMode.UNKNOWN);
+    }
+}
+```
+
+`ChargeCall.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import java.util.List;
+
+/**
+ * One LLM call's charge lines plus the identity they are recorded under.
+ *
+ * @param callRef the deterministic key that makes recording idempotent under redelivery — see
+ *                {@link CallRefs}
+ * @param kind    "review" | "reconcile" | "followup"
+ */
+public record ChargeCall(String reviewId, String callRef, String kind, String model,
+                         List<ChargeLine> lines) {
+
+    public ChargeCall {
+        lines = lines == null ? List.of() : List.copyOf(lines);
+    }
+}
+```
+
+`CallRefs.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+/**
+ * The deterministic identity of one paid LLM call.
+ *
+ * <p>Mirrors the claim the worker already takes before spending
+ * ({@code CommentIdempotencyStore.claim(reviewId, slot, key)}), rather than plumbing a new field
+ * through the wire: the orchestrator can rebuild the same key from facts every delivery of the event
+ * carries, so a redelivered result resolves to the same {@code call_ref} and the ledger's
+ * {@code UNIQUE (call_ref, token_type)} makes the second recording a no-op.
+ *
+ * <p>The slot is the COMMIT for a review or reconcile call, and the THREAD REF for a follow-up —
+ * matching what the worker puts in that position.
+ */
+public final class CallRefs {
+
+    private CallRefs() {
+    }
+
+    public static String of(String reviewId, String slot, String kind) {
+        return reviewId + '|' + slot + '|' + kind;
+    }
+}
+```
+
+- [ ] **Step 4: Reshape the model DTOs**
+
+`LlmModelInput.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import java.util.Map;
+
+/**
+ * Create/update payload for a catalog model.
+ *
+ * <p>{@code pricingMode} is "METERED" or "UNMETERED". Under METERED, {@code rates} maps a
+ * {@code TokenType} name to millicents per 1,000,000 tokens and must contain a rate greater than zero
+ * for at least INPUT and OUTPUT — the two dimensions every vendor reports on every call. The optional
+ * dimensions (CACHED_INPUT, CACHE_WRITE, REASONING) may be omitted, because a model that does not bill
+ * for them cannot be asked to price them.
+ *
+ * <p>Under UNMETERED, {@code rates} must be empty: the cost is an asserted zero.
+ */
+public record LlmModelInput(
+        String type,
+        String name,
+        String label,
+        String pricingMode,
+        Map<String, Long> rates,
+        String outputTokenParam,
+        Boolean supportsTemperature,
+        String reasoningEffort,
+        Map<String, Object> extraParams,
+        Boolean enabled) {
+}
+```
+
+`LlmModelView.java` — same change: replace `inputPriceMillicentsPerMillion` / `outputPriceMillicentsPerMillion` with `String pricingMode` and `Map<String, Long> rates`, keeping every other component and its order.
+
+- [ ] **Step 5: Implement rates, validation and pricing in the registry**
+
+In `LlmModelRegistry`:
+
+1. **Delete the coercions** at the old lines 78, 79, 106, 107 and drop both price columns from the `INSERT`/`UPDATE`; add `pricing_mode`.
+2. **Validate before writing**, in a private helper called by both `create` and `update`:
+
+```java
+    /** Mandatory because every vendor reports these two on every call; the rest are model-specific. */
+    private static final List<TokenType> REQUIRED_RATES = List.of(TokenType.INPUT, TokenType.OUTPUT);
+
+    private static PricingMode validatedMode(LlmModelInput in) {
+        PricingMode mode = parseMode(in.pricingMode());
+        Map<String, Long> rates = in.rates() == null ? Map.of() : in.rates();
+        if (mode == PricingMode.UNMETERED) {
+            if (!rates.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "An UNMETERED model asserts a zero cost, so it must carry no rates");
+            }
+            return mode;
+        }
+        for (TokenType required : REQUIRED_RATES) {
+            Long rate = rates.get(required.name());
+            if (rate == null || rate <= 0) {
+                throw new IllegalArgumentException("A METERED model needs a rate above zero for "
+                        + required.name() + ". If this model is self-hosted and costs nothing to call,"
+                        + " set its pricing mode to UNMETERED instead of entering a zero — a zero rate"
+                        + " and an unentered rate must stay distinguishable.");
+            }
+        }
+        rates.forEach((type, rate) -> {
+            if (rate == null || rate <= 0) {
+                throw new IllegalArgumentException("Rate for " + type + " must be above zero");
+            }
+        });
+        return mode;
+    }
+
+    /** UNKNOWN is a runtime outcome, never an operator's choice, so it is not accepted here. */
+    private static PricingMode parseMode(String raw) {
+        PricingMode mode = raw == null ? null : switch (raw.trim().toUpperCase(Locale.ROOT)) {
+            case "METERED" -> PricingMode.METERED;
+            case "UNMETERED" -> PricingMode.UNMETERED;
+            default -> null;
+        };
+        if (mode == null) {
+            throw new IllegalArgumentException("pricingMode must be METERED or UNMETERED");
+        }
+        return mode;
+    }
+```
+
+3. **Replace rates transactionally** on create/update — `DELETE FROM llm_model_rate WHERE model_id = ?` then insert each entry.
+4. **Read them back** in `toView` via `ratesFor(connection, id)`.
+5. **Replace `costMillicents(String, int, int)` with `priceCall`:**
+
+```java
+    /**
+     * Price one call's token partition into charge lines.
+     *
+     * <p>Never returns a zero cost for a price it could not find. The method this replaced answered
+     * {@code 0L} for an uncatalogued model, a blank model name AND a SQLException, so a momentary
+     * database fault wrote a permanent "this call was free".
+     */
+    public List<ChargeLine> priceCall(String model, ModelUsage usage) {
+        List<TokenCount> counts = usage == null ? List.of() : usage.counts();
+        if (counts.isEmpty()) {
+            return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
+        }
+        // An unreconciled call has no split, so no per-type rate can be applied to it.
+        if (!usage.reconciled()) {
+            return List.of(ChargeLine.unknown(TokenType.TOTAL, usage.reportedTotal()));
+        }
+        Pricing pricing = pricingFor(model);
+        return counts.stream().map(count -> line(pricing, count)).toList();
+    }
+
+    private static ChargeLine line(Pricing pricing, TokenCount count) {
+        if (pricing.mode() == PricingMode.UNMETERED) {
+            return ChargeLine.unmetered(count.type(), count.tokens());
+        }
+        Long rate = pricing.rates().get(count.type());
+        if (pricing.mode() == PricingMode.UNKNOWN || rate == null) {
+            return ChargeLine.unknown(count.type(), count.tokens());
+        }
+        return ChargeLine.metered(count.type(), count.tokens(), rate);
+    }
+
+    /** What the catalog says about a model's pricing; UNKNOWN with no rates when it cannot be read. */
+    private record Pricing(PricingMode mode, Map<TokenType, Long> rates) {
+        static final Pricing UNKNOWN = new Pricing(PricingMode.UNKNOWN, Map.of());
+    }
+
+    private Pricing pricingFor(String model) {
+        if (model == null || model.isBlank()) {
+            return Pricing.UNKNOWN;
+        }
+        try (Connection c = dataSource.getConnection()) {
+            // ... SELECT id, pricing_mode FROM llm_model WHERE name = ?; then ratesFor(c, id).
+            // Not found -> Pricing.UNKNOWN.
+        } catch (SQLException e) {
+            // Deliberately NOT a zero. A transient fault must not become permanent silent corruption.
+            LOG.errorf(e, "Pricing lookup failed for model %s — recording the call as unpriced", model);
+            return Pricing.UNKNOWN;
+        }
+    }
+
+    /** Whether a review may be started against this model: priceable, or explicitly unbilled. */
+    public boolean isPriceable(String model) {
+        Pricing pricing = pricingFor(model);
+        if (pricing.mode() == PricingMode.UNMETERED) {
+            return true;
+        }
+        return pricing.mode() == PricingMode.METERED
+                && REQUIRED_RATES.stream().allMatch(pricing.rates()::containsKey);
+    }
+```
+
+6. **Guard `delete`** against a referencing provider:
+
+```java
+    @Transactional
+    public boolean delete(UUID id) {
+        try (Connection c = dataSource.getConnection()) {
+            String name = nameOf(c, id);
+            if (name == null) {
+                return false;
+            }
+            // Without this, the save-time guard that a provider's model must be catalogued is
+            // defeated after the fact: deleting the entry leaves the provider pointing at nothing
+            // and every call it makes unpriceable.
+            int users = countProvidersUsing(c, name);
+            if (users > 0) {
+                throw new IllegalStateException("Model '" + name + "' is in use by " + users
+                        + " LLM provider(s). Point them at another model first.");
+            }
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_model WHERE id = ?")) {
+                ps.setObject(1, id);
+                return ps.executeUpdate() > 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to delete LLM model " + id, e);
+        }
+    }
+```
+
+`countProvidersUsing` is `SELECT count(*) FROM llm_provider WHERE model = ?`. Confirm the table and column name from `LlmProviderRegistry` before writing it.
+
+- [ ] **Step 6: Run the test**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmModelRegistryPricingTest'`
+Expected: PASS.
+
+- [ ] **Step 7: Mutation-verify the two guards that matter most**
+
+- Change `line(...)` so a missing rate returns `ChargeLine.metered(count.type(), count.tokens(), 0L)`. Expect `aDimensionWithNoRateIsUnknownWhileTheRestOfTheCallPrices` to fail. Restore.
+- Make `pricingFor`'s `catch` return `new Pricing(PricingMode.UNMETERED, Map.of())`. Expect `anUncataloguedModelIsUnknownAndNeverZero` to still pass (it does not hit the catch) — which shows that path is **not** covered. Add a test that injects a failure, or accept the gap and note it. Prefer adding coverage: point the registry at a closed `DataSource` in a focused unit test and assert `UNKNOWN`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm spire-orchestrator/src/test
+git commit -m "Price calls into charge lines instead of one coerced total
+
+priceCall returns a line per token dimension carrying the rate that priced
+it. The method it replaces answered 0 for an uncatalogued model, a blank
+model name and a SQLException alike, so a momentary database fault wrote a
+permanent \"this call was free\".
+
+A METERED model now needs a rate above zero for INPUT and OUTPUT, and its
+error says to use UNMETERED for genuinely free inference rather than
+entering a zero. Optional dimensions stay optional: a model that does not
+bill for cache writes cannot be asked to price them, so an unrated
+dimension makes its own line UNKNOWN and leaves the rest of the call
+priced.
+
+Deleting a catalogued model a provider still references is refused —
+otherwise the save-time guard is defeated the moment the entry goes away."
+```
+
+---
+
+## Task 5: REST validation for the model catalog
+
+**Files:**
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelResource.java:70-95`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmModelResourceTest.java` (exists — extend)
+
+**Interfaces:**
+- Consumes: `LlmModelInput` with `pricingMode`/`rates` (Task 4), `PricingMode`.
+- Produces: 400 with an actionable message for every invalid pricing combination; 409 when deleting a referenced model.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `LlmModelResourceTest`:
+
+```java
+    /**
+     * The gap that let hole #1 through. requireNonNegative rejected null and ACCEPTED zero, while the
+     * UI turned a blank field into zero, so "no price entered" arrived as a valid free model. Zero is
+     * now only legal as a deliberate UNMETERED assertion.
+     */
+    @Test
+    void aZeroRateOnAMeteredModelIsRejectedWithAnActionableMessage() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-ZERO","label":"TEST zero","pricingMode":"METERED",
+                       "rates":{"INPUT":0,"OUTPUT":400000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400)
+                .body(containsString("UNMETERED"));
+    }
+
+    @Test
+    void anUnmeteredModelCarryingRatesIsRejected() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-CONFUSED","label":"TEST","pricingMode":"UNMETERED",
+                       "rates":{"INPUT":200000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400);
+    }
+
+    @Test
+    void anUnknownPricingModeIsRejectedSoUnknownCannotBeChosen() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-UNKNOWN","label":"TEST","pricingMode":"UNKNOWN",
+                       "rates":{}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400);
+    }
+
+    @Test
+    void aMeteredModelMissingTheOutputRateIsRejected() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-PARTIAL","label":"TEST","pricingMode":"METERED",
+                       "rates":{"INPUT":200000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400).body(containsString("OUTPUT"));
+    }
+
+    @Test
+    void aMeteredModelWithBothMandatoryRatesIsCreated() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-GOOD","label":"TEST good","pricingMode":"METERED",
+                       "rates":{"INPUT":200000,"OUTPUT":400000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(201).body("rates.INPUT", equalTo(200000));
+    }
+```
+
+- [ ] **Step 2: Run to confirm they fail**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmModelResourceTest'`
+Expected: FAIL — the new fields are unknown and no rate validation exists.
+
+- [ ] **Step 3: Replace `validate`**
+
+```java
+    private void validate(LlmModelInput in) {
+        if (in == null) {
+            throw new BadRequestException("LLM model body is required");
+        }
+        requireField(in.type(), "type");
+        requireField(in.name(), "name");
+        requireField(in.label(), "label");
+        requireField(in.pricingMode(), "pricingMode");
+        if (!TYPES.contains(in.type())) {
+            throw new BadRequestException("Unsupported model type '" + in.type()
+                    + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
+        }
+        // Pricing validity lives in the registry, which owns the METERED/UNMETERED rules and the
+        // mandatory-dimension list. Surfaced as 400 rather than 500 because it is the caller's input.
+        try {
+            registry.validatePricing(in);
+        } catch (IllegalArgumentException invalid) {
+            throw new BadRequestException(invalid.getMessage());
+        }
+    }
+```
+
+Expose `validatePricing(LlmModelInput)` on the registry (the `validatedMode` helper from Task 4, made package-visible or public and returning `void`), so the rule has one home and the resource does not restate it. Delete `requireNonNegative` — nothing calls it now.
+
+Map the delete guard to 409:
+
+```java
+    @DELETE
+    @RolesAllowed("spire-admin")
+    @Path("/{id}")
+    public Response delete(@PathParam("id") String id) {
+        try {
+            if (!registry.delete(uuid(id))) {
+                throw new NotFoundException("No LLM model " + id);
+            }
+        } catch (IllegalStateException inUse) {
+            throw new ClientErrorException(inUse.getMessage(), Response.Status.CONFLICT);
+        }
+        return Response.noContent().build();
+    }
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmModelResourceTest'`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelResource.java spire-orchestrator/src/test
+git commit -m "Reject a zero rate on a metered model at the API
+
+requireNonNegative rejected null and accepted zero, while the UI turned a
+blank price field into zero — so \"no price entered\" arrived as a valid
+free model and froze that way. Zero is now legal only as a deliberate
+UNMETERED assertion, and the error says so rather than just refusing.
+
+Validation delegates to the registry so the METERED/UNMETERED rules have
+one home instead of being restated at the edge, and deleting a model a
+provider still uses answers 409 rather than orphaning it."
+```
+
+---
+
+## Task 6: A provider may only name a catalogued model
+
+**Files:**
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmProviderResource.java:153`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmProviderModelGuardTest.java`
+
+**Interfaces:**
+- Consumes: `LlmModelRegistry.isPriceable(String)` (Task 4).
+
+- [ ] **Step 1: Write the failing test**
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.http.ContentType;
+import org.junit.jupiter.api.Test;
+
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
+
+/**
+ * The Settings dropdown is a courtesy; this is the control. A provider naming a model that is not in
+ * the catalog cannot be priced, so every call it makes would land in the ledger as UNKNOWN — the exact
+ * state the accounting rework exists to make impossible to configure.
+ */
+@QuarkusTest
+class LlmProviderModelGuardTest {
+
+    @Test
+    void aProviderNamingAnUncataloguedModelIsRejected() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"name":"TEST provider","type":"openai","baseUrl":"https://api.example.invalid",
+                       "apiKey":"TEST-KEY","model":"TEST-NOT-IN-CATALOG"}
+                      """)
+                .when().post("/api/llm-providers")
+                .then().statusCode(400).body(containsString("catalog"));
+    }
+
+    @Test
+    void aProviderNamingACataloguedPriceableModelIsAccepted() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-GUARD-MODEL","label":"TEST guard",
+                       "pricingMode":"METERED","rates":{"INPUT":200000,"OUTPUT":400000}}
+                      """)
+                .when().post("/api/llm-models").then().statusCode(201);
+
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"name":"TEST provider ok","type":"openai","baseUrl":"https://api.example.invalid",
+                       "apiKey":"TEST-KEY","model":"TEST-GUARD-MODEL"}
+                      """)
+                .when().post("/api/llm-providers")
+                .then().statusCode(201);
+    }
+}
+```
+
+- [ ] **Step 2: Run to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmProviderModelGuardTest'`
+Expected: FAIL — the uncatalogued model is accepted with 201.
+
+- [ ] **Step 3: Add the guard**
+
+In `LlmProviderResource`, next to the existing `requireField(in.model(), "model")` at line 153:
+
+```java
+        requireField(in.model(), "model");
+        // A model outside the catalog has no rates, so every call this provider makes would be
+        // recorded unpriced. Refuse the configuration rather than discover it per review.
+        if (!models.isPriceable(in.model())) {
+            throw new BadRequestException("Model '" + in.model() + "' is not in the catalog with usable"
+                    + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
+                    + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
+        }
+```
+
+Inject `LlmModelRegistry models;` if the resource does not already hold it.
+
+- [ ] **Step 4: Run the test and the module**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.*'`
+Expected: PASS.
+
+- [ ] **Step 5: Mutation-verify**
+
+Invert the guard to `if (false)`. Expect exactly `aProviderNamingAnUncataloguedModelIsRejected` to fail. Restore.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmProviderResource.java spire-orchestrator/src/test
+git commit -m "Refuse an LLM provider whose model is not priceable
+
+The model field was validated only for being non-blank, so any string was
+accepted and the Settings dropdown was the sole thing keeping providers
+pointed at catalogued models — a courtesy, not a control. A provider naming
+an uncatalogued model cannot be priced, so every call it made would land in
+the ledger unpriced.
+
+The message names the fix, including the UNMETERED route for self-hosted
+inference."
+```
+
+---
+
+## Task 7: Record charge lines in the read model
+
+**Files:**
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewDetail.java:73-75`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewSummary.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/LlmChargeProjectionIT.java`
+
+**Interfaces:**
+- Consumes: `ChargeCall`, `ChargeLine`, `PricingMode` (Task 4).
+- Produces:
+  - `ReviewProjection.recordCharges(ChargeCall call)` — idempotent
+  - `ReviewProjection.costOf(String reviewId) -> CostSummary`
+  - `record CostSummary(long knownCostMillicents, int unpricedCalls, String lastModel)`
+  - `ReviewProjection.chargeLines(String reviewId) -> List<ReviewDetail.ChargeLineView>`
+  - `record ChargeLineView(String kind, String model, String tokenType, int tokens, Long rateMillicentsPerMillion, Long costMillicents, String pricingMode, String pricedAt)` replacing `ReviewDetail.LlmCall`
+
+- [ ] **Step 1: Write the failing test**
+
+```java
+package dev.codespire.orchestrator.readmodel;
+
+import dev.codespire.contract.review.TokenType;
+import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeLine;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+/**
+ * Two properties of the ledger writer, both of which fail silently if broken: recording is idempotent
+ * under redelivery, and an unpriced line is EXCLUDED from the known total rather than added as zero.
+ * A zero-summing total looks complete and is not.
+ */
+@QuarkusTest
+class LlmChargeProjectionIT {
+
+    private static final String REVIEW = "review::TEST-WS/TEST-REPO#1";
+
+    @Inject
+    ReviewProjection projection;
+
+    private ChargeCall call(String ref, List<ChargeLine> lines) {
+        return new ChargeCall(REVIEW, ref, "review", "TEST-MODEL", lines);
+    }
+
+    @Test
+    void recordingTheSameCallTwiceChargesItOnce() {
+        ChargeCall once = call("CANARY-REF-1",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L)));
+
+        projection.recordCharges(once);
+        projection.recordCharges(once);
+
+        assertEquals(200_000L, projection.costOf(REVIEW).knownCostMillicents());
+        assertEquals(1, projection.chargeLines(REVIEW).size());
+    }
+
+    @Test
+    void anUnpricedLineIsCountedAsUnpricedNotAsZeroCost() {
+        projection.recordCharges(call("CANARY-REF-2", List.of(
+                ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L),
+                ChargeLine.unknown(TokenType.CACHE_WRITE, 500_000))));
+
+        ReviewProjection.CostSummary cost = projection.costOf(REVIEW);
+        assertEquals(200_000L, cost.knownCostMillicents());
+        assertEquals(1, cost.unpricedCalls());
+    }
+
+    @Test
+    void anUnmeteredCallContributesAnExplicitZeroAndIsNotFlaggedUnpriced() {
+        projection.recordCharges(call("CANARY-REF-3",
+                List.of(ChargeLine.unmetered(TokenType.INPUT, 1_000_000))));
+
+        ReviewProjection.CostSummary cost = projection.costOf(REVIEW);
+        assertEquals(0L, cost.knownCostMillicents());
+        assertEquals(0, cost.unpricedCalls());
+    }
+}
+```
+
+- [ ] **Step 2: Run to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.readmodel.LlmChargeProjectionIT'`
+Expected: FAIL — `recordCharges` does not exist.
+
+- [ ] **Step 3: Implement the writer and the reads**
+
+```java
+    /**
+     * Append one LLM call's charge lines. Idempotent: {@code ON CONFLICT DO NOTHING} against the
+     * ledger's {@code UNIQUE (call_ref, token_type)}, so a redelivered result event cannot charge the
+     * same call twice.
+     */
+    public void recordCharges(ChargeCall call) {
+        for (ChargeLine line : call.lines()) {
+            update("""
+                    INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode,
+                            token_type, tokens, rate_millicents_per_million, cost_millicents)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (call_ref, token_type) DO NOTHING
+                    """, ps -> {
+                ps.setObject(1, java.util.UUID.randomUUID());
+                ps.setString(2, call.reviewId());
+                ps.setString(3, call.callRef());
+                ps.setString(4, call.kind());
+                ps.setString(5, call.model());
+                ps.setString(6, line.mode().name());
+                ps.setString(7, line.tokenType().name());
+                ps.setInt(8, line.tokens());
+                setNullableLong(ps, 9, line.rateMillicentsPerMillion());
+                setNullableLong(ps, 10, line.costMillicents());
+            });
+        }
+        broadcast(call.reviewId());
+    }
+
+    /**
+     * A review's cost.
+     *
+     * @param knownCostMillicents the sum of lines that COULD be priced. Deliberately not the whole
+     *                            picture on its own — see {@code unpricedCalls}.
+     * @param unpricedCalls       how many distinct calls have at least one unpriced line, so the UI can
+     *                            say the total is partial instead of presenting it as complete
+     * @param lastModel           the model on the most recent charge line, for the badge that used to
+     *                            read review_status.model
+     */
+    public record CostSummary(long knownCostMillicents, int unpricedCalls, String lastModel) {
+    }
+```
+
+`costOf` is one query:
+
+```sql
+SELECT COALESCE(SUM(cost_millicents), 0)                                        AS known_cost,
+       COUNT(DISTINCT CASE WHEN pricing_mode = 'UNKNOWN' THEN call_ref END)     AS unpriced_calls,
+       (SELECT model FROM llm_charge WHERE review_id = ? ORDER BY priced_at DESC LIMIT 1) AS last_model
+  FROM llm_charge WHERE review_id = ?
+```
+
+- [ ] **Step 4: Rewire the reads that lost their columns**
+
+`review_status.model` and `cost_millicents` are gone, so:
+
+- In `recordOutcome`, drop `model`, `tokens_in`, `tokens_out`, `cost_millicents` from the `UPDATE` entirely — it now writes only `findings_count`, `findings_json`, `stage`, `updated_at`.
+- In `listSummaries`, replace the `llm_type` subquery and the `total_cost_millicents` `COALESCE` with derivations from `llm_charge`:
+
+```sql
+SELECT rs.*,
+       (SELECT m.type FROM llm_model m
+         WHERE m.name = (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                          ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
+       (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+         ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
+       COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
+                  WHERE c.review_id = rs.review_id), 0)                          AS total_cost_millicents,
+       COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
+                  WHERE c.review_id = rs.review_id AND c.pricing_mode = 'UNKNOWN'), 0) AS unpriced_calls
+  FROM review_status rs ORDER BY rs.updated_at DESC
+```
+
+Add `int unpricedCalls` to `ReviewSummary` so a partial total is never shown as complete.
+
+- Replace `llmCalls(String)` with `chargeLines(String)` returning the new `ChargeLineView`, ordered by `priced_at, token_type`.
+- Replace `ReviewDetail.LlmCall` with `ChargeLineView` and update `ReviewDetail`'s `llmCalls` component to `List<ChargeLineView> chargeLines`.
+
+- [ ] **Step 5: Run the module tests**
+
+Run: `./gradlew :spire-orchestrator:test`
+Expected: PASS. Update `ReviewProjectionTest` / `ReviewProjectionPriorRunIT` assertions that referenced the dropped columns.
+
+- [ ] **Step 6: Mutation-verify idempotency**
+
+Remove `ON CONFLICT (call_ref, token_type) DO NOTHING`. Expect `recordingTheSameCallTwiceChargesItOnce` to fail — on the SQL constraint, which is the point: the schema is the backstop and the clause is the graceful handling. Restore.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel spire-orchestrator/src/test
+git commit -m "Record charge lines and derive cost from the ledger
+
+recordCharges appends per-type lines with ON CONFLICT DO NOTHING, so a
+redelivered result cannot charge one call twice.
+
+costOf returns the priced sum AND how many calls carry an unpriced line,
+because a sum that silently omits what it could not price looks complete and
+is not. The reviews list carries the same count for the same reason.
+
+review_status's cost columns are gone, so the model badge and the list total
+now derive from the ledger — one source instead of a rollup that only ever
+held the last run's review call."
+```
+
+---
+
+## Task 8: Price in the saga, and refuse to spend what cannot be priced
+
+**Files:**
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ResultSaga.java:136-250`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/WorkerLlmCredentials.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/pipeline/ResultSagaPricingTest.java`
+
+**Interfaces:**
+- Consumes: `priceCall`, `isPriceable`, `CallRefs.of`, `recordCharges`.
+- Produces: `WorkerLlmCredentials.defaultModelName() -> Optional<String>`.
+
+**Why the guard is here.** Pricing is post-hoc: `ResultSaga` prices when the result event returns, by which point the money is spent. Failing there would waste the spend *and* lose the review. The pre-spend point is where `GenerateReview` is emitted, which already has exactly this shape for a missing LLM credential at `ResultSaga.java:143-150` — copy that idiom.
+
+- [ ] **Step 1: Write the failing test**
+
+```java
+package dev.codespire.orchestrator.pipeline;
+
+// imports as in ResultSagaRetryTest, which already fakes the projection and the emitter
+
+/**
+ * Two behaviours, at the two points where a pricing decision is still possible.
+ *
+ * <p>Before the spend: an unpriceable model must not produce a GenerateReview at all. After it:
+ * whatever the call cost must be recorded as charge lines keyed so redelivery is a no-op.
+ */
+class ResultSagaPricingTest {
+
+    @Test
+    void contextAssembledDoesNotGenerateAReviewWhenTheModelCannotBePriced() {
+        // default provider names TEST-UNPRICEABLE; registry.isPriceable -> false
+        saga.on(contextAssembled("review::TEST-WS/TEST-REPO#1", "TESTSHA00000"));
+
+        assertTrue(emitted.isEmpty(), "no paid command may be emitted for an unpriceable model");
+        assertTrue(projection.note().contains("pricing"),
+                "the dashboard must say WHY nothing ran, not leave a silent stall");
+    }
+
+    @Test
+    void contextAssembledGeneratesAReviewWhenTheModelIsPriceable() {
+        // registry.isPriceable -> true
+        saga.on(contextAssembled("review::TEST-WS/TEST-REPO#1", "TESTSHA00000"));
+
+        assertEquals(1, emitted.size());
+        assertInstanceOf(ActionCommand.GenerateReview.class, emitted.get(0));
+    }
+
+    @Test
+    void reviewGeneratedRecordsChargeLinesUnderADeterministicCallRef() {
+        saga.on(reviewGenerated("review::TEST-WS/TEST-REPO#1", "TESTSHA00000",
+                ModelUsage.of("TEST-MODEL", 1_000_000, 500_000)));
+
+        assertEquals(1, projection.recordedCalls().size());
+        assertEquals("review::TEST-WS/TEST-REPO#1|TESTSHA00000|review",
+                projection.recordedCalls().get(0).callRef());
+    }
+
+    /** The reconcile call is its own charge, under its own ref, so it cannot collide with the review. */
+    @Test
+    void aReconcileCallIsChargedSeparatelyFromTheReviewCall() {
+        saga.on(reviewGeneratedWithReconcile("review::TEST-WS/TEST-REPO#1", "TESTSHA00000"));
+
+        assertEquals(2, projection.recordedCalls().size());
+        assertTrue(projection.recordedCalls().stream()
+                .anyMatch(c -> c.callRef().endsWith("|reconcile")));
+    }
+
+    /** A follow-up is keyed to its thread, matching the slot the worker claims under. */
+    @Test
+    void aFollowUpIsChargedUnderItsThreadRef() {
+        saga.on(followUpGenerated("review::TEST-WS/TEST-REPO#1", "TEST-THREAD-1"));
+
+        assertEquals("review::TEST-WS/TEST-REPO#1|TEST-THREAD-1|followup",
+                projection.recordedCalls().get(0).callRef());
+    }
+}
+```
+
+Follow `ResultSagaRetryTest`'s existing fake-projection pattern; extend that fake with `recordCharges` capture and a `note()` accessor rather than inventing a new harness.
+
+- [ ] **Step 2: Run to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.pipeline.ResultSagaPricingTest'`
+Expected: FAIL — the guard and the recording do not exist.
+
+- [ ] **Step 3: Add `defaultModelName()`**
+
+In `WorkerLlmCredentials`:
+
+```java
+    /** The default provider's model name, for the pre-spend priceability check. */
+    public Optional<String> defaultModelName() {
+        return registry.resolveDefault().map(LlmProviderConfig::model);
+    }
+```
+
+- [ ] **Step 4: Add the pre-spend guard**
+
+In `ResultSaga`'s `ContextAssembled` branch, after the existing `llmCred.isEmpty()` check:
+
+```java
+                // Pre-spend guard. Pricing happens when the result comes back, so this is the last
+                // point at which an unpriceable call can be prevented rather than merely reported.
+                String model = workerLlmCredentials.defaultModelName().orElse("");
+                if (!llmModels.isPriceable(model)) {
+                    timeline.record("result", "skipped:GenerateReview", e.reviewId(),
+                            "model '" + model + "' has no usable pricing");
+                    projection.setNote(e.reviewId(), "Model '" + model + "' has no usable pricing — set"
+                            + " input and output rates in Settings → LLM → Models, or mark it UNMETERED"
+                            + " if it is self-hosted.");
+                    LOG.warnf("Skipping GenerateReview for %s — model '%s' is not priceable",
+                            e.reviewId(), model);
+                    return;
+                }
+```
+
+- [ ] **Step 5: Record the charges**
+
+In the `ReviewGenerated` branch, replacing what Task 1 stripped out:
+
+```java
+                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+                charge(e.reviewId(), e.commit(), "review", e.result().usage());
+                if (e.reconcileUsage() != null) {
+                    charge(e.reviewId(), e.commit(), "reconcile", e.reconcileUsage());
+                }
+```
+
+and in the `FollowUpGenerated` branch, replacing the old `recordLlmCall`:
+
+```java
+                if (e.usage() != null) {
+                    charge(e.reviewId(), e.threadRef().value(), "followup", e.usage());
+                }
+```
+
+with one helper (3 params plus the usage would be 4, so the slot and kind travel together):
+
+```java
+    /**
+     * Price a call and append its lines. {@code slot} is the commit for a review or reconcile call and
+     * the thread ref for a follow-up — the same position the worker claims its idempotency under, so
+     * the derived ref is stable across redelivery.
+     */
+    private void charge(String reviewId, String slot, String kind, ModelUsage usage) {
+        List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
+        projection.recordCharges(
+                new ChargeCall(reviewId, CallRefs.of(reviewId, slot, kind), kind, usage.model(), lines));
+    }
+```
+
+That is 4 parameters, over the limit. Pass a `ChargeRequest` record instead:
+
+```java
+    private record ChargeRequest(String reviewId, String slot, String kind) {
+    }
+
+    private void charge(ChargeRequest request, ModelUsage usage) {
+        List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
+        projection.recordCharges(new ChargeCall(request.reviewId(),
+                CallRefs.of(request.reviewId(), request.slot(), request.kind()),
+                request.kind(), usage.model(), lines));
+    }
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `./gradlew :spire-orchestrator:test`
+Expected: PASS.
+
+- [ ] **Step 7: Mutation-verify the pre-spend guard**
+
+Invert it to `if (false)`. Expect exactly `contextAssembledDoesNotGenerateAReviewWhenTheModelCannotBePriced` to fail. Restore.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java spire-orchestrator/src/test
+git commit -m "Guard the spend before it happens, then charge the ledger
+
+Pricing is post-hoc: the saga prices when the result returns, by which point
+the money is gone, so failing there would waste the spend and lose the
+review too. The pre-spend point is where GenerateReview is emitted, and it
+already had this exact shape for a missing credential — an unpriceable model
+now skips the same way, with the reason on the dashboard.
+
+Charge lines are recorded under a ref derived from the same facts the worker
+claims its idempotency under, so a redelivered result resolves to the same
+key and the ledger's uniqueness makes the second write a no-op. Reconcile
+and follow-up calls get their own refs so they cannot collide."
+```
+
+---
+
+## Task 9: Surface unpriced and unreconciled calls on the attention panel
+
+**Files:**
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/AttentionQueries.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/attention/AttentionQueriesCostTest.java`
+
+**Interfaces:**
+- Produces: `AttentionView` rows with codes `LLM_COST_UNPRICED` and `LLM_USAGE_UNRECONCILED`, both `WARNING`, both non-dismissable.
+
+Both are conditions true right now that clear when the cause is fixed — pricing entered, or a mapping added — so neither is dismissable, matching the panel's rule. Codes carry no vendor name (ADR-020).
+
+- [ ] **Step 1: Write the failing test**
+
+```java
+package dev.codespire.orchestrator.attention;
+
+import dev.codespire.contract.attention.AttentionView;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * An unpriced call is invisible in a money total by construction — it contributes nothing. Without a
+ * row saying so, "$0.00" and "we could not price 40 calls" look identical on the dashboard.
+ */
+@QuarkusTest
+class AttentionQueriesCostTest {
+
+    @Inject
+    AttentionQueries queries;
+
+    @Test
+    void anUnpricedChargeRaisesAWarningPointingAtTheModelSettings() {
+        insertUnpricedCharge("review::TEST-WS/TEST-REPO#1", "TEST-MODEL");
+
+        List<AttentionView> rows = queries.rows();
+
+        assertTrue(rows.stream().anyMatch(r -> "LLM_COST_UNPRICED".equals(r.code())
+                && r.severity() == AttentionView.Severity.WARNING
+                && "/settings/llm".equals(r.action())
+                && r.dismiss() == null));
+    }
+
+    @Test
+    void anUnreconciledCallRaisesItsOwnRow() {
+        insertUnreconciledCharge("review::TEST-WS/TEST-REPO#2", "TEST-MODEL");
+
+        assertTrue(queries.rows().stream()
+                .anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+    }
+
+    @Test
+    void aFullyPricedLedgerRaisesNeitherRow() {
+        insertMeteredCharge("review::TEST-WS/TEST-REPO#3", "TEST-MODEL");
+
+        List<AttentionView> rows = queries.rows();
+
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+    }
+}
+```
+
+Write the three `insert*Charge` helpers as direct SQL against `llm_charge`, mirroring `LlmChargeSchemaIT`'s helper. Clear `llm_charge` in a `@BeforeEach` so the rows do not leak between cases.
+
+- [ ] **Step 2: Run to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.attention.AttentionQueriesCostTest'`
+Expected: FAIL — neither row is produced.
+
+- [ ] **Step 3: Add the rows**
+
+Follow the file's existing pattern — a private method appending to the list, called from the assembling method, with whole-literal SQL (the file deliberately avoids concatenating identifiers):
+
+```java
+    private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
+        int unpriced = count(c,
+                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE pricing_mode = 'UNKNOWN'");
+        if (unpriced > 0) {
+            rows.add(new AttentionView("LLM_COST_UNPRICED", Severity.WARNING, null,
+                    unpriced + " LLM call(s) could not be priced, so the reported cost is lower than"
+                            + " the real spend.", "/settings/llm"));
+        }
+        int unreconciled = count(c,
+                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE token_type = 'TOTAL'");
+        if (unreconciled > 0) {
+            rows.add(new AttentionView("LLM_USAGE_UNRECONCILED", Severity.WARNING, null,
+                    unreconciled + " LLM call(s) reported a token breakdown that did not match their"
+                            + " own total, so only the total was recorded.", "/settings/llm"));
+        }
+    }
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.attention.*'`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention spire-orchestrator/src/test
+git commit -m "Raise attention rows for unpriced and unreconciled calls
+
+An unpriced call contributes nothing to a money total, so without a row
+saying so a genuine \$0.00 and \"we could not price 40 calls\" look
+identical. Both rows are conditions that clear when the cause is fixed —
+rates entered, or a vendor mapping added — so neither is dismissable."
+```
+
+---
+
+## Task 10: UI — pricing mode, per-type rates, per-type cost
+
+**Files:**
+- Modify: `spire-ui/src/api.ts:106-111, 693-719`
+- Modify: `spire-ui/src/components/SettingsLlmProviders.tsx:60-64, 137, 240, 261-262, 469, 560-680`
+- Create: `spire-ui/src/components/ReviewCostCard.tsx`
+- Test: `spire-ui/src/components/SettingsLlmProviders.test.ts` (extend), `spire-ui/src/components/ReviewCostCard.test.tsx` (create)
+
+**Interfaces:**
+- Consumes: the server shapes from Tasks 4 and 7.
+- Produces: `LlmModelView`/`LlmModelInput` with `pricingMode: PricingMode` and `rates: Partial<Record<TokenType, number>>`; `ChargeLineView`; `ReviewCostCard` props `{ lines: ChargeLineView[]; unpricedCalls: number }`.
+
+**The load-bearing UI change** is at `SettingsLlmProviders.tsx:602-603`, where `Number(inputPrice) || 0` turns a blank field into a zero price. That is one third of hole #1 and it must become a validation error, not a default.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `SettingsLlmProviders.test.ts`:
+
+```ts
+  /**
+   * One third of the accounting bug lived here: a blank price field became `Number('') || 0`, which
+   * the server accepted as a valid free model. A blank field is now an error, and zero is only
+   * reachable by choosing UNMETERED.
+   */
+  it('refuses to submit a metered model with a blank rate instead of sending zero', async () => {
+    const createLlmModel = vi.spyOn(api, 'createLlmModel');
+    render(<SettingsLlmProviders />);
+
+    await userEvent.type(screen.getByLabelText(/model name/i), 'TEST-MODEL');
+    await userEvent.type(screen.getByLabelText(/display label/i), 'TEST label');
+    // input rate left blank
+    await userEvent.click(screen.getByRole('button', { name: /add model/i }));
+
+    expect(createLlmModel).not.toHaveBeenCalled();
+    expect(screen.getByText(/rate is required/i)).toBeInTheDocument();
+  });
+
+  it('sends no rates at all when the model is marked unmetered', async () => {
+    const createLlmModel = vi.spyOn(api, 'createLlmModel').mockResolvedValue(/* ... */);
+    render(<SettingsLlmProviders />);
+
+    await userEvent.type(screen.getByLabelText(/model name/i), 'TEST-SELF-HOSTED');
+    await userEvent.type(screen.getByLabelText(/display label/i), 'TEST self-hosted');
+    await userEvent.click(screen.getByLabelText(/self-hosted/i));
+    await userEvent.click(screen.getByRole('button', { name: /add model/i }));
+
+    expect(createLlmModel).toHaveBeenCalledWith(
+      expect.objectContaining({ pricingMode: 'UNMETERED', rates: {} }),
+    );
+  });
+
+  it('sends an optional rate only when it was filled in', async () => {
+    const createLlmModel = vi.spyOn(api, 'createLlmModel').mockResolvedValue(/* ... */);
+    render(<SettingsLlmProviders />);
+
+    await userEvent.type(screen.getByLabelText(/model name/i), 'TEST-MODEL');
+    await userEvent.type(screen.getByLabelText(/display label/i), 'TEST label');
+    await userEvent.type(screen.getByLabelText(/^input rate/i), '2.50');
+    await userEvent.type(screen.getByLabelText(/^output rate/i), '10');
+    await userEvent.click(screen.getByRole('button', { name: /add model/i }));
+
+    const sent = createLlmModel.mock.calls[0][0];
+    expect(Object.keys(sent.rates).sort()).toEqual(['INPUT', 'OUTPUT']);
+  });
+```
+
+`ReviewCostCard.test.tsx`:
+
+```tsx
+/**
+ * The card's job is to make a partial total legible. A total that silently omits what could not be
+ * priced reads as complete, which is the same defect as the zero it replaced — one layer up.
+ */
+describe('ReviewCostCard', () => {
+  it('groups lines by call and shows a rate per token type', () => {
+    render(<ReviewCostCard lines={[
+      { kind: 'review', model: 'TEST-MODEL', tokenType: 'INPUT', tokens: 1000,
+        rateMillicentsPerMillion: 250000, costMillicents: 250, pricingMode: 'METERED',
+        pricedAt: '2026-08-06T00:00:00Z' },
+      { kind: 'review', model: 'TEST-MODEL', tokenType: 'CACHED_INPUT', tokens: 4000,
+        rateMillicentsPerMillion: 25000, costMillicents: 100, pricingMode: 'METERED',
+        pricedAt: '2026-08-06T00:00:00Z' },
+    ]} unpricedCalls={0} />);
+
+    expect(screen.getByText(/cached input/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be priced/i)).not.toBeInTheDocument();
+  });
+
+  it('says the total is partial when a call could not be priced', () => {
+    render(<ReviewCostCard lines={[
+      { kind: 'review', model: 'TEST-MODEL', tokenType: 'INPUT', tokens: 1000,
+        rateMillicentsPerMillion: null, costMillicents: null, pricingMode: 'UNKNOWN',
+        pricedAt: '2026-08-06T00:00:00Z' },
+    ]} unpricedCalls={1} />);
+
+    expect(screen.getByText(/could not be priced/i)).toBeInTheDocument();
+  });
+
+  it('labels an unmetered call as self-hosted rather than as free', () => {
+    render(<ReviewCostCard lines={[
+      { kind: 'review', model: 'TEST-MODEL', tokenType: 'INPUT', tokens: 1000,
+        rateMillicentsPerMillion: 0, costMillicents: 0, pricingMode: 'UNMETERED',
+        pricedAt: '2026-08-06T00:00:00Z' },
+    ]} unpricedCalls={0} />);
+
+    expect(screen.getByText(/self-hosted/i)).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run to confirm they fail**
+
+Run: `cd spire-ui && npx vitest run src/components/SettingsLlmProviders.test.ts src/components/ReviewCostCard.test.tsx`
+Expected: FAIL — `ReviewCostCard` does not exist; the settings form has no pricing-mode control.
+
+- [ ] **Step 3: Update `api.ts`**
+
+```ts
+/** The neutral token-billing dimensions. Mirrors the server's TokenType. */
+export type TokenType = 'INPUT' | 'CACHED_INPUT' | 'CACHE_WRITE' | 'OUTPUT' | 'REASONING' | 'TOTAL';
+
+/** How a model's tokens are costed. UNKNOWN is a runtime outcome, never an operator's choice. */
+export type PricingMode = 'METERED' | 'UNMETERED' | 'UNKNOWN';
+
+/** One token dimension of one LLM call, priced. Rate and cost are null exactly when UNKNOWN. */
+export interface ChargeLineView {
+  kind: string;
+  model: string;
+  tokenType: TokenType;
+  tokens: number;
+  rateMillicentsPerMillion: number | null;
+  costMillicents: number | null;
+  pricingMode: PricingMode;
+  pricedAt: string;
+}
+```
+
+In `LlmModelView` and `LlmModelInput`, replace the two price numbers with:
+
+```ts
+  pricingMode: Exclude<PricingMode, 'UNKNOWN'>;
+  rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>; // millicents per 1M tokens
+```
+
+Add `unpricedCalls: number` to `ReviewSummary`, and replace `LlmCall` with `ChargeLineView` in `ReviewDetail` (`chargeLines`). Update the `costMillicents` comment on `ReviewSummary` — `0` no longer means "unpriced", `unpricedCalls > 0` does.
+
+- [ ] **Step 4: Rework the model form**
+
+At `SettingsLlmProviders.tsx:560-680`:
+
+- Replace `inputPrice`/`outputPrice` state with a `pricingMode` state plus a `rates` record keyed by token type.
+- **Remove `|| 0`.** Build the payload from filled fields only:
+
+```ts
+  function ratesPayload(): Partial<Record<Exclude<TokenType, 'TOTAL'>, number>> {
+    if (pricingMode === 'UNMETERED') return {};
+    const out: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>> = {};
+    for (const [type, raw] of Object.entries(rates)) {
+      // A blank field is an ABSENT rate, never a zero one — that conflation is the bug this
+      // whole change removes, and defaulting here would reintroduce it one layer up.
+      if (raw.trim() === '') continue;
+      out[type as Exclude<TokenType, 'TOTAL'>] = dollarsToMillicentsPerMillion(Number(raw));
+    }
+    return out;
+  }
+```
+
+- Validate before submitting: under `METERED`, `INPUT` and `OUTPUT` must be present and `> 0`, else set an error containing "rate is required" and do not call the API.
+- Sort at line 60-64 by summed `rates` values rather than the removed fields; render rate cells at 261-262 from `rates`; update the empty-state copy at 240 and 469.
+- Show `UNMETERED` models as "self-hosted" in the table, never as "$0.00".
+- Use lucide-react icons only.
+
+If the component passes 250 lines, extract the model form into `SettingsLlmModelForm.tsx` — it is already 585 lines and this adds to it.
+
+- [ ] **Step 5: Create `ReviewCostCard.tsx`**
+
+Group `lines` by a `kind`+`pricedAt` key, render tokens/rate/cost per type, sum only non-null costs, and render "N call(s) could not be priced — this total is partial" when `unpricedCalls > 0`. Label `UNMETERED` lines "self-hosted (unmetered)". Keep it under 250 lines and under 8 props. Wire it into the review detail page in place of the old per-call cost list.
+
+- [ ] **Step 6: Run the UI suite**
+
+Run: `cd spire-ui && npx vitest run && npx tsc --noEmit`
+Expected: PASS, `tsc` silent. Do **not** run this concurrently with a Docker build against the same tree — that has previously produced bogus failures.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add spire-ui
+git commit -m "Make a blank rate an error, and a partial total say so
+
+A blank price field became Number('') || 0 and was sent as a valid zero,
+which is one of the three layers that turned \"no price entered\" into
+\"free\". A blank field is now a validation error and zero is reachable only
+by marking the model self-hosted.
+
+Optional dimensions are sent only when filled, so a model that does not bill
+for cache writes carries no rate for them rather than a zero.
+
+The cost card breaks a call down per token type and states when a total is
+partial. An unmetered call reads as self-hosted, never as \$0.00 — the
+distinction the whole change exists to preserve."
+```
+
+---
+
+## Task 11: ADR-023 and the docs
+
+**Files:**
+- Modify: `docs/DECISIONS.md` (prepend ADR-023 above ADR-022 at line 7)
+- Modify: `docs/SECURITY.md:167-176`
+- Modify: `docs/ROADMAP.md`
+- Modify: `CLAUDE.md` (Status section)
+- Modify: `docs/SMOKE-TEST.md` (a new mode for live verification)
+
+- [ ] **Step 1: Write ADR-023**
+
+Title: `## ADR-023 — LLM cost is a charge-line ledger with snapshotted rates, and zero is a category`.
+
+Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total; `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
+
+- [ ] **Step 2: Update `SECURITY.md`**
+
+The "Cost / abuse controls" section still says v1 has "per-review token budgeting only". Amend it to record that spend is now measured per token type at snapshotted rates and that unpriceable models are refused before they spend — while stating plainly that **fleet-level caps remain deferred**, and that a money cap is inert for `UNMETERED` deployments by design, so the caps will need a token or call-count axis.
+
+- [ ] **Step 3: Update `ROADMAP.md` and `CLAUDE.md`**
+
+Add a delivered entry dated 2026-08-06 describing the ledger, the guards and the wire change. In `ROADMAP.md`'s "Explicitly deferred" section, note that the fleet caps now have a trustworthy ledger to read and carry the `UNMETERED` consequence forward. Update the test counts from the final run.
+
+- [ ] **Step 4: Add a smoke-test mode**
+
+A new mode in `docs/SMOKE-TEST.md` covering: register a `METERED` model and confirm a real review produces per-type charge lines; mark a model `UNMETERED` and confirm the cost card says self-hosted rather than `$0.00`; attempt to save a metered model with a blank rate and confirm the refusal; attempt to delete a model a provider uses and confirm the 409; and point a provider at an uncatalogued model to confirm the 400.
+
+- [ ] **Step 5: Full verification**
+
+```bash
+./gradlew testFast
+./gradlew testServices
+cd spire-ui && npx vitest run && npx tsc --noEmit
+```
+
+Expected: all green. Record the final counts in `CLAUDE.md` and `ROADMAP.md`.
+
+- [ ] **Step 6: Commit and open the PR**
+
+```bash
+git add docs CLAUDE.md
+git commit -m "Record ADR-023 and the cost accounting status
+
+Documents why the ledger snapshots rates rather than deriving them from a
+temporal catalog, why zero had to become a category rather than a stricter
+number check, and why the guards split across config time, pre-spend and
+post-hoc — pricing happens after the money is spent, so only the first two
+can refuse anything.
+
+SECURITY.md keeps the fleet-cap gap open and adds the consequence that a
+money cap is inert on an unmetered deployment by design, so the caps will
+need a token or call-count axis."
+git push -u origin feat/llm-cost-accounting
+gh pr create --base master --title "Record LLM cost as a priced charge-line ledger" --body "..."
+```
+
+The PR body should lead with the defect (an unpriceable call recorded as costing zero, which would have made a spend cap inert), then the design, then the migration's one-time operator action: **any model previously saved with a zero rate must be given rates or marked UNMETERED before it will run a review.**
+
+---
+
+## Self-Review
+
+**Spec coverage.** Every section maps to a task: partition invariant → 2; `pricing_mode` + rate table → 3, 4; ledger + `UNIQUE` → 3, 7; the three guard layers → 4, 5, 6, 8; wire reshape + snapshot → 1; migration and legacy drop → 3; UI → 10; attention → 9; testing → distributed, with mutation verification in 2, 4, 6, 7, 8; ADR + docs → 11.
+
+**Two gaps found and closed while reviewing:**
+
+- The spec's `costMillicents` signature (`String, int, int`) cannot express a partition, so Task 4 replaces it with `priceCall(String, ModelUsage)` rather than modifying it. Named explicitly so the implementer does not try to keep the old shape.
+- Dropping `review_status.model` breaks the reviews-list model badge and the `llm_type` subquery, which the spec did not mention. Task 7 Step 4 re-derives both from the ledger's most recent line.
+
+**Type consistency.** `ModelUsage.of(String, int, int)` is used identically in Tasks 1, 2, 4, 8. `ChargeLine.metered/unmetered/unknown` are the only constructors used after Task 4. `CallRefs.of(reviewId, slot, kind)` produces the exact strings Task 8's tests assert. `PricingMode.UNKNOWN` is never accepted from an operator (rejected in Tasks 4 and 5, excluded from the TS type in Task 10).
+
+**Parameter limits.** `charge(...)` would have taken four parameters; Task 8 Step 5 introduces `ChargeRequest` rather than exceeding the limit. `priceCall`, `CallRefs.of`, `recordCharges` and `isPriceable` are all within three.
