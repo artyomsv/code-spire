@@ -1,7 +1,12 @@
 package dev.codespire.worker.security;
 
+import io.quarkus.oidc.OidcSession;
+import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
+import jakarta.enterprise.inject.Instance;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.core.Response;
 
@@ -19,6 +24,23 @@ import java.net.URI;
  */
 @Path("/wk")
 public class WorkerAuthResource {
+
+    /** Looked up, not injected — see {@code GatewayAuthResource.oidcSession} for why a direct
+     *  injection breaks every build that has OIDC switched off. */
+    @Inject
+    Instance<OidcSession> oidcSession;
+
+    /**
+     * End this prefix's session, and only this one — see {@code GatewayAuthResource.logout} for why
+     * this is a local logout reached by POST, and what signing out left behind before it existed.
+     */
+    @POST
+    @Path("/auth/logout")
+    @RolesAllowed({"spire-viewer", "spire-admin"})
+    public Uni<Response> logout() {
+        if (!oidcSession.isResolvable()) return Uni.createFrom().item(Response.noContent().build());
+        return oidcSession.get().logout().replaceWith(Response.noContent().build());
+    }
 
     @GET
     @Path("/auth/login")

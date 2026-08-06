@@ -79,14 +79,35 @@ describe('apiFetch', () => {
     });
   });
 
-  it('sends the operator to a login when the session has gone', async () => {
+  /**
+   * This is the call that decides a cold sign-in, which is why it chains. The dashboard's first data
+   * fetch is refused before `/api/me` has answered, and navigation is first-caller-wins — so while this
+   * asked for an unchained login it won the race, and each sibling prefix was then discovered missing
+   * one page load at a time. Three renders, seen as the app blanking and restarting.
+   */
+  it('asks for every session when the dashboard itself refuses', async () => {
     const auth = await freshAuth();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 499 }));
     const assign = stubLocation();
 
     await auth.apiFetch('/api/reviews');
 
-    expect(assign).toHaveBeenCalledWith('/api/auth/login');
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
+  });
+
+  /**
+   * The other half of the same decision. A sibling refusing while `/api` still answers is ONE lapsed
+   * prefix; chaining it would re-establish two sessions nobody asked about, and the unchained endpoint
+   * is what the probe reads.
+   */
+  it('asks only for the prefix that refused when the dashboard session is fine', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 499 }));
+    const assign = stubLocation();
+
+    await auth.apiFetch('/wk/review-context/acme/repo/7');
+
+    expect(assign).toHaveBeenCalledWith('/wk/auth/login');
   });
 
   /** A wrong-role refusal must NOT bounce to a login — logging in again changes nothing. */
@@ -134,14 +155,90 @@ describe('leaving for the identity provider', () => {
     expect(auth.isLeavingForAuth()).toBe(false);
   });
 
-  it('marks the departure before navigating, so failures on the way out are recognised', async () => {
+  /**
+   * A cold sign-in needs a session on every prefix, and each needs a real navigation. Asking for them
+   * one at a time meant the dashboard booted, fetched, found the next one missing and navigated again —
+   * three renders discarded, which reads as the app blanking and restarting. `chain=1` asks the server
+   * to hand each hop to the next, so the browser follows one redirect sequence and paints once.
+   */
+  it('asks for the whole chain when signing in from nothing', async () => {
     const auth = await freshAuth();
     const assign = stubLocation();
 
-    auth.goToLogout();
+    auth.goToFullLogin();
+
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
+  });
+
+  /**
+   * The other direction matters just as much. Re-establishing one lapsed prefix must NOT chain: the
+   * unchained path is also what the session probe reads, and a chained answer would depend on a later
+   * prefix — making a healthy service look unauthenticated.
+   */
+  it('does not chain when re-establishing a single prefix', async () => {
+    const auth = await freshAuth();
+    const assign = stubLocation();
+
+    auth.goToLogin('/gw');
+
+    expect(assign).toHaveBeenCalledWith('/gw/auth/login');
+  });
+
+  it('marks the departure before navigating, so failures on the way out are recognised', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+    const assign = stubLocation();
+
+    const leaving = auth.goToLogout();
+    // Synchronously, before the sibling logouts are even awaited: the sockets begin failing the moment
+    // the operator presses Sign out, and those failures must already be attributable to this.
+    expect(auth.isLeavingForAuth()).toBe(true);
+    await leaving;
 
     expect(assign).toHaveBeenCalledWith('/api/auth/logout');
-    expect(auth.isLeavingForAuth()).toBe(true);
+  });
+
+  /**
+   * Sessions are per prefix (ADR-022), so a logout that clears `/api` alone leaves the others live.
+   * Measured before this existed: after signing out, `/gw/webhook-repos/attention` still answered 200
+   * and both sibling cookies were still held, until they happened to lapse.
+   *
+   * <p>Order is part of the contract. The siblings are local logouts and are ended first, by fetch; the
+   * navigation goes last because it is the one that ends the session at the provider, and after it
+   * nothing further in this document runs.
+   */
+  it('ends every prefix session, siblings before the provider', async () => {
+    const auth = await freshAuth();
+    const order: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        order.push(`${init?.method ?? 'GET'} ${url}`);
+        return Promise.resolve({ ok: true, status: 204 });
+      }),
+    );
+    const assign = vi.fn(() => order.push('NAVIGATE /api/auth/logout'));
+    vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
+
+    await auth.goToLogout();
+
+    expect(order).toEqual(['POST /gw/auth/logout', 'POST /wk/auth/logout', 'NAVIGATE /api/auth/logout']);
+  });
+
+  /** A sibling being unreachable must not strand the operator half signed out. */
+  it('still ends the provider session when a sibling logout fails', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url.startsWith('/gw') ? Promise.reject(new Error('gateway down')) : Promise.resolve({ ok: true, status: 204 }),
+      ),
+    );
+    const assign = stubLocation();
+
+    await auth.goToLogout();
+
+    expect(assign).toHaveBeenCalledWith('/api/auth/logout');
   });
 
   /**
@@ -151,15 +248,19 @@ describe('leaving for the identity provider', () => {
    */
   it('does not turn a logout in progress back into a login', async () => {
     const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }));
     const assign = stubLocation();
 
-    auth.goToLogout();
+    // Deliberately NOT awaited: the point is that a login attempted while the logout is still in
+    // flight — which is exactly when the sockets are closing — is refused.
+    const leaving = auth.goToLogout();
     assign.mockClear();
 
     auth.goToLogin('/gw');
     auth.goToLogin();
 
     expect(assign).not.toHaveBeenCalled();
+    await leaving; // let the logout finish, so its own navigation cannot leak into a later test
   });
 
   /** Several things notice a lapsed session at once; they must not each navigate. */
@@ -220,18 +321,48 @@ describe('establishing the other services sessions', () => {
    * this the dashboard would reload forever, which is worse than the broken page it replaced.
    */
   it('gives up on a prefix that refuses even after being logged in to', async () => {
+    // Its own instance, per the convention above: this test navigates, and on the shared module
+    // `leavingForAuth` may already be set by an earlier one. That mattered — while the mark was
+    // written on intent rather than on the attempt, this test passed with its login suppressed, so it
+    // was asserting "gives up after being logged in to" over a login that never ran.
+    const auth = await freshAuth();
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => Promise.resolve(url.startsWith('/gw') ? { ok: false, status: 499 } : okResponse)),
     );
-    const assign = vi.fn();
-    vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
+    const assign = stubLocation();
 
-    expect(await ensureServiceSessions()).toBe(true);
+    expect(await auth.ensureServiceSessions()).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/gw/auth/login');
     assign.mockClear();
 
-    expect(await ensureServiceSessions()).toBe(false);
+    expect(await auth.ensureServiceSessions()).toBe(false);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Two callers race on a fresh page: App's effect asks for the sibling sessions as soon as `/api/me`
+   * answers, and the attention panel's gateway socket — which fails precisely because those sessions
+   * do not exist yet — asks again from its close handler. `goToLogin` is first-caller-wins, so the
+   * second caller's navigation silently does nothing.
+   *
+   * <p>The mark must therefore record a login that RAN, not one that was merely intended. Marking a
+   * prefix whose navigation was suppressed retires it permanently: the next load sees the mark, skips
+   * the prefix, and that service never gets a session — which the panel then reports as the service
+   * being unreachable, forever, 1.5s at a time.
+   */
+  it('only marks a prefix attempted when its login actually ran', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 499 }));
+    const assign = stubLocation();
+
+    await Promise.all([auth.ensureServiceSessions(), auth.ensureServiceSessions()]);
+
+    // First-caller-wins is intended: one navigation, not two.
+    expect(assign).toHaveBeenCalledTimes(1);
+    const navigatedPrefix = (assign.mock.calls[0][0] as string).replace('/auth/login', '');
+    const marked = ['/gw', '/wk'].filter((p) => sessionStorage.getItem(`spire.session.attempted${p}`));
+    expect(marked).toEqual([navigatedPrefix]);
   });
 
   /** An unreachable service is an outage. Navigating to its login would blame the operator for it. */

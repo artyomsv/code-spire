@@ -275,7 +275,9 @@ describe('useLiveReviews', () => {
       FakeSocket.latest.onclose?.();
     });
 
-    expect(assign).toHaveBeenCalledWith('/api/auth/login');
+    // Chained: an expired dashboard session means no session on any prefix, so all three are asked for
+    // in one redirect sequence rather than each being discovered missing a page load at a time.
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
     expect(FakeSocket.open).toHaveLength(1);
     vi.unstubAllGlobals();
   });

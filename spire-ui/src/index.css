@@ -1,4 +1,12 @@
   :root {
+    /* Tells the browser which canvas to paint when no stylesheet of ours applies yet — the gap between
+       two documents. Establishing a sibling service's session is a full-window navigation (ADR-022:
+       each prefix is its own OIDC client, and a cookie cannot be minted by fetch), so a cold sign-in
+       crosses that gap more than once. With a background on `body` alone the browser painted its own
+       default there, which is white however dark the theme — reading as the app blanking and
+       restarting rather than as a redirect completing. Kept in step with the theme below, including
+       the explicit data-theme overrides, or the flash simply moves to the other theme. */
+    color-scheme: light;
     --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
 
@@ -27,6 +35,7 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      color-scheme: dark;
       --bg: #0e0f14;
       --rail: #121319;
       --panel: #16181f;
@@ -51,6 +60,7 @@
     }
   }
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f5f6f9; --rail: #ffffff; --panel: #ffffff; --panel-2: #fafbfc; --hover: #f2f4f7;
     --border: #e6e9ee; --border-strong: #d6dbe2;
     --text: #171a21; --text-2: #565d68; --text-3: #8b93a0;
@@ -65,6 +75,7 @@
     --shadow-sm: 0 1px 2px rgba(20, 24, 34, 0.06);
   }
   :root[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #0e0f14; --rail: #121319; --panel: #16181f; --panel-2: #1a1c25; --hover: #1e212b;
     --border: #262a34; --border-strong: #363b48;
     --text: #e7e9ee; --text-2: #a0a7b2; --text-3: #6a7280;
@@ -80,6 +91,10 @@
   }
 
   * { box-sizing: border-box; }
+  /* The canvas, as well as the body. `color-scheme` above covers the paint before any stylesheet
+     applies; this covers the one after, so neither end of a navigation shows a colour the theme
+     never chose. */
+  html { background: var(--bg); }
   body {
     margin: 0;
     background: var(--bg);

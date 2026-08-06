@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ensureServiceSessions, fetchMe, goToLogin, isLeavingForAuth, needsLogin } from '../auth';
+import { ensureServiceSessions, fetchMe, goToFullLogin, isLeavingForAuth, needsLogin } from '../auth';
 import type { AttentionItem } from '../api';
 
 /**
@@ -133,7 +133,7 @@ export function useAttention(): { items: AttentionItem[] } {
         void fetchMe().then(async (me) => {
           if (closed) return;
           if (needsLogin(me)) {
-            goToLogin();
+            goToFullLogin();
             return;
           }
           // Signed in here does not mean signed in THERE: each service is a separate session behind

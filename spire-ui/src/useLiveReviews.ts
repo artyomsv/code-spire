@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReviews, type ReviewSummary } from './api';
-import { fetchMe, goToLogin, isLeavingForAuth, needsLogin } from './auth';
+import { fetchMe, goToFullLogin, isLeavingForAuth, needsLogin } from './auth';
 
 function sortReviews(list: ReviewSummary[]): ReviewSummary[] {
   return [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -106,7 +106,9 @@ export function useLiveReviews(): LiveReviews {
         void fetchMe().then((me) => {
           if (closed) return;
           if (needsLogin(me)) {
-            goToLogin();
+            // No session at all, so ask for every prefix in one sequence rather than letting each be
+            // discovered missing a page load at a time.
+            goToFullLogin();
             return;
           }
           reconnectTimer = setTimeout(connect, 1500);
