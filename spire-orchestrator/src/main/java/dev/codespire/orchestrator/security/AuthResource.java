@@ -6,6 +6,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -74,11 +75,29 @@ public class AuthResource {
      * identity provider; once the flow completes the framework restores this path, and the operator
      * lands back on the dashboard rather than on a JSON document.
      */
+    /**
+     * Where a chained sign-in goes next. A session is per prefix (ADR-022), so a cold sign-in has to
+     * establish three of them — and each one needs a real navigation, because a cookie cannot be minted
+     * by {@code fetch}. Returning the operator to {@code /} after each meant the dashboard booted,
+     * fetched, discovered the next missing session and navigated again: three renders thrown away, seen
+     * as the app blanking and restarting.
+     *
+     * <p>Handing off to the next prefix instead keeps it a single redirect sequence. The browser follows
+     * redirects without rendering the documents in between, so the dashboard is painted exactly once.
+     *
+     * <p>Only when asked, via {@code chain=1}. Without the parameter this endpoint still answers
+     * {@code /} exactly as before, which is what keeps the session probes honest: they read this path to
+     * ask "does my prefix have a session", and an answer that depended on a LATER prefix would make a
+     * healthy service look unauthenticated. It is also why no client-supplied URL is ever redirected to
+     * — the hop is this constant, so the parameter cannot become an open redirect.
+     */
+    private static final String CHAINED_NEXT = "/gw/auth/login?chain=1";
+
     @GET
     @Path("/auth/login")
     @RolesAllowed({"spire-viewer", "spire-admin"})
-    public Response login() {
-        return Response.seeOther(URI.create("/")).build();
+    public Response login(@QueryParam("chain") String chain) {
+        return Response.seeOther(URI.create("1".equals(chain) ? CHAINED_NEXT : "/")).build();
     }
 
     /**

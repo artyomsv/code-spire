@@ -325,7 +325,9 @@ describe('App — before the session is known', () => {
 
     renderAt('/');
 
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('/api/auth/login'));
+    // Chained: nobody is signed in, so all three prefixes need a session, and asking for them in one
+    // redirect sequence is what keeps the dashboard from booting and discarding a render per prefix.
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1'));
     expect(screen.getByText('Signing in…')).toBeInTheDocument();
     expect(document.querySelector('.nav')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();

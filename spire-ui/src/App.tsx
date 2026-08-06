@@ -18,7 +18,7 @@ import PromptDetail from './components/PromptDetail';
 import RequireRole from './components/RequireRole';
 import { useLiveReviews } from './useLiveReviews';
 import { useMe } from './hooks/useMe';
-import { canAdminister, ensureServiceSessions, goToLogin, goToLogout, needsLogin } from './auth';
+import { canAdminister, ensureServiceSessions, goToFullLogin, goToLogout, needsLogin } from './auth';
 
 function toggleTheme() {
   const root = document.documentElement;
@@ -68,7 +68,7 @@ export default function App() {
    * having second thoughts. The session state was known before any of that; it simply was not used.
    */
   useEffect(() => {
-    if (needsLogin(me)) goToLogin();
+    if (needsLogin(me)) goToFullLogin();
   }, [me]);
 
   /**
