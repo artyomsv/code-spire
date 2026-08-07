@@ -2673,7 +2673,7 @@ rates entered, or a vendor mapping added — so neither is dismissable."
 - Modify: `spire-ui/src/api.ts:106-111, 693-719`
 - Modify: `spire-ui/src/components/SettingsLlmProviders.tsx:60-64, 137, 240, 261-262, 469, 560-680`
 - Create: `spire-ui/src/components/ReviewCostCard.tsx`
-- Test: `spire-ui/src/components/SettingsLlmProviders.test.ts` (extend), `spire-ui/src/components/ReviewCostCard.test.tsx` (create)
+- Test: `spire-ui/src/components/SettingsLlmProviders.test.ts` (pure-function tests: update `byExpenseDesc` fixtures), `spire-ui/src/components/SettingsLlmProviders.form.test.tsx` (CREATE — the rendering tests; JSX cannot go in the `.ts` file), `spire-ui/src/components/ReviewCostCard.test.tsx` (create)
 
 **Interfaces:**
 - Consumes: the server shapes from Tasks 4 and 7.
@@ -2683,7 +2683,30 @@ rates entered, or a vendor mapping added — so neither is dismissable."
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `SettingsLlmProviders.test.ts`:
+**Read this before writing a line of test code — the existing file is not what this plan assumed.**
+
+`SettingsLlmProviders.test.ts` is a **pure-function** test file. It has a `.ts` extension, renders nothing,
+and imports three *exported helpers* from the component module: `byExpenseDesc`, `defaultBaseUrl`,
+`profileHint`. The component-rendering tests below are JSX and **cannot live in a `.ts` file**. Create
+`SettingsLlmProviders.form.test.tsx` for them and leave the pure-function file as pure-function tests.
+
+**`byExpenseDesc` is an exported function this task breaks, and it has its own test.** It sorts models
+most-expensive-first by `inputPriceMillicentsPerMillion + outputPriceMillicentsPerMillion` — both of which
+this task removes. Update it to sum the `rates` map's values, and update its existing test's fixtures in
+the `.ts` file to the new `LlmModelView` shape. An `UNMETERED` model sums to `0` and sorts last, which is
+correct — it is the cheapest thing in the list.
+
+**The form's labels are not what this plan's queries assume.** Verified from the component: the fields are
+labelled `Type`, `Model name`, `Input price $ / 1M tokens`, `Output price $ / 1M tokens`, `Output token
+limit`. So `getByLabelText(/model name/i)` works, but a query for `/^input rate/i` matches nothing.
+
+You are renaming those two price fields into per-type rate inputs anyway, so **choose the label text
+first, then write queries that match it.** Whatever you choose, keep the unit in the label — the existing
+`$ / 1M tokens` suffix is what stops an operator entering a per-token price, and dropping it while
+introducing five inputs instead of two would make that mistake easier, not harder. Suggested:
+`Input rate $ / 1M tokens`, `Cached input rate $ / 1M tokens`, and so on.
+
+The test bodies below are the *intent*; adapt their queries to the labels you actually write.
 
 ```ts
   /**
