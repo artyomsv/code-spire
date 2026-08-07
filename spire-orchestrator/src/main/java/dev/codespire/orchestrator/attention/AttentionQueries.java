@@ -54,6 +54,7 @@ public class AttentionQueries {
             scmProviderRows(c, rows);
             reviewRows(c, rows);
             credentialRows(c, rows);
+            costRows(c, rows);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
@@ -255,6 +256,29 @@ public class AttentionQueries {
             this.rejectedCredentials = rejectedCredentials;
             this.settingsPath = settingsPath;
             this.kind = kind;
+        }
+    }
+
+    /**
+     * A call the ledger could not price (rate missing at charge time) and a call whose reported
+     * token breakdown did not sum to its own total (recorded as {@code TOTAL} instead of a split)
+     * are both silent by construction: neither contributes to a money total, so a genuine $0.00
+     * and "we could not account for N calls" would otherwise look identical on screen.
+     */
+    private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
+        int unpriced = count(c,
+                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE pricing_mode = 'UNKNOWN'");
+        if (unpriced > 0) {
+            rows.add(new AttentionView("LLM_COST_UNPRICED", Severity.WARNING, null,
+                    unpriced + " LLM call(s) could not be priced, so the reported cost is lower than"
+                            + " the real spend.", "/settings/llm"));
+        }
+        int unreconciled = count(c,
+                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE token_type = 'TOTAL'");
+        if (unreconciled > 0) {
+            rows.add(new AttentionView("LLM_USAGE_UNRECONCILED", Severity.WARNING, null,
+                    unreconciled + " LLM call(s) reported a token breakdown that did not match their"
+                            + " own total, so only the total was recorded.", "/settings/llm"));
         }
     }
 
