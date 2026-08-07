@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.attention;
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
 import dev.codespire.orchestrator.dlq.DlqRepository;
+import dev.codespire.orchestrator.llm.LlmModelPricer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -43,6 +44,9 @@ public class AttentionQueries {
     @Inject
     DlqRepository dlq;
 
+    @Inject
+    LlmModelPricer pricer;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -77,6 +81,46 @@ public class AttentionQueries {
             rows.add(new AttentionView("LLM_DEFAULT_MISSING", Severity.BLOCKING, null,
                     "No enabled LLM provider is marked as the default, so no review can run.",
                     "/settings/llm"));
+            return; // no default resolves to no model, so there is nothing to price-check
+        }
+        modelPricingRow(defaultProviderModel(c), rows);
+    }
+
+    /**
+     * The default provider names a model the ledger cannot price, so no review can start at all.
+     *
+     * <p>Existence of a provider and of a default is not enough: {@code ResultSaga}'s pre-spend guard
+     * refuses to emit {@code GenerateReview} for an unpriceable model, and a refused review sits in
+     * {@code REVIEWING} until {@code REVIEW_STUCK} eventually fires — a symptom one level away from
+     * the cause, minutes later, on a panel that exists so blocking configuration announces itself
+     * BEFORE work fails. The V30 upgrade makes this the guaranteed state of any model that carried a
+     * legacy zero price, so it is the first thing an upgraded deployment hits.
+     *
+     * <p>Priceability comes from {@link LlmModelPricer#isPriceable} rather than a query written here:
+     * three guards already share that one rule and a fourth definition of it could disagree with the
+     * gate that actually blocks the review. It opens its own connection, which is why the model name is
+     * all that is read from {@code c} — do not "optimise" that by threading this connection into the
+     * pricer, whose callers are otherwise connectionless.
+     */
+    private void modelPricingRow(String model, List<AttentionView> rows) {
+        if (model == null || pricer.isPriceable(model)) {
+            return;
+        }
+        rows.add(new AttentionView("MODEL_NOT_PRICEABLE", Severity.BLOCKING,
+                // A provider saved with no model at all is equally blocking, but naming "" as the
+                // subject would render an empty label; the message alone carries it.
+                model.isBlank() ? null : model,
+                "The default LLM provider's model has no usable pricing, so every review stops before"
+                        + " it calls the model. Set input and output rates in Settings → LLM → Models,"
+                        + " or mark the model unmetered if it is self-hosted.", "/settings/llm"));
+    }
+
+    /** The model the default provider would use, or null when no enabled default is set. */
+    private static String defaultProviderModel(Connection c) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT model FROM llm_provider WHERE enabled = TRUE AND is_default = TRUE");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getString("model") : null;
         }
     }
 
@@ -287,11 +331,15 @@ public class AttentionQueries {
         if (unreconciled > 0) {
             // Not a setting to fix: a reconciliation failure is a TokenUsageMapper defect, so there
             // is no operator page that helps and the action is deliberately null.
+            // The "or reported none at all" clause is not padding: TokenUsageMapper.map(model, null)
+            // produces exactly this row shape with a zero TOTAL, and the original wording asserted
+            // the vendor had reported a breakdown that disagreed — describing a call where nothing
+            // was reported as one that contradicted itself sends the reader hunting the wrong defect.
             rows.add(new AttentionView("LLM_USAGE_UNRECONCILED", Severity.WARNING, null,
                     unreconciled + " LLM call(s) reported a token breakdown that did not match their"
-                            + " own total, so only the total was recorded and those calls are not"
-                            + " priced. This is a mapping defect rather than a setting, so the"
-                            + " figures will not change until it is fixed.", null));
+                            + " own total, or reported no usage at all, so only a total was recorded"
+                            + " and those calls are not priced. This is a mapping defect rather than a"
+                            + " setting, so the figures will not change until it is fixed.", null));
         }
     }
 
