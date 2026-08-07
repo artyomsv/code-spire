@@ -42,6 +42,7 @@ class AttentionQueriesCostTest {
                 && r.severity() == AttentionView.Severity.WARNING
                 && "/settings/llm".equals(r.action())
                 && r.dismiss() == null));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
     }
 
     /**
