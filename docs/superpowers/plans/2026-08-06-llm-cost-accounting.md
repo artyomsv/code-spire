@@ -2498,7 +2498,7 @@ class AttentionQueriesCostTest {
     void anUnpricedChargeRaisesAWarningPointingAtTheModelSettings() {
         insertUnpricedCharge("review::TEST-WS/TEST-REPO#1", "TEST-MODEL");
 
-        List<AttentionView> rows = queries.rows();
+        List<AttentionView> rows = queries.collect();
 
         assertTrue(rows.stream().anyMatch(r -> "LLM_COST_UNPRICED".equals(r.code())
                 && r.severity() == AttentionView.Severity.WARNING
@@ -2510,7 +2510,7 @@ class AttentionQueriesCostTest {
     void anUnreconciledCallRaisesItsOwnRow() {
         insertUnreconciledCharge("review::TEST-WS/TEST-REPO#2", "TEST-MODEL");
 
-        assertTrue(queries.rows().stream()
+        assertTrue(queries.collect().stream()
                 .anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
     }
 
@@ -2518,7 +2518,7 @@ class AttentionQueriesCostTest {
     void aFullyPricedLedgerRaisesNeitherRow() {
         insertMeteredCharge("review::TEST-WS/TEST-REPO#3", "TEST-MODEL");
 
-        List<AttentionView> rows = queries.rows();
+        List<AttentionView> rows = queries.collect();
 
         assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
         assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
@@ -2535,7 +2535,16 @@ Expected: FAIL — neither row is produced.
 
 - [ ] **Step 3: Add the rows**
 
-Follow the file's existing pattern — a private method appending to the list, called from the assembling method, with whole-literal SQL (the file deliberately avoids concatenating identifiers):
+**Verified shape of the file you are extending:** the public entry point is `collect()` at `:50` — there
+is no `rows()`. It opens one connection and calls `llmProviderRows(c, rows)`, `scmProviderRows(c, rows)`,
+`reviewRows(c, rows)`, `credentialRows(c, rows)` in sequence (`:53-56`), then `deadLetterRows(rows)`
+outside the connection (`:60`), then sorts. **Add `costRows(c, rows)` to that sequence** — a private
+method that appends but is never called is the failure this note exists to prevent, and it would leave
+every test red with a correct-looking implementation.
+
+Follow the file's existing pattern — a private method appending to the list, called from `collect()`, with
+whole-literal SQL (the file deliberately avoids concatenating identifiers, because a table name cannot be
+a bind parameter and the old form could only assert its safety in a comment):
 
 ```java
     private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
