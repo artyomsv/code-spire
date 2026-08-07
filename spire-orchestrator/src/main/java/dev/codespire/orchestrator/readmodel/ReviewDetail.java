@@ -73,10 +73,12 @@ public record ReviewDetail(
      * {@code costMillicents} are null exactly when {@code pricingMode} is "UNKNOWN" — never 0, which
      * would be indistinguishable from an UNMETERED model's asserted zero.
      *
-     * <p>{@code callRef} is the ledger's own call identity ({@code UNIQUE (call_ref, token_type)}) —
-     * the UI groups lines back into calls by it rather than by {@code pricedAt}, because each line of
-     * one call is written in its own transaction ({@link ReviewProjection#recordCharges}) and so does
-     * NOT reliably share one {@code priced_at} value with its siblings.
+     * <p>{@code callRef} is the ledger's own call identity ({@code UNIQUE (call_ref, token_type)}) — the
+     * UI groups lines back into calls by it rather than by {@code pricedAt}, because that identity is
+     * what defines a call. {@code pricedAt} would now agree (one call's lines are written in one
+     * transaction, so they share {@code now()}), but agreeing by side effect is not the same as being
+     * the key: two calls of the same review can share a timestamp, and only {@code call_ref} tells them
+     * apart.
      *
      * <p>{@code kind}, {@code tokenType} and {@code pricingMode} are Strings here, not the enums they
      * mirror, deliberately: this is an outbound view read straight from the ledger, whose CHECK

@@ -11,8 +11,9 @@ const CALL_KIND_LABEL: Record<ChargeKind, string> = {
 
 /**
  * Every charge line sharing one `callRef` is one physical LLM call, split into its token
- * dimensions. Grouping on `pricedAt` instead would be wrong: each line is written in its own
- * transaction server-side, so sibling lines of the same call do not reliably share one timestamp.
+ * dimensions. Grouping on `pricedAt` instead would be wrong even though a call's lines now share one
+ * timestamp (they are written in a single transaction server-side): two calls of the same review can
+ * land on the same timestamp, and only `callRef` is the call's identity.
  */
 interface Call {
   callRef: string;

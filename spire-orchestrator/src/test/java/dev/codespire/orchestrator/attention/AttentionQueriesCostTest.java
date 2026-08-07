@@ -25,6 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * counted without silencing the next call.
  */
 @QuarkusTest
+// Class-level, not per method: a security annotation that appears on only SOME methods of a class makes
+// Quarkus reconfigure between them, which failed to boot when this class ran alongside another suite.
+@TestSecurity(user = "test-viewer", roles = "spire-viewer")
 class AttentionQueriesCostTest {
 
     @Inject
@@ -154,7 +157,6 @@ class AttentionQueriesCostTest {
      * silent success — otherwise the endpoint would be a way to make a broken system look healthy.
      */
     @Test
-    @TestSecurity(user = "test-viewer", roles = "spire-viewer")
     void theAckEndpointAcceptsOnlyTheTwoLedgerConditions() {
         given().when().post("/api/attention/ack/LLM_COST_UNPRICED").then().statusCode(204);
         given().when().post("/api/attention/ack/REVIEW_FAILED").then().statusCode(404);

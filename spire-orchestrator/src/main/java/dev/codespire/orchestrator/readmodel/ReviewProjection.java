@@ -1088,31 +1088,62 @@ public class ReviewProjection {
     }
 
     /**
-     * Append one LLM call's charge lines. Idempotent: {@code ON CONFLICT DO NOTHING} against the
-     * ledger's {@code UNIQUE (call_ref, token_type)}, so a redelivered result event cannot charge the
-     * same call twice.
+     * Append one LLM call's charge lines, in ONE transaction. Idempotent: {@code ON CONFLICT DO NOTHING}
+     * against the ledger's {@code UNIQUE (call_ref, token_type)}, so a redelivered result event cannot
+     * charge the same call twice.
+     *
+     * <p>Atomic per CALL rather than per line, which is the grain that matters even though the ledger's
+     * grain is the line. Written line by line in autocommit, a failure partway through committed a
+     * PARTIAL call — and nothing can flag that, because the missing lines simply do not exist: the
+     * unpriced-call count stays silent and the review renders a confidently understated total, which is
+     * the one thing this ledger exists to prevent. It also gave each line of one call its own
+     * {@code priced_at}, since {@code now()} is the TRANSACTION timestamp; sharing one transaction makes
+     * a call's lines share it, so the UI's grouping by {@code call_ref} is a statement about identity
+     * rather than a workaround for drift.
      */
     public void recordCharges(ChargeCall call) {
-        for (ChargeLine line : call.lines()) {
-            update("""
-                    INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode,
-                            token_type, tokens, rate_millicents_per_million, cost_millicents)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (call_ref, token_type) DO NOTHING
-                    """, ps -> {
-                ps.setObject(1, java.util.UUID.randomUUID());
-                ps.setString(2, call.reviewId());
-                ps.setString(3, call.callRef());
-                ps.setString(4, call.kind().name());
-                ps.setString(5, call.model());
-                ps.setString(6, line.mode().name());
-                ps.setString(7, line.tokenType().name());
-                ps.setInt(8, line.tokens());
-                setNullableLong(ps, 9, line.rateMillicentsPerMillion());
-                setNullableLong(ps, 10, line.costMillicents());
-            });
+        if (call.lines().isEmpty()) {
+            return; // nothing to write, so nothing to broadcast either
+        }
+        String sql = """
+                INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode,
+                        token_type, tokens, rate_millicents_per_million, cost_millicents)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (call_ref, token_type) DO NOTHING
+                """;
+        try (Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                for (ChargeLine line : call.lines()) {
+                    bindChargeLine(ps, call, line);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                c.commit();
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record charges for call " + call.callRef(), e);
         }
         broadcast(call.reviewId());
+    }
+
+    private static void bindChargeLine(PreparedStatement ps, ChargeCall call, ChargeLine line)
+            throws SQLException {
+        ps.setObject(1, java.util.UUID.randomUUID());
+        ps.setString(2, call.reviewId());
+        ps.setString(3, call.callRef());
+        ps.setString(4, call.kind().name());
+        ps.setString(5, call.model());
+        ps.setString(6, line.mode().name());
+        ps.setString(7, line.tokenType().name());
+        ps.setInt(8, line.tokens());
+        setNullableLong(ps, 9, line.rateMillicentsPerMillion());
+        setNullableLong(ps, 10, line.costMillicents());
     }
 
     /**

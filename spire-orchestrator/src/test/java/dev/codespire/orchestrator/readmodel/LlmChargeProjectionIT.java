@@ -153,10 +153,12 @@ class LlmChargeProjectionIT {
     }
 
     /**
-     * {@code chargeLines} is the UI's raw material for grouping lines back into calls, and it must
-     * group by {@code callRef} — each line is written in its own transaction (one {@code update} per
-     * line, no surrounding {@code @Transactional}), so two lines of the SAME call cannot be assumed to
-     * share one {@code pricedAt}. This asserts the field this view exists to carry actually round-trips.
+     * {@code chargeLines} is the UI's raw material for grouping lines back into calls, and it must group
+     * by {@code callRef} — the ledger's own call identity. This asserts the field the view exists to
+     * carry actually round-trips, and that a call's lines land together: they are written in one
+     * transaction, so {@code priced_at DEFAULT now()} (the TRANSACTION timestamp) is the same on each.
+     * A partial call is the failure that would otherwise be invisible — the missing lines do not exist,
+     * so nothing flags the understated total they leave behind.
      */
     @Test
     void chargeLinesCarryTheCallRefTheyWereRecordedUnder() {
@@ -169,5 +171,7 @@ class LlmChargeProjectionIT {
         assertEquals(2, lines.size());
         assertEquals("CANARY-REF-4", lines.get(0).callRef());
         assertEquals("CANARY-REF-4", lines.get(1).callRef());
+        assertEquals(lines.get(0).pricedAt(), lines.get(1).pricedAt(),
+                "one call's lines are one transaction, so they carry one priced_at");
     }
 }
