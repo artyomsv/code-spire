@@ -76,13 +76,28 @@ public final class TokenUsageMapper {
         return total;
     }
 
+    /**
+     * The degraded path, carrying the vendor's own figure — floored, because that figure is the one
+     * number here we have not derived and therefore cannot vouch for. {@code remainder} floors the
+     * subtraction path and says why; this is the same reason at the other door. A negative arriving as
+     * {@code totalTokenCount()} (a misbehaving OpenAI-compatible proxy answering
+     * {@code "total_tokens": -1} suffices) used to pass through unchecked, because it is built into a
+     * {@code TOTAL} line directly and never meets {@code nonEmpty}'s {@code > 0} filter. It then broke
+     * {@code llm_charge.tokens >= 0} inside the {@code ReviewGenerated} handler, BEFORE the
+     * {@code PostComments} emit — a paid call whose findings never reached the pull request, repeating
+     * on every redelivery.
+     *
+     * <p>Zero is the honest floor: the call stays counted and stays flagged unreconciled, which already
+     * means "nothing usable was reported about the split" — the shape a null usage produces too.
+     */
     private static ModelUsage unreconciled(String model, int total) {
-        return new ModelUsage(model, List.of(new TokenCount(TokenType.TOTAL, total)), total, false);
+        int reported = Math.max(0, total);
+        return new ModelUsage(model, List.of(new TokenCount(TokenType.TOTAL, reported)), reported, false);
     }
 
     private static List<TokenCount> partition(TokenUsage usage) {
-        int input = zeroIfNull(usage.inputTokenCount());
-        int output = zeroIfNull(usage.outputTokenCount());
+        int input = countOf(usage.inputTokenCount());
+        int output = countOf(usage.outputTokenCount());
         return switch (usage) {
             case OpenAiTokenUsage u -> openAi(u, input, output);
             case AnthropicTokenUsage u -> anthropic(u, input, output);
@@ -93,9 +108,9 @@ public final class TokenUsageMapper {
 
     /** Cached is a SUBSET of the input count, and reasoning a subset of output — both subtracted out. */
     private static List<TokenCount> openAi(OpenAiTokenUsage u, int input, int output) {
-        int cached = u.inputTokensDetails() == null ? 0 : zeroIfNull(u.inputTokensDetails().cachedTokens());
+        int cached = u.inputTokensDetails() == null ? 0 : countOf(u.inputTokensDetails().cachedTokens());
         int reasoning = u.outputTokensDetails() == null ? 0
-                : zeroIfNull(u.outputTokensDetails().reasoningTokens());
+                : countOf(u.outputTokensDetails().reasoningTokens());
         return nonEmpty(new TokenCount(TokenType.INPUT, remainder(input, cached)),
                 new TokenCount(TokenType.CACHED_INPUT, cached),
                 new TokenCount(TokenType.OUTPUT, remainder(output, reasoning)),
@@ -105,18 +120,18 @@ public final class TokenUsageMapper {
     /** Cache reads and writes are ADDITIONAL to the input count — nothing to subtract. */
     private static List<TokenCount> anthropic(AnthropicTokenUsage u, int input, int output) {
         return nonEmpty(new TokenCount(TokenType.INPUT, input),
-                new TokenCount(TokenType.CACHED_INPUT, zeroIfNull(u.cacheReadInputTokens())),
-                new TokenCount(TokenType.CACHE_WRITE, zeroIfNull(u.cacheCreationInputTokens())),
+                new TokenCount(TokenType.CACHED_INPUT, countOf(u.cacheReadInputTokens())),
+                new TokenCount(TokenType.CACHE_WRITE, countOf(u.cacheCreationInputTokens())),
                 new TokenCount(TokenType.OUTPUT, output));
     }
 
     /** Cached content is a SUBSET of the input count; thoughts are reported apart from output. */
     private static List<TokenCount> gemini(GoogleAiGeminiTokenUsage u, int input, int output) {
-        int cached = zeroIfNull(u.cachedContentTokenCount());
+        int cached = countOf(u.cachedContentTokenCount());
         return nonEmpty(new TokenCount(TokenType.INPUT, remainder(input, cached)),
                 new TokenCount(TokenType.CACHED_INPUT, cached),
                 new TokenCount(TokenType.OUTPUT, output),
-                new TokenCount(TokenType.REASONING, zeroIfNull(u.thoughtsTokenCount())));
+                new TokenCount(TokenType.REASONING, countOf(u.thoughtsTokenCount())));
     }
 
     /**
@@ -131,10 +146,9 @@ public final class TokenUsageMapper {
      *
      * <p>Flooring keeps the failure loud in the safe direction: the missing tokens stay in the subset
      * bucket, the partition sums HIGHER than the vendor's total, the cross-check trips, and the call
-     * degrades to one unreconciled {@code TOTAL} line carrying the vendor's own figure. {@code nonEmpty}
-     * happens to drop a negative today for the same arithmetic reason, which is why nothing has gone
-     * wrong yet — but that is a coincidence of its {@code > 0} filter, not a stated rule, and the
-     * partition's non-negativity is too load-bearing to rest on a coincidence.
+     * degrades to one unreconciled {@code TOTAL} line carrying the vendor's own figure. Non-negativity
+     * is now stated rather than inferred — {@link TokenCount} refuses a negative — so this floor and
+     * {@link #countOf} are what keep that refusal a backstop instead of a live failure path.
      */
     private static int remainder(int whole, int part) {
         return Math.max(0, whole - part);
@@ -151,7 +165,17 @@ public final class TokenUsageMapper {
         return List.copyOf(kept);
     }
 
-    private static int zeroIfNull(Integer value) {
-        return value == null ? 0 : value;
+    /**
+     * A vendor's reported field as a usable count: absent and negative both read as zero.
+     *
+     * <p>The negative half matters because {@link TokenCount} now REFUSES a negative rather than
+     * carrying one to the ledger. Every raw field goes through here, so the refusal is a backstop
+     * against a future construction site and never a new way for a paid call to dead-letter: before,
+     * a negative input count was dropped by {@code nonEmpty}'s {@code > 0} filter — silently, and only
+     * as an accident of that filter's bound. Left unfloored, the same input would now throw out of
+     * {@code map} instead, which is the very outage being closed, just relocated.
+     */
+    private static int countOf(Integer value) {
+        return value == null ? 0 : Math.max(0, value);
     }
 }

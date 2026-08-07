@@ -167,6 +167,45 @@ class TokenUsageMapperTest {
      * make the partition sum LOWER than the vendor's total, which is the one direction the cross-check
      * cannot distinguish from a bucket we simply do not map yet.
      */
+    /**
+     * The vendor's OWN total, negative. {@code remainder} floors the subtraction path, but the
+     * degraded path handed {@code totalTokenCount()} through unchecked, and the {@code nonEmpty}
+     * {@code > 0} filter never sees a {@code TOTAL} line built directly.
+     *
+     * <p>This needs no hostile actor — a buggy OpenAI-compatible proxy reporting
+     * {@code "total_tokens": -1} is enough. It reached the ledger insert, violated
+     * {@code llm_charge.tokens >= 0}, and threw inside the {@code ReviewGenerated} handler BEFORE the
+     * {@code PostComments} emit: the call is paid, the findings are computed, nothing is posted, and
+     * every redelivery repeats it. A permanent dead-letter on a review the operator already paid for.
+     */
+    @Test
+    void aNegativeVendorTotalNeverReachesTheLedgerAsANegativeCount() {
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", new TokenUsage(700, 300, -1));
+
+        for (TokenType type : TokenType.values()) {
+            assertTrue(usage.tokensOf(type) >= 0, type + " must never carry a negative token count");
+        }
+        assertTrue(usage.reportedTotal() >= 0, "a negative reported total is not a token count");
+        assertFalse(usage.reconciled(),
+                "a total the partition cannot possibly match is unreconciled, not a priced breakdown");
+    }
+
+    /**
+     * The relocation guard. Making {@link dev.codespire.contract.review.TokenCount} refuse a negative
+     * would, on its own, turn every OTHER negative vendor field from something {@code nonEmpty}
+     * silently dropped into a throw out of {@code map} — the same paid-call dead-letter, moved from the
+     * ledger insert to the mapper. Every raw field is floored where it is read, so the refusal stays a
+     * backstop; this pins that, since the mapper is the only reader of a vendor's numbers.
+     */
+    @Test
+    void aNegativeVendorFieldIsFlooredRatherThanThrown() {
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", new TokenUsage(-5, 300, 300));
+
+        assertEquals(0, usage.tokensOf(TokenType.INPUT), "a negative input count reads as none reported");
+        assertEquals(300, usage.tokensOf(TokenType.OUTPUT));
+        assertPartitions(usage);
+    }
+
     @Test
     void aSubsetLargerThanItsWholeNeverProducesANegativeBucket() {
         OpenAiTokenUsage vendor = OpenAiTokenUsage.builder()
