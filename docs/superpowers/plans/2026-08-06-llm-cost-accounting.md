@@ -2718,7 +2718,16 @@ distinction the whole change exists to preserve."
 
 Title: `## ADR-023 — LLM cost is a charge-line ledger with snapshotted rates, and zero is a category`.
 
-Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total; `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
+Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total — including that Anthropic's total excludes cache tokens, so the check is per-vendor; `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
+
+**Record one thing the ADR must not overstate.** `ModelUsage` is a Kafka wire type and this branch
+reshaped it, but the ADR-013 snapshot gate stayed green — it renders each component as `name: TypeName`
+and never recurses, so a nested wire type's shape is invisible to it. State plainly that the break is
+safe because **no persisted event carries usage** (verified: `DomainEvent` has no such field) and Kafka
+retention is short, **not** because a compat gate approved it. The blind spot is filed as
+`techdebt/spire-contract/3-2-contract-snapshot-does-not-recurse-into-nested-wire-types.md`; reference it
+rather than restating it. An ADR that credits a gate which did not run is the kind of claim a future
+reader will rely on.
 
 - [ ] **Step 2: Update `SECURITY.md`**
 

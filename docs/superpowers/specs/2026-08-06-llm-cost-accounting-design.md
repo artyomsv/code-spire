@@ -264,8 +264,17 @@ Call sites to update: `Completion`, `ReviewResult.usage`, `IntegrationEvent` lin
 
 **This is a safe clean break, verified rather than assumed.** `DomainEvent` carries no usage field at
 all, so the **event store is untouched** and no upcaster is needed. Only in-flight Kafka messages are
-affected, and those live under short retention (ADR-014). `ContractSchemaSnapshotTest`'s snapshot is
-regenerated; the ADR-013 gate is satisfied by the deliberate regeneration rather than bypassed.
+affected, and those live under short retention (ADR-014).
+
+**The ADR-013 snapshot gate does not see this change, and that is a gap in the gate rather than a
+property of the change.** An earlier draft of this spec claimed the snapshot would be regenerated and the
+gate thereby satisfied. It was not: `ContractSchemaSnapshotTest` renders each component as
+`name: TypeName` and never recurses, so the golden file records
+`reconcileUsage: dev.codespire.contract.review.ModelUsage` and nothing about that type's own components.
+Reshaping it leaves the gate green. So the safety of this break rests entirely on the reasoning above —
+that no persisted event carries usage — and not on any automated check. Filed as
+`techdebt/spire-contract/3-2-contract-snapshot-does-not-recurse-into-nested-wire-types.md`, because the
+same blind spot covers `Finding`, `ReviewResult`, `ContextItem` and every other nested wire type.
 
 Licensing stays consistent with ADR-021: the neutral vocabulary lives in `spire-contract` and the
 vendor mapping in `spire-llm`, both Apache-2.0; pricing and the ledger are orchestrator-owned (FSL).
