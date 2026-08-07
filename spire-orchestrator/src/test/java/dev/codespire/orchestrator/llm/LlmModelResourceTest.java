@@ -115,6 +115,50 @@ class LlmModelResourceTest {
                 .then().statusCode(400);
     }
 
+    /**
+     * Both of LlmModelPricingValidator.parseRateType's rejections, asserted on the RESPONSE BODY and
+     * not merely the 400. Every other rates map in this module's tests uses one of the five legal token
+     * types, so neither branch had any coverage at all — and a status-only assertion would not have
+     * distinguished them, since both answer 400 for entirely different reasons.
+     *
+     * <p>The body matters here beyond telling the two apart: a BadRequestException built from a bare
+     * string sets the exception's message and NOT the entity, which discards the sentence the operator
+     * needs (see techdebt/spire-orchestrator/3-3). Asserting the text is what pins the message as
+     * delivered rather than merely written.
+     */
+    @Test
+    void anUnrecognizedRateKeyIsRejectedAndNamesTheOffendingKey() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-BOGUS-KEY","label":"TEST","pricingMode":"METERED",
+                       "rates":{"INPUT":200000,"OUTPUT":400000,"BOGUS":100}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400)
+                .body(containsString("Unknown token type"))
+                // Naming the rejected key is the actionable half: a rates map may carry several, and
+                // "one of these is wrong" leaves the operator to guess which.
+                .body(containsString("BOGUS"));
+    }
+
+    /**
+     * TOTAL is a legal {@code TokenType} but never a rate key: it exists for an unreconciled call whose
+     * per-type breakdown did not sum to the vendor's own total, so it names a whole call rather than one
+     * priceable dimension of one. Rejecting it at the boundary is what stops the ledger's
+     * "TOTAL on a metered model cannot be priced" invariant from being defeated at configuration time.
+     */
+    @Test
+    void totalIsRejectedAsARateKeyBecauseItPricesNoSingleDimension() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-TOTAL-RATE","label":"TEST","pricingMode":"METERED",
+                       "rates":{"INPUT":200000,"OUTPUT":400000,"TOTAL":1}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400)
+                .body(containsString("TOTAL has no per-call rate"));
+    }
+
     @Test
     void aMeteredModelMissingTheOutputRateIsRejected() {
         given().contentType(ContentType.JSON)
