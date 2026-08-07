@@ -76,9 +76,238 @@
 
 ---
 
-## Task 1: Neutral token vocabulary on the contract
+## Task 1: The V30 schema
 
-Reshape `ModelUsage` and update every call site so the build is green. Behaviour is unchanged — still `INPUT`/`OUTPUT` only — so this task is purely structural and reviewable on its own.
+**Files:**
+- Create: `spire-orchestrator/src/main/resources/db/migration/V30__llm_charge_ledger.sql`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java`
+
+**Interfaces:**
+- Produces: tables `llm_model_rate`, `llm_charge`; column `llm_model.pricing_mode`. Drops `review_llm_call`, `llm_model.input_price_millicents_per_million`, `llm_model.output_price_millicents_per_million`, and `review_status.{model,tokens_in,tokens_out,cost_millicents}`.
+
+- [ ] **Step 1: Write the failing test**
+
+`spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.Test;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+
+/**
+ * The ledger's CHECK constraints are the backstop, so they are asserted at the SQL layer rather than
+ * assumed from the service that writes them. Four of these are NEGATIVE assertions — "this must be
+ * rejected" — and a negative assertion passes trivially if the constraint is simply absent, so each
+ * one below is paired with the positive case that proves the insert path works at all.
+ */
+@QuarkusTest
+class LlmChargeSchemaIT {
+
+    @Inject
+    DataSource dataSource;
+
+    private void exec(String sql) throws SQLException {
+        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
+            s.executeUpdate(sql);
+        }
+    }
+
+    private String insert(String mode, String tokenType, String rate, String cost) {
+        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+                + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
+                + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-" + tokenType + mode
+                + "', 'review', 'TEST-MODEL', '" + mode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")";
+    }
+
+    @Test
+    void aMeteredLineWithARateAndACostIsAccepted() {
+        assertDoesNotThrow(() -> exec(insert("METERED", "INPUT", "250000", "2")));
+    }
+
+    @Test
+    void aMeteredLineWithoutARateIsRejected() {
+        assertThrows(SQLException.class, () -> exec(insert("METERED", "OUTPUT", "NULL", "2")));
+    }
+
+    @Test
+    void anUnknownLineMustCarryNoCostAndNoRate() {
+        assertDoesNotThrow(() -> exec(insert("UNKNOWN", "INPUT", "NULL", "NULL")));
+        assertThrows(SQLException.class, () -> exec(insert("UNKNOWN", "OUTPUT", "NULL", "0")));
+    }
+
+    /** An asserted zero must be exactly zero on both columns — never a stray rate. */
+    @Test
+    void anUnmeteredLineMustBeZeroRateAndZeroCost() {
+        assertDoesNotThrow(() -> exec(insert("UNMETERED", "INPUT", "0", "0")));
+        assertThrows(SQLException.class, () -> exec(insert("UNMETERED", "OUTPUT", "250000", "0")));
+    }
+
+    /** An unreconciled call has no split, so no metered rate can apply to it. */
+    @Test
+    void aTotalLineCannotBeMetered() {
+        assertThrows(SQLException.class, () -> exec(insert("METERED", "TOTAL", "250000", "2")));
+        assertDoesNotThrow(() -> exec(insert("UNMETERED", "TOTAL", "0", "0")));
+    }
+
+    /** The redelivery guard: one call's dimension can be charged exactly once. */
+    @Test
+    void theSameCallAndTokenTypeCannotBeChargedTwice() throws SQLException {
+        String sql = insert("METERED", "CACHE_WRITE", "300000", "3");
+        exec(sql);
+        assertThrows(SQLException.class, () -> exec(sql));
+    }
+
+    @Test
+    void theDroppedTablesAndColumnsAreGone() {
+        assertThrows(SQLException.class, () -> exec("SELECT 1 FROM review_llm_call"));
+        assertThrows(SQLException.class, () -> exec("SELECT cost_millicents FROM review_status"));
+        assertThrows(SQLException.class,
+                () -> exec("SELECT input_price_millicents_per_million FROM llm_model"));
+    }
+}
+```
+
+- [ ] **Step 2: Run it to confirm it fails**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
+Expected: FAIL — `llm_charge` does not exist.
+
+- [ ] **Step 3: Write the migration**
+
+`spire-orchestrator/src/main/resources/db/migration/V30__llm_charge_ledger.sql`:
+
+```sql
+-- LLM cost accounting (ADR-023): one ledger, one row per token type per call, carrying the rate that
+-- priced it.
+--
+-- Two problems this closes. First, cost was stored WITHOUT the rate it came from, so no historical
+-- figure was reproducible and a change in the numbers could not be attributed to usage or to a price
+-- edit. Second, and worse: an unpriceable call was recorded as costing ZERO, indistinguishable from a
+-- genuinely free one, so a spend cap reading these totals would have installed cleanly and never
+-- fired. A pricing MODE fixes that -- an asserted zero for self-hosted inference is now a category,
+-- not a value someone typed to get past validation.
+
+-- 1. The catalog states which world a model is in.
+ALTER TABLE llm_model ADD COLUMN pricing_mode VARCHAR(16) NOT NULL DEFAULT 'METERED';
+ALTER TABLE llm_model ALTER COLUMN pricing_mode DROP DEFAULT;
+ALTER TABLE llm_model ADD CONSTRAINT llm_model_pricing_mode_chk
+    CHECK (pricing_mode IN ('METERED', 'UNMETERED'));
+
+-- 2. Rates move to a child table: five fixed columns would need a migration per vendor billing
+--    change, and could not express "this model does not bill for cache writes" at all.
+CREATE TABLE llm_model_rate (
+    model_id                    UUID        NOT NULL REFERENCES llm_model(id) ON DELETE CASCADE,
+    token_type                  VARCHAR(32) NOT NULL,
+    rate_millicents_per_million BIGINT      NOT NULL CHECK (rate_millicents_per_million > 0),
+    PRIMARY KEY (model_id, token_type),
+    -- TOTAL is deliberately absent: an unreconciled call has no split to price.
+    CHECK (token_type IN ('INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'))
+);
+
+-- 3. Preserve only UNAMBIGUOUS rates. A rate > 0 can only have been operator-entered, because the
+--    old path coerced a blank to 0. A model with any zero rate cannot be migrated honestly, so it is
+--    left without rates and the new guards treat it as unpriceable until an operator fixes it.
+INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million)
+SELECT id, 'INPUT', input_price_millicents_per_million FROM llm_model
+ WHERE input_price_millicents_per_million > 0 AND output_price_millicents_per_million > 0;
+INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million)
+SELECT id, 'OUTPUT', output_price_millicents_per_million FROM llm_model
+ WHERE input_price_millicents_per_million > 0 AND output_price_millicents_per_million > 0;
+
+ALTER TABLE llm_model DROP COLUMN input_price_millicents_per_million;
+ALTER TABLE llm_model DROP COLUMN output_price_millicents_per_million;
+
+-- 4. The ledger. Grain = charge line; a call is the set of rows sharing call_ref.
+CREATE TABLE llm_charge (
+    id            UUID         PRIMARY KEY,
+    review_id     TEXT         NOT NULL,
+    call_ref      TEXT         NOT NULL,
+    kind          VARCHAR(16)  NOT NULL,   -- review | reconcile | followup
+    model         VARCHAR(255) NOT NULL,
+    pricing_mode  VARCHAR(16)  NOT NULL,
+    token_type    VARCHAR(32)  NOT NULL,
+    tokens        INT          NOT NULL CHECK (tokens >= 0),
+    rate_millicents_per_million BIGINT,
+    cost_millicents             BIGINT,
+    priced_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    -- One call's dimension is charged exactly once. recordLlmCall used to be an unguarded INSERT
+    -- whose only protection was a STALENESS check, so a redelivered result between ReviewGenerated
+    -- and ReviewCompleted inserted a second row for a call that happened once.
+    UNIQUE (call_ref, token_type),
+    CHECK (pricing_mode IN ('METERED', 'UNMETERED', 'UNKNOWN')),
+    CHECK ((pricing_mode = 'UNKNOWN') = (cost_millicents IS NULL)),
+    CHECK (pricing_mode <> 'UNKNOWN'   OR rate_millicents_per_million IS NULL),
+    CHECK (pricing_mode <> 'METERED'   OR rate_millicents_per_million IS NOT NULL),
+    CHECK (pricing_mode <> 'UNMETERED'
+           OR (rate_millicents_per_million = 0 AND cost_millicents = 0)),
+    -- An unreconciled call has no per-type split, so a METERED rate cannot be applied to it.
+    -- UNMETERED stays valid: cost is zero whatever the split turns out to be.
+    CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')
+);
+CREATE INDEX llm_charge_review_idx ON llm_charge (review_id, priced_at);
+CREATE INDEX llm_charge_priced_idx ON llm_charge (priced_at);
+
+-- 5. The old ledger and its denormalized rollup go. Every 0 in review_llm_call is ambiguous -- the
+--    coercion means "was unpriced at the time", not "was free" -- and the distinguishing information
+--    was never written, so no migration can recover it. These are development smoke-test rows.
+DROP TABLE review_llm_call;
+ALTER TABLE review_status
+    DROP COLUMN model,
+    DROP COLUMN tokens_in,
+    DROP COLUMN tokens_out,
+    DROP COLUMN cost_millicents;
+```
+
+- [ ] **Step 4: Run the schema test**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
+Expected: PASS. `gen_random_uuid()` needs `pgcrypto` on Postgres < 13; if it errors, replace it in the test helper with a literal `'00000000-0000-0000-0000-0000000000NN'::uuid` per case.
+
+- [ ] **Step 5: Prove the negative assertions can fail**
+
+Temporarily delete the `CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')` line, re-run, and confirm `aTotalLineCannotBeMetered` fails. Restore it. Repeat for the `UNMETERED` check. Four of these assertions pass trivially if a constraint is renamed away, which is exactly the vacuity hole `ContractSchemaSnapshotTest` had.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spire-orchestrator/src/main/resources/db/migration spire-orchestrator/src/test
+git commit -m "Add the LLM charge ledger and pricing mode (V30)
+
+One row per token type per call, carrying the rate that priced it, so every
+historical figure is reproducible as tokens x rate and a later price edit
+cannot reach it. A UNIQUE (call_ref, token_type) closes a real double-count
+window: the old insert's only guard was a staleness check, so a redelivered
+result between ReviewGenerated and ReviewCompleted charged one call twice.
+
+pricing_mode makes zero a category rather than a value. An asserted zero for
+self-hosted inference is now distinguishable from an absent price, which is
+what a spend cap needs to be more than decorative.
+
+CHECK constraints make the illegal combinations unrepresentable at the
+storage layer, not just in the service that writes them.
+
+review_llm_call and review_status's cost columns are dropped: every zero in
+them is ambiguous, the information to disambiguate was never written, and
+they hold development smoke-test rows."
+```
+
+---
+
+## Task 2: Neutral token vocabulary on the contract
+
+Reshape `ModelUsage`, then remove every read of the columns Task 1 dropped. Token accounting is still
+`INPUT`/`OUTPUT` only — the real vendor mapping is Task 3 — so the behaviour change here is confined to
+where cost comes from: nowhere yet, rather than a fabricated zero.
 
 **Files:**
 - Create: `spire-contract/src/main/java/dev/codespire/contract/review/TokenType.java`
@@ -86,8 +315,10 @@ Reshape `ModelUsage` and update every call site so the build is green. Behaviour
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/review/ModelUsage.java`
 - Modify: `spire-contract/src/test/resources/contract-schema.txt`
 - Modify: `spire-llm/src/main/java/dev/codespire/llm/LangChain4jLlmProvider.java:147-152`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ResultSaga.java:422-444`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:346-395`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ResultSaga.java:163-169, 235, 422-444`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:346-395, 961-966, 1078-1091, 1317-1347`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewDetail.java:46, 73-75`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewSummary.java`
 - Test: `spire-contract/src/test/java/dev/codespire/contract/review/ModelUsageTest.java`
 
 **Interfaces:**
@@ -261,9 +492,13 @@ Expected: PASS.
 
 - [ ] **Step 6: Update every call site so the build compiles**
 
-Production sites:
+Task 1 already dropped `review_llm_call` and `review_status`'s four usage columns, so this step does
+not invent a temporary value for any of them — it removes the code that read them. **Nothing in this
+task may write a zero cost.** A zero standing in for an absent price is the exact defect this branch
+exists to remove, and the plan's no-synthetic-data constraint binds the intermediate commits too.
 
-`LangChain4jLlmProvider.java:147-152` — temporarily keep the two-bucket behaviour; Task 2 replaces it:
+`LangChain4jLlmProvider.java:147-152` — keep the two-bucket behaviour for now; Task 3 replaces it with
+the real vendor mapping:
 
 ```java
         ChatResponse response = model.chat(request);
@@ -275,7 +510,8 @@ Production sites:
                         usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0));
 ```
 
-`ResultSaga.java` — delete `priced(ReviewResult)` (lines 422-435) and `priceUsage(ModelUsage)` (437-444) entirely, and at lines 163-169 stop pricing for now:
+`ResultSaga.java` — delete `priced(ReviewResult)` (lines 422-435) and `priceUsage(ModelUsage)` (437-444)
+entirely, and simplify the `ReviewGenerated` branch:
 
 ```java
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
@@ -284,20 +520,75 @@ Production sites:
                 projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
 ```
 
-Also remove the `recordLlmCall` calls at 166, 168 and 235, and the now-unused `llmModels` injection if nothing else uses it. Task 8 reinstates recording against the new ledger.
+Also remove the `recordLlmCall` calls at 166, 168 and 235, and the `llmModels` injection if nothing
+else uses it. Task 8 reinstates recording, against the new ledger.
 
-`ReviewProjection.java` — in `recordOutcome` (346-372) replace the usage columns with the new accessors, keeping the same SQL for now:
+`ReviewProjection.java` — five changes, all of them deletions of dropped-column access:
+
+1. **`recordOutcome` (346-372):** drop `model`, `tokens_in`, `tokens_out`, `cost_millicents` from the
+   `UPDATE` and delete the whole `usage == null` branch. It now writes only `findings_count`,
+   `findings_json`, `stage`, `updated_at`, and no longer needs the `usage` local at all.
+2. **Delete `recordLlmCall` (379-395)** — Task 7 replaces it with `recordCharges`.
+3. **Delete `withReviewCall` (1338-1347)** — it synthesized a "review" call row out of the dropped
+   `review_status` columns. With the ledger as the only source there is nothing to merge, so
+   `toDetail` (1317-1328) passes the charge lines straight through.
+4. **Trim `ReviewRow`** of its `model`, `tokensIn`, `tokensOut`, `costMillicents` fields and stop
+   reading them in whatever maps the row.
+5. **Replace `llmCalls(String)` (1078-1091) with `chargeLines(String)`** reading the new ledger:
 
 ```java
-            } else {
-                ps.setString(3, usage.model());
-                ps.setInt(4, usage.tokensOf(dev.codespire.contract.review.TokenType.INPUT));
-                ps.setInt(5, usage.tokensOf(dev.codespire.contract.review.TokenType.OUTPUT));
-                ps.setLong(6, 0L); // priced in Task 8 against llm_charge
-            }
+    /** Every charge line recorded for a review, oldest first — the cost card's raw material. */
+    public List<ReviewDetail.ChargeLineView> chargeLines(String reviewId) {
+        List<ReviewDetail.ChargeLineView> out = new ArrayList<>();
+        String sql = """
+                SELECT kind, model, token_type, tokens, rate_millicents_per_million, cost_millicents,
+                       pricing_mode, priced_at
+                  FROM llm_charge WHERE review_id = ? ORDER BY priced_at, token_type
+                """;
+        // ... map each row; rate and cost are NULLABLE, so read them via getObject(..., Long.class)
+        //     and let NULL stay NULL. Reading them with getLong would turn "unpriced" back into 0,
+        //     which is the bug this branch removes.
+        return out;
+    }
 ```
 
-and delete `recordLlmCall` (379-395) plus `llmCalls(String)` (1078-1091) — both are replaced in Task 8, and `review_llm_call` is dropped in Task 3.
+**`ReviewDetail.java`** — replace the `LlmCall` record (73-75) with:
+
+```java
+    /**
+     * One token dimension of one LLM call, priced. {@code rateMillicentsPerMillion} and
+     * {@code costMillicents} are null exactly when {@code pricingMode} is "UNKNOWN" — never 0, which
+     * would be indistinguishable from an UNMETERED model's asserted zero.
+     */
+    public record ChargeLineView(String kind, String model, String tokenType, int tokens,
+                                 Long rateMillicentsPerMillion, Long costMillicents,
+                                 String pricingMode, String pricedAt) {
+    }
+```
+
+and change the `llmCalls` component (line 46) to `List<ChargeLineView> chargeLines`.
+
+**`listSummaries` (961-966)** selects `rs.*` and names `rs.cost_millicents` and `rs.model`, so it
+breaks at runtime once the columns are gone. Re-derive all three from the ledger — the query is
+touched once here rather than again in Task 7:
+
+```sql
+SELECT rs.*,
+       (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+         ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
+       (SELECT m.type FROM llm_model m
+         WHERE m.name = (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                          ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
+       COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
+                  WHERE c.review_id = rs.review_id), 0)                          AS total_cost_millicents,
+       COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
+                  WHERE c.review_id = rs.review_id AND c.pricing_mode = 'UNKNOWN'), 0) AS unpriced_calls
+  FROM review_status rs ORDER BY rs.updated_at DESC
+```
+
+Add `int unpricedCalls` to `ReviewSummary`. The ledger is empty until Task 8 starts writing it, so
+totals read as 0 — honestly zero, because there are no charges, not because a price was missing. That
+distinction is exactly what `unpricedCalls` exists to carry.
 
 Test sites — replace `new ModelUsage("m", 1, 1, 0)` with `ModelUsage.of("m", 1, 1)` in each of:
 `spire-gateway/.../WireFormatRoundTripTest.java:52`, `spire-review-worker/.../WorkerPipelineTest.java:125`,
@@ -307,7 +598,10 @@ Test sites — replace `new ModelUsage("m", 1, 1, 0)` with `ModelUsage.of("m", 1
 `spire-orchestrator/.../ResultSagaRetryTest.java:293,340`, `spire-orchestrator/.../ReviewProjectionTest.java:79,385`,
 `spire-orchestrator/.../ReviewProjectionPriorRunIT.java:109,133`.
 
-`ReviewProjectionTest.java:79` and `:385` assert a cost; change those assertions to expect `0` with a comment that pricing moves to `llm_charge` in Task 8, and delete any assertion on `review_llm_call`.
+`ReviewProjectionTest.java:79` and `:385` assert a cost that `recordOutcome` no longer stores — **delete
+those assertions** rather than asserting `0`, along with any assertion on `review_llm_call`. Cost is
+asserted against the ledger in Task 7; an assertion that a dropped column reads zero tests nothing and
+enshrines the conflation.
 
 - [ ] **Step 7: Regenerate the ADR-013 contract snapshot**
 
@@ -344,7 +638,7 @@ usage, so the event store is untouched and no upcaster is needed."
 
 ---
 
-## Task 2: Map each vendor's usage onto the partition
+## Task 3: Map each vendor's usage onto the partition
 
 **Files:**
 - Create: `spire-llm/src/main/java/dev/codespire/llm/TokenUsageMapper.java`
@@ -352,7 +646,7 @@ usage, so the event store is untouched and no upcaster is needed."
 - Test: `spire-llm/src/test/java/dev/codespire/llm/TokenUsageMapperTest.java`
 
 **Interfaces:**
-- Consumes: `ModelUsage`, `TokenCount`, `TokenType` from Task 1.
+- Consumes: `ModelUsage`, `TokenCount`, `TokenType` from Task 2.
 - Produces: `TokenUsageMapper.map(String model, TokenUsage usage) -> ModelUsage` (static, 2 params).
 
 **Read before starting:** the vendor accessors, confirmed present in LangChain4j 1.18.1 by inspecting the jars:
@@ -677,233 +971,6 @@ an unmapped new dimension announces itself instead of mispricing quietly."
 
 ---
 
-## Task 3: The V30 schema
-
-**Files:**
-- Create: `spire-orchestrator/src/main/resources/db/migration/V30__llm_charge_ledger.sql`
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java`
-
-**Interfaces:**
-- Produces: tables `llm_model_rate`, `llm_charge`; column `llm_model.pricing_mode`. Drops `review_llm_call`, `llm_model.input_price_millicents_per_million`, `llm_model.output_price_millicents_per_million`, and `review_status.{model,tokens_in,tokens_out,cost_millicents}`.
-
-- [ ] **Step 1: Write the failing test**
-
-`spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java`:
-
-```java
-package dev.codespire.orchestrator.llm;
-
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Statement;
-
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-
-/**
- * The ledger's CHECK constraints are the backstop, so they are asserted at the SQL layer rather than
- * assumed from the service that writes them. Four of these are NEGATIVE assertions — "this must be
- * rejected" — and a negative assertion passes trivially if the constraint is simply absent, so each
- * one below is paired with the positive case that proves the insert path works at all.
- */
-@QuarkusTest
-class LlmChargeSchemaIT {
-
-    @Inject
-    DataSource dataSource;
-
-    private void exec(String sql) throws SQLException {
-        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
-            s.executeUpdate(sql);
-        }
-    }
-
-    private String insert(String mode, String tokenType, String rate, String cost) {
-        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
-                + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
-                + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-" + tokenType + mode
-                + "', 'review', 'TEST-MODEL', '" + mode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")";
-    }
-
-    @Test
-    void aMeteredLineWithARateAndACostIsAccepted() {
-        assertDoesNotThrow(() -> exec(insert("METERED", "INPUT", "250000", "2")));
-    }
-
-    @Test
-    void aMeteredLineWithoutARateIsRejected() {
-        assertThrows(SQLException.class, () -> exec(insert("METERED", "OUTPUT", "NULL", "2")));
-    }
-
-    @Test
-    void anUnknownLineMustCarryNoCostAndNoRate() {
-        assertDoesNotThrow(() -> exec(insert("UNKNOWN", "INPUT", "NULL", "NULL")));
-        assertThrows(SQLException.class, () -> exec(insert("UNKNOWN", "OUTPUT", "NULL", "0")));
-    }
-
-    /** An asserted zero must be exactly zero on both columns — never a stray rate. */
-    @Test
-    void anUnmeteredLineMustBeZeroRateAndZeroCost() {
-        assertDoesNotThrow(() -> exec(insert("UNMETERED", "INPUT", "0", "0")));
-        assertThrows(SQLException.class, () -> exec(insert("UNMETERED", "OUTPUT", "250000", "0")));
-    }
-
-    /** An unreconciled call has no split, so no metered rate can apply to it. */
-    @Test
-    void aTotalLineCannotBeMetered() {
-        assertThrows(SQLException.class, () -> exec(insert("METERED", "TOTAL", "250000", "2")));
-        assertDoesNotThrow(() -> exec(insert("UNMETERED", "TOTAL", "0", "0")));
-    }
-
-    /** The redelivery guard: one call's dimension can be charged exactly once. */
-    @Test
-    void theSameCallAndTokenTypeCannotBeChargedTwice() throws SQLException {
-        String sql = insert("METERED", "CACHE_WRITE", "300000", "3");
-        exec(sql);
-        assertThrows(SQLException.class, () -> exec(sql));
-    }
-
-    @Test
-    void theDroppedTablesAndColumnsAreGone() {
-        assertThrows(SQLException.class, () -> exec("SELECT 1 FROM review_llm_call"));
-        assertThrows(SQLException.class, () -> exec("SELECT cost_millicents FROM review_status"));
-        assertThrows(SQLException.class,
-                () -> exec("SELECT input_price_millicents_per_million FROM llm_model"));
-    }
-}
-```
-
-- [ ] **Step 2: Run it to confirm it fails**
-
-Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
-Expected: FAIL — `llm_charge` does not exist.
-
-- [ ] **Step 3: Write the migration**
-
-`spire-orchestrator/src/main/resources/db/migration/V30__llm_charge_ledger.sql`:
-
-```sql
--- LLM cost accounting (ADR-023): one ledger, one row per token type per call, carrying the rate that
--- priced it.
---
--- Two problems this closes. First, cost was stored WITHOUT the rate it came from, so no historical
--- figure was reproducible and a change in the numbers could not be attributed to usage or to a price
--- edit. Second, and worse: an unpriceable call was recorded as costing ZERO, indistinguishable from a
--- genuinely free one, so a spend cap reading these totals would have installed cleanly and never
--- fired. A pricing MODE fixes that -- an asserted zero for self-hosted inference is now a category,
--- not a value someone typed to get past validation.
-
--- 1. The catalog states which world a model is in.
-ALTER TABLE llm_model ADD COLUMN pricing_mode VARCHAR(16) NOT NULL DEFAULT 'METERED';
-ALTER TABLE llm_model ALTER COLUMN pricing_mode DROP DEFAULT;
-ALTER TABLE llm_model ADD CONSTRAINT llm_model_pricing_mode_chk
-    CHECK (pricing_mode IN ('METERED', 'UNMETERED'));
-
--- 2. Rates move to a child table: five fixed columns would need a migration per vendor billing
---    change, and could not express "this model does not bill for cache writes" at all.
-CREATE TABLE llm_model_rate (
-    model_id                    UUID        NOT NULL REFERENCES llm_model(id) ON DELETE CASCADE,
-    token_type                  VARCHAR(32) NOT NULL,
-    rate_millicents_per_million BIGINT      NOT NULL CHECK (rate_millicents_per_million > 0),
-    PRIMARY KEY (model_id, token_type),
-    -- TOTAL is deliberately absent: an unreconciled call has no split to price.
-    CHECK (token_type IN ('INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'))
-);
-
--- 3. Preserve only UNAMBIGUOUS rates. A rate > 0 can only have been operator-entered, because the
---    old path coerced a blank to 0. A model with any zero rate cannot be migrated honestly, so it is
---    left without rates and the new guards treat it as unpriceable until an operator fixes it.
-INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million)
-SELECT id, 'INPUT', input_price_millicents_per_million FROM llm_model
- WHERE input_price_millicents_per_million > 0 AND output_price_millicents_per_million > 0;
-INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million)
-SELECT id, 'OUTPUT', output_price_millicents_per_million FROM llm_model
- WHERE input_price_millicents_per_million > 0 AND output_price_millicents_per_million > 0;
-
-ALTER TABLE llm_model DROP COLUMN input_price_millicents_per_million;
-ALTER TABLE llm_model DROP COLUMN output_price_millicents_per_million;
-
--- 4. The ledger. Grain = charge line; a call is the set of rows sharing call_ref.
-CREATE TABLE llm_charge (
-    id            UUID         PRIMARY KEY,
-    review_id     TEXT         NOT NULL,
-    call_ref      TEXT         NOT NULL,
-    kind          VARCHAR(16)  NOT NULL,   -- review | reconcile | followup
-    model         VARCHAR(255) NOT NULL,
-    pricing_mode  VARCHAR(16)  NOT NULL,
-    token_type    VARCHAR(32)  NOT NULL,
-    tokens        INT          NOT NULL CHECK (tokens >= 0),
-    rate_millicents_per_million BIGINT,
-    cost_millicents             BIGINT,
-    priced_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    -- One call's dimension is charged exactly once. recordLlmCall used to be an unguarded INSERT
-    -- whose only protection was a STALENESS check, so a redelivered result between ReviewGenerated
-    -- and ReviewCompleted inserted a second row for a call that happened once.
-    UNIQUE (call_ref, token_type),
-    CHECK (pricing_mode IN ('METERED', 'UNMETERED', 'UNKNOWN')),
-    CHECK ((pricing_mode = 'UNKNOWN') = (cost_millicents IS NULL)),
-    CHECK (pricing_mode <> 'UNKNOWN'   OR rate_millicents_per_million IS NULL),
-    CHECK (pricing_mode <> 'METERED'   OR rate_millicents_per_million IS NOT NULL),
-    CHECK (pricing_mode <> 'UNMETERED'
-           OR (rate_millicents_per_million = 0 AND cost_millicents = 0)),
-    -- An unreconciled call has no per-type split, so a METERED rate cannot be applied to it.
-    -- UNMETERED stays valid: cost is zero whatever the split turns out to be.
-    CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')
-);
-CREATE INDEX llm_charge_review_idx ON llm_charge (review_id, priced_at);
-CREATE INDEX llm_charge_priced_idx ON llm_charge (priced_at);
-
--- 5. The old ledger and its denormalized rollup go. Every 0 in review_llm_call is ambiguous -- the
---    coercion means "was unpriced at the time", not "was free" -- and the distinguishing information
---    was never written, so no migration can recover it. These are development smoke-test rows.
-DROP TABLE review_llm_call;
-ALTER TABLE review_status
-    DROP COLUMN model,
-    DROP COLUMN tokens_in,
-    DROP COLUMN tokens_out,
-    DROP COLUMN cost_millicents;
-```
-
-- [ ] **Step 4: Run the schema test**
-
-Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
-Expected: PASS. `gen_random_uuid()` needs `pgcrypto` on Postgres < 13; if it errors, replace it in the test helper with a literal `'00000000-0000-0000-0000-0000000000NN'::uuid` per case.
-
-- [ ] **Step 5: Prove the negative assertions can fail**
-
-Temporarily delete the `CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')` line, re-run, and confirm `aTotalLineCannotBeMetered` fails. Restore it. Repeat for the `UNMETERED` check. Four of these assertions pass trivially if a constraint is renamed away, which is exactly the vacuity hole `ContractSchemaSnapshotTest` had.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add spire-orchestrator/src/main/resources/db/migration spire-orchestrator/src/test
-git commit -m "Add the LLM charge ledger and pricing mode (V30)
-
-One row per token type per call, carrying the rate that priced it, so every
-historical figure is reproducible as tokens x rate and a later price edit
-cannot reach it. A UNIQUE (call_ref, token_type) closes a real double-count
-window: the old insert's only guard was a staleness check, so a redelivered
-result between ReviewGenerated and ReviewCompleted charged one call twice.
-
-pricing_mode makes zero a category rather than a value. An asserted zero for
-self-hosted inference is now distinguishable from an absent price, which is
-what a spend cap needs to be more than decorative.
-
-CHECK constraints make the illegal combinations unrepresentable at the
-storage layer, not just in the service that writes them.
-
-review_llm_call and review_status's cost columns are dropped: every zero in
-them is ambiguous, the information to disambiguate was never written, and
-they hold development smoke-test rows."
-```
-
----
-
 ## Task 4: Pricing types and the registry's rate storage
 
 **Files:**
@@ -917,7 +984,7 @@ they hold development smoke-test rows."
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmModelRegistryPricingTest.java`
 
 **Interfaces:**
-- Consumes: `TokenType`, `ModelUsage` (Task 1).
+- Consumes: `TokenType`, `ModelUsage` (Task 2).
 - Produces:
   - `enum PricingMode { METERED, UNMETERED, UNKNOWN }`
   - `record ChargeLine(TokenType tokenType, int tokens, Long rateMillicentsPerMillion, Long costMillicents, PricingMode mode)`
@@ -1680,20 +1747,22 @@ inference."
 
 ## Task 7: Record charge lines in the read model
 
+**This task adds the WRITER only.** Task 2 already removed every read of the dropped columns and
+re-derived `model`, `llm_type`, `total_cost_millicents` and `unpriced_calls` in `listSummaries`, and
+already replaced `llmCalls` with `chargeLines` and `ReviewDetail.LlmCall` with `ChargeLineView`. Do not
+redo any of that — verify it is in place, then add `recordCharges` and `costOf`.
+
 **Files:**
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewDetail.java:73-75`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewSummary.java`
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/LlmChargeProjectionIT.java`
 
 **Interfaces:**
-- Consumes: `ChargeCall`, `ChargeLine`, `PricingMode` (Task 4).
+- Consumes: `ChargeCall`, `ChargeLine`, `PricingMode` (Task 4); `ReviewDetail.ChargeLineView` and the
+  ledger-derived `listSummaries` query (Task 2).
 - Produces:
   - `ReviewProjection.recordCharges(ChargeCall call)` — idempotent
   - `ReviewProjection.costOf(String reviewId) -> CostSummary`
   - `record CostSummary(long knownCostMillicents, int unpricedCalls, String lastModel)`
-  - `ReviewProjection.chargeLines(String reviewId) -> List<ReviewDetail.ChargeLineView>`
-  - `record ChargeLineView(String kind, String model, String tokenType, int tokens, Long rateMillicentsPerMillion, Long costMillicents, String pricingMode, String pricedAt)` replacing `ReviewDetail.LlmCall`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1822,31 +1891,18 @@ SELECT COALESCE(SUM(cost_millicents), 0)                                        
   FROM llm_charge WHERE review_id = ?
 ```
 
-- [ ] **Step 4: Rewire the reads that lost their columns**
+- [ ] **Step 4: Confirm Task 2's read side is intact**
 
-`review_status.model` and `cost_millicents` are gone, so:
+Task 2 already did this work; verify rather than repeat it. Read the file and confirm all four hold —
+if any is missing, it is a Task 2 regression and belongs in this task's report as a concern:
 
-- In `recordOutcome`, drop `model`, `tokens_in`, `tokens_out`, `cost_millicents` from the `UPDATE` entirely — it now writes only `findings_count`, `findings_json`, `stage`, `updated_at`.
-- In `listSummaries`, replace the `llm_type` subquery and the `total_cost_millicents` `COALESCE` with derivations from `llm_charge`:
-
-```sql
-SELECT rs.*,
-       (SELECT m.type FROM llm_model m
-         WHERE m.name = (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
-                          ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
-       (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
-         ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
-       COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
-                  WHERE c.review_id = rs.review_id), 0)                          AS total_cost_millicents,
-       COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
-                  WHERE c.review_id = rs.review_id AND c.pricing_mode = 'UNKNOWN'), 0) AS unpriced_calls
-  FROM review_status rs ORDER BY rs.updated_at DESC
-```
-
-Add `int unpricedCalls` to `ReviewSummary` so a partial total is never shown as complete.
-
-- Replace `llmCalls(String)` with `chargeLines(String)` returning the new `ChargeLineView`, ordered by `priced_at, token_type`.
-- Replace `ReviewDetail.LlmCall` with `ChargeLineView` and update `ReviewDetail`'s `llmCalls` component to `List<ChargeLineView> chargeLines`.
+- `recordOutcome` writes only `findings_count`, `findings_json`, `stage`, `updated_at`.
+- `listSummaries` derives `model`, `llm_type`, `total_cost_millicents` and `unpriced_calls` from
+  `llm_charge`, and `ReviewSummary` carries `int unpricedCalls`.
+- `chargeLines(String)` exists and reads `rate_millicents_per_million` / `cost_millicents` as nullable
+  `Long`, not via `getLong` (which would turn "unpriced" back into `0`).
+- `withReviewCall` is gone and `ReviewRow` no longer carries `model` / `tokensIn` / `tokensOut` /
+  `costMillicents`.
 
 - [ ] **Step 5: Run the module tests**
 
@@ -2453,13 +2509,21 @@ The PR body should lead with the defect (an unpriceable call recorded as costing
 
 ## Self-Review
 
-**Spec coverage.** Every section maps to a task: partition invariant → 2; `pricing_mode` + rate table → 3, 4; ledger + `UNIQUE` → 3, 7; the three guard layers → 4, 5, 6, 8; wire reshape + snapshot → 1; migration and legacy drop → 3; UI → 10; attention → 9; testing → distributed, with mutation verification in 2, 4, 6, 7, 8; ADR + docs → 11.
+**Spec coverage.** Every section maps to a task: `pricing_mode` + rate table → 1, 4; ledger + `UNIQUE` → 1, 7; migration and legacy drop → 1; wire reshape + snapshot → 2; partition invariant → 3; the three guard layers → 4, 5, 6, 8; attention → 9; UI → 10; ADR + docs → 11; testing → distributed, with mutation verification in 3, 4, 6, 7, 8.
 
-**Two gaps found and closed while reviewing:**
+**Two gaps found and closed while writing the plan:**
 
 - The spec's `costMillicents` signature (`String, int, int`) cannot express a partition, so Task 4 replaces it with `priceCall(String, ModelUsage)` rather than modifying it. Named explicitly so the implementer does not try to keep the old shape.
-- Dropping `review_status.model` breaks the reviews-list model badge and the `llm_type` subquery, which the spec did not mention. Task 7 Step 4 re-derives both from the ledger's most recent line.
+- Dropping `review_status.model` breaks the reviews-list model badge and the `llm_type` subquery, which the spec did not mention. Task 2 re-derives both from the ledger's most recent line.
 
-**Type consistency.** `ModelUsage.of(String, int, int)` is used identically in Tasks 1, 2, 4, 8. `ChargeLine.metered/unmetered/unknown` are the only constructors used after Task 4. `CallRefs.of(reviewId, slot, kind)` produces the exact strings Task 8's tests assert. `PricingMode.UNKNOWN` is never accepted from an operator (rejected in Tasks 4 and 5, excluded from the TS type in Task 10).
+**Three more found in the pre-flight scan, and fixed by reordering.** The plan originally reshaped the contract before running the migration, which forced an intermediate state for columns about to be dropped. That single root cause produced all three:
+
+- It mandated `ps.setLong(6, 0L)` and a test asserting cost `0` — a fabricated zero, violating this plan's own no-synthetic-data constraint, in the branch whose entire purpose is removing that conflation.
+- It deleted `ReviewProjection.llmCalls(String)` while `:995` still called it, so the task did not compile.
+- It never mentioned `withReviewCall` (`:1338-1347`), `toDetail` (`:1317-1328`) or `ReviewRow`, all of which read the four dropped columns.
+
+The migration is now Task 1, so Task 2 **removes** those reads instead of inventing values for them. Task 2 also absorbed the `listSummaries` re-derivation, because dropping the columns breaks that query at runtime the moment the migration lands — Task 7 now verifies that work rather than repeating it.
+
+**Type consistency.** `ModelUsage.of(String, int, int)` is used identically in Tasks 2, 3, 4, 8. `ChargeLine.metered/unmetered/unknown` are the only constructors used after Task 4. `CallRefs.of(reviewId, slot, kind)` produces the exact strings Task 8's tests assert. `ReviewDetail.ChargeLineView` is defined once, in Task 2, and consumed by Tasks 7 and 10. `PricingMode.UNKNOWN` is never accepted from an operator (rejected in Tasks 4 and 5, excluded from the TS type in Task 10).
 
 **Parameter limits.** `charge(...)` would have taken four parameters; Task 8 Step 5 introduces `ChargeRequest` rather than exceeding the limit. `priceCall`, `CallRefs.of`, `recordCharges` and `isPriceable` are all within three.
