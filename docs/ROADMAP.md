@@ -280,6 +280,33 @@ down is the original design-time roadmap (kept for reference).
   make a healthy service look unauthenticated because a *later* prefix had none. The call that actually
   decides a cold sign-in turned out to be `apiFetch`'s, not the shell's: the first data fetch is refused
   before `/api/me` answers and wins the race. **271 vitest / 37 files; 1074 Java tests / 130 suites.**
+- **LLM cost is a priced ledger, not a fabricatable total (ADR-023, 2026-08-07):** the accounting a fleet
+  spend cap would have to trust turned *unknown* into *zero* in four separate, individually-defensible
+  places; fixing that came before the caps rather than alongside them, since a cap reading the old
+  numbers would install cleanly and never fire for exactly the calls it exists to stop. `llm_charge`
+  (V30) is now the ledger — one row per token type per call, priced at the rate **in force when the call
+  happened** and snapshotted onto the row, so a later price edit cannot rewrite history and a rejected
+  temporal price catalog was not needed to get that property. `pricing_mode` (`METERED`/`UNMETERED`/
+  `UNKNOWN`) replaces a bare number, because no amount of validating a number distinguishes "this model
+  is free" from "nobody told us the price" when both used to arrive as `0`. The vendor-usage partition is
+  cross-checked against each vendor's own reported total — **per vendor, not uniformly**, since
+  Anthropic's total is derived as `input + output` and excludes both its cache buckets entirely; a
+  uniform check would have made every cached Anthropic call unpriceable, the cheap calls being the only
+  ones that couldn't be priced. The priceable-model rule is enforced twice on purpose — at the registry
+  (`LlmProviderRegistry`, so a bad configuration cannot exist, closing a gap a bypassing test proved
+  live) and again pre-spend in `ResultSaga` (because pricing is post-hoc, so that is the last point an
+  unpriceable review can be refused rather than merely reported) — and the same registry guard now
+  refuses **renaming** a catalogued model still in use, not only deleting one; a rename orphaned
+  referencing providers identically and was the one path that could defeat the guard after it had
+  passed. The conversation path deliberately keeps no pre-spend check of its own — a follow-up answers a
+  human already waiting, and the turn cap's old silent-drop failure is the shape this project does not
+  want to repeat on that path — so it records cost honestly and leans on the registry guard instead.
+  `UNIQUE (call_ref, token_type)` closes a real double-charge window: the prior write was an unguarded
+  `INSERT` behind only a staleness check, so a redelivered result between `ReviewGenerated` and
+  `ReviewCompleted` charged the same call twice. See ADR-023 for the full reasoning, including why the
+  ADR-013 contract-compat gate did **not** catch the `ModelUsage` wire reshape (a documented blind spot,
+  not a passed check) and why the break is safe anyway. **1138 Java tests / 142 suites; 290 vitest / 40
+  files; `tsc --noEmit` silent.**
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -519,6 +546,15 @@ than how well it runs. Operator decides.
   Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of. NOTE: a giant PR
   is not silently mis-reviewed — the diff is clipped to the token budget and the partial review is now
   MARKED (dashboard note + a line on the posted summary comment). A hard giant-PR skip is still future.
+  **Still deferred, but no longer blocked on trustworthy data**: ADR-023 (2026-08-07) replaced the
+  accounting a spend cap would have had to read, which used to record `$0.00` for any call it could not
+  price — a cap built on it would have installed cleanly and never fired for exactly the calls that
+  needed it. The ledger (`llm_charge`) now distinguishes priced, unpriced-but-billable and genuinely-free
+  calls, so this item is implementation work rather than a data-trust problem. Carry the one consequence
+  forward when it is built: **a money-denominated cap is inert by design on an `UNMETERED` (self-hosted)
+  deployment** — the operator has asserted zero cost, so there is nothing in dollars to cap, while every
+  other abuse scenario (a hammered inference GPU, for instance) still applies. The cap needs a token- or
+  call-count axis that holds regardless of pricing mode, not a money axis alone.
 - Whole-repo RAG (P3), learned memory + per-author analytics (P4).
   (**"non-Bitbucket SCMs" is no longer deferred** — GitHub and GitLab both shipped and are live-verified
   to full parity with Bitbucket as of 2026-07-26.)

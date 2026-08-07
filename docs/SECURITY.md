@@ -171,6 +171,22 @@ opens/updates a PR triggers a paid LLM call.
 
 - **v1:** per-review token budgeting only (`spire-diff`). **No fleet-level cap.** This is a
   documented, accepted v1 gap.
+- **Spend is now measured, not just bounded per review (ADR-023).** Every LLM call is priced per token
+  type (`INPUT`/`CACHED_INPUT`/`CACHE_WRITE`/`OUTPUT`/`REASONING`) at the rate in force when the call
+  happened, recorded as a charge line rather than a single fabricatable total. A model whose pricing the
+  catalog cannot resolve — no rate entered, or an operator has not decided whether it is billed at
+  all — is refused **before** it can spend: at provider save/update (`LlmProviderRegistry`) and again
+  immediately before the review call (`ResultSaga`), because pricing itself happens after the money is
+  spent and cannot refuse anything. A call that still cannot be priced (a lookup fault, an unmapped
+  vendor field) is recorded `UNKNOWN` and raised to the attention panel — never silently `$0.00`, which
+  would be indistinguishable from a deployment that is genuinely free to run.
+- **Fleet-level caps remain deferred**, and this ledger is what makes building one honest: a spend cap
+  reading the old accounting would have read "free" for every call it could not price and never fired.
+  It still needs its own axis, though — **a money-denominated cap is inert on an `UNMETERED`
+  (self-hosted) deployment by design**, since the operator has asserted zero cost and there is nothing in
+  dollars to cap. Every other abuse scenario still applies to self-hosted inference hardware (a hammered
+  GPU costs real money even when the LLM call line reads zero), so the cap will need a token- or
+  call-count axis that holds regardless of pricing mode, not a money axis alone.
 - **Deferred (FR-later):** per-repo/workspace rate limit, daily LLM spend cap, giant-PR guard,
   draft/WIP-PR skip, bot-authored-PR skip. An operator running v1 must know there is no built-in
   ceiling on spend yet.

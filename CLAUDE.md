@@ -513,6 +513,62 @@ The design is fully specified in `docs/` — **treat those files as the source o
   reports rather than blocks, now for the one honest remaining reason: `p/default` resolves from the
   Semgrep registry at run time, so a blocking gate would let a rule added upstream redden an untouched
   branch. Blocking wants a pinned ruleset first.
+- **LLM cost accounting rebuilt as a priced charge-line ledger (ADR-023, 2026-08-07):** the fleet
+  cost/abuse caps item (ROADMAP "Explicitly deferred") turned out to need this first — reading what it
+  would build on found four separate, individually-defensible places where *unknown* became *zero*
+  (a blank UI field defaulting to `0`, REST accepting `0` as valid, a registry `null → 0L` coercion,
+  and a `SQLException` answering `0L`), so a spend cap built on the old numbers would install cleanly
+  and never fire for exactly the calls it exists to stop — the same failure shape as the LLM circuit
+  breaker once recording a failed future as a success. `llm_charge` (migration `V30`) replaces
+  `review_llm_call` and the four `review_status` rollup columns entirely: one row per token type per
+  call, priced at the rate **in force when the call happened** and snapshotted onto the row rather than
+  re-derived from a mutable catalog (a temporal price catalog was considered and rejected — every read
+  becomes an interval join, and it doesn't even solve the case it exists for, since an operator entering
+  a price today still has no recorded price for yesterday). `llm_model.pricing_mode`
+  (`METERED`/`UNMETERED`; `UNKNOWN` is a ledger-only runtime outcome, never an operator's choice) makes
+  zero a category instead of a number, because no amount of tightening a numeric check distinguishes
+  "this model is free" from "nobody told us the price" when both used to arrive as the same `0`.
+  `spire-llm`'s `TokenUsageMapper` partitions each vendor's usage onto the neutral `TokenType`
+  (`INPUT`/`CACHED_INPUT`/`CACHE_WRITE`/`OUTPUT`/`REASONING`/`TOTAL`) and cross-checks
+  `Σ(per-type tokens)` against the vendor's own `totalTokenCount()` — **per vendor, not uniformly**,
+  because Anthropic's total is derived by LangChain4j as `input + output` and excludes both its cache
+  buckets entirely; a uniform check (an earlier draft's mistake, caught before it shipped) would have
+  made every *cached* Anthropic call fail reconciliation and degrade to a single unpriceable `TOTAL`
+  line — the cheap calls being the only ones that couldn't be priced. `LlmModelPricer` never returns a
+  zero for a price it could not find; a lookup fault resolves to `pricing_mode='UNKNOWN'` plus an
+  attention row, not a coerced `0`. The priceable-model rule is enforced **twice, deliberately**: at
+  `LlmProviderRegistry.create`/`update` (added after a review proved live, via a choreography test that
+  registered a provider through the registry directly, that the rule was enforced only at
+  `LlmProviderResource` — its one existing REST caller — and not at the invariant's own boundary) and
+  again pre-spend in `ResultSaga` immediately before `GenerateReview`, because pricing itself is
+  post-hoc and that saga check is the last point an unpriceable review can still be **refused** rather
+  than merely reported. `LlmModelRegistry.update` now also refuses to **rename** a catalogued model
+  still referenced by a provider, mirroring the pre-existing delete guard — a rename orphaned every
+  referencing provider identically to a delete and was the one path left that could defeat the
+  config-time guard after it had passed; caught because the **conversation path keeps no pre-spend
+  check of its own** (a follow-up answers a human already waiting, and the project already learned from
+  the silent turn cap that an unexplained non-response reads as a lost webhook, so `AnswerFollowUp`
+  records cost honestly instead of declining to answer), which makes the registry-side guard the only
+  thing standing between a follow-up and an unpriceable call. `UNIQUE (call_ref, token_type)` closes a
+  real double-charge window: the write this replaced was an unguarded `INSERT` protected only by
+  `ResultSaga.ifCurrentRun`'s staleness check, so a redelivered result between `ReviewGenerated` and
+  `ReviewCompleted` — still "reviewing" at the same commit — charged the same call twice. **One
+  documented gap, not glossed over:** the ADR-013 contract-compat snapshot gate stayed green through
+  `ModelUsage` losing its cost field and gaining the token-count list, but it did not catch that change
+  and could not have — `ContractSchemaSnapshotTest` renders a nested record component as `name:
+  TypeName` and never recurses into it, so the golden file never described `ModelUsage`'s own shape in
+  the first place. The break is safe because `DomainEvent` carries no usage field (verified directly)
+  and Kafka retention is short (ADR-014), not because any check approved it — filed as
+  `techdebt/spire-contract/3-2-contract-snapshot-does-not-recurse-into-nested-wire-types.md`, since the
+  same blind spot covers every other nested wire type. One operator-facing consequence of the migration:
+  a catalog model previously saved with a zero rate cannot be migrated honestly (a rate `> 0` is the
+  only unambiguous signal that it was operator-entered) and is left without rates, so it must be given
+  real rates or marked `UNMETERED` before it will run another review — the guard working as specified.
+  SECURITY.md's cost-controls section and ROADMAP's deferred fleet-caps note both now carry the
+  consequence forward: a money-denominated cap will be inert by design on an `UNMETERED` deployment, so
+  the eventual cap needs a token- or call-count axis regardless of pricing mode. **1138 Java tests
+  across 142 suites (`testFast` 497/61 + `testServices` — gateway 63/9, worker 153/17, orchestrator
+  425/55); 290 `spire-ui` vitest tests across 40 files; `tsc --noEmit` silent.**
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
