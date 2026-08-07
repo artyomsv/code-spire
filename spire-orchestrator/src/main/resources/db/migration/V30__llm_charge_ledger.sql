@@ -1,3 +1,30 @@
+-- READ BEFORE APPLYING: this migration destroys the prior spend record, irreversibly.
+--
+-- Section 5 drops review_llm_call and review_status's four rollup columns. Flyway has no
+-- down-migration and nothing in this file reconstructs them, so after the upgrade there is no record
+-- of what any past review cost, how many tokens it used, or which model ran it -- nothing left to
+-- reconcile against a vendor invoice.
+--
+-- Section 5's reasoning is about PRICE, and it holds: a legacy 0 cannot be carried forward honestly,
+-- because the coercion that produced it meant "unpriced at the time", not "free". It says nothing
+-- about model, tokens_in and tokens_out, which were never ambiguous and go with it anyway. So if this
+-- deployment has reviewed real pull requests, archive first -- while still on V29, before this runs:
+--
+--   SET search_path TO orchestrator;          -- Flyway migrates with default-schema=orchestrator
+--   CREATE TABLE review_llm_call_pre_v30 AS SELECT * FROM review_llm_call;
+--   CREATE TABLE review_status_usage_pre_v30 AS
+--       SELECT review_id, model, tokens_in, tokens_out, cost_millicents FROM review_status;
+--
+-- Both are plain tables Flyway does not manage, so they survive every later migration and can be
+-- dropped by hand once reconciled. To take a copy off the box instead, from psql:
+--
+--   \copy (SELECT * FROM orchestrator.review_llm_call) TO 'review_llm_call.csv' WITH CSV HEADER
+--
+-- One thing the archive cannot give back: every cost_millicents in it still means "0 may be unknown
+-- rather than free". That ambiguity is what this migration exists to end and it is not resolvable
+-- after the fact -- the archive preserves the token counts and models, which are recoverable, and the
+-- costs only as the unreliable figures they always were.
+
 -- LLM cost accounting (ADR-023): one ledger, one row per token type per call, carrying the rate that
 -- priced it.
 --
