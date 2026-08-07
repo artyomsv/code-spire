@@ -2631,21 +2631,47 @@ a bind parameter and the old form could only assert its safety in a comment):
 
 ```java
     private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
+        // `token_type <> 'TOTAL'` makes the two rows mutually exclusive, and it is the exclusion that
+        // matters rather than either row's own condition. priceCall returns EITHER per-type lines OR a
+        // single TOTAL line, so an unreconciled call is also unpriced — and reporting it as unpriced would
+        // send an operator to enter rates, which cannot fix a mapping defect. Each row must name the
+        // CAUSE, not the symptom: missing rates here, failed reconciliation below.
         int unpriced = count(c,
-                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE pricing_mode = 'UNKNOWN'");
+                "SELECT count(DISTINCT call_ref) FROM llm_charge "
+                        + "WHERE pricing_mode = 'UNKNOWN' AND token_type <> 'TOTAL'");
         if (unpriced > 0) {
             rows.add(new AttentionView("LLM_COST_UNPRICED", Severity.WARNING, null,
                     unpriced + " LLM call(s) could not be priced, so the reported cost is lower than"
                             + " the real spend.", "/settings/llm"));
         }
+        // No action route on purpose: reconciliation happens in TokenUsageMapper, so this is a code defect
+        // and not a setting. The panel's value is that every row is actionable — pointing an operator at a
+        // settings page that cannot help is worse than pointing nowhere.
         int unreconciled = count(c,
                 "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE token_type = 'TOTAL'");
         if (unreconciled > 0) {
             rows.add(new AttentionView("LLM_USAGE_UNRECONCILED", Severity.WARNING, null,
-                    unreconciled + " LLM call(s) reported a token breakdown that did not match their"
-                            + " own total, so only the total was recorded.", "/settings/llm"));
+                    unreconciled + " LLM call(s) reported a token breakdown that did not match their own"
+                            + " total, so only the total was recorded and those calls are not priced. This"
+                            + " is a mapping defect rather than a setting, so the figures will not change"
+                            + " until it is fixed.", null));
         }
     }
+```
+
+**Every producible shape and which row it must raise** — the pricer emits exactly these, so this table is
+the test matrix:
+
+| `pricing_mode` | `token_type` | Raises | Why |
+|---|---|---|---|
+| `METERED` | per-type | neither | priced normally |
+| `UNMETERED` | per-type | neither | asserted zero, priced |
+| `UNKNOWN` | per-type | `LLM_COST_UNPRICED` | no rate for that dimension — an operator fixes this |
+| `UNKNOWN` | `TOTAL` | `LLM_USAGE_UNRECONCILED` only | unreconciled, therefore unpriced; the cause is the mapping |
+| `UNMETERED` | `TOTAL` | `LLM_USAGE_UNRECONCILED` only | unreconciled but cost is an asserted zero, so never "unpriced" |
+
+`METERED` + `TOTAL` is unreachable — the ledger's `CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')`
+forbids it, because an unreconciled call has no split for a rate to apply to.
 ```
 
 - [ ] **Step 4: Run the tests**
