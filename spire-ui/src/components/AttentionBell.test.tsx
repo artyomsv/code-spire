@@ -300,4 +300,35 @@ describe('AttentionBell', () => {
     FakeSocket.push(ORCHESTRATOR, []);
     await waitFor(() => expect(screen.queryByTestId('attention-count')).toBeNull());
   });
+
+  /**
+   * A dismissable row with NO subject — the ledger-wide cost conditions, which describe calls already
+   * made rather than one record. Every dismissable row used to name a review, so the control's
+   * accessible name fell back to a value nothing had exercised.
+   */
+  it('dismisses a system-wide row, naming it by its code', async () => {
+    const unpriced: AttentionItem = {
+      code: 'LLM_COST_UNPRICED',
+      severity: 'WARNING',
+      subject: null,
+      message: '3 LLM call(s) could not be priced, so the reported cost is lower than the real spend.',
+      action: '/settings/llm',
+      dismiss: '/api/attention/ack/LLM_COST_UNPRICED',
+    };
+    await renderWithFeeds([unpriced], []);
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(unpriced.message)).toBeInTheDocument());
+
+    const button = screen.getByRole('button', { name: /^Dismiss:/ });
+    expect(button).toHaveAccessibleName('Dismiss: LLM_COST_UNPRICED');
+    button.click();
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(unpriced.dismiss, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'JavaScript' },
+      }),
+    );
+  });
 });
