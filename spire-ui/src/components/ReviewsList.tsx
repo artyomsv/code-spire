@@ -28,6 +28,23 @@ function matchesChip(status: ReviewStatus, f: ChipFilter): boolean {
   return status === 'cancelled' || status === 'superseded';
 }
 
+/**
+ * The Cost cell's text. `costMillicents` sums to 0 both when no charge has landed yet and when
+ * every priced charge was an asserted UNMETERED zero — those are not the same thing, and must not
+ * both render "$0.000". `model` is blank exactly when no charge line has landed for this review yet
+ * (it is derived from the ledger's most recent charge, per its own contract above), so it is what
+ * tells "nothing to show" apart from "a real, possibly-zero, total" — and `unpricedCalls` marks that
+ * total explicitly partial rather than complete.
+ */
+function costCell(r: ReviewSummary): { text: string; title: string } {
+  if (!r.model) return { text: '—', title: 'No charges recorded yet' };
+  const amount = formatCost(r.costMillicents);
+  if (r.unpricedCalls > 0) {
+    return { text: `${amount}*`, title: `${r.unpricedCalls} call(s) could not be priced — this total is partial` };
+  }
+  return { text: amount, title: 'Review cost' };
+}
+
 interface Props {
   reviews: ReviewSummary[];
   loading: boolean;
@@ -201,7 +218,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                 <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings)}</div>
                 <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                 <div className="cell-r">
-                  <span className="mono" title="Review cost">{formatCost(r.costMillicents)}</span>
+                  <span className="mono" title={costCell(r).title}>{costCell(r).text}</span>
                 </div>
                 <div className="cell-r">
                   <span className="time">{ago(r.updatedAt)}</span>

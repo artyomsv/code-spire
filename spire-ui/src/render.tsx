@@ -6,15 +6,12 @@ import { RiOpenaiFill } from 'react-icons/ri';
 import { SiClaude, SiGooglegemini } from 'react-icons/si';
 import type {
   Finding,
-  LlmCall,
   PrState,
   ReconciliationItem,
   ReviewDetail,
   ReviewEvent,
   ReviewStatus,
-  Usage,
 } from './api';
-import { formatCost } from './money';
 import { formatEventTime } from './format';
 
 export { formatEventTime };
@@ -613,82 +610,6 @@ export function findingsCard(r: ReviewDetail) {
             <div className="resolved-group-body">{closedRows.map((row) => findingRow(r, row))}</div>
           </details>
         )}
-      </div>
-    </div>
-  );
-}
-
-const EMPTY_USAGE: Usage = { model: '—', prompt: '—', completion: '—', cost: '—', latency: '—' };
-
-const LLM_CALL_KIND_LABEL: Record<string, string> = {
-  review: 'Review',
-  followup: 'Follow-up',
-  reconcile: 'Reconcile',
-};
-
-function llmCallRow(call: LlmCall, i: number) {
-  const kind = LLM_CALL_KIND_LABEL[call.kind] ?? call.kind;
-  return (
-    <div key={i} className={`usage-call ${call.kind}`}>
-      <div className="usage-call-top">
-        <span className="usage-kind">{kind}</span>
-        {call.createdAt && <span className="usage-time">{formatEventTime(call.createdAt)}</span>}
-        <span className="usage-cost">{formatCost(call.costMillicents)}</span>
-      </div>
-      <div className="usage-call-meta">
-        <div className="usage-model">{call.model}</div>
-        <div className="usage-tokens">
-          {call.tokensIn.toLocaleString()} input → {call.tokensOut.toLocaleString()} output tokens
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function usageCard(r: ReviewDetail) {
-  if (r.llmCalls?.length) {
-    const total = r.llmCalls.reduce((sum, call) => sum + call.costMillicents, 0);
-    return (
-      <div className="card">
-        <div className="head">
-          <span className="k">//</span>
-          <h3>Model usage</h3>
-          <span className="badge">
-            {r.llmCalls.length} request{r.llmCalls.length === 1 ? '' : 's'}
-          </span>
-        </div>
-        <div className="body">
-          <div className="usage-calls">
-            {r.llmCalls.map(llmCallRow)}
-            <div className="usage-total">
-              <span>Total</span>
-              <span className="accent">{formatCost(total)}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  const u = r.usage ?? EMPTY_USAGE;
-  return (
-    <div className="card">
-      <div className="head">
-        <span className="k">//</span>
-        <h3>Model usage</h3>
-      </div>
-      <div className="body">
-        <dl className="kv">
-          <dt>Model</dt>
-          <dd>{u.model}</dd>
-          <dt>Prompt tokens</dt>
-          <dd>{u.prompt}</dd>
-          <dt>Completion tokens</dt>
-          <dd>{u.completion}</dd>
-          <dt>Latency</dt>
-          <dd>{u.latency}</dd>
-          <dt>Cost</dt>
-          <dd className="accent">{u.cost}</dd>
-        </dl>
       </div>
     </div>
   );

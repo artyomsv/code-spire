@@ -21,8 +21,8 @@ describe('byExpenseDesc', () => {
     type: 'openai',
     name: label,
     label,
-    inputPriceMillicentsPerMillion: input,
-    outputPriceMillicentsPerMillion: output,
+    pricingMode: 'METERED',
+    rates: { INPUT: input, OUTPUT: output },
     outputTokenParam: 'MAX_TOKENS',
     supportsTemperature: true,
     reasoningEffort: null,
@@ -31,7 +31,7 @@ describe('byExpenseDesc', () => {
     createdAt: '2026-07-07T00:00:00Z',
   });
 
-  it('orders most-expensive-first by combined price', () => {
+  it('orders most-expensive-first by summed rates', () => {
     const cheap = model('mini', 15_000, 60_000); // 75k total
     const mid = model('4o', 250_000, 1_000_000); // 1.25M total
     const dear = model('o1', 1_500_000, 6_000_000); // 7.5M total
@@ -43,6 +43,17 @@ describe('byExpenseDesc', () => {
     byExpenseDesc(list);
     expect(list.map((m) => m.label)).toEqual(['a', 'b']);
   });
+
+  /**
+   * An UNMETERED model carries no rates at all (the validator refuses one that does), so its
+   * summed rate is 0 — the same value a never-priced model would sum to, and correctly the
+   * cheapest thing in the list.
+   */
+  it('sorts an UNMETERED model last, since its empty rates sum to zero', () => {
+    const priced = model('priced', 100, 200);
+    const free: LlmModelView = { ...model('free', 0, 0), pricingMode: 'UNMETERED', rates: {} };
+    expect(byExpenseDesc([free, priced]).map((m) => m.label)).toEqual(['priced', 'free']);
+  });
 });
 
 describe('profileHint', () => {
@@ -51,8 +62,8 @@ describe('profileHint', () => {
     type: 'openai',
     name: 'x',
     label: 'x',
-    inputPriceMillicentsPerMillion: 0,
-    outputPriceMillicentsPerMillion: 0,
+    pricingMode: 'METERED',
+    rates: {},
     outputTokenParam: 'MAX_TOKENS',
     supportsTemperature: true,
     reasoningEffort: null,

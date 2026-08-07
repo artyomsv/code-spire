@@ -616,6 +616,9 @@
     font-size: 13px; font-weight: 600; color: var(--text);
   }
   .usage-total .accent { font-family: var(--font-mono); color: var(--iris); }
+  /* Shown only when unpricedCalls > 0 — the total above sums what COULD be priced, and this is the
+     only thing saying it left something out. */
+  .usage-partial { margin-top: 6px; font-size: 11px; color: var(--warn); }
 
   .clean { text-align: center; padding: 26px; color: var(--good); font-weight: 600; font-size: 13.5px; }
   .clean .em { font-family: var(--font-mono); font-size: 22px; display: block; margin-bottom: 6px; }
