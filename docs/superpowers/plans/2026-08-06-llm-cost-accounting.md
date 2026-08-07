@@ -1916,17 +1916,35 @@ Expected: FAIL — the new fields are unknown and no rate validation exists.
             throw new BadRequestException("Unsupported model type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
         }
-        // Pricing validity lives in the registry, which owns the METERED/UNMETERED rules and the
+        // Pricing validity lives with the validator, which owns the METERED/UNMETERED rules and the
         // mandatory-dimension list. Surfaced as 400 rather than 500 because it is the caller's input.
         try {
-            registry.validatePricing(in);
+            LlmModelPricingValidator.validate(in);
         } catch (IllegalArgumentException invalid) {
             throw new BadRequestException(invalid.getMessage());
         }
     }
 ```
 
-Expose `validatePricing(LlmModelInput)` on the registry (the `validatedMode` helper from Task 4, made package-visible or public and returning `void`), so the rule has one home and the resource does not restate it. Delete `requireNonNegative` — nothing calls it now.
+**The real API — verified, because an earlier draft of this step named a method that does not exist.** Task 4
+extracted validation into `LlmModelPricingValidator`, a **package-private class of static methods** (no CDI
+bean), and the registry calls it at `LlmModelRegistry.java:77` and `:107`:
+
+```java
+    static Validated validate(LlmModelInput in)     // throws IllegalArgumentException; returns the parsed
+    record Validated(PricingMode mode, Map<TokenType, Long> rates)
+    static final List<TokenType> REQUIRED_RATES     // = [INPUT, OUTPUT]
+```
+
+So call `LlmModelPricingValidator.validate(in)` **statically** — there is no `registry.validatePricing(...)`
+to expose and you must not add one. `LlmModelResource` is in the same package (`…orchestrator.llm`), so the
+package-private access works without widening anything.
+
+Discard the returned `Validated`: the resource is only converting an exception type, and the registry
+re-validates on the write path, which is what actually protects the data. Validating twice is deliberate —
+the resource's call exists to produce a 400 instead of a 500, not to be the enforcement point.
+
+Delete `requireNonNegative` — nothing calls it once the price fields are gone.
 
 Map the delete guard to 409:
 
