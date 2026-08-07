@@ -28,8 +28,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * under test is precisely that the run number advances <em>because the aggregate recorded a second
  * request</em> — a fake run counter would assert the wiring while assuming the fact.
  *
- * <p>Each test owns its own review id: charges aggregate by {@code review_id} with no teardown here,
- * so a shared id would let one test count the other's rows.
+ * <p>Each test owns its own review id, and the WORKSPACE is unique to this class too: charges aggregate
+ * by {@code review_id} with no teardown here, and the saga resolves an SCM provider by workspace name —
+ * under the shared {@code TEST-WS} it picked up another suite's provider fixture and failed decrypting
+ * that fixture's secret rather than testing anything about charges.
  */
 @QuarkusTest
 class RerunChargeIdentityIT {
@@ -47,7 +49,7 @@ class RerunChargeIdentityIT {
 
     @Test
     void aSecondRunOnTheSameCommitRecordsItsOwnCharges() {
-        String reviewId = "review::TEST-WS/TEST-RERUN#9201";
+        String reviewId = "review::TEST-RERUN-WS/TEST-RERUN-REPO#9201";
         String commit = "TESTSHA9201";
         requestReview(reviewId, commit, "OPENED");
 
@@ -69,7 +71,7 @@ class RerunChargeIdentityIT {
      */
     @Test
     void aRedeliveredResultFromTheSameRunIsStillChargedOnce() {
-        String reviewId = "review::TEST-WS/TEST-RERUN#9202";
+        String reviewId = "review::TEST-RERUN-WS/TEST-RERUN-REPO#9202";
         String commit = "TESTSHA9202";
         requestReview(reviewId, commit, "OPENED");
 
