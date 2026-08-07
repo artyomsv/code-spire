@@ -9,7 +9,6 @@ const line = (overrides: Partial<ChargeLineView>): ChargeLineView => ({
   model: 'TEST-MODEL',
   tokenType: 'INPUT',
   tokens: 1000,
-  rateMillicentsPerMillion: 250_000,
   costMillicents: 250,
   pricingMode: 'METERED',
   pricedAt: '2026-08-06T00:00:00Z',
@@ -21,12 +20,12 @@ const line = (overrides: Partial<ChargeLineView>): ChargeLineView => ({
  * priced reads as complete, which is the same defect as the zero it replaced — one layer up.
  */
 describe('ReviewCostCard', () => {
-  it('groups lines by call and shows a rate per token type', () => {
+  it('groups lines by call and shows each token type its own cost', () => {
     render(
       <ReviewCostCard
         lines={[
-          line({ tokenType: 'INPUT', tokens: 1000, rateMillicentsPerMillion: 250_000, costMillicents: 250 }),
-          line({ tokenType: 'CACHED_INPUT', tokens: 4000, rateMillicentsPerMillion: 25_000, costMillicents: 100 }),
+          line({ tokenType: 'INPUT', tokens: 1000, costMillicents: 250 }),
+          line({ tokenType: 'CACHED_INPUT', tokens: 4000, costMillicents: 100 }),
         ]}
         unpricedCalls={0}
       />,
@@ -43,16 +42,19 @@ describe('ReviewCostCard', () => {
     // enumerated `[,.']` would have covered. Every locale's group separator is a single non-digit
     // character, so matching "one optional non-digit" is tolerant without needing that list kept current.
     expect(screen.getByText(/4[^0-9]?000 tokens/)).toBeInTheDocument();
-    // The rate and cost are asserted directly, not just for presence.
-    expect(screen.getByText(/\$2\.500\/1M tokens · \$0\.003/)).toBeInTheDocument();
-    expect(screen.getByText(/\$0\.250\/1M tokens · \$0\.001/)).toBeInTheDocument();
+    // Each line's cost is asserted directly, not just for presence. No rate appears: the server does
+    // not send one (a rate is admin-only configuration and this page is viewer-visible), so asserting
+    // its absence here is what would catch it being reintroduced into the payload and rendered.
+    expect(screen.getByText(/1[^0-9]?000 tokens · \$0\.003/)).toBeInTheDocument();
+    expect(screen.getByText(/4[^0-9]?000 tokens · \$0\.001/)).toBeInTheDocument();
+    expect(screen.queryByText(/\/1M tokens/)).not.toBeInTheDocument();
     expect(screen.queryByText(/could not be priced/i)).not.toBeInTheDocument();
   });
 
   it('says the total is partial when a call could not be priced', () => {
     render(
       <ReviewCostCard
-        lines={[line({ rateMillicentsPerMillion: null, costMillicents: null, pricingMode: 'UNKNOWN' })]}
+        lines={[line({ costMillicents: null, pricingMode: 'UNKNOWN' })]}
         unpricedCalls={1}
       />,
     );
@@ -74,8 +76,8 @@ describe('ReviewCostCard', () => {
     render(
       <ReviewCostCard
         lines={[
-          line({ callRef: 'CANARY-CALL-3', tokenType: 'INPUT', rateMillicentsPerMillion: null, costMillicents: null, pricingMode: 'UNKNOWN' }),
-          line({ callRef: 'CANARY-CALL-4', tokenType: 'OUTPUT', rateMillicentsPerMillion: null, costMillicents: null, pricingMode: 'UNKNOWN' }),
+          line({ callRef: 'CANARY-CALL-3', tokenType: 'INPUT', costMillicents: null, pricingMode: 'UNKNOWN' }),
+          line({ callRef: 'CANARY-CALL-4', tokenType: 'OUTPUT', costMillicents: null, pricingMode: 'UNKNOWN' }),
         ]}
         unpricedCalls={2}
       />,
@@ -91,7 +93,7 @@ describe('ReviewCostCard', () => {
   it('labels an unmetered call as self-hosted rather than as free', () => {
     render(
       <ReviewCostCard
-        lines={[line({ rateMillicentsPerMillion: 0, costMillicents: 0, pricingMode: 'UNMETERED' })]}
+        lines={[line({ costMillicents: 0, pricingMode: 'UNMETERED' })]}
         unpricedCalls={0}
       />,
     );
@@ -116,7 +118,7 @@ describe('ReviewCostCard', () => {
       <ReviewCostCard
         lines={[
           line({ tokenType: 'INPUT', costMillicents: 250, pricingMode: 'METERED' }),
-          line({ tokenType: 'OUTPUT', costMillicents: null, pricingMode: 'UNKNOWN', rateMillicentsPerMillion: null }),
+          line({ tokenType: 'OUTPUT', costMillicents: null, pricingMode: 'UNKNOWN' }),
         ]}
         unpricedCalls={1}
       />,

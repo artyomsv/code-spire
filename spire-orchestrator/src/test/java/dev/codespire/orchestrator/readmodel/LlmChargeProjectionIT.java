@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -111,6 +112,36 @@ class LlmChargeProjectionIT {
         // renders the qualifier silently became false. A typed getter cannot express that failure.
         assertEquals(1, unpricedCallsOnTheWire(detail),
                 "the page cannot mark its total partial unless the payload says how many calls it omits");
+    }
+
+    /**
+     * The per-token rate must not reach a viewer. A rate is operator-entered configuration, and
+     * configuration reads are admin-only (ADR-022's third rule, which is why {@code LlmModelResource}
+     * refuses a viewer) — while this payload is served under viewer+admin.
+     *
+     * <p>Asserted on the SERIALIZED payload and by field NAME, because that is the only place the
+     * disclosure would happen: a record component added back for convenience would be silently sent,
+     * and no typed assertion about cost or mode would notice.
+     */
+    @Test
+    void theChargeLinePayloadDoesNotCarryThePerTokenRate() {
+        long pr = 9107L;
+        String reviewId = reviewId(pr);
+        projection.registerHeader(reviewId, new RepoRef("TEST-WS", "TEST-REPO"), pr,
+                "t", "a", "aid", "src", "dst", "TESTSHA9107", "http://example.invalid/pr", "github",
+                "completed", 0);
+        projection.recordCharges(call(reviewId, "CANARY-REF-7",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L))));
+
+        ReviewDetail detail = projection.loadDetail("TEST-WS", "TEST-REPO", pr).orElseThrow();
+
+        List<String> fields = new java.util.ArrayList<>();
+        mapper.valueToTree(detail).get("chargeLines").get(0).fieldNames().forEachRemaining(fields::add);
+        // Paired with a positive: a payload that carried no line fields at all would satisfy the
+        // absence on its own, and prove nothing.
+        assertTrue(fields.contains("costMillicents"), "the line still carries its own money: " + fields);
+        assertFalse(fields.stream().anyMatch(f -> f.toLowerCase(java.util.Locale.ROOT).contains("rate")),
+                "a viewer-visible payload must not carry a configured rate: " + fields);
     }
 
     private int unpricedCallsOnTheWire(ReviewDetail detail) {

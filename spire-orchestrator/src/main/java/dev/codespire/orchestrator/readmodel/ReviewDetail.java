@@ -69,9 +69,21 @@ public record ReviewDetail(
     }
 
     /**
-     * One token dimension of one LLM call, priced. {@code rateMillicentsPerMillion} and
-     * {@code costMillicents} are null exactly when {@code pricingMode} is "UNKNOWN" — never 0, which
-     * would be indistinguishable from an UNMETERED model's asserted zero.
+     * One token dimension of one LLM call, priced. {@code costMillicents} is null exactly when
+     * {@code pricingMode} is "UNKNOWN" — never 0, which would be indistinguishable from an UNMETERED
+     * model's asserted zero.
+     *
+     * <p><b>The per-token RATE is deliberately absent.</b> A rate is operator-entered configuration, and
+     * ADR-022's third rule makes every registry admin-only <em>including its reads</em> — which is why
+     * {@code LlmModelResource} refuses a viewer. This payload is served to viewers, so carrying the rate
+     * put the same value on both sides of that rule; and while a cost and a token count were already
+     * viewer-visible (making INPUT/OUTPUT rates solvable), {@code CACHED_INPUT}/{@code CACHE_WRITE}/
+     * {@code REASONING} had no such counterpart. Dropping it rather than nulling it per role keeps one
+     * payload shape for both roles: a shape that varies by caller is the class of bug that already
+     * shipped here once, where a field absent from the wire read as {@code undefined} and silently
+     * disabled the qualifier it controlled. The consequence, stated: a review page no longer shows the
+     * rate that produced its figure. The ledger row still carries it — that is what makes a historical
+     * cost reproducible — and the current rate is on the admin-only Models page.
      *
      * <p>{@code callRef} is the ledger's own call identity ({@code UNIQUE (call_ref, token_type)}) — the
      * UI groups lines back into calls by it rather than by {@code pricedAt}, because that identity is
@@ -88,8 +100,7 @@ public record ReviewDetail(
      * alongside the query that fills it.
      */
     public record ChargeLineView(String callRef, String kind, String model, String tokenType, int tokens,
-                                 Long rateMillicentsPerMillion, Long costMillicents,
-                                 String pricingMode, String pricedAt) {
+                                 Long costMillicents, String pricingMode, String pricedAt) {
     }
 
     /**

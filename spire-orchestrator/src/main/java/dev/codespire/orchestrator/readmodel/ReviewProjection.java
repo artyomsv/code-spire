@@ -1076,8 +1076,11 @@ public class ReviewProjection {
     /** Every charge line recorded for a review, oldest first — the cost card's raw material. */
     public List<ReviewDetail.ChargeLineView> chargeLines(String reviewId) {
         List<ReviewDetail.ChargeLineView> out = new ArrayList<>();
+        // rate_millicents_per_million is deliberately NOT selected: this view is served to viewers and a
+        // rate is admin-only configuration (see ChargeLineView). Leaving it out of the QUERY, not just
+        // out of the record, keeps the omission from being undone by an autocompleted constructor arg.
         String sql = """
-                SELECT call_ref, kind, model, token_type, tokens, rate_millicents_per_million,
+                SELECT call_ref, kind, model, token_type, tokens,
                        cost_millicents, pricing_mode, priced_at
                   FROM llm_charge WHERE review_id = ? ORDER BY priced_at, token_type
                 """;
@@ -1085,12 +1088,11 @@ public class ReviewProjection {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    // rate/cost are NULLABLE — read via getObject(..., Long.class) so NULL stays NULL.
+                    // cost is NULLABLE — read via getObject(..., Long.class) so NULL stays NULL.
                     // getLong would coerce "unpriced" back into 0, which is the bug this branch removes.
-                    Long rate = rs.getObject("rate_millicents_per_million", Long.class);
                     Long cost = rs.getObject("cost_millicents", Long.class);
                     out.add(new ReviewDetail.ChargeLineView(rs.getString("call_ref"), rs.getString("kind"),
-                            rs.getString("model"), rs.getString("token_type"), rs.getInt("tokens"), rate, cost,
+                            rs.getString("model"), rs.getString("token_type"), rs.getInt("tokens"), cost,
                             rs.getString("pricing_mode"), rs.getTimestamp("priced_at").toInstant().toString()));
                 }
             }

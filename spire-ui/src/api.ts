@@ -108,12 +108,16 @@ export type PricingMode = 'METERED' | 'UNMETERED' | 'UNKNOWN';
 export type ChargeKind = 'REVIEW' | 'RECONCILE' | 'FOLLOWUP';
 
 /**
- * One token dimension of one LLM call, priced. Rate and cost are null exactly when `pricingMode` is
+ * One token dimension of one LLM call, priced. `costMillicents` is null exactly when `pricingMode` is
  * 'UNKNOWN' — never 0, which would be indistinguishable from an UNMETERED model's asserted zero.
  *
- * `callRef` is the ledger's own call identity — group by it, not by `pricedAt`. Each line of one
- * call is written in its own transaction server-side, so sibling lines of the same call do not
- * reliably share one `pricedAt` value.
+ * The per-token rate is not sent: a rate is operator-entered configuration, and configuration reads are
+ * admin-only (ADR-022), while this payload is served to viewers. A cost without its rate is still
+ * honest — `pricingMode` says which world the model is in — and the rate remains on the ledger row and
+ * on the admin-only Models page.
+ *
+ * `callRef` is the ledger's own call identity — group by it, not by `pricedAt`, which two calls of one
+ * review can share.
  */
 export interface ChargeLineView {
   callRef: string;
@@ -121,7 +125,6 @@ export interface ChargeLineView {
   model: string;
   tokenType: TokenType;
   tokens: number;
-  rateMillicentsPerMillion: number | null;
   costMillicents: number | null;
   pricingMode: PricingMode;
   pricedAt: string; // ISO-8601

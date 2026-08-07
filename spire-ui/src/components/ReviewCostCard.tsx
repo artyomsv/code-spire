@@ -1,7 +1,7 @@
 import type { ChargeKind, ChargeLineView } from '../api';
 import { formatEventTime } from '../format';
 import { formatCost } from '../money';
-import { TOKEN_TYPE_LABEL, formatRate } from '../llmPricing';
+import { TOKEN_TYPE_LABEL } from '../llmPricing';
 
 const CALL_KIND_LABEL: Record<ChargeKind, string> = {
   REVIEW: 'Review',
@@ -54,10 +54,15 @@ function callCostText(lines: ChargeLineView[]): string {
   return lines.some((l) => l.pricingMode === 'UNKNOWN') ? `${amount} (partial)` : amount;
 }
 
+/**
+ * A line's own money, without the rate that produced it — the server does not send one, because a rate
+ * is admin-only configuration and this page is viewer-visible. `pricingMode` still separates the three
+ * cases, which is what keeps a metered line that truncates to $0.0000 from reading as free.
+ */
 function lineDetail(line: ChargeLineView): string {
   if (line.pricingMode === 'UNMETERED') return 'self-hosted (unmetered)';
   if (line.pricingMode === 'UNKNOWN') return 'could not be priced';
-  return `${formatRate(line.rateMillicentsPerMillion)}/1M tokens · ${formatCost(line.costMillicents)}`;
+  return formatCost(line.costMillicents);
 }
 
 function lineRow(line: ChargeLineView, i: number) {
