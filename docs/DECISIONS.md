@@ -31,6 +31,17 @@ Snapshotting `rate_millicents_per_million` onto the charge line at write time ma
 reproducible as `tokens × rate ÷ 1e6` **by construction**, not by convention — a later price edit is
 structurally invisible to history rather than merely discouraged from touching it.
 
+That rate is stored, not served. A review's charge-line payload is viewer-readable and a rate is
+operator-entered configuration, which ADR-022 makes admin-only *including its reads*; carrying it on the
+review view put one value on both sides of that rule, and `CACHED_INPUT`/`CACHE_WRITE`/`REASONING` rates
+had no viewer-visible counterpart to be inferred from the way INPUT/OUTPUT did. So reproducibility is a
+property of the **ledger row**, not of the page: the review page shows what a call cost and which world
+its model is in, and the rate behind it is on the admin-only Models page and in the row itself. It is also
+bounded above (`MAX_RATE_MILLICENTS_PER_MILLION`, ~$10,000 per million tokens) — not a pricing policy but
+an overflow guard, since `tokens × rate` in `long` millicents wraps into a **negative** cost past roughly
+9.2e12, and a negative charge subtracts from every total it lands in while raising none of the attention
+rows an unpriced call does. V31 adds the matching `CHECK`.
+
 **Why `pricing_mode` is a category, not a stricter number check.** The blank-becomes-zero defect
 survives any single-layer fix, because the layers disagree about what a bare `0` *means* and each is
 right about its own slice: the UI's default is a reasonable convenience, the REST layer's "reject
