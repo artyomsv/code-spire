@@ -20,6 +20,20 @@ final class LlmModelPricingValidator {
      */
     static final List<TokenType> REQUIRED_RATES = List.of(TokenType.INPUT, TokenType.OUTPUT);
 
+    /**
+     * The largest saveable rate: 1e9 millicents = <b>$10,000 per million tokens</b>, some fifty times
+     * the priciest model published anywhere. A typo bound, not a pricing policy — a real price must
+     * never hit it.
+     *
+     * <p>Bounded because {@code ChargeLine.metered} computes {@code tokens × rate} in a {@code long} of
+     * millicents. Above roughly 9.2e12 that product wraps and the ledger stores a NEGATIVE cost, which
+     * subtracts from the review's total and from any deployment-wide sum — silently, and with no
+     * attention row, unlike an unpriced call. This value is chosen so even {@code Integer.MAX_VALUE}
+     * tokens cannot overflow it (2.1e9 × 1e9 = 2.1e18, against a ceiling of 9.2e18), which means the
+     * bound holds without knowing anything about the call it will price.
+     */
+    static final long MAX_RATE_MILLICENTS_PER_MILLION = 1_000_000_000L;
+
     private LlmModelPricingValidator() {
     }
 
@@ -39,12 +53,27 @@ final class LlmModelPricingValidator {
             return new Validated(mode, Map.of());
         }
         requireEveryMandatoryRate(rawRates);
-        rawRates.forEach((type, rate) -> {
-            if (rate == null || rate <= 0) {
-                throw new IllegalArgumentException("Rate for " + type + " must be above zero");
-            }
-        });
+        rawRates.forEach(LlmModelPricingValidator::requireRateInRange);
         return new Validated(mode, parseRates(rawRates));
+    }
+
+    /**
+     * Both ends of the range. The upper end is the half that PREVENTS a wrapped cost: the arithmetic
+     * downstream can refuse to compute one, but refusing at charge time only turns a review's spend into
+     * an unpriced line, after the money is gone. Rejecting the rate at the save is what stops it.
+     */
+    private static void requireRateInRange(String type, Long rate) {
+        if (rate == null || rate <= 0) {
+            throw new IllegalArgumentException("Rate for " + type + " must be above zero");
+        }
+        if (rate > MAX_RATE_MILLICENTS_PER_MILLION) {
+            throw new IllegalArgumentException("Rate for " + type + " is implausibly large ("
+                    + rate + " millicents per million tokens = $" + rate / 100_000L
+                    + " per million tokens). The maximum is " + MAX_RATE_MILLICENTS_PER_MILLION
+                    + " ($" + MAX_RATE_MILLICENTS_PER_MILLION / 100_000L + " per million tokens);"
+                    + " above that a call's cost can no longer be computed. Check the unit: rates are"
+                    + " millicents per MILLION tokens, so $2.50 per million is 250000.");
+        }
     }
 
     private static void requireEveryMandatoryRate(Map<String, Long> rawRates) {

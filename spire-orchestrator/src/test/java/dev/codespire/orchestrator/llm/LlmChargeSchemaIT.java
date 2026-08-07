@@ -12,6 +12,7 @@ import java.sql.Statement;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The ledger's CHECK constraints are the backstop, so they are asserted at the SQL layer rather than
@@ -81,6 +82,32 @@ class LlmChargeSchemaIT {
         String sql = insert("METERED", "CACHE_WRITE", "300000", "3");
         exec(sql);
         assertThrows(SQLException.class, () -> exec(sql));
+    }
+
+    /**
+     * A negative cost is not a small error: it SUBTRACTS from the review's total and from any
+     * deployment-wide sum, so one rate typo would silently reduce reported spend — worse than an
+     * unpriced call, which at least raises an attention row.
+     *
+     * <p>The refusal is asserted to name its CHECK. A bare {@code SQLException} is also what a UNIQUE
+     * collision or a typo'd literal throws, so "it threw" would pass whether or not the constraint
+     * exists — the failure mode this file's own header warns about.
+     */
+    @Test
+    void aNegativeCostIsRejectedByItsOwnCheck() {
+        assertDoesNotThrow(() -> exec(costing("CANARY-COST-POSITIVE", "2")));
+        SQLException refused =
+                assertThrows(SQLException.class, () -> exec(costing("CANARY-COST-NEGATIVE", "-2")));
+        assertTrue(refused.getMessage().contains("llm_charge_cost_non_negative"),
+                "rejected for some other reason, so this proves nothing: " + refused.getMessage());
+    }
+
+    /** A metered REASONING line at a fixed rate, with the cost as the only variable. */
+    private String costing(String callRef, String cost) {
+        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+                + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
+                + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', '" + callRef + "', 'REVIEW', "
+                + "'TEST-MODEL', 'METERED', 'REASONING', 10, 250000, " + cost + ")";
     }
 
     @Test

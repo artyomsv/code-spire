@@ -26,10 +26,18 @@ public record ChargeLine(TokenType tokenType, int tokens, Long rateMillicentsPer
      *
      * <p>The loss is bounded by one millicent ($0.00001) per line, and a genuinely sub-millicent line
      * (100 cached tokens at $0.075/1M) records an exact {@code 0} — still distinguishable from an
-     * asserted zero, because {@code mode} is {@code METERED} and the rate is on the row.
+     * asserted zero, because {@code mode} records which world the model is in.
+     *
+     * <p>{@code multiplyExact} rather than {@code *}: past roughly 9.2e12 millicents per million tokens
+     * the product wraps and yields a NEGATIVE cost, which subtracts from the review's total and from any
+     * deployment-wide sum with nothing to announce it. Throwing is only the backstop —
+     * {@code LlmModelPricingValidator.MAX_RATE_MILLICENTS_PER_MILLION} refuses such a rate at the save,
+     * which is what actually prevents it; {@link LlmModelPricer} turns this throw into an UNKNOWN line so
+     * a rate stored before that bound existed costs a price, not the whole review.
      */
     public static ChargeLine metered(TokenType type, int tokens, long rate) {
-        return new ChargeLine(type, tokens, rate, (long) tokens * rate / 1_000_000L, PricingMode.METERED);
+        long cost = Math.multiplyExact((long) tokens, rate) / 1_000_000L;
+        return new ChargeLine(type, tokens, rate, cost, PricingMode.METERED);
     }
 
     public static ChargeLine unmetered(TokenType type, int tokens) {

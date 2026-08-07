@@ -92,7 +92,19 @@ public class LlmModelPricer {
         if (pricing.mode() == PricingMode.UNKNOWN || rate == null) {
             return ChargeLine.unknown(count.type(), count.tokens());
         }
-        return ChargeLine.metered(count.type(), count.tokens(), rate);
+        try {
+            return ChargeLine.metered(count.type(), count.tokens(), rate);
+        } catch (ArithmeticException overflow) {
+            // A rate stored before MAX_RATE_MILLICENTS_PER_MILLION existed. UNKNOWN for the same reason a
+            // lookup fault is: the cost could not be established, and inventing one — the wrapped
+            // negative this replaces, or a saturated maximum — would be a number nobody can trace to a
+            // real charge. Letting the throw escape instead would dead-letter the whole result event,
+            // losing the review's findings over one unpriceable line.
+            LOG.errorf(overflow, "Rate %d for %s on this call is too large to price (%d tokens) —"
+                    + " recording the line as unpriced; correct the rate in Settings → LLM → Models",
+                    rate, count.type(), count.tokens());
+            return ChargeLine.unknown(count.type(), count.tokens());
+        }
     }
 
     /** What the catalog says about a model's pricing; UNKNOWN with no rates when it cannot be read. */
