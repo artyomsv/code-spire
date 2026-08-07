@@ -12,6 +12,8 @@ import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.attention.AttentionBroadcaster;
+import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeLine;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -1070,6 +1072,84 @@ public class ReviewProjection {
             throw new IllegalStateException("Failed to load charge lines for " + reviewId, e);
         }
         return out;
+    }
+
+    /**
+     * Append one LLM call's charge lines. Idempotent: {@code ON CONFLICT DO NOTHING} against the
+     * ledger's {@code UNIQUE (call_ref, token_type)}, so a redelivered result event cannot charge the
+     * same call twice.
+     */
+    public void recordCharges(ChargeCall call) {
+        for (ChargeLine line : call.lines()) {
+            update("""
+                    INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode,
+                            token_type, tokens, rate_millicents_per_million, cost_millicents)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (call_ref, token_type) DO NOTHING
+                    """, ps -> {
+                ps.setObject(1, java.util.UUID.randomUUID());
+                ps.setString(2, call.reviewId());
+                ps.setString(3, call.callRef());
+                ps.setString(4, call.kind().name());
+                ps.setString(5, call.model());
+                ps.setString(6, line.mode().name());
+                ps.setString(7, line.tokenType().name());
+                ps.setInt(8, line.tokens());
+                setNullableLong(ps, 9, line.rateMillicentsPerMillion());
+                setNullableLong(ps, 10, line.costMillicents());
+            });
+        }
+        broadcast(call.reviewId());
+    }
+
+    /**
+     * Bind a nullable money column. NULL must stay NULL: a rate or cost written as 0 because the value
+     * was absent is the exact conflation this ledger exists to remove, and {@code setLong} on an
+     * unboxed null would either throw or silently write zero depending on the call site.
+     */
+    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
+        }
+    }
+
+    /**
+     * A review's cost.
+     *
+     * @param knownCostMillicents the sum of lines that COULD be priced. Deliberately not the whole
+     *                            picture on its own — see {@code unpricedCalls}.
+     * @param unpricedCalls       how many distinct calls have at least one unpriced line, so the UI can
+     *                            say the total is partial instead of presenting it as complete
+     * @param lastModel           the model on the most recent charge line, for the badge that used to
+     *                            read review_status.model
+     */
+    public record CostSummary(long knownCostMillicents, int unpricedCalls, String lastModel) {
+    }
+
+    /** A review's cost, derived from the ledger — see {@link CostSummary}. */
+    public CostSummary costOf(String reviewId) {
+        String sql = """
+                SELECT COALESCE(SUM(cost_millicents), 0)                                    AS known_cost,
+                       COUNT(DISTINCT CASE WHEN pricing_mode = 'UNKNOWN' THEN call_ref END) AS unpriced_calls,
+                       (SELECT model FROM llm_charge WHERE review_id = ?
+                         ORDER BY priced_at DESC LIMIT 1)                                    AS last_model
+                  FROM llm_charge WHERE review_id = ?
+                """;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return new CostSummary(0L, 0, null);
+                }
+                return new CostSummary(rs.getLong("known_cost"), rs.getInt("unpriced_calls"),
+                        rs.getString("last_model"));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to compute cost for " + reviewId, e);
+        }
     }
 
     // ---- broadcast ---------------------------------------------------------
