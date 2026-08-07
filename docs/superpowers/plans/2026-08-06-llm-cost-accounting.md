@@ -2347,10 +2347,25 @@ held the last run's review call."
 
 **Why the guard is here.** Pricing is post-hoc: `ResultSaga` prices when the result event returns, by which point the money is spent. Failing there would waste the spend *and* lose the review. The pre-spend point is where `GenerateReview` is emitted, which already has exactly this shape for a missing LLM credential at `ResultSaga.java:143-150` — copy that idiom.
 
-**You may need to re-add an injection Task 2 removed.** Task 2 deleted `ResultSaga`'s pricing calls and
-was told to drop its `LlmModelRegistry llmModels` field if nothing else used it. This task needs it again,
-for both `isPriceable` and `priceCall`. If the field is gone, put it back — that is expected churn from
-sequencing the removal before the replacement, not a mistake by either task.
+**You must re-add an injection Task 2 removed — verified gone.** `ResultSaga`'s `@Inject` list now ends at
+`WorkerLlmCredentials workerLlmCredentials` (`:73-74`) with no `LlmModelRegistry`. Add it back; this task
+needs it for both `isPriceable` and `priceCall`. That is expected churn from sequencing the removal before
+the replacement, not a mistake by either task.
+
+**The test harness detail that will bite you.** `ResultSagaRetryTest` fakes the projection with
+**`new ReviewProjection() { ... }` anonymous subclasses at six sites** (`:89, 215, 330, 382, 441, 500`).
+`recordCharges` is a concrete method on the real class, so those subclasses compile without it — and that
+is the trap: an un-overridden `recordCharges` runs the real body, which calls `update(...)` and
+`broadcast(...)` against a `DataSource` that was never injected into an anonymous instance.
+
+So **every fake whose flow can reach `charge(...)` must override `recordCharges` to capture instead**, or
+the test dies on an NPE deep inside the projection rather than on anything to do with your change. Add a
+capture list and a `note()` accessor to the fakes you need, following the pattern already there — do not
+introduce a second harness style alongside it.
+
+**Fold in one deferred cleanup while you are in this file.** `ResultSagaRetryTest:370` has a javadoc
+referring to `recordLlmCall`, a method deleted two tasks ago. It was left for whoever next opened this
+file, which is you. Reword it to name the ledger write it now describes.
 
 - [ ] **Step 1: Write the failing test**
 
