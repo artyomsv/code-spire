@@ -18,6 +18,15 @@ public final class CallRefs {
     }
 
     public static String of(String reviewId, String slot, ChargeKind kind) {
+        if (reviewId == null || reviewId.isBlank() || slot == null || slot.isBlank()) {
+            // A blank component still produces a well-formed-looking ref (e.g. "x||REVIEW") that
+            // silently breaks the UNIQUE (call_ref, token_type) identity this method exists to give:
+            // two different calls collide, and the second is discarded as a redelivery of the first —
+            // a lost charge.
+            throw new IllegalArgumentException(
+                    "A charge needs a reviewId and a slot (the commit, or the thread ref for a follow-up); "
+                            + "got reviewId='" + reviewId + "', slot='" + slot + "'");
+        }
         return reviewId + '|' + slot + '|' + kind.name();
     }
 }

@@ -77,7 +77,7 @@ class ConversationE2ETest {
         // planFollowUp needs a default LLM provider to pack a credential (else it skips).
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
-                    "test-llm", "openai", "http://localhost", "sk-test", "gpt-4o", 0.2, null, true, true));
+                    "test-llm", "openai", "http://localhost", "sk-test", "TEST-MODEL", 0.2, null, true, true));
         }
         // Mark the thread as bot-owned (scope A) so the reply is in-scope.
         try (Connection c = dataSource.getConnection();

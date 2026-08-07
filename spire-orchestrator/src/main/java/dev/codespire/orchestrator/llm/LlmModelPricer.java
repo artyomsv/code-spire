@@ -44,11 +44,18 @@ public class LlmModelPricer {
         if (counts.isEmpty()) {
             return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
         }
+        Pricing pricing = pricingFor(model);
+        // The catalog is consulted BEFORE the reconciled check, because an UNMETERED model's cost is an
+        // asserted zero whatever the split turns out to be.
+        if (pricing.mode() == PricingMode.UNMETERED) {
+            return usage.reconciled()
+                    ? counts.stream().map(count -> line(pricing, count)).toList()
+                    : List.of(ChargeLine.unmetered(TokenType.TOTAL, usage.reportedTotal()));
+        }
         // An unreconciled call has no split, so no per-type rate can be applied to it.
         if (!usage.reconciled()) {
             return List.of(ChargeLine.unknown(TokenType.TOTAL, usage.reportedTotal()));
         }
-        Pricing pricing = pricingFor(model);
         return counts.stream().map(count -> line(pricing, count)).toList();
     }
 

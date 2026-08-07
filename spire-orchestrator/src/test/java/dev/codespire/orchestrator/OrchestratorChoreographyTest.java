@@ -96,7 +96,7 @@ class OrchestratorChoreographyTest {
         // stub mode here, but the orchestrator still packs the default's credential.
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
-                    "test-llm", "openai", "http://localhost", "sk-test", "gpt-4o",
+                    "test-llm", "openai", "http://localhost", "sk-test", "TEST-MODEL",
                     0.2, null, true, true));
         }
     }

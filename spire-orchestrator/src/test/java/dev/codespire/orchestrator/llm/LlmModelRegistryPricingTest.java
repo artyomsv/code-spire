@@ -126,6 +126,26 @@ class LlmModelRegistryPricingTest {
     }
 
     /**
+     * An UNMETERED model's cost is an asserted zero whatever the split turns out to be — including when
+     * there is no split at all. This must record as UNMETERED, not as unpriced: the catalog already
+     * answered the question, so an unreconciled call must not downgrade that answer to UNKNOWN.
+     */
+    @Test
+    void anUnmeteredModelsUnreconciledCallIsStillAnAssertedZero() {
+        registry.create(new LlmModelInput("openai", "TEST-UNMETERED-UNRECONCILED", "TEST self-hosted",
+                "UNMETERED", Map.of(), null, null, null, Map.of(), true));
+
+        List<ChargeLine> lines = registry.priceCall("TEST-UNMETERED-UNRECONCILED",
+                new ModelUsage("TEST-UNMETERED-UNRECONCILED",
+                        List.of(new TokenCount(TokenType.TOTAL, 900)), 900, false));
+
+        assertEquals(1, lines.size());
+        assertEquals(TokenType.TOTAL, lines.get(0).tokenType());
+        assertEquals(PricingMode.UNMETERED, lines.get(0).mode());
+        assertEquals(0L, lines.get(0).costMillicents());
+    }
+
+    /**
      * The regression that motivated the change: an uncatalogued model used to be priced at 0, which
      * froze forever as "free". It must be UNKNOWN.
      */
