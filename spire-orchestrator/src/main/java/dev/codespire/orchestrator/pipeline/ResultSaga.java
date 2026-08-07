@@ -14,10 +14,15 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
+import dev.codespire.orchestrator.llm.CallRefs;
+import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeKind;
+import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -72,6 +77,9 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
+
+    @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
     @Inject
     dev.codespire.orchestrator.context.WorkerContextCredentials workerContextCredentials;
@@ -144,6 +152,19 @@ public class ResultSaga {
                     LOG.warnf("Skipping GenerateReview for %s — no default LLM provider set", e.reviewId());
                     return;
                 }
+                // Pre-spend guard. Pricing happens when the result comes back, so this is the last
+                // point at which an unpriceable call can be prevented rather than merely reported.
+                String model = workerLlmCredentials.defaultModelName().orElse("");
+                if (!llmModels.isPriceable(model)) {
+                    timeline.record("result", "skipped:GenerateReview", e.reviewId(),
+                            "model '" + model + "' has no usable pricing");
+                    projection.setNote(e.reviewId(), "Model '" + model + "' has no usable pricing — set"
+                            + " input and output rates in Settings → LLM → Models, or mark it UNMETERED"
+                            + " if it is self-hosted.");
+                    LOG.warnf("Skipping GenerateReview for %s — model '%s' is not priceable",
+                            e.reviewId(), model);
+                    return;
+                }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
                 dev.codespire.contract.llm.PromptTemplate reviewPrompt =
                         promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW);
@@ -157,6 +178,11 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
                 projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+                charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.REVIEW), e.result().usage());
+                if (e.reconcileUsage() != null) {
+                    charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.RECONCILE),
+                            e.reconcileUsage());
+                }
                 java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
                 String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
                 if (!e.verdicts().isEmpty()) {
@@ -220,7 +246,10 @@ public class ResultSaga {
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
                         Previews.of(e.answerText()), e.threadRef().value());
-                // Charge recording against the ledger returns in a later task (roadmap 11).
+                if (e.usage() != null) {
+                    charge(new ChargeRequest(e.reviewId(), e.threadRef().value(), ChargeKind.FOLLOWUP),
+                            e.usage());
+                }
                 projection.touch(e.reviewId());
             }
             case FollowUpPosted e -> {
@@ -379,6 +408,22 @@ public class ResultSaga {
             return;
         }
         commands.emit(build.apply(cred.get()));
+    }
+
+    /**
+     * Which paid call this is. {@code slot} is the commit for a review or reconcile call and the thread
+     * ref for a follow-up — the same position the worker claims its idempotency under, so the ref
+     * derived from it is stable across redelivery.
+     */
+    private record ChargeRequest(String reviewId, String slot, ChargeKind kind) {
+    }
+
+    /** Price a call and append its lines. */
+    private void charge(ChargeRequest request, ModelUsage usage) {
+        List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
+        projection.recordCharges(new ChargeCall(request.reviewId(),
+                CallRefs.of(request.reviewId(), request.slot(), request.kind()),
+                request.kind(), usage.model(), lines));
     }
 
     /** ADR-013: a superseded/cancelled run's results never trigger the next command. */

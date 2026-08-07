@@ -67,6 +67,9 @@ class OrchestratorChoreographyTest {
     @Inject
     dev.codespire.orchestrator.llm.LlmProviderRegistry llmProviders;
 
+    @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
+
     private KafkaProducer<String, String> producer;
 
     /**
@@ -94,6 +97,15 @@ class OrchestratorChoreographyTest {
         }
         // GenerateReview needs a default LLM provider (ADR-018); the worker runs in
         // stub mode here, but the orchestrator still packs the default's credential.
+        // The model must also be catalogued — ResultSaga's pre-spend guard now refuses to start a
+        // review it cannot price, so an uncatalogued model would make this test's own GenerateReview
+        // expectation stall the same way an operator's misconfiguration would. UNMETERED, since this
+        // is a fake test model, not a real vendor whose rates would need entering.
+        if (llmModels.list().stream().noneMatch(m -> m.name().equals("TEST-MODEL"))) {
+            llmModels.create(new dev.codespire.orchestrator.llm.LlmModelInput(
+                    "openai", "TEST-MODEL", "TEST-MODEL", "UNMETERED", Map.of(),
+                    null, null, null, null, true));
+        }
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
                     "test-llm", "openai", "http://localhost", "sk-test", "TEST-MODEL",

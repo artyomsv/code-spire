@@ -15,6 +15,9 @@ import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
+import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -356,6 +359,13 @@ class ResultSagaRetryTest {
             @Override
             public void touch(String reviewId) {
             }
+
+            // recordCharges is concrete on the real class, so leaving it un-overridden would run the
+            // real body (a DataSource this anonymous instance never got) once ReviewGenerated reaches
+            // the pre-spend-priced charge() call this test's flow now passes through.
+            @Override
+            public void recordCharges(ChargeCall call) {
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
@@ -363,11 +373,19 @@ class ResultSagaRetryTest {
                 return credential;
             }
         };
+        // The saga needs a priceable model to price the ReviewGenerated call — this test's own
+        // assertions are about priorSummaryRef, not the ledger, so the lines themselves don't matter.
+        saga.llmModels = new LlmModelRegistry() {
+            @Override
+            public List<ChargeLine> priceCall(String model, ModelUsage usage) {
+                return List.of();
+            }
+        };
         return saga;
     }
 
     /**
-     * A follow-up's cost landing (recordLlmCall) must also bump the dashboard's live feed
+     * A follow-up's cost landing (the ledger charge write) must also bump the dashboard's live feed
      * (updated_at) — otherwise the new cost/turn only shows up after a hard refresh.
      */
     @Test

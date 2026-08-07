@@ -38,6 +38,11 @@ public class WorkerLlmCredentials {
         return registry.resolveDefault().map(cfg -> pack(cfg, workspace));
     }
 
+    /** The default provider's model name, for the pre-spend priceability check. */
+    public Optional<String> defaultModelName() {
+        return registry.resolveDefault().map(LlmProviderConfig::model);
+    }
+
     private String pack(LlmProviderConfig cfg, String workspace) {
         // The parameter dialect lives on the model catalog, keyed by model name;
         // fall back to the classic Chat Completions dialect for uncatalogued models.
