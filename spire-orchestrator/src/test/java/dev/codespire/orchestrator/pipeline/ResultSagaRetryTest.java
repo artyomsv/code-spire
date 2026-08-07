@@ -381,6 +381,14 @@ class ResultSagaRetryTest {
                 return List.of();
             }
         };
+        // A charge's slot carries which RUN of the commit it belongs to, resolved from the review's
+        // event stream — faked here so this test stays off the database, like recordCharges above.
+        saga.runs = new dev.codespire.orchestrator.llm.ReviewRuns() {
+            @Override
+            public int currentRun(String reviewId) {
+                return FIRST_RUN;
+            }
+        };
         return saga;
     }
 

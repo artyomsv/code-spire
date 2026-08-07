@@ -17,6 +17,7 @@ import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
+import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
@@ -49,6 +50,9 @@ class ResultSagaPricingTest {
 
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final FakeProjection projection = new FakeProjection();
+
+    /** Which run the fake {@link ReviewRuns} reports; a test bumps it to stand for a re-run. */
+    private int run = ReviewRuns.FIRST_RUN;
 
     @Test
     void contextAssembledDoesNotGenerateAReviewWhenTheModelCannotBePriced() {
@@ -100,6 +104,30 @@ class ResultSagaPricingTest {
         assertTrue(projection.recordedCalls().isEmpty(), "there is no model to charge this under");
         assertEquals(1, emitted.size(), "the rest of the path must still run — this is not a failure");
         assertInstanceOf(ActionCommand.PostComments.class, emitted.get(0));
+    }
+
+    /**
+     * A re-run's call is charged under its own ref, on the very same commit.
+     *
+     * <p>The Re-run button clears the worker's cached result so the LLM genuinely runs again, which
+     * makes the commit alone the wrong identity: run 2 resolved to run 1's {@code call_ref} and
+     * {@code recordCharges}' {@code ON CONFLICT DO NOTHING} dropped the whole call. As with the
+     * conversation-turn defect above, the fake projection records what it is handed, so the flaw shows
+     * here as two calls sharing one ref and in production as a missing row.
+     */
+    @Test
+    void aSecondRunOnTheSameCommitIsChargedUnderItsOwnRef() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+        ModelUsage usage = ModelUsage.of("TEST-MODEL", 1_000_000, 500_000);
+
+        saga.on(reviewGenerated(REVIEW_ID, COMMIT, usage));
+        run = 2; // the operator pressed Re-run: same commit, cached result dropped, LLM runs again
+        saga.on(reviewGenerated(REVIEW_ID, COMMIT, usage));
+
+        assertEquals(List.of("review::TEST-WS/TEST-REPO#1|TESTSHA00000|REVIEW",
+                        "review::TEST-WS/TEST-REPO#1|TESTSHA00000#run2|REVIEW"),
+                projection.recordedCalls().stream().map(ChargeCall::callRef).toList(),
+                "run 1 keeps the bare commit; run 2 must not reuse it");
     }
 
     /** The reconcile call is its own charge, under its own ref, so it cannot collide with the review. */
@@ -253,6 +281,12 @@ class ResultSagaPricingTest {
             @Override
             public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
                 return null;
+            }
+        };
+        saga.runs = new ReviewRuns() {
+            @Override
+            public int currentRun(String reviewId) {
+                return run;
             }
         };
         return saga;

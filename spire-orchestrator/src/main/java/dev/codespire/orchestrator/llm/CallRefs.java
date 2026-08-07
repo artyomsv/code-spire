@@ -15,6 +15,9 @@ package dev.codespire.orchestrator.llm;
  * triggeringCommentId)}, so the comment is what distinguishes turn 2 of a conversation from a
  * redelivery of turn 1. Comparing only the slot is what let every turn of a thread collapse onto one
  * ledger identity — see {@link #followUpSlot}.
+ *
+ * <p><b>And the claim is deletable.</b> Mirroring it is only sufficient while it survives, and a
+ * re-run clears it on purpose so the LLM runs again on the same commit — see {@link #reviewSlot}.
  */
 public final class CallRefs {
 
@@ -32,6 +35,36 @@ public final class CallRefs {
                             + "got reviewId='" + reviewId + "', slot='" + slot + "'");
         }
         return reviewId + '|' + slot + '|' + kind.name();
+    }
+
+    /**
+     * A review or reconcile call's slot: the commit AND which run of it this is.
+     *
+     * <p>The commit alone is not the identity of the call, because a re-run is a second paid call on an
+     * unchanged one: {@code ReviewRerunService} clears the worker's cached result and comment claims
+     * before re-requesting, precisely so the LLM runs again. Keyed on the commit alone, run 2 resolved
+     * to run 1's {@code call_ref} and {@code recordCharges}' {@code ON CONFLICT DO NOTHING} discarded
+     * every line of it — no row, no log, no attention row, and a cost card that kept showing run 1's
+     * figure however many times the operator re-ran. Both entry points reach it: the Re-run button and
+     * the {@code /review} PR comment.
+     *
+     * <p>Run 1 keeps the bare commit, so a review that never re-ran reproduces the ref its charges
+     * were written under and a replayed event yields its own row instead of a second one — the same
+     * reasoning as {@link #followUpSlot}'s legacy fallback.
+     *
+     * <p><b>Known limit, stated rather than implied:</b> a {@code ReviewGenerated} redelivered from run
+     * <i>N</i> after run <i>N+1</i> has started is priced under <i>N+1</i>'s ref, because the run
+     * number is read when the result arrives rather than carried on the wire. The ADR-013 stale-run
+     * gate cannot separate those either — {@code ifCurrentRun} compares the commit, and a re-run keeps
+     * the commit — so this is a pre-existing hole in the same place, not one the run discriminator
+     * introduces. Closing it properly means carrying the run on {@code GenerateReview} and back on
+     * {@code ReviewGenerated}, the way {@code triggeringCommentId} is carried for follow-ups.
+     */
+    public static String reviewSlot(String commit, int run) {
+        if (run <= ReviewRuns.FIRST_RUN) {
+            return commit;
+        }
+        return commit + "#run" + run;
     }
 
     /**

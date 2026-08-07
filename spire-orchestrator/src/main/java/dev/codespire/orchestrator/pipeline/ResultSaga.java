@@ -81,6 +81,10 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
+    /** Which run of a review a charge belongs to — a re-run spends again on the same commit. */
+    @Inject
+    dev.codespire.orchestrator.llm.ReviewRuns runs;
+
     @Inject
     dev.codespire.orchestrator.context.WorkerContextCredentials workerContextCredentials;
 
@@ -178,29 +182,7 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
                 projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
-                if (e.result().usage() == null) {
-                    // Guarded like the two sibling sites below, which is what this one was missing:
-                    // charge() dereferences the usage for the model name, so a usage-less result
-                    // NPE'd the WHOLE handler into cs.dlq — findings, verdicts and PostComments with
-                    // it. Not charged either: llm_charge.model is NOT NULL and there is no model to
-                    // name, and a blank one would feed latestModelFor and render the review's real
-                    // spend as "no charges recorded yet".
-                    //
-                    // WARN rather than silence because this cannot happen by design:
-                    // TokenUsageMapper always answers a ModelUsage (a null input yields an
-                    // unreconciled TOTAL), so a null here means the worker emitted a result with no
-                    // accounting at all — a defect upstream, not a case to absorb. Recording nothing
-                    // quietly would hide it behind an empty cost card.
-                    LOG.warnf("No usage on ReviewGenerated for %s — no charge recorded; the worker"
-                            + " emitted a result without token accounting", e.reviewId());
-                } else {
-                    charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.REVIEW),
-                            e.result().usage());
-                }
-                if (e.reconcileUsage() != null) {
-                    charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.RECONCILE),
-                            e.reconcileUsage());
-                }
+                chargeGeneratedCalls(e);
                 java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
                 String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
                 if (!e.verdicts().isEmpty()) {
@@ -432,12 +414,47 @@ public class ResultSaga {
     }
 
     /**
-     * Which paid call this is. {@code slot} is the commit for a review or reconcile call and
-     * {@link CallRefs#followUpSlot} for a follow-up — between them these carry the worker's whole
-     * idempotency identity, so the ref derived from one is stable across redelivery and distinct
+     * Which paid call this is. {@code slot} is {@link CallRefs#reviewSlot} for a review or reconcile
+     * call and {@link CallRefs#followUpSlot} for a follow-up — between them these carry the worker's
+     * whole idempotency identity, so the ref derived from one is stable across redelivery and distinct
      * across genuinely separate calls.
      */
     private record ChargeRequest(String reviewId, String slot, ChargeKind kind) {
+    }
+
+    /**
+     * The paid calls one {@code ReviewGenerated} stands for: the review call, and the ADR-019 reconcile
+     * call when a follow-up commit triggered one. Both share the run-discriminated slot, since both
+     * were made for this run of this commit.
+     */
+    private void chargeGeneratedCalls(ReviewGenerated e) {
+        ModelUsage reviewUsage = e.result().usage();
+        if (reviewUsage == null) {
+            // Guarded like the two sibling sites below, which is what this one was missing:
+            // charge() dereferences the usage for the model name, so a usage-less result
+            // NPE'd the WHOLE handler into cs.dlq — findings, verdicts and PostComments with
+            // it. Not charged either: llm_charge.model is NOT NULL and there is no model to
+            // name, and a blank one would feed latestModelFor and render the review's real
+            // spend as "no charges recorded yet".
+            //
+            // WARN rather than silence because this cannot happen by design:
+            // TokenUsageMapper always answers a ModelUsage (a null input yields an
+            // unreconciled TOTAL), so a null here means the worker emitted a result with no
+            // accounting at all — a defect upstream, not a case to absorb. Recording nothing
+            // quietly would hide it behind an empty cost card.
+            LOG.warnf("No usage on ReviewGenerated for %s — no charge recorded; the worker"
+                    + " emitted a result without token accounting", e.reviewId());
+        }
+        if (reviewUsage == null && e.reconcileUsage() == null) {
+            return; // nothing was paid for, so do not spend a query resolving which run this is
+        }
+        String slot = CallRefs.reviewSlot(e.commit(), runs.currentRun(e.reviewId()));
+        if (reviewUsage != null) {
+            charge(new ChargeRequest(e.reviewId(), slot, ChargeKind.REVIEW), reviewUsage);
+        }
+        if (e.reconcileUsage() != null) {
+            charge(new ChargeRequest(e.reviewId(), slot, ChargeKind.RECONCILE), e.reconcileUsage());
+        }
     }
 
     /** Price a call and append its lines. */
