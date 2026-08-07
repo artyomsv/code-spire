@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.llm;
 import dev.codespire.contract.review.ModelUsage;
 import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
 import static io.restassured.RestAssured.when;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -72,6 +74,67 @@ class LlmModelResourceTest {
                 .body(Map.of("type", "openai", "label", "X",
                         "pricingMode", "METERED", "rates", Map.of("INPUT", 1, "OUTPUT", 1)))
                 .when().post("/api/llm-models").then().statusCode(400);
+    }
+
+    /**
+     * The gap that let hole #1 through. requireNonNegative rejected null and ACCEPTED zero, while the
+     * UI turned a blank field into zero, so "no price entered" arrived as a valid free model. Zero is
+     * now only legal as a deliberate UNMETERED assertion.
+     */
+    @Test
+    void aZeroRateOnAMeteredModelIsRejectedWithAnActionableMessage() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-ZERO","label":"TEST zero","pricingMode":"METERED",
+                       "rates":{"INPUT":0,"OUTPUT":400000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400)
+                .body(containsString("UNMETERED"));
+    }
+
+    @Test
+    void anUnmeteredModelCarryingRatesIsRejected() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-CONFUSED","label":"TEST","pricingMode":"UNMETERED",
+                       "rates":{"INPUT":200000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400);
+    }
+
+    @Test
+    void anUnknownPricingModeIsRejectedSoUnknownCannotBeChosen() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-UNKNOWN","label":"TEST","pricingMode":"UNKNOWN",
+                       "rates":{}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400);
+    }
+
+    @Test
+    void aMeteredModelMissingTheOutputRateIsRejected() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-PARTIAL","label":"TEST","pricingMode":"METERED",
+                       "rates":{"INPUT":200000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(400).body(containsString("OUTPUT"));
+    }
+
+    @Test
+    void aMeteredModelWithBothMandatoryRatesIsCreated() {
+        given().contentType(ContentType.JSON)
+                .body("""
+                      {"type":"openai","name":"TEST-GOOD","label":"TEST good","pricingMode":"METERED",
+                       "rates":{"INPUT":200000,"OUTPUT":400000}}
+                      """)
+                .when().post("/api/llm-models")
+                .then().statusCode(201).body("rates.INPUT", equalTo(200000));
     }
 
     @Test
@@ -138,5 +201,24 @@ class LlmModelResourceTest {
                 "sk-test", "TEST-CLEAN-COLLISION", 0.2, null, true, true));
 
         assertDoesNotThrow(this::clean);
+    }
+
+    /**
+     * Before this task the registry's in-use guard threw IllegalStateException straight past the
+     * resource, so the API answered 500 for a condition the caller can act on. It must answer 409 with
+     * the message intact — the message already names the model and how many providers use it.
+     */
+    @Test
+    void deletingAModelInUseByAProviderAnswersConflictNotServerError() {
+        registry.create(new LlmModelInput("openai", "TEST-IN-USE", "TEST in use",
+                "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
+                null, null, null, Map.of(), true));
+        String modelId = registry.list().stream()
+                .filter(m -> m.name().equals("TEST-IN-USE")).findFirst().orElseThrow().id();
+        providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
+                "sk-test", "TEST-IN-USE", 0.2, null, true, true));
+
+        given().when().delete("/api/llm-models/" + modelId)
+                .then().statusCode(409).body(containsString("TEST-IN-USE"));
     }
 }
