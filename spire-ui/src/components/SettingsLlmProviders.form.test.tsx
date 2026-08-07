@@ -97,6 +97,76 @@ describe('SettingsLlmProviders — model form', () => {
     expect(sent.rates).toEqual({ INPUT: 250_000, CACHED_INPUT: 30_000, OUTPUT: 1_000_000 });
   });
 
+  /**
+   * Extra params is a raw pass-through textarea, so the form is the only thing standing between a typo
+   * and a request body. Both of its rejections are covered here because they are different mistakes:
+   * text that is not JSON at all, and JSON that is not an object (an array parses fine and would be
+   * sent as one).
+   */
+  it('refuses malformed JSON in extra params instead of sending it', async () => {
+    const createLlmModel = vi.spyOn(api, 'createLlmModel');
+    renderPage();
+    const dialog = await openAddModelForm();
+    const form = within(dialog);
+    fillNameAndLabel(dialog);
+    fireEvent.change(form.getByLabelText(/^input rate/i), { target: { value: '2.50' } });
+    fireEvent.change(form.getByLabelText(/^output rate/i), { target: { value: '10' } });
+    fireEvent.change(form.getByLabelText(/^extra params/i), { target: { value: '{ not json' } });
+    submitModel(dialog);
+
+    expect(await screen.findByText(/extra params must be valid json/i)).toBeInTheDocument();
+    expect(createLlmModel).not.toHaveBeenCalled();
+  });
+
+  it('refuses a JSON array in extra params, which parses but is not an object', async () => {
+    const createLlmModel = vi.spyOn(api, 'createLlmModel');
+    renderPage();
+    const dialog = await openAddModelForm();
+    const form = within(dialog);
+    fillNameAndLabel(dialog);
+    fireEvent.change(form.getByLabelText(/^input rate/i), { target: { value: '2.50' } });
+    fireEvent.change(form.getByLabelText(/^output rate/i), { target: { value: '10' } });
+    fireEvent.change(form.getByLabelText(/^extra params/i), { target: { value: '["service_tier"]' } });
+    submitModel(dialog);
+
+    expect(await screen.findByText(/must be a json object/i)).toBeInTheDocument();
+    expect(createLlmModel).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A reasoning model needs `max_completion_tokens` AND rejects a custom temperature, so choosing the
+   * first presets the second. Two settings that must agree, where only one is the operator's stated
+   * intent — leaving them independent means a model saved with a dialect its API refuses.
+   */
+  it('unchecks the temperature toggle when the reasoning-model output cap is chosen', async () => {
+    const createLlmModel = vi.spyOn(api, 'createLlmModel').mockResolvedValue({} as never);
+    renderPage();
+    const dialog = await openAddModelForm();
+    const form = within(dialog);
+    fillNameAndLabel(dialog);
+    fireEvent.change(form.getByLabelText(/^input rate/i), { target: { value: '2.50' } });
+    fireEvent.change(form.getByLabelText(/^output rate/i), { target: { value: '10' } });
+
+    const temperature = form.getByLabelText(/accepts a custom temperature/i);
+    expect(temperature).toBeChecked();
+    // The dialect field is the project's own Select — a button plus a portalled listbox, not a native
+    // <select> — so it is driven by opening it and clicking the option, and the listbox lands outside
+    // the dialog in <body>.
+    fireEvent.click(form.getByRole('combobox', { name: /output token limit/i }));
+    fireEvent.click(await screen.findByRole('option', { name: /max_completion_tokens/i }));
+
+    expect(temperature).not.toBeChecked();
+    submitModel(dialog);
+    await waitFor(() =>
+      expect(createLlmModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outputTokenParam: 'MAX_COMPLETION_TOKENS',
+          supportsTemperature: false,
+        }),
+      ),
+    );
+  });
+
   it('shows a model marked self-hosted in the catalog table as "Self-hosted", never as a price', async () => {
     vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
       {
