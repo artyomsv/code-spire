@@ -81,7 +81,17 @@ each site now says it owns the status code and must not be removed — but a com
 enforcement, and the duplication remains the only thing holding the contract.
 
 **The durable fix is the same `ExceptionMapper` work as Solution 2 above**, extended to cover
-`IllegalArgumentException` and `IllegalStateException` (the latter is what the in-use guards on model delete
-and rename throw, and it should map to **409**, not 400 or 500). Doing both symptoms together is why they
+`IllegalArgumentException` (the priceable-model trap above). Doing both symptoms together is why they
 share this entry: one mapper class fixes the missing bodies *and* removes the need for the duplicated
 validation to exist for status-code reasons.
+
+**The model-rename instance of this is now fixed** (commit `5e8c3cc`, followed by `cb5b8d5` giving the
+in-use refusal its own `ModelInUseException` rather than a bare `IllegalStateException` shared with
+every other registry failure). `LlmModelResource.update` now catches it and answers **409** with the
+registry's message, mirroring `delete`. It is kept here as the worked example of the class rather than
+deleted, because it is exactly how this entry's broader claim was found in the first place: a guard
+that throws a plain runtime exception has no body at the client until something *specifically* catches
+it, and until this fix, `update` was the one site on this branch where nothing did. The
+`IllegalArgumentException` trap above is not fixed by this — it is a different exception type at a
+different call site (`LlmProviderRegistry.requirePriceableModel`) and still relies on
+`LlmProviderResource.validate()`'s duplicate check rather than its own catch.

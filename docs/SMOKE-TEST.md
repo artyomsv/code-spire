@@ -992,34 +992,53 @@ In Settings → LLM → Models, create or edit a model with pricing mode `METERE
 rate field blank, then Save.
 
 **Expected:** the form refuses before any request leaves the browser — *"Output rate is required for
-a metered model."* Enter `0` instead of leaving it blank: the same message, because the client
-validator treats an entered zero and an absent value identically (`Number(raw) > 0` fails either way).
-Confirm the same refusal fires for Input alone.
+a metered model."* Now enter `0` instead of leaving it blank, and Save again: a **different**
+message, *"Output rate must be greater than zero."* — the client validator branches on the two cases
+separately (blank vs. non-positive) rather than treating them as one. Confirm the same pair of
+messages fires for Input alone.
+
+**The distinction is the point, not an implementation detail worth glossing over.** Blank means "the
+operator hasn't decided yet" — a form left incomplete. An entered `0` means the operator typed a
+value and believes the model is free — the exact case `UNMETERED` exists for, not a validation
+nag. A runbook (or a form) that collapses these into one message teaches the wrong mental model of
+the rule ADR-023 added: zero is a category (`UNMETERED`), not a number that failed a range check.
 
 Bypass the client (a direct `POST`/`PUT` to `/api/llm-models` with an `OUTPUT` rate of `0` or omitted)
 to see the **server's own guard**, which exists precisely because the UI is a courtesy, not the
-control: **400**, *"A METERED model needs a rate above zero for OUTPUT. If this model is self-hosted
+control. Both cases — blank and `0` — collapse to the **same** server-side message, unlike the
+client: **400**, *"A METERED model needs a rate above zero for OUTPUT. If this model is self-hosted
 and costs nothing to call, set its pricing mode to UNMETERED instead of entering a zero — a zero rate
-and an unentered rate must stay distinguishable."*
+and an unentered rate must stay distinguishable."* The server does not need to explain the operator's
+two different mistakes separately; it only needs to refuse both and point at `UNMETERED`.
+
+K-4 and K-5 each need their **own** in-use model/provider pair, not K-1's and not each other's — K-4
+ends by making its pair no-longer-in-use (that is the point of the scenario), so a pair K-5 also
+depended on would already be gone by the time you reach it. Catalog a fresh throwaway model for each
+(e.g. `TEST-K4-MODEL`, `TEST-K5-MODEL`) with a provider naming it, before starting that scenario — do
+not reuse a pair from an earlier scenario in this mode.
 
 ### K-4 — deleting a model a provider uses is refused
 
-Attempt to delete the catalogued model K-1's provider still names (Settings → LLM → Models → delete).
+With `TEST-K4-MODEL` catalogued and a provider naming it, attempt to delete the model
+(Settings → LLM → Models → delete).
 
 **Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
 first."* The model remains in the catalog. Repoint the provider at a different model and retry —
-deletion should now succeed.
+deletion should now succeed. This scenario is now finished; its pair is gone by design, and neither
+half of it should be reused by K-5 or anything after it.
 
 ### K-5 — renaming a model a provider uses is refused
 
-Attempt to rename that same in-use model (edit its `name` field and save; leave every other field
-alone).
+With `TEST-K5-MODEL` catalogued and a **separate** provider naming it — untouched by K-4 — attempt
+to rename the model (edit its `name` field and save; leave every other field alone).
 
 **Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
 first, then rename it."* The rename does not take effect — check the model's name in the list, or
 the provider's `model` field, rather than trusting the toast alone. Renaming the model's label,
 rates or any other field with the *same* name should still succeed; only the name itself is
-guarded.
+guarded. Repoint or delete the provider afterward if you want to delete `TEST-K5-MODEL` too — it is
+still in use at the end of this scenario, deliberately, since the rename was refused rather than
+applied.
 
 ### K-6 — a provider naming an uncatalogued model is refused
 
@@ -1033,10 +1052,12 @@ LLM -> Models first, with a rate for input and output tokens — or mark it UNME
 self-hosted and costs nothing."* The provider is not saved. This is the same rule K-3/K-4 protect from
 the other direction — a provider can never reference a model the catalog cannot price. Once at least
 one model of that type is catalogued, the dropdown replaces the free-text field and this path is no
-longer reachable from the UI at all — the courtesy the code comment at
-`LlmProviderResource.java` describes.
+longer reachable from the UI at all — *"the Settings dropdown is a courtesy; this is the control,"*
+in the words of `LlmProviderModelGuardTest`'s own javadoc, the test that exercises this exact path.
 
 ### Cleanup
 
-Delete any model/provider pair added only for this pass, in the order K-4 requires (repoint or delete
-the provider before the model).
+Delete any model/provider pair added only for this pass. For a pair still in use (K-5's, and K-4's
+before you repointed it), repoint the provider at a different model — or delete the provider
+outright — before deleting the model itself; deleting an in-use model is refused by the same guard
+K-4 exercises.
