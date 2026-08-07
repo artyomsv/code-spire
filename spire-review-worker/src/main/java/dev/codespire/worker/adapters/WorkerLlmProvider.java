@@ -120,7 +120,7 @@ public class WorkerLlmProvider {
                       ] }
                     """;
             return CompletableFuture.completedFuture(
-                    new Completion(canned, new ModelUsage("stub-model", 0, 0, 0)));
+                    new Completion(canned, ModelUsage.of("stub-model", 0, 0)));
         }
     }
 }

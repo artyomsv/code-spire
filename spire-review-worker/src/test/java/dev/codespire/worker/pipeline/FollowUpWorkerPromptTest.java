@@ -49,7 +49,7 @@ class FollowUpWorkerPromptTest {
         when(diffs.fetchDiff(eq(repo), eq(1L), eq("sha")))
                 .thenReturn(new Diff("sha", List.of(), false));
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
-                new Completion("ok", new ModelUsage("m", 1, 1, 0))));
+                new Completion("ok", ModelUsage.of("m", 1, 1))));
         when(sink.replyInThread(eq(repo), eq(1L), eq(thread), anyString()))
                 .thenReturn(new CommentRef("c-1", thread, CommentKind.REPLY));
 

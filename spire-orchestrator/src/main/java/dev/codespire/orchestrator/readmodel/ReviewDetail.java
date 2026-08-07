@@ -14,6 +14,12 @@ import java.util.List;
  * reconciliation, deduped) — the same figures the reviews list shows via
  * {@code ReviewProjection.openCounts}, so the header badge agrees with the list row instead of
  * quoting a stale per-run outcome.
+ *
+ * <p>{@code unpricedCalls} travels with {@code chargeLines} for the same reason it travels with the
+ * list row's total: the page sums the lines itself, and an unpriced line contributes nothing to that
+ * sum. Without the count, a review whose every call was unpriceable renders a confident total that
+ * cannot be told apart from an asserted zero — so it is part of the payload, not something the client
+ * infers.
  */
 public record ReviewDetail(
         String id,
@@ -42,8 +48,8 @@ public record ReviewDetail(
         List<String> timings,
         List<FindingView> findingsList,
         List<ReconciliationView> reconciliation,
-        UsageView usage,
-        List<LlmCall> llmCalls,
+        List<ChargeLineView> chargeLines,
+        int unpricedCalls,
         String note,
         String errorDetail,
         List<EventView> events,
@@ -62,16 +68,39 @@ public record ReviewDetail(
                                      String threadRef, boolean resolvedThread) {
     }
 
-    /** Model usage as display strings (tokens formatted, cost as dollars). */
-    public record UsageView(String model, String prompt, String completion, String cost, String latency) {
-    }
-
     /**
-     * One LLM call in the review's lifetime — the review generation ({@code kind = "review"}) or a
-     * conversation follow-up ({@code kind = "followup"}) — for the cost-breakdown UI (roadmap 11).
+     * One token dimension of one LLM call, priced. {@code costMillicents} is null exactly when
+     * {@code pricingMode} is "UNKNOWN" — never 0, which would be indistinguishable from an UNMETERED
+     * model's asserted zero.
+     *
+     * <p><b>The per-token RATE is deliberately absent.</b> A rate is operator-entered configuration, and
+     * ADR-022's third rule makes every registry admin-only <em>including its reads</em> — which is why
+     * {@code LlmModelResource} refuses a viewer. This payload is served to viewers, so carrying the rate
+     * put the same value on both sides of that rule; and while a cost and a token count were already
+     * viewer-visible (making INPUT/OUTPUT rates solvable), {@code CACHED_INPUT}/{@code CACHE_WRITE}/
+     * {@code REASONING} had no such counterpart. Dropping it rather than nulling it per role keeps one
+     * payload shape for both roles: a shape that varies by caller is the class of bug that already
+     * shipped here once, where a field absent from the wire read as {@code undefined} and silently
+     * disabled the qualifier it controlled. The consequence, stated: a review page no longer shows the
+     * rate that produced its figure. The ledger row still carries it — that is what makes a historical
+     * cost reproducible — and the current rate is on the admin-only Models page.
+     *
+     * <p>{@code callRef} is the ledger's own call identity ({@code UNIQUE (call_ref, token_type)}) — the
+     * UI groups lines back into calls by it rather than by {@code pricedAt}, because that identity is
+     * what defines a call. {@code pricedAt} would now agree (one call's lines are written in one
+     * transaction, so they share {@code now()}), but agreeing by side effect is not the same as being
+     * the key: two calls of the same review can share a timestamp, and only {@code call_ref} tells them
+     * apart.
+     *
+     * <p>{@code kind}, {@code tokenType} and {@code pricingMode} are Strings here, not the enums they
+     * mirror, deliberately: this is an outbound view read straight from the ledger, whose CHECK
+     * constraints already restrict those columns. The enums exist to protect the WRITE path, where a
+     * typo'd literal costs a lost charge; a display type has nothing to lose by carrying the stored
+     * value verbatim, and typing it would force this record to be defined after the enums rather than
+     * alongside the query that fills it.
      */
-    public record LlmCall(String kind, String model, int tokensIn, int tokensOut, long costMillicents,
-                          String createdAt) {
+    public record ChargeLineView(String callRef, String kind, String model, String tokenType, int tokens,
+                                 Long costMillicents, String pricingMode, String pricedAt) {
     }
 
     /**

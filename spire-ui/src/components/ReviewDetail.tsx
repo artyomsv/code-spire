@@ -3,12 +3,13 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
 import Tooltip from './Tooltip';
-import { CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper, usageCard } from '../render';
+import { CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
 import ConfirmDialog from './ConfirmDialog';
 import { useMe } from '../hooks/useMe';
 import { canAdminister } from '../auth';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
+import ReviewCostCard from './ReviewCostCard';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -247,7 +248,7 @@ export default function ReviewDetail({ reviews }: Props) {
         </div>
         <div>
           {metaCard(r)}
-          {usageCard(r)}
+          <ReviewCostCard lines={r.chargeLines} unpricedCalls={r.unpricedCalls} />
         </div>
       </div>
     </section>

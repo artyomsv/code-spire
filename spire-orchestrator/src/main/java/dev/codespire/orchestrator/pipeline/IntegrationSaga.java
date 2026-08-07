@@ -104,15 +104,7 @@ public class IntegrationSaga {
                 projection.appendEvent(reviewId, "integration", "PullRequestClosed",
                         merged ? "merged" : "closed (" + e.reason().name().toLowerCase(Locale.ROOT) + ")");
             }
-            case ManualCommandReceived e -> {
-                if (isBotAuthored(reviewIdOf(e), e.author())) {
-                    dropSelfLoop(reviewIdOf(e), "/" + e.command());
-                } else if ("review".equals(e.command())) {
-                    triggerManualReview(e);
-                } else {
-                    LOG.infof("Manual /%s command received — no handler", e.command());
-                }
-            }
+            case ManualCommandReceived e -> onManualCommand(e);
             case AuthorReplied e -> {
                 if (isBotAuthored(e.reviewId(), e.author())) {
                     dropSelfLoop(e.reviewId(), "reply");
@@ -145,6 +137,52 @@ public class IntegrationSaga {
             }
             default -> LOG.debugf("No integration reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * A {@code /command} PR comment: our own bot's is dropped as a self-loop, then the SAME
+     * per-provider allowlist that gates a PR event applies. It has to, because a command spends real
+     * money — {@link ReviewRerunService} clears the worker's LLM idempotency claim on purpose, so the
+     * model genuinely runs again — and nothing else bounds this path: {@code SPIRE_REVIEW_MAX_ATTEMPTS}
+     * bounds auto-retry and the turn cap bounds follow-ups, neither covers a comment command. Without
+     * the gate, anyone who can comment on the PR can bill the operator once per comment.
+     *
+     * <p>The gate sits ahead of the command switch rather than inside the {@code /review} branch, so a
+     * future command cannot be added below it and arrive ungated — which is exactly how this one got in.
+     *
+     * <p><b>The refused author is not replied to</b>, unlike the turn cap (whose silence was a real
+     * defect, because a missing ANSWER is indistinguishable from a lost webhook). An authorization
+     * refusal is the opposite case: a reply confirms to a prober that the command exists and is wired,
+     * and makes each probe cost an outbound comment. Timeline note plus a log line, as the PR-open path
+     * records an unlisted author — and deliberately not a durable review-history row, which a prober
+     * could otherwise grow without bound.
+     */
+    private void onManualCommand(ManualCommandReceived e) {
+        String reviewId = reviewIdOf(e);
+        if (isBotAuthored(reviewId, e.author())) {
+            dropSelfLoop(reviewId, "/" + e.command());
+            return;
+        }
+        // Resolved by the review's stored SCM type, the way the credential this command would broker
+        // already is — a workspace name registered on two SCMs must check the right provider's list.
+        // An unresolvable provider is left to the command itself, which refuses for want of a
+        // credential (NotFoundException below); calling that an authorization failure would misreport it.
+        if (!authorAllowed(allowlistFor(reviewId), e.author())) {
+            timeline.record("integration", "ManualCommandSkipped", reviewId,
+                    "author not in the provider's allowlist: @" + username(e.author()));
+            LOG.infof("Skipping /%s on %s — author @%s not in the provider allowlist",
+                    e.command(), reviewId, username(e.author()));
+            return;
+        }
+        if ("review".equals(e.command())) {
+            triggerManualReview(e);
+        } else {
+            LOG.infof("Manual /%s command received — no handler", e.command());
+        }
+    }
+
+    private List<String> allowlistFor(String reviewId) {
+        return reviewProviders.resolveForReview(reviewId).map(ScmProvider::authors).orElse(List.of());
     }
 
     private void dropSelfLoop(String reviewId, String what) {
@@ -268,7 +306,11 @@ public class IntegrationSaga {
     }
 
     private static String username(PullRequestEventReceived e) {
-        return e.author() == null ? "unknown" : e.author().username();
+        return username(e.author());
+    }
+
+    private static String username(Author author) {
+        return author == null ? "unknown" : author.username();
     }
 
     private static String authorId(PullRequestEventReceived e) {

@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.attention;
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
 import dev.codespire.orchestrator.dlq.DlqRepository;
+import dev.codespire.orchestrator.llm.LlmModelPricer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -12,6 +13,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -43,6 +46,12 @@ public class AttentionQueries {
     @Inject
     DlqRepository dlq;
 
+    @Inject
+    LlmModelPricer pricer;
+
+    @Inject
+    CostAttentionAcks acks;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -54,6 +63,7 @@ public class AttentionQueries {
             scmProviderRows(c, rows);
             reviewRows(c, rows);
             credentialRows(c, rows);
+            costRows(c, rows);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
@@ -76,6 +86,46 @@ public class AttentionQueries {
             rows.add(new AttentionView("LLM_DEFAULT_MISSING", Severity.BLOCKING, null,
                     "No enabled LLM provider is marked as the default, so no review can run.",
                     "/settings/llm"));
+            return; // no default resolves to no model, so there is nothing to price-check
+        }
+        modelPricingRow(defaultProviderModel(c), rows);
+    }
+
+    /**
+     * The default provider names a model the ledger cannot price, so no review can start at all.
+     *
+     * <p>Existence of a provider and of a default is not enough: {@code ResultSaga}'s pre-spend guard
+     * refuses to emit {@code GenerateReview} for an unpriceable model, and a refused review sits in
+     * {@code REVIEWING} until {@code REVIEW_STUCK} eventually fires — a symptom one level away from
+     * the cause, minutes later, on a panel that exists so blocking configuration announces itself
+     * BEFORE work fails. The V30 upgrade makes this the guaranteed state of any model that carried a
+     * legacy zero price, so it is the first thing an upgraded deployment hits.
+     *
+     * <p>Priceability comes from {@link LlmModelPricer#isPriceable} rather than a query written here:
+     * three guards already share that one rule and a fourth definition of it could disagree with the
+     * gate that actually blocks the review. It opens its own connection, which is why the model name is
+     * all that is read from {@code c} — do not "optimise" that by threading this connection into the
+     * pricer, whose callers are otherwise connectionless.
+     */
+    private void modelPricingRow(String model, List<AttentionView> rows) {
+        if (model == null || pricer.isPriceable(model)) {
+            return;
+        }
+        rows.add(new AttentionView("MODEL_NOT_PRICEABLE", Severity.BLOCKING,
+                // A provider saved with no model at all is equally blocking, but naming "" as the
+                // subject would render an empty label; the message alone carries it.
+                model.isBlank() ? null : model,
+                "The default LLM provider's model has no usable pricing, so every review stops before"
+                        + " it calls the model. Set input and output rates in Settings → LLM → Models,"
+                        + " or mark the model unmetered if it is self-hosted.", "/settings/llm"));
+    }
+
+    /** The model the default provider would use, or null when no enabled default is set. */
+    private static String defaultProviderModel(Connection c) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT model FROM llm_provider WHERE enabled = TRUE AND is_default = TRUE");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getString("model") : null;
         }
     }
 
@@ -258,6 +308,30 @@ public class AttentionQueries {
         }
     }
 
+    /**
+     * A call the ledger could not price (rate missing at charge time) and a call whose reported
+     * token breakdown did not sum to its own total (recorded as {@code TOTAL} instead of a split)
+     * are both silent by construction: neither contributes to a money total, so a genuine $0.00
+     * and "we could not account for N calls" would otherwise look identical on screen.
+     *
+     * <p>Both are counted only from each condition's acknowledgement watermark, and both are therefore
+     * dismissable — the only rows here that are. {@link CostAttentionRow} carries the reasoning for
+     * why, along with each row's own query and wording.
+     */
+    private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
+        for (CostAttentionRow row : CostAttentionRow.values()) {
+            int calls = countSince(c, row.countQuery(), acks.since(row));
+            if (calls > 0) {
+                rows.add(row.view(calls));
+            }
+        }
+    }
+
+    /** Acknowledge a ledger-wide cost condition: calls already priced stop being counted. */
+    void acknowledge(CostAttentionRow row) {
+        acks.acknowledge(row);
+    }
+
     private void deadLetterRows(List<AttentionView> rows) {
         int pending = dlq.countPending();
         if (pending > 0) {
@@ -281,6 +355,16 @@ public class AttentionQueries {
     private static int count(Connection c, String sql) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
             return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    /** As {@link #count}, for a query bounded by one acknowledgement watermark. */
+    private static int countSince(Connection c, String sql, Instant since) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(since));
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
         }
     }
 }

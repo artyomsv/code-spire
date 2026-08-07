@@ -130,8 +130,10 @@ public class FollowUpWorker {
                 client.params(), clients.comments(),
                 command.followUpPrompt(), command.otherFindings());
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
+        // The triggering comment rides along because it is half of the claim key above: without it the
+        // orchestrator's ledger identity cannot tell turn 2 of this thread from a redelivery of turn 1.
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
-                result.usage()));
+                result.usage(), command.triggeringCommentId()));
         results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId()));
     }
 

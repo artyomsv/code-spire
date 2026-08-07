@@ -5,6 +5,7 @@ import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.contract.llm.ModelParamProfile.OutputTokenParam;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
+import dev.codespire.contract.review.TokenType;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -161,8 +162,8 @@ class LangChain4jLlmProviderTest {
 
         Completion completion = provider.complete(PROMPT, PARAMS).toCompletableFuture().get();
         assertEquals("the review", completion.text());
-        assertEquals(120, completion.usage().tokensIn());
-        assertEquals(34, completion.usage().tokensOut());
+        assertEquals(120, completion.usage().tokensOf(TokenType.INPUT));
+        assertEquals(34, completion.usage().tokensOf(TokenType.OUTPUT));
         assertEquals("test-model", completion.usage().model());
     }
 
@@ -174,8 +175,8 @@ class LangChain4jLlmProviderTest {
         var provider = new LangChain4jLlmProvider(returning(response), "test");
 
         Completion completion = provider.complete(PROMPT, PARAMS).toCompletableFuture().get();
-        assertEquals(0, completion.usage().tokensIn());
-        assertEquals(0, completion.usage().tokensOut());
+        assertEquals(0, completion.usage().tokensOf(TokenType.INPUT));
+        assertEquals(0, completion.usage().tokensOf(TokenType.OUTPUT));
     }
 
     @Test

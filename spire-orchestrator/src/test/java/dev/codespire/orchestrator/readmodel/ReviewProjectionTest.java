@@ -76,7 +76,7 @@ class ReviewProjectionTest {
 
         var result = new ReviewResult(
                 List.of(new Finding("src/App.ts", new LineRange(42, 42), Severity.BLOCKER, "NPE risk", null)),
-                "One blocker.", new ModelUsage("gpt-x", 1200, 90, 4100));
+                "One blocker.", ModelUsage.of("gpt-x", 1200, 90));
         projection.recordOutcome(id, result, ReviewProjection.STAGE_COMMENTS);
         projection.updateStatus(id, "completed", ReviewProjection.STAGE_DONE);
 
@@ -90,8 +90,6 @@ class ReviewProjectionTest {
         assertEquals(1, d.findingsList().size());
         assertEquals("critical", d.findingsList().get(0).sev(), "BLOCKER maps to critical");
         assertEquals("src/App.ts:42", d.findingsList().get(0).loc());
-        assertNotNull(d.usage());
-        assertEquals("gpt-x", d.usage().model());
         assertTrue(d.events().stream().anyMatch(e -> e.type().equals("PullRequestEventReceived")));
     }
 
@@ -382,7 +380,7 @@ class ReviewProjectionTest {
 
         var result = new ReviewResult(
                 List.of(new Finding("src/App.java", new LineRange(9, 9), Severity.BLOCKER, "no compile", null)),
-                "One blocker.", new ModelUsage("gpt-x", 10, 5, 100));
+                "One blocker.", ModelUsage.of("gpt-x", 10, 5));
         projection.recordOutcome(id, result, ReviewProjection.STAGE_COMMENTS);
 
         // finding thread c1 (matches src/App.java:9), summary thread sum1

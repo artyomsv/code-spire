@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -34,12 +35,21 @@ class LlmProviderCheckTest {
     @Inject
     LlmProviderRegistry registry;
 
+    @Inject
+    LlmModelRegistry models;
+
     private WireMockServer server;
 
     @BeforeEach
     void start() {
         server = new WireMockServer(options().dynamicPort());
         server.start();
+        // resource.create()/update() (used below) now guard the model against the catalog
+        // (LlmProviderModelGuardTest) — idempotent, since this runs before every test.
+        if (models.list().stream().noneMatch(m -> m.name().equals("TEST-MODEL"))) {
+            models.create(new LlmModelInput("openai", "TEST-MODEL", "TEST-MODEL", "UNMETERED", Map.of(),
+                    null, null, null, null, true));
+        }
     }
 
     @AfterEach

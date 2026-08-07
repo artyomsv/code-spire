@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.llm;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -54,51 +55,68 @@ public class LlmModelResource {
     @Path("/{id}")
     public LlmModelView update(@PathParam("id") String id, LlmModelInput in) {
         validate(in);
-        return registry.update(uuid(id), in).orElseThrow(() -> new NotFoundException("No LLM model " + id));
+        try {
+            return registry.update(uuid(id), in)
+                    .orElseThrow(() -> new NotFoundException("No LLM model " + id));
+        } catch (ModelInUseException inUse) {
+            throw new ClientErrorException(
+                    Response.status(Response.Status.CONFLICT).entity(inUse.getMessage()).build());
+        }
     }
 
     @DELETE
     @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
-        if (!registry.delete(uuid(id))) {
-            throw new NotFoundException("No LLM model " + id);
+        try {
+            if (!registry.delete(uuid(id))) {
+                throw new NotFoundException("No LLM model " + id);
+            }
+        } catch (ModelInUseException inUse) {
+            throw new ClientErrorException(
+                    Response.status(Response.Status.CONFLICT).entity(inUse.getMessage()).build());
         }
         return Response.noContent().build();
     }
 
     private void validate(LlmModelInput in) {
         if (in == null) {
-            throw new BadRequestException("LLM model body is required");
+            throw badRequest("LLM model body is required");
         }
         requireField(in.type(), "type");
         requireField(in.name(), "name");
         requireField(in.label(), "label");
+        requireField(in.pricingMode(), "pricingMode");
         if (!TYPES.contains(in.type())) {
-            throw new BadRequestException("Unsupported model type '" + in.type()
+            throw badRequest("Unsupported model type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
         }
-        requireNonNegative(in.inputPriceMillicentsPerMillion(), "inputPriceMillicentsPerMillion");
-        requireNonNegative(in.outputPriceMillicentsPerMillion(), "outputPriceMillicentsPerMillion");
+        // Pricing validity lives with the validator, which owns the METERED/UNMETERED rules and the
+        // mandatory-dimension list. Surfaced as 400 rather than 500 because it is the caller's input.
+        try {
+            LlmModelPricingValidator.validate(in);
+        } catch (IllegalArgumentException invalid) {
+            throw badRequest(invalid.getMessage());
+        }
     }
 
     private static void requireField(String value, String name) {
         if (value == null || value.isBlank()) {
-            throw new BadRequestException(name + " is required");
+            throw badRequest(name + " is required");
         }
     }
 
-    private static void requireNonNegative(Long value, String name) {
-        if (value == null || value < 0) {
-            throw new BadRequestException(name + " must be zero or positive");
-        }
+    // BadRequestException(String) only sets the exception's own message, not the HTTP response
+    // body — the entity must be set explicitly so callers see the actionable errors.
+    private static BadRequestException badRequest(String message) {
+        return new BadRequestException(Response.status(Response.Status.BAD_REQUEST).entity(message).build());
     }
 
     private static UUID uuid(String id) {
         try {
             return UUID.fromString(id);
         } catch (IllegalArgumentException e) {
-            throw new BadRequestException("Invalid LLM model id");
+            throw badRequest("Invalid LLM model id");
         }
     }
 }

@@ -204,7 +204,7 @@ class ReviewWorkerTest {
                 llmCalls.add(prompt);
                 boolean isReconcile = prompt.user().contains("Prior findings");
                 String text = isReconcile ? reconcileResponse : reviewResponse;
-                return CompletableFuture.completedFuture(new Completion(text, new ModelUsage("m", 1, 1, 0)));
+                return CompletableFuture.completedFuture(new Completion(text, ModelUsage.of("m", 1, 1)));
             }
         });
     }
@@ -225,14 +225,14 @@ class ReviewWorkerTest {
 
     private PostComments postCommand(List<Finding> findings) {
         return new PostComments(REVIEW_ID, REPO, 9, COMMIT,
-                new ReviewResult(findings, "summary", new ModelUsage("m", 0, 0, 0)), null);
+                new ReviewResult(findings, "summary", ModelUsage.of("m", 0, 0)), null);
     }
 
     /** Follow-up PostComments: verdicts drive thread actions, newFindings post fresh (ADR-019). */
     private PostComments postCommand(List<FindingVerdict> verdicts, List<Finding> newFindings,
                                      String priorSummaryRef) {
         return new PostComments(REVIEW_ID, REPO, 9, COMMIT,
-                new ReviewResult(newFindings, "summary", new ModelUsage("m", 0, 0, 0)), null,
+                new ReviewResult(newFindings, "summary", ModelUsage.of("m", 0, 0)), null,
                 verdicts, priorSummaryRef);
     }
 
@@ -271,7 +271,7 @@ class ReviewWorkerTest {
     @Test
     void truncatedReviewMarksThePostedSummary() {
         var review = new ReviewResult(List.of(finding("src/A.java", 2)), "ok",
-                new ModelUsage("m", 1, 1, 0), true);
+                ModelUsage.of("m", 1, 1), true);
         worker.postComments(new PostComments(REVIEW_ID, REPO, 9, COMMIT, review, null));
         assertInstanceOf(CommentsPosted.class, emitted.getLast());
         assertTrue(sink.summaryBody.contains("Partial review"),
@@ -554,7 +554,7 @@ class ReviewWorkerTest {
     void crashBetweenMarkAndEmitStillConvergesOnRedelivery() throws Exception {
         // simulate: LLM call completed and was marked, but the emit never happened (M2)
         ReviewResult result = new ReviewResult(List.of(finding("src/A.java", 2)), "persisted summary",
-                new ModelUsage("m", 1, 1, 0));
+                ModelUsage.of("m", 1, 1));
         idempotency.claim(REVIEW_ID, COMMIT, "LLM");
         idempotency.markPosted(REVIEW_ID, COMMIT, "LLM", new ObjectMapper().writeValueAsString(result));
 

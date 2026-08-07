@@ -4,8 +4,8 @@
 **C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
 PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via
 webhook (Tailscale Funnel); **G** provider-parity regression script (run the same scenarios on every
-SCM); **H** the attention panel; **I** context provisioning across every provider type. Do A first —
-it validates your local stack in ~2 minutes.
+SCM); **H** the attention panel; **I** context provisioning across every provider type; **J** operator
+authentication; **K** the LLM cost ledger. Do A first — it validates your local stack in ~2 minutes.
 
 Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
 
@@ -951,3 +951,113 @@ Checks 1–6, 9, 12 and 13 need no browser: the realm's clients allow the direct
 token for either synthetic user comes back from `/protocol/openid-connect/token` with
 `grant_type=password`, and `Authorization: Bearer <it>` exercises the role split (`/api/dlq` **403**
 as `dev-viewer`, **200** as `dev-operator`) straight from the shell.
+
+---
+
+## Mode K — the LLM cost ledger (ADR-023)
+
+Config-time guards in Settings → LLM, then one real review to confirm the ledger it feeds. Sign in as
+`dev-admin` (or run with auth off) — every endpoint here is admin-only.
+
+### Setup
+
+A catalogued model and a provider pointed at it, from an earlier mode. If not, catalog one in
+Settings → LLM → Models with pricing mode `METERED` and real `INPUT`/`OUTPUT` rates, then a provider
+in Settings → LLM → Providers naming it.
+
+### K-1 — a `METERED` model produces per-type charge lines on a real review
+
+Run any review that reaches `ReviewGenerated` (Mode A/B/C/D/E/F/G all work — this mode does not care
+which SCM). Open the review detail's "Model usage" card.
+
+**Expected:** one block per call (review, and reconcile on a second round), each with a line per token
+type actually used — tokens, the rate that priced it, and the line's cost — and a dollar headline, not
+a bare token count. If the model has no cache traffic, expect exactly `INPUT` and `OUTPUT` lines; a
+`CACHED_INPUT`/`CACHE_WRITE`/`REASONING` line only appears when that dimension was actually non-zero,
+matching `TokenUsageMapper`'s rule that a call without caching carries no zero rows.
+
+### K-2 — an `UNMETERED` model reads as self-hosted, not `$0.00`
+
+Catalog a second model, check "Self-hosted — no per-token cost (UNMETERED)" (the rate fields
+disappear entirely once checked — there is nothing to fill in), point a provider at it, run a review.
+
+**Expected:** the "Model usage" card's per-call headline reads **"self-hosted (unmetered)"**, never
+`$0.00`. Those two read identically to an operator unless the mode is surfaced explicitly, which is the entire reason
+`pricing_mode` exists rather than a plain number — `$0.00` is indistinguishable between "genuinely
+free" and "nobody told us the price."
+
+### K-3 — a `METERED` model with a blank rate is refused, not saved as free
+
+In Settings → LLM → Models, create or edit a model with pricing mode `METERED` and leave the Output
+rate field blank, then Save.
+
+**Expected:** the form refuses before any request leaves the browser — *"Output rate is required for
+a metered model."* Now enter `0` instead of leaving it blank, and Save again: a **different**
+message, *"Output rate must be greater than zero."* — the client validator branches on the two cases
+separately (blank vs. non-positive) rather than treating them as one. Confirm the same pair of
+messages fires for Input alone.
+
+**The distinction is the point, not an implementation detail worth glossing over.** Blank means "the
+operator hasn't decided yet" — a form left incomplete. An entered `0` means the operator typed a
+value and believes the model is free — the exact case `UNMETERED` exists for, not a validation
+nag. A runbook (or a form) that collapses these into one message teaches the wrong mental model of
+the rule ADR-023 added: zero is a category (`UNMETERED`), not a number that failed a range check.
+
+Bypass the client (a direct `POST`/`PUT` to `/api/llm-models` with an `OUTPUT` rate of `0` or omitted)
+to see the **server's own guard**, which exists precisely because the UI is a courtesy, not the
+control. Both cases — blank and `0` — collapse to the **same** server-side message, unlike the
+client: **400**, *"A METERED model needs a rate above zero for OUTPUT. If this model is self-hosted
+and costs nothing to call, set its pricing mode to UNMETERED instead of entering a zero — a zero rate
+and an unentered rate must stay distinguishable."* The server does not need to explain the operator's
+two different mistakes separately; it only needs to refuse both and point at `UNMETERED`.
+
+K-4 and K-5 each need their **own** in-use model/provider pair, not K-1's and not each other's — K-4
+ends by making its pair no-longer-in-use (that is the point of the scenario), so a pair K-5 also
+depended on would already be gone by the time you reach it. Catalog a fresh throwaway model for each
+(e.g. `TEST-K4-MODEL`, `TEST-K5-MODEL`) with a provider naming it, before starting that scenario — do
+not reuse a pair from an earlier scenario in this mode.
+
+### K-4 — deleting a model a provider uses is refused
+
+With `TEST-K4-MODEL` catalogued and a provider naming it, attempt to delete the model
+(Settings → LLM → Models → delete).
+
+**Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
+first."* The model remains in the catalog. Repoint the provider at a different model and retry —
+deletion should now succeed. This scenario is now finished; its pair is gone by design, and neither
+half of it should be reused by K-5 or anything after it.
+
+### K-5 — renaming a model a provider uses is refused
+
+With `TEST-K5-MODEL` catalogued and a **separate** provider naming it — untouched by K-4 — attempt
+to rename the model (edit its `name` field and save; leave every other field alone).
+
+**Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
+first, then rename it."* The rename does not take effect — check the model's name in the list, or
+the provider's `model` field, rather than trusting the toast alone. Renaming the model's label,
+rates or any other field with the *same* name should still succeed; only the name itself is
+guarded. Repoint or delete the provider afterward if you want to delete `TEST-K5-MODEL` too — it is
+still in use at the end of this scenario, deliberately, since the rename was refused rather than
+applied.
+
+### K-6 — a provider naming an uncatalogued model is refused
+
+Create or edit a provider (Settings → LLM → Providers) naming a model not in the catalog. The Model
+field is a dropdown built from the catalog **only when one exists for that provider type** — pick a
+provider type with zero catalogued models first (or use `POST /api/llm-providers` directly) to reach
+the free-text fallback, then type a name you have not catalogued.
+
+**Expected:** **400**, *"Model 'X' is not in the catalog with usable pricing. Add it under Settings ->
+LLM -> Models first, with a rate for input and output tokens — or mark it UNMETERED if it is
+self-hosted and costs nothing."* The provider is not saved. This is the same rule K-3/K-4 protect from
+the other direction — a provider can never reference a model the catalog cannot price. Once at least
+one model of that type is catalogued, the dropdown replaces the free-text field and this path is no
+longer reachable from the UI at all — *"the Settings dropdown is a courtesy; this is the control,"*
+in the words of `LlmProviderModelGuardTest`'s own javadoc, the test that exercises this exact path.
+
+### Cleanup
+
+Delete any model/provider pair added only for this pass. For a pair still in use (K-5's, and K-4's
+before you repointed it), repoint the provider at a different model — or delete the provider
+outright — before deleting the model itself; deleting an in-use model is refused by the same guard
+K-4 exercises.

@@ -3,17 +3,22 @@ package dev.codespire.orchestrator.llm;
 import java.util.Map;
 
 /**
- * Create/update payload for a catalog model. Prices are millicents per 1,000,000
- * tokens (the UI accepts plain dollars and converts). The parameter-profile fields
- * are optional and default to the classic Chat Completions dialect (max_tokens +
- * temperature) when omitted.
+ * Create/update payload for a catalog model.
+ *
+ * <p>{@code pricingMode} is "METERED" or "UNMETERED". Under METERED, {@code rates} maps a
+ * {@code TokenType} name to millicents per 1,000,000 tokens and must contain a rate greater than zero
+ * for at least INPUT and OUTPUT — the two dimensions every vendor reports on every call. The optional
+ * dimensions (CACHED_INPUT, CACHE_WRITE, REASONING) may be omitted, because a model that does not bill
+ * for them cannot be asked to price them.
+ *
+ * <p>Under UNMETERED, {@code rates} must be empty: the cost is an asserted zero.
  */
 public record LlmModelInput(
         String type,
         String name,
         String label,
-        Long inputPriceMillicentsPerMillion,
-        Long outputPriceMillicentsPerMillion,
+        String pricingMode,
+        Map<String, Long> rates,
         String outputTokenParam,
         Boolean supportsTemperature,
         String reasoningEffort,
