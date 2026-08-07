@@ -49,8 +49,35 @@ describe('ReviewCostCard', () => {
       />,
     );
 
-    // Rendered both on the line itself and in the total's partial note — either is fine here.
-    expect(screen.getAllByText(/could not be priced/i).length).toBeGreaterThan(0);
+    // Scoped to the total's own note rather than matched anywhere on the card: the phrase also
+    // appears on the line row, so an unscoped match passed even with the qualifier deleted — the
+    // total, not the breakdown, is the figure a spend decision reads.
+    const partial = document.querySelector('.usage-partial') as HTMLElement | null;
+    expect(partial).not.toBeNull();
+    expect(partial).toHaveTextContent(/1 call could not be priced — this total is partial/i);
+  });
+
+  /**
+   * The all-unpriced case, which is where a missing qualifier is worst: every line contributes
+   * nothing, so the total is $0.000 — a figure identical to an unmetered model's asserted zero. The
+   * qualifier is the only thing distinguishing them, so it must be present, not merely possible.
+   */
+  it('qualifies a zero total when every call was unpriceable', () => {
+    render(
+      <ReviewCostCard
+        lines={[
+          line({ callRef: 'CANARY-CALL-3', tokenType: 'INPUT', rateMillicentsPerMillion: null, costMillicents: null, pricingMode: 'UNKNOWN' }),
+          line({ callRef: 'CANARY-CALL-4', tokenType: 'OUTPUT', rateMillicentsPerMillion: null, costMillicents: null, pricingMode: 'UNKNOWN' }),
+        ]}
+        unpricedCalls={2}
+      />,
+    );
+
+    const total = document.querySelector('.usage-total') as HTMLElement;
+    expect(total).toHaveTextContent('$0.000');
+    expect(document.querySelector('.usage-partial')).toHaveTextContent(
+      /2 calls could not be priced — this total is partial/i,
+    );
   });
 
   it('labels an unmetered call as self-hosted rather than as free', () => {

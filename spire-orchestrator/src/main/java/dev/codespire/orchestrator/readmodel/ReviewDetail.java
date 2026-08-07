@@ -14,6 +14,12 @@ import java.util.List;
  * reconciliation, deduped) — the same figures the reviews list shows via
  * {@code ReviewProjection.openCounts}, so the header badge agrees with the list row instead of
  * quoting a stale per-run outcome.
+ *
+ * <p>{@code unpricedCalls} travels with {@code chargeLines} for the same reason it travels with the
+ * list row's total: the page sums the lines itself, and an unpriced line contributes nothing to that
+ * sum. Without the count, a review whose every call was unpriceable renders a confident total that
+ * cannot be told apart from an asserted zero — so it is part of the payload, not something the client
+ * infers.
  */
 public record ReviewDetail(
         String id,
@@ -43,6 +49,7 @@ public record ReviewDetail(
         List<FindingView> findingsList,
         List<ReconciliationView> reconciliation,
         List<ChargeLineView> chargeLines,
+        int unpricedCalls,
         String note,
         String errorDetail,
         List<EventView> events,

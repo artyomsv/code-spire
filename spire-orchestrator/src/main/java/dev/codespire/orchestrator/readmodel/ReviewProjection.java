@@ -966,7 +966,8 @@ public class ReviewProjection {
 
             return Optional.of(toDetail(row,
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
-                    chargeLines(reviewId), attached.findings(), reconciliation));
+                    new ChargeDetail(chargeLines(reviewId), costOf(reviewId).unpricedCalls()),
+                    attached.findings(), reconciliation));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
@@ -1406,8 +1407,21 @@ public class ReviewProjection {
                 rs.getString("pr_state"));
     }
 
+    /**
+     * A review's ledger as the detail page needs it: the per-line breakdown, and how many distinct
+     * calls the ledger could not price.
+     *
+     * <p>A parameter object for the same reason {@link LedgerSummary} is one — the two figures are
+     * only meaningful together. The page sums the lines itself and an unpriced line contributes
+     * nothing to that sum, so a breakdown handed over without the count produces a total that reads
+     * as complete. Passing them as separate arguments invites exactly the omission that shipped: the
+     * lines were plumbed through and the count was not.
+     */
+    private record ChargeDetail(List<ReviewDetail.ChargeLineView> lines, int unpricedCalls) {
+    }
+
     private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
-                                  List<ReviewDetail.ChargeLineView> chargeLines,
+                                  ChargeDetail charges,
                                   List<ReviewDetail.FindingView> findings,
                                   List<ReviewDetail.ReconciliationView> reconciliation) {
         // Same reconciled-open figures the list row shows (openCounts) — the header badge must
@@ -1418,7 +1432,8 @@ public class ReviewProjection {
                 blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
                 computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation,
-                chargeLines, r.note, decryptError(r.errorDetail, r.id), events, r.prState);
+                charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
+                events, r.prState);
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
