@@ -2061,13 +2061,43 @@ In `LlmProviderResource`, next to the existing `requireField(in.model(), "model"
         // A model outside the catalog has no rates, so every call this provider makes would be
         // recorded unpriced. Refuse the configuration rather than discover it per review.
         if (!models.isPriceable(in.model())) {
-            throw new BadRequestException("Model '" + in.model() + "' is not in the catalog with usable"
+            throw badRequest("Model '" + in.model() + "' is not in the catalog with usable"
                     + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
                     + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
         }
 ```
 
-Inject `LlmModelRegistry models;` if the resource does not already hold it.
+**Inject `LlmModelRegistry models;`** — verified: `LlmProviderResource` currently injects only
+`LlmProviderRegistry registry` and `LlmKeyValidator validator` (`:40-44`), so you must add it.
+`isPriceable(String)` is public on the registry (`LlmModelRegistry.java:170-172`).
+
+### `throw badRequest(...)`, not `throw new BadRequestException(...)` — and this is not a style preference
+
+`new BadRequestException("some message")` sets the **exception's** message and **not the HTTP response
+body**. The client gets a `400` with an empty entity and the sentence explaining the fix is discarded.
+Task 5 discovered this empirically: it wrote the plan's exact `new BadRequestException(...)` code and three
+body assertions failed.
+
+That matters more here than anywhere else on this branch, because **the entire value of this guard is its
+message.** Refusing the save is the easy half; telling an operator to catalogue the model, or to mark it
+`UNMETERED` if their inference is genuinely free, is the half that saves them a confused half-hour.
+
+`LlmProviderResource` has **seven** existing bodiless throws (`:148, 155, 161, 164, 167, 173, 181`). Add the
+helper and route **all eight** through it — an eighth throw with a body beside seven without would read as
+intentional:
+
+```java
+    private static BadRequestException badRequest(String message) {
+        return new BadRequestException(Response.status(Response.Status.BAD_REQUEST).entity(message).build());
+    }
+```
+
+This mirrors what `PromptResource` already did and what Task 5 added to `LlmModelResource`. **Assert the
+body, not only the status, in your tests** — every existing test in this area checked `statusCode(400)`
+alone, which is exactly why the defect survived.
+
+Twelve other files in the module have the same problem; they are **out of scope** and filed as
+`techdebt/spire-orchestrator/3-3-rejection-messages-never-reach-the-client.md`. Fix this file only.
 
 - [ ] **Step 4: Run the test and the module**
 
