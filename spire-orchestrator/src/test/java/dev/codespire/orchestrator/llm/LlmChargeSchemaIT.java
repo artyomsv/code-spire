@@ -94,9 +94,9 @@ class LlmChargeSchemaIT {
      * adding a new type without amending the migration turns a new billing dimension into a runtime
      * insert failure — the charge is lost at exactly the moment it first occurs.
      *
-     * TODO(Task 2): dev.codespire.contract.review.TokenType does not exist yet — this literal list is
-     * its enum-constant names. Swap for a loop over TokenType.values() once that type lands, so the
-     * two cannot drift apart.
+     * <p>Driven by a literal list because dev.codespire.contract.review.TokenType does not exist yet:
+     * until it does, this can only prove the list agrees with the CHECK, both written from the same
+     * source. It becomes a real drift guard once the enum arrives and drives the loop.
      */
     @Test
     void theTokenTypeCheckAcceptsEveryKnownTokenType() {
