@@ -431,9 +431,13 @@ down is the original design-time roadmap (kept for reference).
     unauthenticated" for three days after that shipped — the delivered list said one thing and the
     backlog the opposite, which is the failure mode a live view exists to prevent.
 11. ✅ **`costMillicents` LLM pricing** (2026-07-07). LLM model catalog with operator-entered token
-    pricing (`llm_model`); a review's real token usage is priced into `review_status.cost_millicents`
+    pricing (`llm_model`); a review's real token usage was priced into `review_status.cost_millicents`
     and shown on the detail page + a Cost column in the reviews list. Model is now a dropdown from the
-    catalog. See ADR-018.
+    catalog. See ADR-018. **Storage superseded by ADR-023 (2026-08-07):** V30 dropped
+    `review_status.cost_millicents` (with `model`/`tokens_in`/`tokens_out`) and `review_llm_call`
+    entirely; a review's cost is now derived from the `llm_charge` ledger. The operator-entered pricing
+    this item delivered is unchanged and is still the reason there is no hardcoded price table — only
+    where the resulting figure lives, and the fact that it can now be *absent* rather than `0`.
 12. **MinIO / object-store BlobStore** · M. The `BlobStore` port itself is wired and in production use —
     `PostgresBlobStore` holds encrypted assembled context (`worker.context_blob`). What remains is an
     **object-store adapter** (MinIO/S3) plus the large-diff and future-artifact cases that outgrow a
