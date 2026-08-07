@@ -1563,6 +1563,15 @@ public final class CallRefs {
     }
 
     public static String of(String reviewId, String slot, ChargeKind kind) {
+        // A blank slot would yield a well-formed-LOOKING ref ("review::x/y#1||REVIEW") that silently
+        // breaks the UNIQUE (call_ref, token_type) identity this method exists to provide — two different
+        // calls would collide and the second would be discarded as a redelivery of the first. Fail loudly
+        // instead: every caller has a real commit or thread ref, so a blank one is a bug upstream.
+        if (reviewId == null || reviewId.isBlank() || slot == null || slot.isBlank()) {
+            throw new IllegalArgumentException(
+                    "A charge needs a reviewId and a slot (the commit, or the thread ref for a follow-up); "
+                            + "got reviewId='" + reviewId + "', slot='" + slot + "'");
+        }
         return reviewId + '|' + slot + '|' + kind.name();
     }
 }
@@ -1673,11 +1682,20 @@ In `LlmModelRegistry`:
         if (counts.isEmpty()) {
             return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
         }
-        // An unreconciled call has no split, so no per-type rate can be applied to it.
+        Pricing pricing = pricingFor(model);
+        // The catalog is consulted BEFORE the reconciled check, because an UNMETERED model's cost is an
+        // asserted zero whatever the split turns out to be — there is nothing a missing breakdown could
+        // change about it. Checking reconciliation first would record a self-hosted deployment's calls as
+        // unpriced, which is both untrue and enough to make the attention panel flag genuinely free work.
+        if (pricing.mode() == PricingMode.UNMETERED) {
+            return usage.reconciled()
+                    ? counts.stream().map(count -> line(pricing, count)).toList()
+                    : List.of(ChargeLine.unmetered(TokenType.TOTAL, usage.reportedTotal()));
+        }
+        // For a metered or unknown model an unreconciled call has no split, so no per-type rate applies.
         if (!usage.reconciled()) {
             return List.of(ChargeLine.unknown(TokenType.TOTAL, usage.reportedTotal()));
         }
-        Pricing pricing = pricingFor(model);
         return counts.stream().map(count -> line(pricing, count)).toList();
     }
 
