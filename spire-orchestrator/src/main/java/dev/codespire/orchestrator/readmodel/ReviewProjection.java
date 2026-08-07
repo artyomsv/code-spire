@@ -723,10 +723,11 @@ public class ReviewProjection {
 
     /**
      * Permanently delete a review and everything derived from it: the read-model
-     * row, its scoped timeline ({@code review_event}) and the underlying event
-     * stream ({@code event_log}, keyed by stream_id = reviewId). Done in one
-     * transaction so a review never half-vanishes. Returns false when there was
-     * no such review; broadcasts a removal so live clients drop the row.
+     * row, its scoped timeline ({@code review_event}), the underlying event
+     * stream ({@code event_log}, keyed by stream_id = reviewId) and its charge
+     * ledger ({@code llm_charge}). Done in one transaction so a review never
+     * half-vanishes. Returns false when there was no such review; broadcasts a
+     * removal so live clients drop the row.
      */
     public boolean deleteReview(String workspace, String slug, long pr) {
         String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
@@ -736,6 +737,17 @@ public class ReviewProjection {
                 boolean existed = deleteBy(c, "DELETE FROM review_status WHERE review_id = ?", reviewId) > 0;
                 deleteBy(c, "DELETE FROM review_event WHERE review_id = ?", reviewId);
                 deleteBy(c, "DELETE FROM event_log WHERE stream_id = ?", reviewId);
+                // The ledger has the same delete-then-re-register property as the worker claim below:
+                // review_id is ReviewIds.reviewId(repo, pr) — stable per PR, not per run — and
+                // llm_charge.review_id is plain TEXT with no FK, so nothing cascades. Left behind, the
+                // orphaned rows are not merely unreachable: costOf/listSummaries/latestModelFor key on
+                // review_id alone, so a RE-REGISTERED PR renders the deleted run's money and model as
+                // its own, the unpriced attention row stays raised for a review that no longer exists,
+                // and the new run's own call_ref collides with the deleted one — discarding a real
+                // charge. Deletion is right here (unlike on a re-run, where the spend history must
+                // survive). The durable fix is a REFERENCES review_status(review_id) ON DELETE CASCADE
+                // on llm_charge, deferred to its own migration so this PR keeps one.
+                deleteBy(c, "DELETE FROM llm_charge WHERE review_id = ?", reviewId);
                 // The worker (separate service, `worker` schema) caches the completed LLM result in
                 // comment_idempotency keyed by (review_id, commit) and RE-EMITS it on any redelivery
                 // for the same PR@commit — crash-safety so a retry never pays for the LLM twice. But a

@@ -123,6 +123,36 @@ class LlmChargeProjectionIT {
     }
 
     /**
+     * Deleting a review deletes its ledger, because a re-registration of the same PR is the SAME
+     * {@code review_id} — {@code ReviewIds.reviewId(repo, pr)} is stable per PR, not per run.
+     *
+     * <p>{@code deleteReview} already clears the worker's claims for exactly this reason, and its own
+     * comment says why: delete-then-re-register is that same key. The ledger has the identical
+     * property and {@code llm_charge.review_id} is plain TEXT with no FK, so nothing cascaded. Left
+     * behind, the orphaned rows made the NEW review render the deleted run's money and model as its
+     * own, kept the unpriced attention row raised for reviews that no longer exist, and collided with
+     * the new run's own {@code call_ref} so its real charge was discarded too.
+     */
+    @Test
+    void deletingAReviewDeletesItsChargesSoAReRegisteredPrCannotInheritThem() {
+        long pr = 9106L;
+        String reviewId = reviewId(pr);
+        projection.registerHeader(reviewId, new RepoRef("TEST-WS", "TEST-REPO"), pr,
+                "t", "a", "aid", "src", "dst", "TESTSHA9106", "http://example.invalid/pr", "github",
+                "completed", 0);
+        projection.recordCharges(call(reviewId, "CANARY-REF-6",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L))));
+
+        assertTrue(projection.deleteReview("TEST-WS", "TEST-REPO", pr), "the review existed");
+
+        assertTrue(projection.chargeLines(reviewId).isEmpty(), "the deleted review's lines are gone");
+        ReviewProjection.CostSummary inherited = projection.costOf(reviewId);
+        assertEquals(0L, inherited.knownCostMillicents(),
+                "a re-registered PR would render the deleted run's spend as its own");
+        assertNull(inherited.lastModel(), "and its model as the model it has not called yet");
+    }
+
+    /**
      * {@code chargeLines} is the UI's raw material for grouping lines back into calls, and it must
      * group by {@code callRef} — each line is written in its own transaction (one {@code update} per
      * line, no surrounding {@code @Transactional}), so two lines of the SAME call cannot be assumed to
