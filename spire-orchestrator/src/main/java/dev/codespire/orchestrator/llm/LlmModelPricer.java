@@ -42,6 +42,15 @@ public class LlmModelPricer {
     public List<ChargeLine> priceCall(String model, ModelUsage usage) {
         List<TokenCount> counts = usage == null ? List.of() : usage.counts();
         if (counts.isEmpty()) {
+            // A defensive contract of this public method, NOT the live path — every current caller
+            // (ResultSaga's three charge sites) null-checks before reaching here, because a null usage
+            // also means there is no model name to write into llm_charge.model (NOT NULL).
+            //
+            // A trap in both directions, so neither half may be removed on the strength of the other:
+            // deleting this branch as "unreachable" leaves a public method that NPEs on a documented
+            // input, and dropping a call-site guard as "redundant because priceCall handles null"
+            // reinstates the NPE-into-cs.dlq it was added to stop — the guard is what keeps the
+            // warning and the dead-letter avoidance, not this branch.
             return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
         }
         Pricing pricing = pricingFor(model);

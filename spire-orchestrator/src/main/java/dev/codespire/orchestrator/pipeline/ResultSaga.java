@@ -181,12 +181,18 @@ public class ResultSaga {
                 if (e.result().usage() == null) {
                     // Guarded like the two sibling sites below, which is what this one was missing:
                     // charge() dereferences the usage for the model name, so a usage-less result
-                    // NPE'd the whole handler into cs.dlq. Not charged either — llm_charge.model is
-                    // NOT NULL and there is no model to name, so a row here would need an invented
-                    // one. Unreachable from the current worker (TokenUsageMapper never answers null),
-                    // so a legacy replay or a malformed result, and either deserves to be visible.
-                    LOG.warnf("ReviewGenerated for %s carries no token usage — no charge recorded",
-                            e.reviewId());
+                    // NPE'd the WHOLE handler into cs.dlq — findings, verdicts and PostComments with
+                    // it. Not charged either: llm_charge.model is NOT NULL and there is no model to
+                    // name, and a blank one would feed latestModelFor and render the review's real
+                    // spend as "no charges recorded yet".
+                    //
+                    // WARN rather than silence because this cannot happen by design:
+                    // TokenUsageMapper always answers a ModelUsage (a null input yields an
+                    // unreconciled TOTAL), so a null here means the worker emitted a result with no
+                    // accounting at all — a defect upstream, not a case to absorb. Recording nothing
+                    // quietly would hide it behind an empty cost card.
+                    LOG.warnf("No usage on ReviewGenerated for %s — no charge recorded; the worker"
+                            + " emitted a result without token accounting", e.reviewId());
                 } else {
                     charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.REVIEW),
                             e.result().usage());
