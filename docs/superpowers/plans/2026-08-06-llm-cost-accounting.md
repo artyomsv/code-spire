@@ -1671,7 +1671,22 @@ In `LlmModelRegistry`:
     }
 ```
 
-`countProvidersUsing` is `SELECT count(*) FROM llm_provider WHERE model = ?`. Confirm the table and column name from `LlmProviderRegistry` before writing it.
+`countProvidersUsing` is:
+
+```sql
+SELECT count(*) FROM llm_provider WHERE model = ?
+```
+
+**Verified, not assumed:** `V8__llm_provider.sql:14` declares `model VARCHAR(255) NOT NULL`, and
+`LlmProviderRegistry` reads and writes it as a plain string (`:88`, `:116`, `:220`). No later migration
+alters it. Match on the model NAME, which is what a provider stores — never on the catalog row's UUID.
+
+**Class-size warning, measured:** `LlmModelRegistry.java` is currently **256 lines** and this task adds
+rate CRUD, pricing-mode validation, `priceCall`, `isPriceable` and the delete guard. It will cross the
+project's 300-line limit. Plan for that from the start rather than discovering it at the end: extract the
+rate table into `LlmModelRateRepository` (`ratesFor(Connection, UUID)`, `replaceRates(UUID, Map<TokenType,
+Long>)`) and have the registry delegate. Splitting once, deliberately, beats a reviewer asking you to
+split a 380-line class afterwards.
 
 - [ ] **Step 6: Run the test**
 
