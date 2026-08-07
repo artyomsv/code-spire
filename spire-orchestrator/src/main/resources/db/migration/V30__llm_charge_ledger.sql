@@ -56,6 +56,10 @@ CREATE TABLE llm_charge (
     -- and ReviewCompleted inserted a second row for a call that happened once.
     UNIQUE (call_ref, token_type),
     CHECK (pricing_mode IN ('METERED', 'UNMETERED', 'UNKNOWN')),
+    CHECK (kind IN ('review', 'reconcile', 'followup')),
+    -- Unlike llm_model_rate.token_type, TOTAL belongs here: an unreconciled call is charged as one
+    -- undivided line (see the aTotalLineCannotBeMetered CHECK below) rather than left unrepresentable.
+    CHECK (token_type IN ('INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING', 'TOTAL')),
     CHECK ((pricing_mode = 'UNKNOWN') = (cost_millicents IS NULL)),
     CHECK (pricing_mode <> 'UNKNOWN'   OR rate_millicents_per_million IS NULL),
     CHECK (pricing_mode <> 'METERED'   OR rate_millicents_per_million IS NOT NULL),

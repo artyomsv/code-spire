@@ -76,6 +76,45 @@ class LlmChargeSchemaIT {
     }
 
     @Test
+    void aTypoedTokenTypeIsRejected() {
+        assertThrows(SQLException.class, () -> exec(insert("UNKNOWN", "INPUTT", "NULL", "NULL")));
+    }
+
+    @Test
+    void aTypoedKindIsRejected() {
+        String sql = "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+                + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
+                + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-BADKIND', 'reviewww', "
+                + "'TEST-MODEL', 'UNKNOWN', 'INPUT', 10, NULL, NULL)";
+        assertThrows(SQLException.class, () -> exec(sql));
+    }
+
+    /**
+     * The ledger's token_type CHECK must accept every token type the code can produce. Without this,
+     * adding a new type without amending the migration turns a new billing dimension into a runtime
+     * insert failure — the charge is lost at exactly the moment it first occurs.
+     *
+     * TODO(Task 2): dev.codespire.contract.review.TokenType does not exist yet — this literal list is
+     * its enum-constant names. Swap for a loop over TokenType.values() once that type lands, so the
+     * two cannot drift apart.
+     */
+    @Test
+    void theTokenTypeCheckAcceptsEveryKnownTokenType() {
+        String[] tokenTypes = {"INPUT", "CACHED_INPUT", "CACHE_WRITE", "OUTPUT", "REASONING", "TOTAL"};
+        for (String tokenType : tokenTypes) {
+            // A distinct call_ref per iteration: other tests already charge (call_ref, token_type)
+            // pairs like ('CANARY-INPUTUNKNOWN', 'INPUT'), and this loop must not collide with them.
+            String sql = "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+                    + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
+                    + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-ENUM-" + tokenType
+                    + "', 'review', 'TEST-MODEL', 'UNKNOWN', '" + tokenType + "', 10, NULL, NULL)";
+            assertDoesNotThrow(() -> exec(sql),
+                    "llm_charge.token_type CHECK rejects " + tokenType
+                            + " — add it to the CHECK in V30__llm_charge_ledger.sql");
+        }
+    }
+
+    @Test
     void theDroppedTablesAndColumnsAreGone() {
         assertThrows(SQLException.class, () -> exec("SELECT 1 FROM review_llm_call"));
         assertThrows(SQLException.class, () -> exec("SELECT cost_millicents FROM review_status"));
