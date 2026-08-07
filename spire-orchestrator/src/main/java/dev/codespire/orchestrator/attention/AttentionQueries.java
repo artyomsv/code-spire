@@ -13,6 +13,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -46,6 +48,9 @@ public class AttentionQueries {
 
     @Inject
     LlmModelPricer pricer;
+
+    @Inject
+    CostAttentionAcks acks;
 
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
@@ -309,38 +314,22 @@ public class AttentionQueries {
      * are both silent by construction: neither contributes to a money total, so a genuine $0.00
      * and "we could not account for N calls" would otherwise look identical on screen.
      *
-     * <p>The two rows are made mutually exclusive by construction, each naming its own cause rather
-     * than a shared symptom. {@code LlmModelPricer.priceCall} returns EITHER per-type lines OR one
-     * {@code TOTAL} line, never both, so a {@code TOTAL} row is always the unreconciled case — even
-     * when it is also priced {@code UNKNOWN} (a metered model has no split to apply a rate to). The
-     * unpriced query excludes {@code TOTAL} so that case is reported as a mapping defect, not sent to
-     * the LLM settings page where entering a rate would do nothing: the call is unpriced BECAUSE it
-     * did not reconcile, not because a rate is missing. Do not "simplify" this exclusion away.
+     * <p>Both are counted only from each condition's acknowledgement watermark, and both are therefore
+     * dismissable — the only rows here that are. {@link CostAttentionRow} carries the reasoning for
+     * why, along with each row's own query and wording.
      */
     private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
-        int unpriced = count(c,
-                "SELECT count(DISTINCT call_ref) FROM llm_charge "
-                        + "WHERE pricing_mode = 'UNKNOWN' AND token_type <> 'TOTAL'");
-        if (unpriced > 0) {
-            rows.add(new AttentionView("LLM_COST_UNPRICED", Severity.WARNING, null,
-                    unpriced + " LLM call(s) could not be priced, so the reported cost is lower than"
-                            + " the real spend.", "/settings/llm"));
+        for (CostAttentionRow row : CostAttentionRow.values()) {
+            int calls = countSince(c, row.countQuery(), acks.since(row));
+            if (calls > 0) {
+                rows.add(row.view(calls));
+            }
         }
-        int unreconciled = count(c,
-                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE token_type = 'TOTAL'");
-        if (unreconciled > 0) {
-            // Not a setting to fix: a reconciliation failure is a TokenUsageMapper defect, so there
-            // is no operator page that helps and the action is deliberately null.
-            // The "or reported none at all" clause is not padding: TokenUsageMapper.map(model, null)
-            // produces exactly this row shape with a zero TOTAL, and the original wording asserted
-            // the vendor had reported a breakdown that disagreed — describing a call where nothing
-            // was reported as one that contradicted itself sends the reader hunting the wrong defect.
-            rows.add(new AttentionView("LLM_USAGE_UNRECONCILED", Severity.WARNING, null,
-                    unreconciled + " LLM call(s) reported a token breakdown that did not match their"
-                            + " own total, or reported no usage at all, so only a total was recorded"
-                            + " and those calls are not priced. This is a mapping defect rather than a"
-                            + " setting, so the figures will not change until it is fixed.", null));
-        }
+    }
+
+    /** Acknowledge a ledger-wide cost condition: calls already priced stop being counted. */
+    void acknowledge(CostAttentionRow row) {
+        acks.acknowledge(row);
     }
 
     private void deadLetterRows(List<AttentionView> rows) {
@@ -366,6 +355,16 @@ public class AttentionQueries {
     private static int count(Connection c, String sql) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
             return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    /** As {@link #count}, for a query bounded by one acknowledgement watermark. */
+    private static int countSince(Connection c, String sql, Instant since) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(since));
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
         }
     }
 }
