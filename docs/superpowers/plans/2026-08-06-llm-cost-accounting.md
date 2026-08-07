@@ -1983,6 +1983,11 @@ inference."
 
 ## Task 7: Record charge lines in the read model
 
+**Helpers already in `ReviewProjection` that this task builds on — verified present, do not re-create:**
+`update(String sql, Binder binder)` at `:1549` (the `Binder` functional interface takes the
+`PreparedStatement`, so a `ps -> { ... }` lambda is correct) and `broadcast(String reviewId)` at `:1077`.
+`setNullableLong` does **not** exist and is added by this task, as shown below.
+
 **This task adds the WRITER only.** Task 2 already removed every read of the dropped columns and
 re-derived `model`, `llm_type`, `total_cost_millicents` and `unpriced_calls` in `listSummaries`, and
 already replaced `llmCalls` with `chargeLines` and `ReviewDetail.LlmCall` with `ChargeLineView`. Do not
@@ -2102,6 +2107,19 @@ Expected: FAIL — `recordCharges` does not exist.
             });
         }
         broadcast(call.reviewId());
+    }
+
+    /**
+     * Bind a nullable money column. NULL must stay NULL: a rate or cost written as 0 because the value
+     * was absent is the exact conflation this ledger exists to remove, and {@code setLong} on an
+     * unboxed null would either throw or silently write zero depending on the call site.
+     */
+    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
+        }
     }
 
     /**
