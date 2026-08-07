@@ -2200,6 +2200,11 @@ held the last run's review call."
 
 **Why the guard is here.** Pricing is post-hoc: `ResultSaga` prices when the result event returns, by which point the money is spent. Failing there would waste the spend *and* lose the review. The pre-spend point is where `GenerateReview` is emitted, which already has exactly this shape for a missing LLM credential at `ResultSaga.java:143-150` — copy that idiom.
 
+**You may need to re-add an injection Task 2 removed.** Task 2 deleted `ResultSaga`'s pricing calls and
+was told to drop its `LlmModelRegistry llmModels` field if nothing else used it. This task needs it again,
+for both `isPriceable` and `priceCall`. If the field is gone, put it back — that is expected churn from
+sequencing the removal before the replacement, not a mistake by either task.
+
 - [ ] **Step 1: Write the failing test**
 
 ```java
