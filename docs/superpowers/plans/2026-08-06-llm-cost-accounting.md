@@ -1140,6 +1140,53 @@ an unmapped new dimension announces itself instead of mispricing quietly."
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelView.java`
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmModelRegistry.java`
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmModelRegistryPricingTest.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmModelResourceTest.java` — **7
+  existing tests, all of which this task breaks and must repair. One of them asserts the defect. See below.**
+
+### The existing catalog test enshrines the bug — do not just make it compile
+
+`LlmModelResourceTest` (104 lines, 7 tests) builds every fixture from the two price fields this task
+replaces, so all 7 break. Three of them are already failing before you start, because Task 1 dropped the
+two `llm_model` price columns; that is expected and yours to fix, not someone else's breakage.
+
+Repairing them by swapping the fixture to `pricingMode` + `rates` is **not sufficient**, because two of
+them assert the old semantics directly:
+
+```java
+    @Test
+    void uncataloguedModelCostsZero() {
+        assertEquals(0L, registry.costMillicents("not-registered", 1_000, 1_000));
+    }
+```
+
+**That test asserts the exact defect this branch exists to remove.** An uncatalogued model costing zero
+is how an unpriceable call became indistinguishable from a free one. Invert it — do not delete it, since
+the behaviour is worth pinning in its corrected form:
+
+```java
+    /**
+     * The regression this branch was built for. An uncatalogued model used to be priced at 0, which froze
+     * forever as "this call was free". It must now be UNKNOWN, with a null cost that no sum can absorb.
+     */
+    @Test
+    void anUncataloguedModelIsUnknownNotFree() {
+        List<ChargeLine> lines = registry.priceCall("TEST-NOT-REGISTERED", ModelUsage.of("TEST-NOT-REGISTERED", 1_000, 1_000));
+
+        assertFalse(lines.isEmpty());
+        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.UNKNOWN));
+        assertTrue(lines.stream().allMatch(l -> l.costMillicents() == null));
+    }
+```
+
+`pricesAReviewFromTokenUsage` (`:72-77`) calls the removed `costMillicents(String, int, int)` and must be
+rewritten against `priceCall`, pricing each bucket at its own rate. `rejectsANegativePrice` (`:64`)
+becomes obsolete — negative is no longer the interesting case; **zero under `METERED`** is, and that
+assertion belongs in Task 5 with the rest of the REST validation. Delete it here and say so in your
+report, so its disappearance is a decision on the record rather than an omission.
+
+**Ownership boundary with Task 5:** this task repairs the 7 existing tests so the module is green again.
+Task 5 adds the *new* REST validation cases (zero-under-METERED, rates-under-UNMETERED, UNKNOWN rejected
+as a chosen mode, 409 on deleting a referenced model). Do not pre-empt those.
 
 **Interfaces:**
 - Consumes: `TokenType`, `ModelUsage` (Task 2).
