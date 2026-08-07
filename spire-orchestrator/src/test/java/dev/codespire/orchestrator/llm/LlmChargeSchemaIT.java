@@ -35,7 +35,14 @@ class LlmChargeSchemaIT {
         return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-" + tokenType + mode
-                + "', 'review', 'TEST-MODEL', '" + mode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")";
+                + "', 'REVIEW', 'TEST-MODEL', '" + mode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")";
+    }
+
+    private String insertKind(String kind) {
+        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+                + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
+                + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-KIND-" + kind
+                + "', '" + kind + "', 'TEST-MODEL', 'UNKNOWN', 'INPUT', 10, NULL, NULL)";
     }
 
     @Test
@@ -103,9 +110,22 @@ class LlmChargeSchemaIT {
             String sql = "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
                     + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                     + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-ENUM-" + type.name()
-                    + "', 'review', 'TEST-MODEL', 'UNKNOWN', '" + type.name() + "', 10, NULL, NULL)";
+                    + "', 'REVIEW', 'TEST-MODEL', 'UNKNOWN', '" + type.name() + "', 10, NULL, NULL)";
             assertDoesNotThrow(() -> exec(sql),
                     "llm_charge.token_type CHECK rejects TokenType." + type
+                            + " — add it to the CHECK in V30__llm_charge_ledger.sql");
+        }
+    }
+
+    /**
+     * The ledger's kind CHECK must accept every ChargeKind the writer can produce. Without this, adding
+     * a call kind without amending the migration turns that kind's first charge into a lost INSERT.
+     */
+    @Test
+    void theKindCheckAcceptsEveryChargeKind() {
+        for (ChargeKind kind : ChargeKind.values()) {
+            assertDoesNotThrow(() -> exec(insertKind(kind.name())),
+                    "llm_charge.kind CHECK rejects ChargeKind." + kind
                             + " — add it to the CHECK in V30__llm_charge_ledger.sql");
         }
     }

@@ -1,11 +1,13 @@
 package dev.codespire.orchestrator.llm;
 
+import dev.codespire.contract.review.ModelUsage;
 import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -13,6 +15,8 @@ import static io.restassured.RestAssured.given;
 import static io.restassured.RestAssured.when;
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The /api/llm-models catalog: CRUD + validation, and the pricing lookup used to
@@ -32,8 +36,8 @@ class LlmModelResourceTest {
 
     private static Map<String, Object> gpt4o() {
         return Map.of("type", "openai", "name", "gpt-4o", "label", "GPT-4o",
-                "inputPriceMillicentsPerMillion", 250_000, // $2.50 / 1M
-                "outputPriceMillicentsPerMillion", 1_000_000); // $10.00 / 1M
+                "pricingMode", "METERED",
+                "rates", Map.of("INPUT", 250_000, "OUTPUT", 1_000_000)); // $2.50 / $10.00 per 1M
     }
 
     @Test
@@ -48,7 +52,7 @@ class LlmModelResourceTest {
     void rejectsAnUnsupportedType() {
         given().contentType("application/json")
                 .body(Map.of("type", "cohere", "name", "command-r", "label", "C",
-                        "inputPriceMillicentsPerMillion", 1, "outputPriceMillicentsPerMillion", 1))
+                        "pricingMode", "METERED", "rates", Map.of("INPUT", 1, "OUTPUT", 1)))
                 .when().post("/api/llm-models").then().statusCode(400);
     }
 
@@ -56,34 +60,41 @@ class LlmModelResourceTest {
     void rejectsAMissingName() {
         given().contentType("application/json")
                 .body(Map.of("type", "openai", "label", "X",
-                        "inputPriceMillicentsPerMillion", 1, "outputPriceMillicentsPerMillion", 1))
-                .when().post("/api/llm-models").then().statusCode(400);
-    }
-
-    @Test
-    void rejectsANegativePrice() {
-        given().contentType("application/json")
-                .body(Map.of("type", "openai", "name", "m", "label", "M",
-                        "inputPriceMillicentsPerMillion", -1, "outputPriceMillicentsPerMillion", 1))
+                        "pricingMode", "METERED", "rates", Map.of("INPUT", 1, "OUTPUT", 1)))
                 .when().post("/api/llm-models").then().statusCode(400);
     }
 
     @Test
     void pricesAReviewFromTokenUsage() {
-        registry.create(new LlmModelInput("openai", "gpt-4o", "GPT-4o", 250_000L, 1_000_000L,
-                "MAX_TOKENS", true, null, Map.of(), true));
+        registry.create(new LlmModelInput("openai", "gpt-4o", "GPT-4o", "METERED",
+                Map.of("INPUT", 250_000L, "OUTPUT", 1_000_000L), "MAX_TOKENS", true, null, Map.of(), true));
+
+        List<ChargeLine> lines = registry.priceCall("gpt-4o", ModelUsage.of("gpt-4o", 10_000, 2_000));
+
+        assertEquals(2, lines.size());
         // (10000 * 250000 + 2000 * 1000000) / 1_000_000 = 4500 millicents = $0.045
-        assertEquals(4500L, registry.costMillicents("gpt-4o", 10_000, 2_000));
+        assertEquals(4500L, lines.stream().mapToLong(ChargeLine::costMillicents).sum());
     }
 
+    /**
+     * The regression this branch was built for. An uncatalogued model used to be priced at 0, which
+     * froze forever as "this call was free". It must now be UNKNOWN, with a null cost that no sum can
+     * absorb.
+     */
     @Test
-    void uncataloguedModelCostsZero() {
-        assertEquals(0L, registry.costMillicents("not-registered", 1_000, 1_000));
+    void anUncataloguedModelIsUnknownNotFree() {
+        List<ChargeLine> lines = registry.priceCall("TEST-NOT-REGISTERED",
+                ModelUsage.of("TEST-NOT-REGISTERED", 1_000, 1_000));
+
+        assertFalse(lines.isEmpty());
+        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.UNKNOWN));
+        assertTrue(lines.stream().allMatch(l -> l.costMillicents() == null));
     }
 
     @Test
     void roundTripsTheParameterProfileAndBrokersItByName() {
-        registry.create(new LlmModelInput("openai", "o3", "OpenAI o3", 2_000_000L, 8_000_000L,
+        registry.create(new LlmModelInput("openai", "o3", "OpenAI o3", "METERED",
+                Map.of("INPUT", 2_000_000L, "OUTPUT", 8_000_000L),
                 "MAX_COMPLETION_TOKENS", false, "medium", Map.of("service_tier", "flex"), true));
 
         var view = registry.list().stream().filter(m -> m.name().equals("o3")).findFirst().orElseThrow();

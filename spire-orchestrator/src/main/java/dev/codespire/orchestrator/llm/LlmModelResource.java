@@ -78,19 +78,13 @@ public class LlmModelResource {
             throw new BadRequestException("Unsupported model type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
         }
-        requireNonNegative(in.inputPriceMillicentsPerMillion(), "inputPriceMillicentsPerMillion");
-        requireNonNegative(in.outputPriceMillicentsPerMillion(), "outputPriceMillicentsPerMillion");
+        // Pricing-mode and rate validation happens in LlmModelRegistry (create/update), which is the
+        // single place that knows what a saveable model looks like.
     }
 
     private static void requireField(String value, String name) {
         if (value == null || value.isBlank()) {
             throw new BadRequestException(name + " is required");
-        }
-    }
-
-    private static void requireNonNegative(Long value, String name) {
-        if (value == null || value < 0) {
-            throw new BadRequestException(name + " must be zero or positive");
         }
     }
 

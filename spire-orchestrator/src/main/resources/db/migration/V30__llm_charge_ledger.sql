@@ -43,7 +43,7 @@ CREATE TABLE llm_charge (
     id            UUID         PRIMARY KEY,
     review_id     TEXT         NOT NULL,
     call_ref      TEXT         NOT NULL,
-    kind          VARCHAR(16)  NOT NULL,   -- review | reconcile | followup
+    kind          VARCHAR(16)  NOT NULL,   -- REVIEW | RECONCILE | FOLLOWUP
     model         VARCHAR(255) NOT NULL,
     pricing_mode  VARCHAR(16)  NOT NULL,
     token_type    VARCHAR(32)  NOT NULL,
@@ -56,7 +56,9 @@ CREATE TABLE llm_charge (
     -- and ReviewCompleted inserted a second row for a call that happened once.
     UNIQUE (call_ref, token_type),
     CHECK (pricing_mode IN ('METERED', 'UNMETERED', 'UNKNOWN')),
-    CHECK (kind IN ('review', 'reconcile', 'followup')),
+    -- Names the ChargeKind enum verbatim, matching how token_type already works below: a typo'd
+    -- literal in the writer would otherwise pass compilation and dead-letter the result at INSERT time.
+    CHECK (kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')),
     -- Unlike llm_model_rate.token_type, TOTAL belongs here: an unreconciled call is charged as one
     -- undivided line (see the aTotalLineCannotBeMetered CHECK below) rather than left unrepresentable.
     CHECK (token_type IN ('INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING', 'TOTAL')),

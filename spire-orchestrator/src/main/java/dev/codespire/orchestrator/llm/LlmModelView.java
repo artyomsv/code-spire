@@ -4,18 +4,18 @@ import java.time.Instant;
 import java.util.Map;
 
 /**
- * A catalog model as the API returns it. Prices are millicents (1/100,000 dollar)
- * per 1,000,000 tokens (how providers quote pricing). The parameter profile
- * ({@code outputTokenParam}/{@code supportsTemperature}/{@code reasoningEffort}/
- * {@code extraParams}) declares the model's API dialect (ADR-018).
+ * A catalog model as the API returns it. {@code pricingMode} is "METERED" or "UNMETERED"; {@code rates}
+ * maps a {@code TokenType} name to millicents per 1,000,000 tokens (how providers quote pricing) and is
+ * empty under UNMETERED. The parameter profile ({@code outputTokenParam}/{@code supportsTemperature}/
+ * {@code reasoningEffort}/{@code extraParams}) declares the model's API dialect (ADR-018).
  */
 public record LlmModelView(
         String id,
         String type,
         String name,
         String label,
-        long inputPriceMillicentsPerMillion,
-        long outputPriceMillicentsPerMillion,
+        String pricingMode,
+        Map<String, Long> rates,
         String outputTokenParam,
         boolean supportsTemperature,
         String reasoningEffort,
