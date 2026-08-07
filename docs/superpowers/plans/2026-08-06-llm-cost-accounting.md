@@ -320,6 +320,8 @@ where cost comes from: nowhere yet, rather than a fabricated zero.
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewDetail.java:45-46, 66, 73-75`
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewSummary.java`
 - Test: `spire-contract/src/test/java/dev/codespire/contract/review/ModelUsageTest.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSchemaIT.java` — **the
+  `TokenType.values()` swap described in Step 8. Do not skip it; it is why this file is listed.**
 
 **Interfaces:**
 - Produces: `TokenType` enum with constants `INPUT, CACHED_INPUT, CACHE_WRITE, OUTPUT, REASONING, TOTAL`; `record TokenCount(TokenType type, int tokens)`; `record ModelUsage(String model, List<TokenCount> counts, int reportedTotal, boolean reconciled)` with `int tokensOf(TokenType)` and static `ModelUsage of(String model, int input, int output)`.
@@ -628,12 +630,45 @@ This is a **deliberate** wire change, safe because `DomainEvent` carries no usag
 
 Expected: PASS.
 
-- [ ] **Step 8: Run the Docker-free tier**
+- [ ] **Step 8: Activate Task 1's token-type drift guard**
+
+Task 1 added `LlmChargeSchemaIT.theTokenTypeCheckAcceptsEveryKnownTokenType`, which asserts the ledger's
+`token_type` CHECK accepts every token type the code can produce. Because `TokenType` did not exist yet,
+it is currently driven by a **hardcoded `String[]` of the six names**, written from the same CHECK it is
+meant to police. In that form it proves only that an array agrees with a constraint that the same author
+copied it from — a tautology, not a guard.
+
+You are creating `TokenType`. Swap the literal array for the enum so the guard becomes real:
+
+```java
+        for (TokenType type : TokenType.values()) {
+            assertDoesNotThrow(() -> exec(insert("UNKNOWN", type.name(), "NULL", "NULL")),
+                    "llm_charge.token_type CHECK rejects TokenType." + type
+                            + " — add it to the CHECK in V30__llm_charge_ledger.sql");
+        }
+```
+
+Import `dev.codespire.contract.review.TokenType`; `spire-orchestrator` already declares
+`implementation(project(":spire-contract"))`, so no build change is needed. Delete the comment that
+asked for this swap.
+
+**Why this step is spelled out rather than left to a code comment:** without it, nothing in the plan
+directs anyone back to that file, the array stays hardcoded indefinitely, and the CHECK is free to drift
+from the enum — which is the exact failure the test was added to prevent. A guard that cannot detect its
+own subject is worse than none, because it reports success.
+
+Verify it is load-bearing: temporarily add a constant to `TokenType` without touching the migration, run
+the test, confirm it now FAILS naming that constant, then remove the constant.
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmChargeSchemaIT'`
+Expected: PASS, 10/10.
+
+- [ ] **Step 9: Run the Docker-free tier**
 
 Run: `./gradlew testFast`
 Expected: PASS, all 13 modules.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add spire-contract spire-llm spire-orchestrator spire-review-worker spire-gateway
