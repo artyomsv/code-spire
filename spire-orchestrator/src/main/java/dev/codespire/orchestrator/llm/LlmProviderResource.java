@@ -160,6 +160,11 @@ public class LlmProviderResource {
         }
         // A model outside the catalog has no rates, so every call this provider makes would be
         // recorded unpriced. Refuse the configuration rather than discover it per review.
+        //
+        // This duplicates LlmProviderRegistry.requirePriceableModel — deliberately, not redundantly.
+        // The registry throws a plain IllegalArgumentException, which no ExceptionMapper in this
+        // module translates, so without this check the same refusal would answer 500 instead of 400.
+        // Keep this until that mapper exists (tracked in techdebt) — do not delete it as duplication.
         if (!models.isPriceable(in.model())) {
             throw badRequest("Model '" + in.model() + "' is not in the catalog with usable"
                     + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"

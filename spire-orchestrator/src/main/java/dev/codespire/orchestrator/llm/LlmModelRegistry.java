@@ -108,9 +108,11 @@ public class LlmModelRegistry {
         PricingMode mode = validated.mode();
         Map<TokenType, Long> rates = validated.rates();
         try (Connection c = dataSource.getConnection()) {
-            if (!exists(c, id)) {
+            String existingName = nameOf(c, id);
+            if (existingName == null) {
                 return Optional.empty();
             }
+            requireRenameIsSafe(c, existingName, in.name());
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE llm_model SET type=?, name=?, label=?, pricing_mode=?, output_token_param=?,
                             supports_temperature=?, reasoning_effort=?, extra_params=?, enabled=?,
@@ -203,12 +205,20 @@ public class LlmModelRegistry {
 
     // ---- helpers -----------------------------------------------------------
 
-    private boolean exists(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM llm_model WHERE id = ?")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
+    /**
+     * {@code llm_provider.model} is a bare string reference, not a foreign key, so renaming a
+     * catalogued model out from under a referencing provider would orphan it exactly as deleting the
+     * model would — {@link #delete} already guards that; a rename needs the same guard. Only the
+     * name is load-bearing here: every other field stays freely editable while the model is in use.
+     */
+    private void requireRenameIsSafe(Connection c, String existingName, String newName) throws SQLException {
+        if (existingName.equals(newName)) {
+            return;
+        }
+        int users = countProvidersUsing(c, existingName);
+        if (users > 0) {
+            throw new IllegalStateException("Model '" + existingName + "' is in use by " + users
+                    + " LLM provider(s). Point them at another model first, then rename it.");
         }
     }
 
