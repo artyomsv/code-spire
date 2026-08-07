@@ -149,7 +149,7 @@ public class LlmModelRegistry {
             // and every call it makes unpriceable.
             int users = countProvidersUsing(c, name);
             if (users > 0) {
-                throw new IllegalStateException("Model '" + name + "' is in use by " + users
+                throw new ModelInUseException("Model '" + name + "' is in use by " + users
                         + " LLM provider(s). Point them at another model first.");
             }
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_model WHERE id = ?")) {
@@ -217,7 +217,7 @@ public class LlmModelRegistry {
         }
         int users = countProvidersUsing(c, existingName);
         if (users > 0) {
-            throw new IllegalStateException("Model '" + existingName + "' is in use by " + users
+            throw new ModelInUseException("Model '" + existingName + "' is in use by " + users
                     + " LLM provider(s). Point them at another model first, then rename it.");
         }
     }

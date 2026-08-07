@@ -58,7 +58,7 @@ public class LlmModelResource {
         try {
             return registry.update(uuid(id), in)
                     .orElseThrow(() -> new NotFoundException("No LLM model " + id));
-        } catch (IllegalStateException inUse) {
+        } catch (ModelInUseException inUse) {
             throw new ClientErrorException(
                     Response.status(Response.Status.CONFLICT).entity(inUse.getMessage()).build());
         }
@@ -72,7 +72,7 @@ public class LlmModelResource {
             if (!registry.delete(uuid(id))) {
                 throw new NotFoundException("No LLM model " + id);
             }
-        } catch (IllegalStateException inUse) {
+        } catch (ModelInUseException inUse) {
             throw new ClientErrorException(
                     Response.status(Response.Status.CONFLICT).entity(inUse.getMessage()).build());
         }
