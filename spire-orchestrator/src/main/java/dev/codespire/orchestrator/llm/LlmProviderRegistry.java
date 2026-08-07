@@ -35,6 +35,9 @@ public class LlmProviderRegistry {
     @Inject
     dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
 
+    @Inject
+    LlmModelRegistry models;
+
     // ---- reads (API) -------------------------------------------------------
 
     public List<LlmProviderView> list() {
@@ -67,6 +70,7 @@ public class LlmProviderRegistry {
 
     @Transactional
     public LlmProviderView create(LlmProviderInput in) {
+        requirePriceableModel(in.model());
         UUID id = UUID.randomUUID();
         String apiKey = require(in.apiKey(), "apiKey");
         try (Connection c = dataSource.getConnection()) {
@@ -101,6 +105,7 @@ public class LlmProviderRegistry {
     /** Update everything except the default flag (managed via {@link #setDefault}). */
     @Transactional
     public Optional<LlmProviderView> update(UUID id, LlmProviderInput in) {
+        requirePriceableModel(in.model());
         try (Connection c = dataSource.getConnection()) {
             if (!exists(c, id)) {
                 return Optional.empty();
@@ -211,6 +216,21 @@ public class LlmProviderRegistry {
     }
 
     // ---- helpers -----------------------------------------------------------
+
+    /**
+     * A provider may only name a model the catalog can price. Enforced HERE rather than only at the REST
+     * edge because this is the invariant's real boundary: a caller that bypasses the resource — a seeder,
+     * an import, a test — would otherwise create a provider whose every call lands in the ledger unpriced.
+     * The saga keeps its own pre-spend check regardless: pricing is post-hoc, so that is the last point at
+     * which an unpriceable review can still be refused rather than merely reported.
+     */
+    private void requirePriceableModel(String model) {
+        if (!models.isPriceable(model)) {
+            throw new IllegalArgumentException("Model '" + model + "' is not in the catalog with usable"
+                    + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
+                    + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
+        }
+    }
 
     private LlmProviderConfig decrypted(ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);

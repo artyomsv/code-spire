@@ -61,6 +61,9 @@ class ConversationE2ETest {
     @Inject
     dev.codespire.orchestrator.llm.LlmProviderRegistry llmProviders;
 
+    @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
+
     private KafkaProducer<String, String> producer;
 
     @BeforeEach
@@ -74,7 +77,14 @@ class ConversationE2ETest {
         } catch (RuntimeException alreadyRegistered) {
             // one provider per (type, workspace)
         }
-        // planFollowUp needs a default LLM provider to pack a credential (else it skips).
+        // planFollowUp needs a default LLM provider to pack a credential (else it skips). The model
+        // must also be catalogued — the registry now refuses to create a provider naming one it
+        // cannot price. UNMETERED, since this is a fake test model, not a real vendor.
+        if (llmModels.list().stream().noneMatch(m -> m.name().equals("TEST-MODEL"))) {
+            llmModels.create(new dev.codespire.orchestrator.llm.LlmModelInput(
+                    "openai", "TEST-MODEL", "TEST-MODEL", "UNMETERED", java.util.Map.of(),
+                    null, null, null, null, true));
+        }
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
                     "test-llm", "openai", "http://localhost", "sk-test", "TEST-MODEL", 0.2, null, true, true));
