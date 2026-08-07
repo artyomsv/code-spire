@@ -298,9 +298,16 @@ down is the original design-time roadmap (kept for reference).
   unpriceable review can be refused rather than merely reported) — and the same registry guard now
   refuses **renaming** a catalogued model still in use, not only deleting one; a rename orphaned
   referencing providers identically and was the one path that could defeat the guard after it had
-  passed. The conversation path deliberately keeps no pre-spend check of its own — a follow-up answers a
-  human already waiting, and the turn cap's old silent-drop failure is the shape this project does not
-  want to repeat on that path — so it records cost honestly and leans on the registry guard instead.
+  passed. The conversation path is guarded the same way: `ConversationSaga` resolves the default
+  credential and its priceability in one answer (`WorkerLlmCredentials.resolveDefault` → `DefaultLlm`), so
+  a caller cannot take the credential without being told whether spending it can be priced. It was
+  originally left unguarded on the argument that the registry made an unpriceable provider impossible,
+  which V30 falsifies — the migration leaves legacy zero-priced models rateless by writing SQL directly,
+  reaching that state without passing the registry guard at all, and a transient `SQLException` in the
+  pricing lookup does the same. The "a human is already waiting" concern is answered by *how* the refusal
+  surfaces rather than by not checking: the skip records a timeline note naming the model and a dashboard
+  note naming the fix, so it is nothing like the turn cap's old silent drop, and unlike the turn cap it
+  posts nothing into the thread — a misconfiguration is fixed and the next reply then works.
   `UNIQUE (call_ref, token_type)` closes a real double-charge window: the prior write was an unguarded
   `INSERT` behind only a staleness check, so a redelivered result between `ReviewGenerated` and
   `ReviewCompleted` charged the same call twice. See ADR-023 for the full reasoning, including why the

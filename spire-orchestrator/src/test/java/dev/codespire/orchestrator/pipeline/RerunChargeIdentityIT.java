@@ -6,12 +6,17 @@ import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.port.EventStore;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.readmodel.ReviewDetail;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -47,6 +52,9 @@ class RerunChargeIdentityIT {
     @Inject
     ReviewProjection projection;
 
+    @Inject
+    DataSource dataSource;
+
     @Test
     void aSecondRunOnTheSameCommitRecordsItsOwnCharges() {
         String reviewId = "review::TEST-RERUN-WS/TEST-RERUN-REPO#9201";
@@ -80,6 +88,51 @@ class RerunChargeIdentityIT {
 
         assertEquals(1, callRefs(reviewId).size(),
                 "a redelivered result is the same call and must resolve to the same ref");
+    }
+
+    /**
+     * The retry counter must never be part of a paid call's identity.
+     *
+     * <p>{@code review_status.attempt} is the obvious column to reach for, and it is wrong in both
+     * directions: a re-run leaves it untouched (so it would fix nothing), while the ADR-016 auto-retry
+     * bumps it on the one path whose charges must COLLAPSE — the claims are kept, so the worker
+     * re-emits its persisted result and one paid call is dispatched twice. Folding it in would turn
+     * silently lost charges into silently inflated ones.
+     *
+     * <p>This drives the column the way the auto-retry does and asserts the identity did not move. The
+     * read-back of {@code attempt} is not decoration: without a {@code review_status} row the UPDATE is
+     * a no-op and the test would pass while proving nothing.
+     */
+    @Test
+    void theRetryCounterIsNotPartOfAPaidCallsIdentity() {
+        long pr = 9203L;
+        String reviewId = "review::TEST-RERUN-WS/TEST-RERUN-REPO#" + pr;
+        String commit = "TESTSHA9203";
+        projection.registerHeader(reviewId, new RepoRef("TEST-RERUN-WS", "TEST-RERUN-REPO"), pr,
+                "t", "a", "aid", "src", "dst", commit, "http://example.invalid/pr", "github",
+                "reviewing", 0);
+        requestReview(reviewId, commit, "OPENED");
+
+        saga.on(reviewGenerated(reviewId, commit));
+        bumpRetryCounter(reviewId);
+        saga.on(reviewGenerated(reviewId, commit));
+
+        assertEquals(2, projection.loadDetail("TEST-RERUN-WS", "TEST-RERUN-REPO", pr).orElseThrow().attempt(),
+                "the fixture must actually have moved the counter, or this asserts nothing");
+        assertEquals(1, callRefs(reviewId).size(),
+                "the retry counter is not the run identity — one paid call, charged once");
+    }
+
+    /** What {@code scheduleRetry} does to the row, without needing a provider to dispatch a real retry. */
+    private void bumpRetryCounter(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE review_status SET attempt = 2 WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not bump the retry counter", e);
+        }
     }
 
     private List<String> callRefs(String reviewId) {

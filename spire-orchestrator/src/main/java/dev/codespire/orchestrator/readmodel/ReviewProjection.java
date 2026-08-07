@@ -877,7 +877,20 @@ public class ReviewProjection {
         }
     }
 
-    /** Reset the row to an in-progress state for a manual re-run, clearing any prior terminal error. */
+    /**
+     * Reset the row to an in-progress state for a manual re-run, clearing any prior terminal error.
+     *
+     * <p>Deliberately does NOT touch {@code attempt}, and {@code attempt} is deliberately NOT the run
+     * identity a charge is keyed under — the obvious reuse, and wrong in both directions. It is written
+     * only by {@link #retryPipeline} and {@link #scheduleRetry}, the ADR-016 auto-retry paths, which
+     * keep the worker's idempotency claims so the worker re-emits its PERSISTED result: one paid call,
+     * dispatched more than once, whose charges must therefore COLLAPSE. A re-run is the opposite — the
+     * claims are cleared on purpose, so the LLM spends again and the charges must SEPARATE — and it
+     * leaves {@code attempt} untouched, so folding that column into the key would be inert here and
+     * would inflate every auto-retry into two or three charges for one call. The run number comes from
+     * {@link dev.codespire.orchestrator.llm.ReviewRuns} instead, which moves on exactly the paths that
+     * can spend again.
+     */
     public void markRerunStarted(String reviewId) {
         update("""
                 UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,

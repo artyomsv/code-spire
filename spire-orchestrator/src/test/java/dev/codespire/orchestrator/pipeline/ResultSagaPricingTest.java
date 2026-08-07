@@ -131,6 +131,30 @@ class ResultSagaPricingTest {
                 "run 1 keeps the bare commit; run 2 must not reuse it");
     }
 
+    /**
+     * The other side of the same property, and the one that must NOT change: an ADR-016 auto-retry
+     * re-dispatches a call that was already paid for.
+     *
+     * <p>{@code onReviewFailed} deliberately leaves the worker's idempotency claims in place, so the
+     * worker re-emits its PERSISTED result — one paid call, delivered twice, within one run. The run
+     * number does not move (no new {@code ReviewRequested} is recorded), so the charges collapse. Asserted
+     * beside the re-run case above because the two need opposite treatment: without both halves, "give a
+     * re-run a new identity" could be satisfied by a per-delivery identity that charges every retry
+     * again — turning silently lost charges into silently inflated ones, which is worse for the spend cap
+     * this ledger exists to enable.
+     */
+    @Test
+    void anAutoRetryRedeliveringOnePaidCallKeepsOneChargeIdentity() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+        ModelUsage usage = ModelUsage.of("TEST-MODEL", 1_000_000, 500_000);
+
+        saga.on(reviewGenerated(REVIEW_ID, COMMIT, usage));
+        saga.on(reviewGenerated(REVIEW_ID, COMMIT, usage));
+
+        assertEquals(1, projection.recordedCalls().stream().map(ChargeCall::callRef).distinct().count(),
+                "a re-emitted persisted result is the same paid call and must charge once");
+    }
+
     /** The reconcile call is its own charge, under its own ref, so it cannot collide with the review. */
     @Test
     void aReconcileCallIsChargedSeparatelyFromTheReviewCall() {
