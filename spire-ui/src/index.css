@@ -905,6 +905,9 @@
   .prov-table .cell-r { text-align: right; }
   .prov-name { font-weight: 600; }
   .prov-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  /* A METERED model with no rate at all — an upgraded deployment can leave one behind (see
+     ratesSummary) and it needs an operator's attention, not a blank cell. */
+  .rate-unset { color: var(--warn); font-weight: 600; }
   .prov-note { margin: 0; padding: 15px 18px 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
   .prov-actions { display: flex; gap: 8px; justify-content: flex-end; }
 

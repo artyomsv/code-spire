@@ -28,21 +28,29 @@ function matchesChip(status: ReviewStatus, f: ChipFilter): boolean {
   return status === 'cancelled' || status === 'superseded';
 }
 
+/** The Cost cell's text + tooltip, computed once per row (it's read twice in the row markup). */
+interface CostCell {
+  text: string;
+  title: string;
+}
+
 /**
- * The Cost cell's text. `costMillicents` sums to 0 both when no charge has landed yet and when
- * every priced charge was an asserted UNMETERED zero — those are not the same thing, and must not
- * both render "$0.000". `model` is blank exactly when no charge line has landed for this review yet
- * (it is derived from the ledger's most recent charge, per its own contract above), so it is what
- * tells "nothing to show" apart from "a real, possibly-zero, total" — and `unpricedCalls` marks that
- * total explicitly partial rather than complete.
+ * `costMillicents` sums to 0 in three different situations that must not all render the same way:
+ * no charge has landed yet, every priced charge was an asserted UNMETERED zero, and every charge
+ * that landed came back UNKNOWN (so there is nothing to sum in the first place). `model` is blank
+ * exactly when no charge line has landed for this review yet (derived from the ledger's most recent
+ * charge, per its own contract above), telling "nothing to show" apart from "a real, possibly-zero,
+ * total". `unpricedCalls` marks a real total partial — but when the total is ALSO zero, a dollar
+ * figure would read as "confirmed free", which is exactly the state this branch exists to flag.
  */
-function costCell(r: ReviewSummary): { text: string; title: string } {
+export function costCell(r: ReviewSummary): CostCell {
   if (!r.model) return { text: '—', title: 'No charges recorded yet' };
-  const amount = formatCost(r.costMillicents);
   if (r.unpricedCalls > 0) {
-    return { text: `${amount}*`, title: `${r.unpricedCalls} call(s) could not be priced — this total is partial` };
+    const reason = `${r.unpricedCalls} call(s) could not be priced`;
+    if (r.costMillicents === 0) return { text: '— (unpriced)', title: reason };
+    return { text: `${formatCost(r.costMillicents)}*`, title: `${reason} — this total is partial` };
   }
-  return { text: amount, title: 'Review cost' };
+  return { text: formatCost(r.costMillicents), title: 'Review cost' };
 }
 
 interface Props {
@@ -174,57 +182,60 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
           ) : loading && reviews.length === 0 ? (
             <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
           ) : (
-            rows.map((r) => (
-              <div
-                key={r.id}
-                className={`row ${r.status === 'superseded' ? 'faded' : ''}`}
-                data-id={r.id}
-                tabIndex={0}
-                role="button"
-                onClick={() => open(r)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') open(r);
-                }}
-              >
-                <div className="status-cell">
-                  {statusCell(r)}
-                </div>
-                <div className="state-cell">
-                  {prStateBadge(r.prState)}
-                </div>
-                <div className="prov-cell">
-                  {providerBadge(r) ?? <span className="prov-none">—</span>}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div className="repo">
-                    {r.repo}
-                    <span className="pr">#{r.pr}</span>
+            rows.map((r) => {
+              const cost = costCell(r);
+              return (
+                <div
+                  key={r.id}
+                  className={`row ${r.status === 'superseded' ? 'faded' : ''}`}
+                  data-id={r.id}
+                  tabIndex={0}
+                  role="button"
+                  onClick={() => open(r)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') open(r);
+                  }}
+                >
+                  <div className="status-cell">
+                    {statusCell(r)}
                   </div>
-                  <div className="sub">
-                    <CopyableValue text={r.branch} copyTitle="Copy branch" />
+                  <div className="state-cell">
+                    {prStateBadge(r.prState)}
+                  </div>
+                  <div className="prov-cell">
+                    {providerBadge(r) ?? <span className="prov-none">—</span>}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="repo">
+                      {r.repo}
+                      <span className="pr">#{r.pr}</span>
+                    </div>
+                    <div className="sub">
+                      <CopyableValue text={r.branch} copyTitle="Copy branch" />
+                    </div>
+                  </div>
+                  <div className="author-cell" title={r.authorId ? `@${r.author} · ${r.authorId}` : `@${r.author}`}>
+                    <div className="mono ellip">@{r.author}</div>
+                    {r.authorId && <div className="sub mono ellip">{r.authorId}</div>}
+                  </div>
+                  <div className="title-cell">
+                    <CopyableValue text={r.title} copyTitle="Copy title" />
+                  </div>
+                  <div className="commit-cell">
+                    <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
+                  </div>
+                  <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
+                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings)}</div>
+                  <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
+                  <div className="cell-r">
+                    <span className="mono" title={cost.title}>{cost.text}</span>
+                  </div>
+                  <div className="cell-r">
+                    <span className="time">{ago(r.updatedAt)}</span>
                   </div>
                 </div>
-                <div className="author-cell" title={r.authorId ? `@${r.author} · ${r.authorId}` : `@${r.author}`}>
-                  <div className="mono ellip">@{r.author}</div>
-                  {r.authorId && <div className="sub mono ellip">{r.authorId}</div>}
-                </div>
-                <div className="title-cell">
-                  <CopyableValue text={r.title} copyTitle="Copy title" />
-                </div>
-                <div className="commit-cell">
-                  <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
-                </div>
-                <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
-                <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings)}</div>
-                <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
-                <div className="cell-r">
-                  <span className="mono" title={costCell(r).title}>{costCell(r).text}</span>
-                </div>
-                <div className="cell-r">
-                  <span className="time">{ago(r.updatedAt)}</span>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

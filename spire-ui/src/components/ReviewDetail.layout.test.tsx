@@ -38,8 +38,9 @@ const review: ReviewDetailData = {
   findingsList: [],
   chargeLines: [
     {
+      callRef: 'CANARY-CALL-1',
       kind: 'REVIEW',
-      model: 'gpt-5',
+      model: 'TEST-MODEL',
       tokenType: 'INPUT',
       tokens: 100,
       rateMillicentsPerMillion: 500_000,
@@ -48,8 +49,9 @@ const review: ReviewDetailData = {
       pricedAt: '2026-08-01T00:00:00Z',
     },
     {
+      callRef: 'CANARY-CALL-1',
       kind: 'REVIEW',
-      model: 'gpt-5',
+      model: 'TEST-MODEL',
       tokenType: 'OUTPUT',
       tokens: 50,
       rateMillicentsPerMillion: 1_000_000,

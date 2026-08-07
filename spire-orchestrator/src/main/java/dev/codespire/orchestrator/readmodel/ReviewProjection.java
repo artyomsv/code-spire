@@ -1051,8 +1051,8 @@ public class ReviewProjection {
     public List<ReviewDetail.ChargeLineView> chargeLines(String reviewId) {
         List<ReviewDetail.ChargeLineView> out = new ArrayList<>();
         String sql = """
-                SELECT kind, model, token_type, tokens, rate_millicents_per_million, cost_millicents,
-                       pricing_mode, priced_at
+                SELECT call_ref, kind, model, token_type, tokens, rate_millicents_per_million,
+                       cost_millicents, pricing_mode, priced_at
                   FROM llm_charge WHERE review_id = ? ORDER BY priced_at, token_type
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -1063,8 +1063,8 @@ public class ReviewProjection {
                     // getLong would coerce "unpriced" back into 0, which is the bug this branch removes.
                     Long rate = rs.getObject("rate_millicents_per_million", Long.class);
                     Long cost = rs.getObject("cost_millicents", Long.class);
-                    out.add(new ReviewDetail.ChargeLineView(rs.getString("kind"), rs.getString("model"),
-                            rs.getString("token_type"), rs.getInt("tokens"), rate, cost,
+                    out.add(new ReviewDetail.ChargeLineView(rs.getString("call_ref"), rs.getString("kind"),
+                            rs.getString("model"), rs.getString("token_type"), rs.getInt("tokens"), rate, cost,
                             rs.getString("pricing_mode"), rs.getTimestamp("priced_at").toInstant().toString()));
                 }
             }

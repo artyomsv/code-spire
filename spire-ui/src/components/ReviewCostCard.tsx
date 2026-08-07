@@ -1,7 +1,7 @@
 import type { ChargeKind, ChargeLineView } from '../api';
 import { formatEventTime } from '../format';
 import { formatCost } from '../money';
-import { TOKEN_TYPE_LABEL } from '../llmPricing';
+import { TOKEN_TYPE_LABEL, formatRate } from '../llmPricing';
 
 const CALL_KIND_LABEL: Record<ChargeKind, string> = {
   REVIEW: 'Review',
@@ -9,25 +9,29 @@ const CALL_KIND_LABEL: Record<ChargeKind, string> = {
   FOLLOWUP: 'Follow-up',
 };
 
-/** Every charge line sharing one kind+pricedAt is one physical LLM call, split into its token
- *  dimensions — the ledger has no callRef on this view, so that pair is the grouping key. */
+/**
+ * Every charge line sharing one `callRef` is one physical LLM call, split into its token
+ * dimensions. Grouping on `pricedAt` instead would be wrong: each line is written in its own
+ * transaction server-side, so sibling lines of the same call do not reliably share one timestamp.
+ */
 interface Call {
-  key: string;
+  callRef: string;
   kind: ChargeKind;
   model: string;
   pricedAt: string;
   lines: ChargeLineView[];
 }
 
+/** `lines` arrives ordered by `pricedAt` ascending, so a call's first-seen line already carries its
+ *  earliest timestamp — used as the call's displayed time without a second pass to find the min. */
 function groupByCall(lines: ChargeLineView[]): Call[] {
   const calls: Call[] = [];
-  const byKey = new Map<string, Call>();
+  const byRef = new Map<string, Call>();
   for (const line of lines) {
-    const key = `${line.kind}|${line.pricedAt}`;
-    let call = byKey.get(key);
+    let call = byRef.get(line.callRef);
     if (!call) {
-      call = { key, kind: line.kind, model: line.model, pricedAt: line.pricedAt, lines: [] };
-      byKey.set(key, call);
+      call = { callRef: line.callRef, kind: line.kind, model: line.model, pricedAt: line.pricedAt, lines: [] };
+      byRef.set(line.callRef, call);
       calls.push(call);
     }
     call.lines.push(line);
@@ -52,7 +56,7 @@ function callCostText(lines: ChargeLineView[]): string {
 function lineDetail(line: ChargeLineView): string {
   if (line.pricingMode === 'UNMETERED') return 'self-hosted (unmetered)';
   if (line.pricingMode === 'UNKNOWN') return 'could not be priced';
-  return `${formatCost(line.rateMillicentsPerMillion)}/1M tokens · ${formatCost(line.costMillicents)}`;
+  return `${formatRate(line.rateMillicentsPerMillion)}/1M tokens · ${formatCost(line.costMillicents)}`;
 }
 
 function lineRow(line: ChargeLineView, i: number) {
@@ -65,7 +69,7 @@ function lineRow(line: ChargeLineView, i: number) {
 
 function callRow(call: Call) {
   return (
-    <div key={call.key} className={`usage-call ${call.kind.toLowerCase()}`}>
+    <div key={call.callRef} className={`usage-call ${call.kind.toLowerCase()}`}>
       <div className="usage-call-top">
         <span className="usage-kind">{CALL_KIND_LABEL[call.kind] ?? call.kind}</span>
         {call.pricedAt && <span className="usage-time">{formatEventTime(call.pricedAt)}</span>}
@@ -79,6 +83,11 @@ function callRow(call: Call) {
   );
 }
 
+interface ReviewCostCardProps {
+  lines: ChargeLineView[];
+  unpricedCalls: number;
+}
+
 /**
  * A review's per-call, per-token-type cost breakdown — a strict superset of the legacy single-row
  * `UsageView` it replaced (Task 2 removed the server's `usage` field entirely).
@@ -87,13 +96,7 @@ function callRow(call: Call) {
  * marked partial rather than presented as complete — a silently incomplete total is the same defect
  * the zero-vs-unknown distinction exists to remove, one layer up.
  */
-export default function ReviewCostCard({
-  lines,
-  unpricedCalls,
-}: {
-  lines: ChargeLineView[];
-  unpricedCalls: number;
-}) {
+export default function ReviewCostCard({ lines, unpricedCalls }: ReviewCostCardProps) {
   if (lines.length === 0) {
     return (
       <div className="card">
@@ -102,8 +105,10 @@ export default function ReviewCostCard({
           <h3>Model usage</h3>
         </div>
         <div className="body">
-          <div className="clean">
-            <span className="em mono">—</span>No model calls recorded yet.
+          {/* Neutral, not the findings card's "clean" green — no calls yet is not good news on a
+              review that failed before ever reaching the model. */}
+          <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
+            No model calls recorded yet.
           </div>
         </div>
       </div>

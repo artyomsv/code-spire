@@ -110,8 +110,13 @@ export type ChargeKind = 'REVIEW' | 'RECONCILE' | 'FOLLOWUP';
 /**
  * One token dimension of one LLM call, priced. Rate and cost are null exactly when `pricingMode` is
  * 'UNKNOWN' — never 0, which would be indistinguishable from an UNMETERED model's asserted zero.
+ *
+ * `callRef` is the ledger's own call identity — group by it, not by `pricedAt`. Each line of one
+ * call is written in its own transaction server-side, so sibling lines of the same call do not
+ * reliably share one `pricedAt` value.
  */
 export interface ChargeLineView {
+  callRef: string;
   kind: ChargeKind;
   model: string;
   tokenType: TokenType;

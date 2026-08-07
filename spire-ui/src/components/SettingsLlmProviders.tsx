@@ -13,8 +13,7 @@ import {
   type LlmProviderView,
   type LlmType,
 } from '../api';
-import { formatCost } from '../money';
-import { RATE_TYPES, TOKEN_TYPE_LABEL, sumRates } from '../llmPricing';
+import { RATE_TYPES, TOKEN_TYPE_LABEL, formatRate, sumRates } from '../llmPricing';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
@@ -52,15 +51,24 @@ export function byExpenseDesc(models: LlmModelView[]): LlmModelView[] {
   return [...models].sort((a, b) => sumRates(b.rates) - sumRates(a.rates) || a.label.localeCompare(b.label));
 }
 
-/** The catalog table's compact rate cell: "Self-hosted" for UNMETERED, else each priced dimension
- *  joined together — never "$0.00" for a self-hosted model, which would read as a priced free tier
- *  rather than as an operator's assertion that there is no per-token cost at all. */
-export function ratesSummary(m: LlmModelView): string {
-  if (m.pricingMode === 'UNMETERED') return 'Self-hosted';
-  return RATE_TYPES
-    .filter((t) => m.rates[t] != null)
-    .map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatCost(m.rates[t]!)}/1M`)
-    .join(' · ');
+/** The catalog table's compact rate cell. */
+export interface RatesSummary {
+  text: string;
+  /** True for a METERED model with no rate at all — the state a legacy upgrade can leave behind
+   *  (the migration skips a model whose old price was ever zero rather than fabricate a rate for
+   *  it) and the one state in this cell that needs an operator's attention, not just a read. */
+  warn: boolean;
+}
+
+/** "Self-hosted" for UNMETERED; a flagged "Not priced" for a METERED model with no rate at all
+ *  (never a blank cell, which reads as nothing to report rather than as something to fix); else
+ *  each priced dimension joined together — never "$0.00" for a self-hosted model, which would read
+ *  as a priced free tier rather than as an operator's assertion that there is no per-token cost. */
+export function ratesSummary(m: LlmModelView): RatesSummary {
+  if (m.pricingMode === 'UNMETERED') return { text: 'Self-hosted', warn: false };
+  const priced = RATE_TYPES.filter((t) => m.rates[t] != null);
+  if (priced.length === 0) return { text: 'Not priced', warn: true };
+  return { text: priced.map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatRate(m.rates[t]!)}/1M`).join(' · '), warn: false };
 }
 
 // Per-provider connectivity status, keyed by provider id.
@@ -244,27 +252,30 @@ export default function SettingsLlmProviders() {
               </tr>
             </thead>
             <tbody>
-              {byExpenseDesc(models).map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
-                    {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
-                  </td>
-                  <td className="mono">{m.type}</td>
-                  <td className="mono">{ratesSummary(m)}</td>
-                  <td>
-                    <div className="prov-actions">
-                      <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" />
-                      <IconButton
-                        kind="delete"
-                        onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
-                        title="Delete"
-                        aria-label="Delete"
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {byExpenseDesc(models).map((m) => {
+                const rates = ratesSummary(m);
+                return (
+                  <tr key={m.id}>
+                    <td>
+                      {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
+                      {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
+                    </td>
+                    <td className="mono">{m.type}</td>
+                    <td className={`mono${rates.warn ? ' rate-unset' : ''}`}>{rates.text}</td>
+                    <td>
+                      <div className="prov-actions">
+                        <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" />
+                        <IconButton
+                          kind="delete"
+                          onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
+                          title="Delete"
+                          aria-label="Delete"
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LlmModelView } from '../api';
-import { byExpenseDesc, defaultBaseUrl, profileHint } from './SettingsLlmProviders';
+import { byExpenseDesc, defaultBaseUrl, profileHint, ratesSummary } from './SettingsLlmProviders';
 
 describe('defaultBaseUrl', () => {
   it('returns the base URL for each supported type', () => {
@@ -53,6 +53,47 @@ describe('byExpenseDesc', () => {
     const priced = model('priced', 100, 200);
     const free: LlmModelView = { ...model('free', 0, 0), pricingMode: 'UNMETERED', rates: {} };
     expect(byExpenseDesc([free, priced]).map((m) => m.label)).toEqual(['priced', 'free']);
+  });
+});
+
+describe('ratesSummary', () => {
+  const model = (over: Partial<LlmModelView> = {}): LlmModelView => ({
+    id: 'x',
+    type: 'openai',
+    name: 'x',
+    label: 'x',
+    pricingMode: 'METERED',
+    rates: { INPUT: 250_000, OUTPUT: 1_000_000 },
+    outputTokenParam: 'MAX_TOKENS',
+    supportsTemperature: true,
+    reasoningEffort: null,
+    extraParams: {},
+    enabled: true,
+    createdAt: '2026-07-07T00:00:00Z',
+    ...over,
+  });
+
+  it('joins each priced dimension for a metered model', () => {
+    const summary = ratesSummary(model());
+    expect(summary.warn).toBe(false);
+    expect(summary.text).toBe('Input $2.500/1M · Output $10.000/1M');
+  });
+
+  it('reads "Self-hosted" for an unmetered model, never a price', () => {
+    const summary = ratesSummary(model({ pricingMode: 'UNMETERED', rates: {} }));
+    expect(summary.warn).toBe(false);
+    expect(summary.text).toBe('Self-hosted');
+  });
+
+  /**
+   * V30 sets pricing_mode='METERED' for every legacy model but migrates rates only where BOTH old
+   * prices were > 0 — a model that had any zero price is left with no rates at all. That row must
+   * read as a problem, not as an empty cell indistinguishable from "nothing to report".
+   */
+  it('flags a metered model with no rate at all as needing attention', () => {
+    const summary = ratesSummary(model({ rates: {} }));
+    expect(summary.warn).toBe(true);
+    expect(summary.text).toBe('Not priced');
   });
 });
 

@@ -66,6 +66,11 @@ public record ReviewDetail(
      * {@code costMillicents} are null exactly when {@code pricingMode} is "UNKNOWN" — never 0, which
      * would be indistinguishable from an UNMETERED model's asserted zero.
      *
+     * <p>{@code callRef} is the ledger's own call identity ({@code UNIQUE (call_ref, token_type)}) —
+     * the UI groups lines back into calls by it rather than by {@code pricedAt}, because each line of
+     * one call is written in its own transaction ({@link ReviewProjection#recordCharges}) and so does
+     * NOT reliably share one {@code priced_at} value with its siblings.
+     *
      * <p>{@code kind}, {@code tokenType} and {@code pricingMode} are Strings here, not the enums they
      * mirror, deliberately: this is an outbound view read straight from the ledger, whose CHECK
      * constraints already restrict those columns. The enums exist to protect the WRITE path, where a
@@ -73,7 +78,7 @@ public record ReviewDetail(
      * value verbatim, and typing it would force this record to be defined after the enums rather than
      * alongside the query that fills it.
      */
-    public record ChargeLineView(String kind, String model, String tokenType, int tokens,
+    public record ChargeLineView(String callRef, String kind, String model, String tokenType, int tokens,
                                  Long rateMillicentsPerMillion, Long costMillicents,
                                  String pricingMode, String pricedAt) {
     }

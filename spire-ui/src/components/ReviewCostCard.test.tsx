@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import ReviewCostCard from './ReviewCostCard';
 import type { ChargeLineView } from '../api';
 
 const line = (overrides: Partial<ChargeLineView>): ChargeLineView => ({
+  callRef: 'CANARY-CALL-1',
   kind: 'REVIEW',
   model: 'TEST-MODEL',
   tokenType: 'INPUT',
@@ -32,6 +33,11 @@ describe('ReviewCostCard', () => {
     );
 
     expect(screen.getByText(/cached input/i)).toBeInTheDocument();
+    // The rate and cost are asserted directly (not just presence) — the token count itself is left
+    // out of the match since `toLocaleString()` is locale-dependent (this repo runs under `en-CH`
+    // on some machines, which renders "1'000" rather than "1,000").
+    expect(screen.getByText(/\$2\.500\/1M tokens · \$0\.003/)).toBeInTheDocument();
+    expect(screen.getByText(/\$0\.250\/1M tokens · \$0\.001/)).toBeInTheDocument();
     expect(screen.queryByText(/could not be priced/i)).not.toBeInTheDocument();
   });
 
@@ -55,7 +61,11 @@ describe('ReviewCostCard', () => {
       />,
     );
 
-    expect(screen.getAllByText(/self-hosted/i).length).toBeGreaterThan(0);
+    const callBlock = document.querySelector('.usage-call') as HTMLElement;
+    expect(within(callBlock).getAllByText(/self-hosted/i).length).toBeGreaterThan(0);
+    // The call's own cost line must say "self-hosted", not a dollar figure — the total below it
+    // legitimately shows $0.000 (it really is free), so that check has to stay scoped to the call.
+    expect(within(callBlock).queryByText(/\$0\.000/)).not.toBeInTheDocument();
   });
 
   it('renders an empty state rather than an empty card when no calls have happened yet', () => {
@@ -78,5 +88,26 @@ describe('ReviewCostCard', () => {
     );
 
     expect(screen.getByText('$0.003 (partial)')).toBeInTheDocument();
+  });
+
+  /**
+   * The regression this guards: grouping on `kind`+`pricedAt` (as the card originally did) splits
+   * one call into one block per line whenever its lines don't share a timestamp — which they never
+   * reliably do, since each is written in its own transaction server-side. Two lines of one call
+   * with DIFFERENT `pricedAt` values must still render as exactly one block.
+   */
+  it('groups lines sharing one callRef into a single call even with different pricedAt values', () => {
+    render(
+      <ReviewCostCard
+        lines={[
+          line({ callRef: 'CANARY-CALL-2', tokenType: 'INPUT', pricedAt: '2026-08-06T00:00:00.100Z' }),
+          line({ callRef: 'CANARY-CALL-2', tokenType: 'OUTPUT', pricedAt: '2026-08-06T00:00:00.900Z' }),
+        ]}
+        unpricedCalls={0}
+      />,
+    );
+
+    expect(document.querySelectorAll('.usage-call')).toHaveLength(1);
+    expect(screen.getByText(/1 request/)).toBeInTheDocument();
   });
 });

@@ -71,4 +71,23 @@ class LlmChargeProjectionIT {
         assertEquals(0L, cost.knownCostMillicents());
         assertEquals(0, cost.unpricedCalls());
     }
+
+    /**
+     * {@code chargeLines} is the UI's raw material for grouping lines back into calls, and it must
+     * group by {@code callRef} — each line is written in its own transaction (one {@code update} per
+     * line, no surrounding {@code @Transactional}), so two lines of the SAME call cannot be assumed to
+     * share one {@code pricedAt}. This asserts the field this view exists to carry actually round-trips.
+     */
+    @Test
+    void chargeLinesCarryTheCallRefTheyWereRecordedUnder() {
+        String reviewId = reviewId(9104L);
+        projection.recordCharges(call(reviewId, "CANARY-REF-4", List.of(
+                ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L),
+                ChargeLine.metered(TokenType.OUTPUT, 500_000, 100_000L))));
+
+        List<ReviewDetail.ChargeLineView> lines = projection.chargeLines(reviewId);
+        assertEquals(2, lines.size());
+        assertEquals("CANARY-REF-4", lines.get(0).callRef());
+        assertEquals("CANARY-REF-4", lines.get(1).callRef());
+    }
 }

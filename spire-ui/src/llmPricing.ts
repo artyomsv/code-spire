@@ -1,6 +1,7 @@
 // Shared knowledge about the per-token-type rate dimensions, used by the model catalog form/table
 // and the review cost card, so the token-type vocabulary is written once rather than three times.
 import type { TokenType } from './api';
+import { formatCost } from './money';
 
 /** A rate dimension a model's catalog entry can carry — everything but the degraded TOTAL case. */
 export type RateType = Exclude<TokenType, 'TOTAL'>;
@@ -28,3 +29,10 @@ export const TOKEN_TYPE_LABEL: Record<TokenType, string> = {
 export function sumRates(rates: Partial<Record<RateType, number>>): number {
   return Object.values(rates).reduce((sum: number, v) => sum + (v ?? 0), 0);
 }
+
+/**
+ * A per-1M-tokens rate (millicents) as a display string. Numerically identical to {@link formatCost}
+ * — both are a millicents amount — but named for what it is: a rate is a price per million tokens,
+ * not a review's spend, and reusing `formatCost`'s name at a rate call site read as a copy-paste slip.
+ */
+export const formatRate = formatCost;
