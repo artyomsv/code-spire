@@ -1010,22 +1010,16 @@ Attempt to delete the catalogued model K-1's provider still names (Settings → 
 first."* The model remains in the catalog. Repoint the provider at a different model and retry —
 deletion should now succeed.
 
-### K-5 — renaming a model a provider uses is refused, but read the status code honestly
+### K-5 — renaming a model a provider uses is refused
 
 Attempt to rename that same in-use model (edit its `name` field and save; leave every other field
 alone).
 
-**Expected:** the rename does **not** take effect — check the model's name in the list, or the
-provider's `model` field, rather than trusting the toast alone. **The status code is not yet the clean
-409 that delete returns.** `LlmModelRegistry.update` throws the same `IllegalStateException` `delete`
-does, but `LlmModelResource.update` has no `catch` for it (unlike `delete`, which does), so an unmapped
-exception falls through to Quarkus's default handling and the UI shows a generic *"Failed to update LLM
-model (500)"* instead of the actionable "in use by N provider(s)" message the registry actually
-produced. This is the tracked gap in
-`techdebt/spire-orchestrator/3-3-rejection-messages-never-reach-the-client.md` (no
-`ExceptionMapper` exists in this module) — expect the refusal, not the status code, until that lands.
-Renaming the model's label, rates or any other field with the *same* name should still succeed; only
-the name itself is guarded.
+**Expected:** **409**, *"Model 'X' is in use by N LLM provider(s). Point them at another model
+first, then rename it."* The rename does not take effect — check the model's name in the list, or
+the provider's `model` field, rather than trusting the toast alone. Renaming the model's label,
+rates or any other field with the *same* name should still succeed; only the name itself is
+guarded.
 
 ### K-6 — a provider naming an uncatalogued model is refused
 

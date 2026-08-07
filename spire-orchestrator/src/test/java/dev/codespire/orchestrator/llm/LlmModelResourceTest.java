@@ -221,4 +221,32 @@ class LlmModelResourceTest {
         given().when().delete("/api/llm-models/" + modelId)
                 .then().statusCode(409).body(containsString("TEST-IN-USE"));
     }
+
+    /**
+     * Companion to the delete test above, for the rename guard update() gained after it. Before
+     * this fix, update() had no catch for the registry's in-use IllegalStateException (unlike
+     * delete(), which already had one) — the guard's message never reached the client, and a
+     * caller saw a bodiless 500 instead of the actionable refusal the registry produced. Asserting
+     * the body, not just the status, is the point: a status-only check cannot tell a mapped 409
+     * from an unmapped one wearing the right number by coincidence.
+     */
+    @Test
+    void renamingAModelInUseByAProviderAnswersConflictNotServerError() {
+        registry.create(new LlmModelInput("openai", "TEST-RENAME-CONFLICT", "TEST rename conflict",
+                "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
+                null, null, null, Map.of(), true));
+        String modelId = registry.list().stream()
+                .filter(m -> m.name().equals("TEST-RENAME-CONFLICT")).findFirst().orElseThrow().id();
+        providers.create(new LlmProviderInput("TEST-RENAME-CONFLICT-PROVIDER", "openai",
+                "http://example.invalid", "sk-test", "TEST-RENAME-CONFLICT", 0.2, null, true, true));
+
+        given().contentType(ContentType.JSON)
+                .body(Map.of("type", "openai", "name", "TEST-RENAME-CONFLICT-NEW",
+                        "label", "TEST rename conflict", "pricingMode", "METERED",
+                        "rates", Map.of("INPUT", 200_000, "OUTPUT", 400_000)))
+                .when().put("/api/llm-models/" + modelId)
+                .then().statusCode(409)
+                .body(containsString("TEST-RENAME-CONFLICT"))
+                .body(containsString("Point them at another model first"));
+    }
 }

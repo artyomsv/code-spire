@@ -55,7 +55,13 @@ public class LlmModelResource {
     @Path("/{id}")
     public LlmModelView update(@PathParam("id") String id, LlmModelInput in) {
         validate(in);
-        return registry.update(uuid(id), in).orElseThrow(() -> new NotFoundException("No LLM model " + id));
+        try {
+            return registry.update(uuid(id), in)
+                    .orElseThrow(() -> new NotFoundException("No LLM model " + id));
+        } catch (IllegalStateException inUse) {
+            throw new ClientErrorException(
+                    Response.status(Response.Status.CONFLICT).entity(inUse.getMessage()).build());
+        }
     }
 
     @DELETE
