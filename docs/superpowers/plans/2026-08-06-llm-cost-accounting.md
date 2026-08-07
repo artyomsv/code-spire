@@ -2838,6 +2838,33 @@ spire-ui/src`. Two consequences you must handle rather than discover:
   so the old `<= 0` guard was defending against a state the schema forbids. Do not carry it forward as a
   way of hiding zeros.
 
+**There is a test pinning this defect, and it is the second one on this branch.** `spire-ui/src/money.test.ts:6`:
+
+```ts
+    expect(formatCost(0)).toBe('—');
+```
+
+Invert it rather than delete it — the behaviour is worth pinning in its corrected form:
+
+```ts
+  it('renders an asserted zero as a zero, and only an absent cost as a dash', () => {
+    // The conflation the charge ledger removes: 0 is an UNMETERED operator's assertion that a call was
+    // free, while null means it could not be priced. A dash for both told a self-hosted operator their
+    // cost was unknown when it was known to be nothing.
+    expect(formatCost(0)).toBe('$0.000');
+    expect(formatCost(null)).toBe('—');
+  });
+```
+
+The server-side counterpart was `LlmModelResourceTest.uncataloguedModelCostsZero`, inverted in Task 4. That
+the same conflation was independently asserted at **both** layers is the clearest evidence that it was the
+system's understanding of cost and not a local slip — and that a task told merely to "make the suite green"
+would have preserved it in both places.
+
+**Callers to update** — verified by grep, this is the complete list:
+`ReviewsList.tsx:204` (the reviews-list Cost column), `render.tsx:636` and `:665` (per-call cost and the
+card total, both of which the new cost card replaces), and `money.test.ts`.
+
 - [ ] **Step 3: Update `api.ts`**
 
 ```ts
