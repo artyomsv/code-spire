@@ -1026,6 +1026,7 @@ an unmapped new dimension announces itself instead of mispricing quietly."
 
 **Files:**
 - Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/PricingMode.java`
+- Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/ChargeKind.java`
 - Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/ChargeLine.java`
 - Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/ChargeCall.java`
 - Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/CallRefs.java`
@@ -1038,9 +1039,10 @@ an unmapped new dimension announces itself instead of mispricing quietly."
 - Consumes: `TokenType`, `ModelUsage` (Task 2).
 - Produces:
   - `enum PricingMode { METERED, UNMETERED, UNKNOWN }`
+  - `enum ChargeKind { REVIEW, RECONCILE, FOLLOWUP }`
   - `record ChargeLine(TokenType tokenType, int tokens, Long rateMillicentsPerMillion, Long costMillicents, PricingMode mode)`
-  - `record ChargeCall(String reviewId, String callRef, String kind, String model, List<ChargeLine> lines)`
-  - `CallRefs.of(String reviewId, String slot, String kind) -> String`
+  - `record ChargeCall(String reviewId, String callRef, ChargeKind kind, String model, List<ChargeLine> lines)`
+  - `CallRefs.of(String reviewId, String slot, ChargeKind kind) -> String`
   - `LlmModelRegistry.priceCall(String model, ModelUsage usage) -> List<ChargeLine>`
   - `LlmModelRegistry.isPriceable(String model) -> boolean`
   - `LlmModelInput(String type, String name, String label, String pricingMode, Map<String, Long> rates, String outputTokenParam, Boolean supportsTemperature, String reasoningEffort, Map<String, Object> extraParams, Boolean enabled)`
@@ -1211,6 +1213,69 @@ Expected: FAIL — compilation error; `PricingMode`, `ChargeLine` and the new `L
 
 - [ ] **Step 3: Create the pricing value types**
 
+**First, close a drift risk the Task 1 review flagged.** `llm_charge.kind` has a
+`CHECK (kind IN ('review', 'reconcile', 'followup'))`, but nothing type-checks what the writer passes —
+a typo'd literal in Task 8 would fail the INSERT at runtime and dead-letter the result. `token_type` is
+already an enum whose names the CHECK lists verbatim; `kind` should work identically, so both columns get
+the same treatment and the same guard.
+
+Two coupled edits:
+
+1. **Amend `V30__llm_charge_ledger.sql`** so the kind CHECK lists enum names verbatim, matching how
+   `token_type` already works:
+
+   ```sql
+   CHECK (kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')),
+   ```
+
+   Editing the migration in place is correct — it has not run anywhere persistent. If your local dev
+   Postgres reports a Flyway checksum mismatch, say so in the report rather than working around it.
+
+2. **Add the mirrored drift guard** to `LlmChargeSchemaIT`, alongside the `TokenType` one Task 2
+   activated:
+
+   ```java
+   /**
+    * The ledger's kind CHECK must accept every ChargeKind the writer can produce. Without this, adding
+    * a call kind without amending the migration turns that kind's first charge into a lost INSERT.
+    */
+   @Test
+   void theKindCheckAcceptsEveryChargeKind() {
+       for (ChargeKind kind : ChargeKind.values()) {
+           assertDoesNotThrow(() -> exec(insertKind(kind.name())),
+                   "llm_charge.kind CHECK rejects ChargeKind." + kind
+                           + " — add it to the CHECK in V30__llm_charge_ledger.sql");
+       }
+   }
+   ```
+
+   Give each iteration a distinct `call_ref` (`'CANARY-KIND-' + kind.name()`); the existing tests' refs
+   are all distinct and must stay that way. Verify it is load-bearing: add a constant to `ChargeKind`
+   without touching the migration, confirm the test fails naming it, remove the constant.
+
+The UI displays this value, so it lowercases for display in Task 10 — the wire and storage form is the
+enum name.
+
+`ChargeKind.java`:
+
+```java
+package dev.codespire.orchestrator.llm;
+
+/**
+ * Which paid call a charge belongs to. An enum rather than a string because the ledger's {@code kind}
+ * CHECK lists these names verbatim: a typo'd literal would otherwise pass compilation and fail the
+ * INSERT at runtime, dead-lettering a result whose money has already been spent.
+ */
+public enum ChargeKind {
+    /** The review generation call. */
+    REVIEW,
+    /** The ADR-019 reconcile call that verdicts a prior run's findings. */
+    RECONCILE,
+    /** A conversation follow-up answer. */
+    FOLLOWUP
+}
+```
+
 `PricingMode.java`:
 
 ```java
@@ -1280,9 +1345,10 @@ import java.util.List;
  *
  * @param callRef the deterministic key that makes recording idempotent under redelivery — see
  *                {@link CallRefs}
- * @param kind    "review" | "reconcile" | "followup"
+ * @param kind    which paid call this is; stored as the enum NAME, which the ledger's kind CHECK
+ *                lists verbatim
  */
-public record ChargeCall(String reviewId, String callRef, String kind, String model,
+public record ChargeCall(String reviewId, String callRef, ChargeKind kind, String model,
                          List<ChargeLine> lines) {
 
     public ChargeCall {
@@ -1313,8 +1379,8 @@ public final class CallRefs {
     private CallRefs() {
     }
 
-    public static String of(String reviewId, String slot, String kind) {
-        return reviewId + '|' + slot + '|' + kind;
+    public static String of(String reviewId, String slot, ChargeKind kind) {
+        return reviewId + '|' + slot + '|' + kind.name();
     }
 }
 ```
@@ -1845,7 +1911,7 @@ class LlmChargeProjectionIT {
     ReviewProjection projection;
 
     private ChargeCall call(String ref, List<ChargeLine> lines) {
-        return new ChargeCall(REVIEW, ref, "review", "TEST-MODEL", lines);
+        return new ChargeCall(REVIEW, ref, ChargeKind.REVIEW, "TEST-MODEL", lines);
     }
 
     @Test
@@ -1907,7 +1973,7 @@ Expected: FAIL — `recordCharges` does not exist.
                 ps.setObject(1, java.util.UUID.randomUUID());
                 ps.setString(2, call.reviewId());
                 ps.setString(3, call.callRef());
-                ps.setString(4, call.kind());
+                ps.setString(4, call.kind().name());
                 ps.setString(5, call.model());
                 ps.setString(6, line.mode().name());
                 ps.setString(7, line.tokenType().name());
@@ -2037,7 +2103,7 @@ class ResultSagaPricingTest {
                 ModelUsage.of("TEST-MODEL", 1_000_000, 500_000)));
 
         assertEquals(1, projection.recordedCalls().size());
-        assertEquals("review::TEST-WS/TEST-REPO#1|TESTSHA00000|review",
+        assertEquals("review::TEST-WS/TEST-REPO#1|TESTSHA00000|REVIEW",
                 projection.recordedCalls().get(0).callRef());
     }
 
@@ -2048,7 +2114,7 @@ class ResultSagaPricingTest {
 
         assertEquals(2, projection.recordedCalls().size());
         assertTrue(projection.recordedCalls().stream()
-                .anyMatch(c -> c.callRef().endsWith("|reconcile")));
+                .anyMatch(c -> c.callRef().endsWith("|RECONCILE")));
     }
 
     /** A follow-up is keyed to its thread, matching the slot the worker claims under. */
@@ -2056,7 +2122,7 @@ class ResultSagaPricingTest {
     void aFollowUpIsChargedUnderItsThreadRef() {
         saga.on(followUpGenerated("review::TEST-WS/TEST-REPO#1", "TEST-THREAD-1"));
 
-        assertEquals("review::TEST-WS/TEST-REPO#1|TEST-THREAD-1|followup",
+        assertEquals("review::TEST-WS/TEST-REPO#1|TEST-THREAD-1|FOLLOWUP",
                 projection.recordedCalls().get(0).callRef());
     }
 }
@@ -2106,9 +2172,10 @@ In the `ReviewGenerated` branch, replacing what Task 1 stripped out:
 
 ```java
                 projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
-                charge(e.reviewId(), e.commit(), "review", e.result().usage());
+                charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.REVIEW), e.result().usage());
                 if (e.reconcileUsage() != null) {
-                    charge(e.reviewId(), e.commit(), "reconcile", e.reconcileUsage());
+                    charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.RECONCILE),
+                            e.reconcileUsage());
                 }
 ```
 
@@ -2116,31 +2183,24 @@ and in the `FollowUpGenerated` branch, replacing the old `recordLlmCall`:
 
 ```java
                 if (e.usage() != null) {
-                    charge(e.reviewId(), e.threadRef().value(), "followup", e.usage());
+                    charge(new ChargeRequest(e.reviewId(), e.threadRef().value(), ChargeKind.FOLLOWUP),
+                            e.usage());
                 }
 ```
 
-with one helper (3 params plus the usage would be 4, so the slot and kind travel together):
+and one helper. The identity of a call is three facts, so they travel as a record rather than as
+parameters — `(reviewId, slot, kind, usage)` would be four, over this project's limit:
 
 ```java
     /**
-     * Price a call and append its lines. {@code slot} is the commit for a review or reconcile call and
-     * the thread ref for a follow-up — the same position the worker claims its idempotency under, so
-     * the derived ref is stable across redelivery.
+     * Which paid call this is. {@code slot} is the commit for a review or reconcile call and the thread
+     * ref for a follow-up — the same position the worker claims its idempotency under, so the ref
+     * derived from it is stable across redelivery.
      */
-    private void charge(String reviewId, String slot, String kind, ModelUsage usage) {
-        List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
-        projection.recordCharges(
-                new ChargeCall(reviewId, CallRefs.of(reviewId, slot, kind), kind, usage.model(), lines));
-    }
-```
-
-That is 4 parameters, over the limit. Pass a `ChargeRequest` record instead:
-
-```java
-    private record ChargeRequest(String reviewId, String slot, String kind) {
+    private record ChargeRequest(String reviewId, String slot, ChargeKind kind) {
     }
 
+    /** Price a call and append its lines. */
     private void charge(ChargeRequest request, ModelUsage usage) {
         List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
         projection.recordCharges(new ChargeCall(request.reviewId(),
@@ -2418,9 +2478,12 @@ export type TokenType = 'INPUT' | 'CACHED_INPUT' | 'CACHE_WRITE' | 'OUTPUT' | 'R
 /** How a model's tokens are costed. UNKNOWN is a runtime outcome, never an operator's choice. */
 export type PricingMode = 'METERED' | 'UNMETERED' | 'UNKNOWN';
 
+/** Which paid call a charge belongs to. Mirrors the server's ChargeKind; stored and sent as the name. */
+export type ChargeKind = 'REVIEW' | 'RECONCILE' | 'FOLLOWUP';
+
 /** One token dimension of one LLM call, priced. Rate and cost are null exactly when UNKNOWN. */
 export interface ChargeLineView {
-  kind: string;
+  kind: ChargeKind;
   model: string;
   tokenType: TokenType;
   tokens: number;
@@ -2579,4 +2642,6 @@ The migration is now Task 1, so Task 2 **removes** those reads instead of invent
 
 **Type consistency.** `ModelUsage.of(String, int, int)` is used identically in Tasks 2, 3, 4, 8. `ChargeLine.metered/unmetered/unknown` are the only constructors used after Task 4. `CallRefs.of(reviewId, slot, kind)` produces the exact strings Task 8's tests assert. `ReviewDetail.ChargeLineView` is defined once, in Task 2, and consumed by Tasks 7 and 10. `PricingMode.UNKNOWN` is never accepted from an operator (rejected in Tasks 4 and 5, excluded from the TS type in Task 10).
 
-**Parameter limits.** `charge(...)` would have taken four parameters; Task 8 Step 5 introduces `ChargeRequest` rather than exceeding the limit. `priceCall`, `CallRefs.of`, `recordCharges` and `isPriceable` are all within three.
+**Parameter limits.** `charge(...)` would have taken four parameters; Task 8 Step 5 uses a `ChargeRequest` record instead. The plan deliberately does **not** show the four-parameter version first — an earlier draft did, with prose correcting it afterwards, which invites an implementer reading quickly to write the version the project forbids. `priceCall`, `CallRefs.of`, `recordCharges` and `isPriceable` are all within three.
+
+**Enum-backed wire values.** `TokenType`, `PricingMode` and `ChargeKind` are all stored as their enum names, and the ledger's `token_type`, `pricing_mode` and `kind` CHECKs list those names verbatim. Two of the three carry a drift guard that loops `values()` and asserts the CHECK accepts each — `token_type` (activated in Task 2) and `kind` (added in Task 4). `pricing_mode` has none because its three values are produced by pricing logic that the Task 4 tests already cover exhaustively; the two that needed guards are the ones whose vocabulary a future change is likely to extend.
