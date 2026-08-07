@@ -2782,6 +2782,62 @@ describe('ReviewCostCard', () => {
 Run: `cd spire-ui && npx vitest run src/components/SettingsLlmProviders.test.ts src/components/ReviewCostCard.test.tsx`
 Expected: FAIL — `ReviewCostCard` does not exist; the settings form has no pricing-mode control.
 
+- [ ] **Step 2b: Fix `formatCost` — it currently encodes the defect this branch removes**
+
+`spire-ui/src/money.ts` reads, verbatim:
+
+```ts
+/** A review cost (millicents) as a display string; em-dash when unpriced (0). */
+export function formatCost(millicents: number): string {
+  if (!millicents || millicents <= 0) {
+    return '—';
+  }
+  return `$${(millicents / 100_000).toFixed(3)}`;
+}
+```
+
+Its own comment says it: **"em-dash when unpriced (0)"**. It treats zero as *unpriced*, and `!millicents`
+catches `0`, `null` and `undefined` alike, collapsing all three to `—`. That was defensible when zero was
+the only way to say "no price". It is now wrong in the one way this whole branch exists to prevent:
+
+| Value | Means, after this branch | Must render |
+|---|---|---|
+| `null` | **UNKNOWN** — we could not price it | `—` |
+| `0` | **UNMETERED** — an operator asserted it is free (self-hosted) | a zero, not a dash |
+| `> 0` | a priced amount | the amount |
+
+Rendering an asserted zero as `—` tells an operator their self-hosted deployment's cost is *unknown* when
+it is in fact *known to be nothing*. Every server-side task on this branch worked to keep those apart —
+nullable columns, `getObject` over `getLong`, `pricing_mode` as a category, a binder that refuses to write
+`0` for absent — and this one function undoes all of it at the last step.
+
+```ts
+/**
+ * A cost (millicents) as a display string.
+ *
+ * <p>`null` and a zero are deliberately different: null means the call could not be priced, while zero is
+ * an operator's assertion that an UNMETERED model costs nothing to call. Collapsing them — as this function
+ * used to, treating `0` as "unpriced" — is the conflation the charge ledger was built to remove.
+ */
+export function formatCost(millicents: number | null): string {
+  if (millicents === null || millicents === undefined) {
+    return '—';
+  }
+  return `$${(millicents / 100_000).toFixed(3)}`;
+}
+```
+
+**Then check every caller**, because widening the type changes what they render. `grep -rn "formatCost"
+spire-ui/src`. Two consequences you must handle rather than discover:
+
+- **The reviews-list Cost column.** `ReviewSummary.costMillicents` is `COALESCE(SUM(...), 0)`, so `0` there
+  means *either* "no charges recorded yet" *or* "every charge was an asserted zero". Those are not the same
+  thing and must not both print `$0.000`. Use the `unpricedCalls` count that already rides alongside it, and
+  treat a review with no charge lines at all as `—`.
+- **Negative is now impossible** rather than filtered: the ledger's rate `CHECK` is `> 0` and tokens `>= 0`,
+  so the old `<= 0` guard was defending against a state the schema forbids. Do not carry it forward as a
+  way of hiding zeros.
+
 - [ ] **Step 3: Update `api.ts`**
 
 ```ts
