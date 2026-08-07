@@ -3056,7 +3056,7 @@ distinction the whole change exists to preserve."
 
 Title: `## ADR-023 — LLM cost is a charge-line ledger with snapshotted rates, and zero is a category`.
 
-Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total — including that Anthropic's total excludes cache tokens, so the check is per-vendor; **why the priceable-model rule is enforced twice** — at the registry so a bad configuration cannot exist, and again pre-spend in the saga because pricing is post-hoc and that is the last point at which an unpriceable review can be refused rather than merely reported (Task 12 added the first after a review observed the rule was enforced at its one existing caller rather than at its boundary); `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
+Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total — including that Anthropic's total excludes cache tokens, so the check is per-vendor; **why the priceable-model rule is enforced twice** — at the registry so a bad configuration cannot exist, and again pre-spend in the saga because pricing is post-hoc and that is the last point at which an unpriceable review can be refused rather than merely reported (Task 12 added the first after a review observed the rule was enforced at its one existing caller rather than at its boundary); **and why only the review path refuses while the conversation path does not** — a follow-up answers a human who is waiting, and this project has already been burned by the bot going silent (the turn cap recorded a note and posted nothing, indistinguishable from a lost webhook), so a follow-up records its cost honestly and relies on the registry guard to make an unpriceable provider impossible rather than declining to answer; `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
 
 **Record one thing the ADR must not overstate.** `ModelUsage` is a Kafka wire type and this branch
 reshaped it, but the ADR-013 snapshot gate stayed green — it renders each component as `name: TypeName`
@@ -3128,8 +3128,35 @@ import path, or admin tool would do the same.
 check remains the correct last-chance backstop even with the registry hardened. Neither substitutes for the
 other, and the ADR should say so.
 
+**This is stronger than defence in depth — verified.** The pre-spend guard exists **only** on the review
+path (`ResultSaga.java:158`, before `GenerateReview`). `ConversationSaga.java:116` emits `AnswerFollowUp`
+with **no priceability check at all**, so a follow-up answer on an unpriceable model spends money and
+records `UNKNOWN` charge lines. That is honest but unprevented, and it is the asymmetry this task removes:
+with the rule enforced where providers are written, an unpriceable provider cannot exist, so the follow-up
+path is safe *by construction* rather than by having its own guard.
+
+Do **not** add a guard to the conversation path instead. A follow-up answers a human who is waiting, and
+this project has already been burned by the bot going silent — the turn cap used to record a note and post
+nothing, which was indistinguishable from a lost webhook. Refusing to answer because pricing is
+unconfigured would repeat that mistake. Recording the cost honestly and preventing the bad configuration
+upstream is the right split.
+
+**Exactly one existing test will break, and I have identified it: `ConversationE2ETest.java:79`.** It
+creates a provider straight through the registry and, unlike its two siblings, never catalogues the model
+(`OrchestratorChoreographyTest` catalogues at `:105` before creating at `:110`; `LlmProviderCheckTest`
+catalogues at `:50` before creating at `:61` — both fixed by earlier tasks). It passes today only because
+the conversation path has no pre-spend guard to trip. Repair it the same way its siblings were: catalogue
+the model as `UNMETERED` in that test's own setup, which is honest because it prices nothing.
+
+**No CDI cycle to worry about:** `LlmModelRegistry` injects only `DataSource` and `ObjectMapper`, and its
+own delete guard queries `llm_provider` by SQL rather than through `LlmProviderRegistry`. Injecting the
+model registry here is safe.
+
 **Files:**
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmProviderRegistry.java`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmProviderRegistry.java` — it
+  injects `DataSource`, `EncryptionService` and `AttentionBroadcaster` today (`:28-36`); add `LlmModelRegistry`
+- Modify: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/ConversationE2ETest.java:79` — the one
+  test this breaks
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmProviderRegistryPricingGuardTest.java`
 
 **Interfaces:**
