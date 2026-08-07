@@ -82,6 +82,26 @@ class ResultSagaPricingTest {
                 projection.recordedCalls().get(0).callRef());
     }
 
+    /**
+     * A review result with no token usage must not take the whole handler down.
+     *
+     * <p>{@code charge} dereferences the usage for the model name, and this was the one of three call
+     * sites with no null check — so a usage-less result dead-lettered the result event, losing the
+     * findings, the reconciliation and the PostComments command along with the charge. Nothing is
+     * charged (there is no model to name, and {@code llm_charge.model} is NOT NULL), but everything
+     * else on the path still runs.
+     */
+    @Test
+    void aReviewResultWithNoUsageStillCompletesWithoutCharging() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+
+        saga.on(reviewGenerated(REVIEW_ID, COMMIT, null));
+
+        assertTrue(projection.recordedCalls().isEmpty(), "there is no model to charge this under");
+        assertEquals(1, emitted.size(), "the rest of the path must still run — this is not a failure");
+        assertInstanceOf(ActionCommand.PostComments.class, emitted.get(0));
+    }
+
     /** The reconcile call is its own charge, under its own ref, so it cannot collide with the review. */
     @Test
     void aReconcileCallIsChargedSeparatelyFromTheReviewCall() {

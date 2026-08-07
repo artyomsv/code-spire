@@ -178,7 +178,19 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
                 projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
-                charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.REVIEW), e.result().usage());
+                if (e.result().usage() == null) {
+                    // Guarded like the two sibling sites below, which is what this one was missing:
+                    // charge() dereferences the usage for the model name, so a usage-less result
+                    // NPE'd the whole handler into cs.dlq. Not charged either — llm_charge.model is
+                    // NOT NULL and there is no model to name, so a row here would need an invented
+                    // one. Unreachable from the current worker (TokenUsageMapper never answers null),
+                    // so a legacy replay or a malformed result, and either deserves to be visible.
+                    LOG.warnf("ReviewGenerated for %s carries no token usage — no charge recorded",
+                            e.reviewId());
+                } else {
+                    charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.REVIEW),
+                            e.result().usage());
+                }
                 if (e.reconcileUsage() != null) {
                     charge(new ChargeRequest(e.reviewId(), e.commit(), ChargeKind.RECONCILE),
                             e.reconcileUsage());
