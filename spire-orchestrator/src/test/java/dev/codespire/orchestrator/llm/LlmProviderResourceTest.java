@@ -37,6 +37,9 @@ class LlmProviderResourceTest {
     @Inject
     LlmProviderRegistry registry;
 
+    @Inject
+    LlmModelRegistry models;
+
     @BeforeAll
     static void startLlm() {
         llm = new WireMockServer(WireMockConfiguration.options().dynamicPort());
@@ -51,10 +54,22 @@ class LlmProviderResourceTest {
     @BeforeEach
     void reset() {
         registry.list().forEach(v -> registry.delete(UUID.fromString(v.id())));
+        // A provider's model must be catalogued (LlmProviderModelGuardTest) — idempotent, since
+        // this runs before every test in the class and the model name is unique.
+        ensureCatalogued("openai", "TEST-MODEL");
+        ensureCatalogued("anthropic", "claude-sonnet-4");
+        ensureCatalogued("gemini", "gemini-2.5-pro");
         llm.resetAll();
         llm.stubFor(get(urlEqualTo("/models"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{ \"data\": [] }")));
+    }
+
+    private void ensureCatalogued(String type, String name) {
+        if (models.list().stream().noneMatch(m -> m.name().equals(name))) {
+            models.create(new LlmModelInput(type, name, name, "UNMETERED", Map.of(),
+                    null, null, null, null, true));
+        }
     }
 
     private static Map<String, Object> body(Object apiKey) {
