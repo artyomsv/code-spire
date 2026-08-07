@@ -2925,7 +2925,7 @@ distinction the whole change exists to preserve."
 
 Title: `## ADR-023 — LLM cost is a charge-line ledger with snapshotted rates, and zero is a category`.
 
-Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total — including that Anthropic's total excludes cache tokens, so the check is per-vendor; `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
+Cover, in the house style (decision, why, what was rejected): the partition invariant and why it cross-checks against the vendor's total — including that Anthropic's total excludes cache tokens, so the check is per-vendor; **why the priceable-model rule is enforced twice** — at the registry so a bad configuration cannot exist, and again pre-spend in the saga because pricing is post-hoc and that is the last point at which an unpriceable review can be refused rather than merely reported (Task 12 added the first after a review observed the rule was enforced at its one existing caller rather than at its boundary); `pricing_mode` and why a stricter number check could not work; snapshotting the rate versus a temporal price catalog; guards at config time / pre-spend / post-hoc and why pricing being post-hoc forces that split; and the `UNIQUE (call_ref, token_type)` double-count fix.
 
 **Record one thing the ADR must not overstate.** `ModelUsage` is a Kafka wire type and this branch
 reshaped it, but the ADR-013 snapshot gate stayed green — it renders each component as `name: TypeName`
@@ -2978,6 +2978,113 @@ gh pr create --base master --title "Record LLM cost as a priced charge-line ledg
 ```
 
 The PR body should lead with the defect (an unpriceable call recorded as costing zero, which would have made a spend cap inert), then the design, then the migration's one-time operator action: **any model previously saved with a zero rate must be given rates or marked UNMETERED before it will run a review.**
+
+---
+
+## Task 12: Enforce the priceable-model invariant at the registry, not only the REST edge
+
+**Added after Task 8's review, on its recommendation.** Dispatch this **before Task 11**, so ADR-023 can
+describe the final state rather than an intermediate one.
+
+Task 6 put the "a provider may only name a priceable model" guard in `LlmProviderResource.validate()`. That
+is the only *production* caller of `LlmProviderRegistry.create/update` today — but the invariant is
+therefore enforced at the one caller that happens to exist, not at its actual boundary. This is not
+hypothetical: `OrchestratorChoreographyTest` registers a provider by calling the registry directly, sailed
+past the REST guard, and was caught only by Task 8's pre-spend guard at review time. A future seeder,
+import path, or admin tool would do the same.
+
+**Both guards stay.** They are not alternatives: pricing is genuinely post-hoc, so the saga's pre-spend
+check remains the correct last-chance backstop even with the registry hardened. Neither substitutes for the
+other, and the ADR should say so.
+
+**Files:**
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmProviderRegistry.java`
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmProviderRegistryPricingGuardTest.java`
+
+**Interfaces:**
+- Consumes: `LlmModelRegistry.isPriceable(String)` (Task 4, public at `:170-172`).
+
+- [ ] **Step 1: Write the failing test**
+
+Two cases, each with a **unique** provider name and model name (see Global Constraints — this is a
+`@QuarkusTest` sharing one database):
+
+```java
+    @Test
+    void creatingAProviderNamingAnUncataloguedModelIsRefused() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> registry.create(providerNaming("TEST-GUARD-UNCATALOGUED")));
+
+        assertTrue(refused.getMessage().contains("catalog"),
+                "the refusal must name the fix, not merely refuse: " + refused.getMessage());
+    }
+
+    /** The bypass this task closes: the REST layer already refused this, the registry did not. */
+    @Test
+    void updatingAProviderOntoAnUncataloguedModelIsRefused() {
+        // create against a catalogued UNMETERED model, then try to move it to an uncatalogued one
+    }
+```
+
+- [ ] **Step 2: Run to confirm both fail**
+
+Run: `./gradlew :spire-orchestrator:test --tests 'dev.codespire.orchestrator.llm.LlmProviderRegistryPricingGuardTest'`
+Expected: FAIL — the registry currently accepts both.
+
+- [ ] **Step 3: Add the guard to `create` and `update`**
+
+Inject `LlmModelRegistry models` and check in both methods, before any write:
+
+```java
+    /**
+     * A provider may only name a model the catalog can price. Enforced HERE rather than only at the REST
+     * edge because this is the invariant's real boundary: a caller that bypasses the resource — a seeder,
+     * an import, a test — would otherwise create a provider whose every call lands in the ledger unpriced.
+     * The saga keeps its own pre-spend check regardless: pricing is post-hoc, so that is the last point at
+     * which an unpriceable review can still be refused rather than merely reported.
+     */
+    private void requirePriceableModel(String model) {
+        if (!models.isPriceable(model)) {
+            throw new IllegalArgumentException("Model '" + model + "' is not in the catalog with usable"
+                    + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
+                    + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
+        }
+    }
+```
+
+`LlmProviderResource` already maps `IllegalArgumentException` to a 400 through its `badRequest` helper, so
+the REST behaviour and its existing tests are unchanged. **Leave `LlmProviderResource`'s own check in
+place** — it produces the 400 before the registry is reached, and removing it would change which layer
+owns the status code.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `./gradlew :spire-orchestrator:test`
+Expected: PASS. **Some existing tests will break** — any that create a provider via the registry with an
+uncatalogued model, exactly as `OrchestratorChoreographyTest` did for Task 8. Repair them the same way: get
+the model catalogued as `UNMETERED` in that test's own setup, which is honest because those tests price
+nothing. Do **not** weaken the guard, and do not add an escape hatch for tests.
+
+- [ ] **Step 5: Mutation-verify**
+
+Invert the guard to `if (false)`, confirm exactly the two new tests fail, restore, confirm green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/LlmProviderRegistry.java spire-orchestrator/src/test
+git commit -m "Enforce the priceable-model rule where providers are written
+
+The rule lived only in the REST resource, so it was enforced at the one caller
+that happens to exist rather than at the invariant's boundary. A test that
+registered a provider straight through the registry sailed past it and was
+caught only by the saga's pre-spend guard at review time; a future seeder or
+import would do the same.
+
+Both guards stay. Pricing is post-hoc, so the saga's check is the last point at
+which an unpriceable review can be refused rather than merely reported — the
+registry check stops the bad configuration existing in the first place."
+```
 
 ---
 
