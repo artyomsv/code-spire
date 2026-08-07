@@ -72,7 +72,9 @@
 |---|---|
 | `api.ts` (modify:693-719, 106-111) | Types follow the server |
 | `components/SettingsLlmProviders.tsx` (modify:560-680) | Pricing-mode choice, per-type rates, **no blank→0** |
-| `components/ReviewCostCard.tsx` (create) | Per-type cost breakdown, extracted so no component passes 250 lines |
+| `components/ReviewCostCard.tsx` (create) | Per-type cost breakdown, extracted because `render.tsx` is already 876 lines |
+| `render.tsx` (modify:621-700) | Delete `usageCard`, `llmCallRow`, `LLM_CALL_KIND_LABEL`, `EMPTY_USAGE` |
+| `components/ReviewDetail.tsx` (modify:6, 250) | Render the new component instead of importing `usageCard` |
 
 ---
 
@@ -2673,7 +2675,43 @@ At `SettingsLlmProviders.tsx:560-680`:
 
 If the component passes 250 lines, extract the model form into `SettingsLlmModelForm.tsx` — it is already 585 lines and this adds to it.
 
-- [ ] **Step 5: Create `ReviewCostCard.tsx`**
+- [ ] **Step 5: Replace the model-usage card**
+
+**Where the card actually lives — verified, because the file list above was written before this was
+checked.** It is not a new component grafted onto the detail page; it is an existing exported function:
+
+| What | Location |
+|---|---|
+| `usageCard(r: ReviewDetail)` — the card, both branches | `render.tsx:648-700` |
+| `llmCallRow(call, i)` — one per-call row | `render.tsx:~628-646` |
+| `LLM_CALL_KIND_LABEL: Record<string, string>` | `render.tsx:623` |
+| `EMPTY_USAGE: Usage` | `render.tsx:621` |
+| Its only caller | `components/ReviewDetail.tsx:250` (imported at `:6`) |
+
+Four consequences, none of them optional:
+
+1. **`LLM_CALL_KIND_LABEL`'s keys must become the uppercase enum names** — `REVIEW`, `RECONCILE`,
+   `FOLLOWUP`. The server now sends `ChargeKind` names verbatim. Left lowercase, every row silently
+   falls through to `?? call.kind` and renders a raw `FOLLOWUP` instead of a label. It would look like a
+   styling bug, not a contract mismatch.
+2. **`EMPTY_USAGE` and the `r.usage` fallback branch (`:672` onward) are deleted**, not adapted — Task 2
+   removed `ReviewDetail.usage` from the server. `Usage` becomes an unused import.
+3. **`llmCallRow` reads `call.tokensIn` / `call.tokensOut` / `call.costMillicents`**, none of which exist
+   on a charge line. It is replaced, not edited: a charge line is one token dimension, so several lines
+   make up one call and the rows must group by `call_ref` before rendering.
+4. **`costMillicents` is now `number | null`.** `reduce((sum, c) => sum + c.costMillicents, 0)` at `:650`
+   would produce `NaN` or silently treat null as 0 — sum only non-null costs, and render the total as
+   partial when any line is unpriced. This is the UI face of the branch's central rule; getting it wrong
+   here undoes the work every server-side task did to keep unknown distinct from zero.
+
+`render.tsx` is **876 lines**, so extract the new card into `components/ReviewCostCard.tsx` rather than
+growing it further, and have `ReviewDetail.tsx:250` render the component directly. Delete `usageCard`,
+`llmCallRow`, `LLM_CALL_KIND_LABEL` and `EMPTY_USAGE` from `render.tsx` once nothing imports them.
+
+**Three test files reference the old shape** and must be updated: `App.routes.test.tsx`,
+`components/ReviewDetail.layout.test.tsx`, `components/ReviewDetail.roles.test.tsx`.
+
+- [ ] **Step 5b: Write `ReviewCostCard.tsx`**
 
 Group `lines` by a `kind`+`pricedAt` key, render tokens/rate/cost per type, sum only non-null costs, and render "N call(s) could not be priced — this total is partial" when `unpricedCalls > 0`. Label `UNMETERED` lines "self-hosted (unmetered)". Keep it under 250 lines and under 8 props. Wire it into the review detail page in place of the old per-call cost list.
 
