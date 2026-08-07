@@ -408,7 +408,8 @@ class ResultSagaRetryTest {
             }
         };
 
-        saga.on(new FollowUpGenerated(REVIEW_ID, new ThreadRef("t-1"), "because it leaks a resource", null));
+        saga.on(new FollowUpGenerated(REVIEW_ID, new ThreadRef("t-1"), "because it leaks a resource",
+                null, "TEST-COMMENT-1"));
 
         assertEquals(List.of(REVIEW_ID), touched, "a new follow-up turn must bump the live dashboard");
     }

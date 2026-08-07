@@ -97,16 +97,76 @@ class ResultSagaPricingTest {
                 .anyMatch(c -> c.callRef().endsWith("|RECONCILE")));
     }
 
-    /** A follow-up is keyed to its thread, matching the slot the worker claims under. */
+    /**
+     * A follow-up is keyed to its thread AND the comment it answers — the pair the worker claims
+     * under, not just the thread half of it.
+     */
     @Test
-    void aFollowUpIsChargedUnderItsThreadRef() {
+    void aFollowUpIsChargedUnderItsThreadAndTriggeringComment() {
         ResultSaga saga = sagaFor("TEST-MODEL", true);
         ModelUsage usage = ModelUsage.of("TEST-MODEL", 300_000, 150_000);
 
-        saga.on(new FollowUpGenerated(REVIEW_ID, new ThreadRef("TEST-THREAD-1"),
-                "because it leaks a resource", usage));
+        saga.on(followUp("TEST-THREAD-1", "TEST-COMMENT-1", usage));
 
-        assertEquals("review::TEST-WS/TEST-REPO#1|TEST-THREAD-1|FOLLOWUP",
+        assertEquals("review::TEST-WS/TEST-REPO#1|TEST-THREAD-1:TEST-COMMENT-1|FOLLOWUP",
+                projection.recordedCalls().get(0).callRef());
+    }
+
+    /**
+     * Every turn of one conversation is its own paid call, so every turn needs its own ledger identity.
+     *
+     * <p>The worker claims per (thread, triggering comment) and permits turn 2 to spend; the
+     * orchestrator derived its {@code call_ref} from the thread alone, so turns 2..N resolved to turn
+     * 1's ref and {@code recordCharges}' {@code ON CONFLICT DO NOTHING} dropped them — no row, no log,
+     * no attention row. With a default turn cap of 4 (and no cap at all once the bot is @-mentioned)
+     * that is most of a conversation's spend missing from the total an operator reads.
+     *
+     * <p>The DISTINCT count is the assertion that matters: the fake projection records every call it
+     * is handed, where the real {@code recordCharges} drops a colliding one at the database. So the
+     * defect shows here as two calls sharing one ref, and in production as a missing row.
+     */
+    @Test
+    void twoTurnsOfOneConversationAreTwoDistinctCharges() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+
+        saga.on(followUp("TEST-THREAD-2", "TEST-COMMENT-1", ModelUsage.of("TEST-MODEL", 300_000, 150_000)));
+        saga.on(followUp("TEST-THREAD-2", "TEST-COMMENT-2", ModelUsage.of("TEST-MODEL", 400_000, 200_000)));
+
+        assertEquals(2, projection.recordedCalls().stream().map(ChargeCall::callRef).distinct().count(),
+                "two turns sharing one call_ref means the second is discarded as a redelivery");
+        assertEquals(2, projection.recordedCalls().size(),
+                "each turn is a separate paid call and must be charged separately");
+    }
+
+    /**
+     * The same turn delivered twice must still collapse — that is what the derived ref is FOR. Without
+     * this, "make the ref unique per turn" could be satisfied by making it unique per delivery, which
+     * would double-charge on every redelivery.
+     */
+    @Test
+    void theSameTurnRedeliveredKeepsOneChargeIdentity() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+        ModelUsage usage = ModelUsage.of("TEST-MODEL", 300_000, 150_000);
+
+        saga.on(followUp("TEST-THREAD-3", "TEST-COMMENT-9", usage));
+        saga.on(followUp("TEST-THREAD-3", "TEST-COMMENT-9", usage));
+
+        assertEquals(1, projection.recordedCalls().stream().map(ChargeCall::callRef).distinct().count(),
+                "a redelivered turn is the same call and must resolve to the same ref");
+    }
+
+    /**
+     * A legacy event — recorded before {@code triggeringCommentId} existed — must still charge rather
+     * than fail. It falls back to the thread ref, which is the identity it was written under, so a
+     * replay reproduces its original {@code call_ref} instead of a new one.
+     */
+    @Test
+    void aLegacyFollowUpWithoutATriggeringCommentFallsBackToItsThreadRef() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+
+        saga.on(followUp("TEST-THREAD-4", null, ModelUsage.of("TEST-MODEL", 300_000, 150_000)));
+
+        assertEquals("review::TEST-WS/TEST-REPO#1|TEST-THREAD-4|FOLLOWUP",
                 projection.recordedCalls().get(0).callRef());
     }
 
@@ -185,6 +245,11 @@ class ResultSagaPricingTest {
     private static ReviewGenerated reviewGenerated(String reviewId, String commit, ModelUsage usage) {
         ReviewResult result = new ReviewResult(List.of(), "summary", usage);
         return new ReviewGenerated(reviewId, 1L, commit, result);
+    }
+
+    private static FollowUpGenerated followUp(String threadRef, String triggeringCommentId, ModelUsage usage) {
+        return new FollowUpGenerated(REVIEW_ID, new ThreadRef(threadRef), "because it leaks a resource",
+                usage, triggeringCommentId);
     }
 
     /**

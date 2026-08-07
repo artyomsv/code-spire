@@ -9,8 +9,12 @@ package dev.codespire.orchestrator.llm;
  * carries, so a redelivered result resolves to the same {@code call_ref} and the ledger's
  * {@code UNIQUE (call_ref, token_type)} makes the second recording a no-op.
  *
- * <p>The slot is the COMMIT for a review or reconcile call, and the THREAD REF for a follow-up —
- * matching what the worker puts in that position.
+ * <p><b>The mirror is of the worker's whole (slot, key) identity, not of its slot alone.</b> For a
+ * review or reconcile call the key is a constant, so the commit in the slot position carries the
+ * identity by itself. A follow-up's is not: the worker claims {@code (threadRef, "followup:" +
+ * triggeringCommentId)}, so the comment is what distinguishes turn 2 of a conversation from a
+ * redelivery of turn 1. Comparing only the slot is what let every turn of a thread collapse onto one
+ * ledger identity — see {@link #followUpSlot}.
  */
 public final class CallRefs {
 
@@ -28,5 +32,25 @@ public final class CallRefs {
                             + "got reviewId='" + reviewId + "', slot='" + slot + "'");
         }
         return reviewId + '|' + slot + '|' + kind.name();
+    }
+
+    /**
+     * A follow-up's slot: the conversation AND the turn within it.
+     *
+     * <p>Every turn is a distinct paid call that the worker's claim correctly permits, so every turn
+     * needs its own identity here. Keyed on the thread alone, turns 2..N of one conversation resolved
+     * to turn 1's {@code call_ref} and {@code recordCharges}' {@code ON CONFLICT DO NOTHING} discarded
+     * them with no row, no log and no attention row — the default turn cap is 4, and an @-mention
+     * removes the cap entirely, so the loss was unbounded.
+     *
+     * <p>A null {@code triggeringCommentId} means a legacy event recorded before the field existed.
+     * It falls back to the thread ref, which is the identity such an event was originally charged
+     * under, so replaying one reproduces its own row rather than adding a second.
+     */
+    public static String followUpSlot(String threadRef, String triggeringCommentId) {
+        if (triggeringCommentId == null || triggeringCommentId.isBlank()) {
+            return threadRef;
+        }
+        return threadRef + ':' + triggeringCommentId;
     }
 }

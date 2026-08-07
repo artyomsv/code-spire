@@ -247,8 +247,11 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
                         Previews.of(e.answerText()), e.threadRef().value());
                 if (e.usage() != null) {
-                    charge(new ChargeRequest(e.reviewId(), e.threadRef().value(), ChargeKind.FOLLOWUP),
-                            e.usage());
+                    // Thread AND triggering comment: the worker claims on the pair, so a follow-up's
+                    // ledger identity has to be the pair too or turn 2 is dropped as turn 1's redelivery.
+                    charge(new ChargeRequest(e.reviewId(),
+                            CallRefs.followUpSlot(e.threadRef().value(), e.triggeringCommentId()),
+                            ChargeKind.FOLLOWUP), e.usage());
                 }
                 projection.touch(e.reviewId());
             }
@@ -411,9 +414,10 @@ public class ResultSaga {
     }
 
     /**
-     * Which paid call this is. {@code slot} is the commit for a review or reconcile call and the thread
-     * ref for a follow-up — the same position the worker claims its idempotency under, so the ref
-     * derived from it is stable across redelivery.
+     * Which paid call this is. {@code slot} is the commit for a review or reconcile call and
+     * {@link CallRefs#followUpSlot} for a follow-up — between them these carry the worker's whole
+     * idempotency identity, so the ref derived from one is stable across redelivery and distinct
+     * across genuinely separate calls.
      */
     private record ChargeRequest(String reviewId, String slot, ChargeKind kind) {
     }
