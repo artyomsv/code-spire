@@ -5,7 +5,6 @@ import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.contract.llm.ModelParams;
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.port.LlmProvider;
-import dev.codespire.contract.review.ModelUsage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
@@ -16,7 +15,6 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
-import dev.langchain4j.model.output.TokenUsage;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -143,12 +141,9 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .parameters(paramFactory.apply(params))
                 .build();
         ChatResponse response = model.chat(request);
-        TokenUsage usage = response.tokenUsage();
         return new Completion(
                 response.aiMessage().text(),
-                ModelUsage.of(params.model(),
-                        usage != null && usage.inputTokenCount() != null ? usage.inputTokenCount() : 0,
-                        usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0));
+                TokenUsageMapper.map(params.model(), response.tokenUsage()));
     }
 
     /** The same params with temperature suppressed (profile.supportsTemperature = false). */
