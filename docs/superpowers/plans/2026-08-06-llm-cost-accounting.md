@@ -575,6 +575,13 @@ reading the plan, so do not assume this list is exhaustive either.
      * One token dimension of one LLM call, priced. {@code rateMillicentsPerMillion} and
      * {@code costMillicents} are null exactly when {@code pricingMode} is "UNKNOWN" — never 0, which
      * would be indistinguishable from an UNMETERED model's asserted zero.
+     *
+     * <p>{@code kind}, {@code tokenType} and {@code pricingMode} are Strings here, not the enums they
+     * mirror, deliberately: this is an outbound view read straight from the ledger, whose CHECK
+     * constraints already restrict those columns. The enums exist to protect the WRITE path, where a
+     * typo'd literal costs a lost charge; a display type has nothing to lose by carrying the stored
+     * value verbatim, and typing it would force this record to be defined after the enums rather than
+     * alongside the query that fills it.
      */
     public record ChargeLineView(String kind, String model, String tokenType, int tokens,
                                  Long rateMillicentsPerMillion, Long costMillicents,
