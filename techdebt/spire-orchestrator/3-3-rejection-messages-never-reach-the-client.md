@@ -63,3 +63,25 @@ that assert status codes pass, and only a test asserting the *body* catches it.
 3. **Assert bodies, not just statuses, in resource tests.** Whichever fix lands, the reason this persisted
    is that every existing test checked `statusCode(400)` alone. Without body assertions the fix can regress
    silently, exactly as the original defect arrived.
+
+## The same absence has a second symptom (added 2026-08-07, ADR-023)
+
+There is **no `ExceptionMapper` of any kind in this module**, which also means a plain
+`IllegalArgumentException` thrown by a service or registry becomes a **500**, not a 400 — it is not a
+`WebApplicationException`, so nothing translates it.
+
+ADR-023 made that concrete. `LlmProviderRegistry.create/update` now reject a provider naming an unpriceable
+model with an `IllegalArgumentException`, and `LlmModelRegistry` rejects invalid pricing the same way. Those
+never surface as 500s today **only because `LlmProviderResource.validate()` and `LlmModelResource.validate()`
+perform byte-identical checks first** and throw a mapped `BadRequestException`.
+
+That is a trap, not a design: the resource-layer checks *look* like pure duplication of the registry's, so
+someone will eventually delete one as redundant and silently convert a clean 400 into a 500. A comment at
+each site now says it owns the status code and must not be removed — but a comment is the weakest possible
+enforcement, and the duplication remains the only thing holding the contract.
+
+**The durable fix is the same `ExceptionMapper` work as Solution 2 above**, extended to cover
+`IllegalArgumentException` and `IllegalStateException` (the latter is what the in-use guards on model delete
+and rename throw, and it should map to **409**, not 400 or 500). Doing both symptoms together is why they
+share this entry: one mapper class fixes the missing bodies *and* removes the need for the duplicated
+validation to exist for status-code reasons.
