@@ -152,5 +152,37 @@ class TokenUsageMapperTest {
         assertEquals(0, usage.reportedTotal());
         assertEquals(1, usage.counts().size());
         assertEquals(0, usage.tokensOf(TokenType.TOTAL));
+        // The flag is the whole point of this shape: a zero TOTAL that claimed to be reconciled would
+        // assert "this call genuinely used no tokens" rather than "nothing was reported about it".
+        assertFalse(usage.reconciled());
+    }
+
+    /**
+     * A subset count larger than the whole it belongs to. This should be impossible — every vendor
+     * documents these details as included in the headline number — but the partition's non-negativity
+     * is what {@code llm_charge.tokens >= 0} and the cross-check's direction both rest on, so it is
+     * pinned rather than reasoned about.
+     *
+     * <p>The bucket must not go negative, and the call must degrade honestly: a negative INPUT would
+     * make the partition sum LOWER than the vendor's total, which is the one direction the cross-check
+     * cannot distinguish from a bucket we simply do not map yet.
+     */
+    @Test
+    void aSubsetLargerThanItsWholeNeverProducesANegativeBucket() {
+        OpenAiTokenUsage vendor = OpenAiTokenUsage.builder()
+                .inputTokenCount(100)
+                .inputTokensDetails(OpenAiTokenUsage.InputTokensDetails.builder().cachedTokens(400).build())
+                .outputTokenCount(50)
+                .outputTokensDetails(OpenAiTokenUsage.OutputTokensDetails.builder().reasoningTokens(200).build())
+                .totalTokenCount(150)
+                .build();
+
+        ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", vendor);
+
+        for (TokenType type : TokenType.values()) {
+            assertTrue(usage.tokensOf(type) >= 0, type + " must never carry a negative token count");
+        }
+        assertFalse(usage.reconciled(), "an impossible partition must degrade, not publish a breakdown");
+        assertEquals(150, usage.reportedTotal(), "the vendor's own figure survives, not our failed sum");
     }
 }

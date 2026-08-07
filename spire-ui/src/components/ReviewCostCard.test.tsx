@@ -33,9 +33,17 @@ describe('ReviewCostCard', () => {
     );
 
     expect(screen.getByText(/cached input/i)).toBeInTheDocument();
-    // The rate and cost are asserted directly (not just presence) — the token count itself is left
-    // out of the match since `toLocaleString()` is locale-dependent (this repo runs under `en-CH`
-    // on some machines, which renders "1'000" rather than "1,000").
+    // The token count IS asserted, with the group separator left open: `toLocaleString()` follows the
+    // machine's locale, so the digits are pinned and only the separator tolerated. Pinning a locale in
+    // the test would assert something production does not do; leaving the count unasserted would let
+    // the wrong number through. Neither is safe.
+    //
+    // `[^0-9]?` rather than an enumerated class of separators: this machine resolves to `en-CH`, which
+    // groups with U+2019 (a right single quotation mark, "4’000") — NOT the ASCII apostrophe an
+    // enumerated `[,.']` would have covered. Every locale's group separator is a single non-digit
+    // character, so matching "one optional non-digit" is tolerant without needing that list kept current.
+    expect(screen.getByText(/4[^0-9]?000 tokens/)).toBeInTheDocument();
+    // The rate and cost are asserted directly, not just for presence.
     expect(screen.getByText(/\$2\.500\/1M tokens · \$0\.003/)).toBeInTheDocument();
     expect(screen.getByText(/\$0\.250\/1M tokens · \$0\.001/)).toBeInTheDocument();
     expect(screen.queryByText(/could not be priced/i)).not.toBeInTheDocument();

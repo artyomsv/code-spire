@@ -96,9 +96,9 @@ public final class TokenUsageMapper {
         int cached = u.inputTokensDetails() == null ? 0 : zeroIfNull(u.inputTokensDetails().cachedTokens());
         int reasoning = u.outputTokensDetails() == null ? 0
                 : zeroIfNull(u.outputTokensDetails().reasoningTokens());
-        return nonEmpty(new TokenCount(TokenType.INPUT, input - cached),
+        return nonEmpty(new TokenCount(TokenType.INPUT, remainder(input, cached)),
                 new TokenCount(TokenType.CACHED_INPUT, cached),
-                new TokenCount(TokenType.OUTPUT, output - reasoning),
+                new TokenCount(TokenType.OUTPUT, remainder(output, reasoning)),
                 new TokenCount(TokenType.REASONING, reasoning));
     }
 
@@ -113,10 +113,31 @@ public final class TokenUsageMapper {
     /** Cached content is a SUBSET of the input count; thoughts are reported apart from output. */
     private static List<TokenCount> gemini(GoogleAiGeminiTokenUsage u, int input, int output) {
         int cached = zeroIfNull(u.cachedContentTokenCount());
-        return nonEmpty(new TokenCount(TokenType.INPUT, input - cached),
+        return nonEmpty(new TokenCount(TokenType.INPUT, remainder(input, cached)),
                 new TokenCount(TokenType.CACHED_INPUT, cached),
                 new TokenCount(TokenType.OUTPUT, output),
                 new TokenCount(TokenType.REASONING, zeroIfNull(u.thoughtsTokenCount())));
+    }
+
+    /**
+     * The part of a whole not accounted for by one of its subsets, floored at zero.
+     *
+     * <p>Every subtraction here rests on a vendor's documented claim that the detail count is INSIDE
+     * the headline one. A vendor that contradicts its own documentation — or a LangChain4j mapping
+     * that populates the wrong field — makes the remainder negative, and a negative token count is
+     * meaningless in every direction: it violates {@code llm_charge.tokens >= 0}, so the charge
+     * dead-letters instead of being recorded, and it makes the partition sum SMALLER than the truth,
+     * which is the one direction the cross-check against the vendor's total cannot catch.
+     *
+     * <p>Flooring keeps the failure loud in the safe direction: the missing tokens stay in the subset
+     * bucket, the partition sums HIGHER than the vendor's total, the cross-check trips, and the call
+     * degrades to one unreconciled {@code TOTAL} line carrying the vendor's own figure. {@code nonEmpty}
+     * happens to drop a negative today for the same arithmetic reason, which is why nothing has gone
+     * wrong yet — but that is a coincidence of its {@code > 0} filter, not a stated rule, and the
+     * partition's non-negativity is too load-bearing to rest on a coincidence.
+     */
+    private static int remainder(int whole, int part) {
+        return Math.max(0, whole - part);
     }
 
     /** Only dimensions that actually occurred, so a call without caching carries no zero rows. */

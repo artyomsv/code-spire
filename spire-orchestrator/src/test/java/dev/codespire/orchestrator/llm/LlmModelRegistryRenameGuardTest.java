@@ -35,7 +35,10 @@ class LlmModelRegistryRenameGuardTest {
         providers.create(new LlmProviderInput("TEST-RENAME-GUARD-PROVIDER", "openai",
                 "http://localhost", "sk-test", "TEST-RENAME-GUARD-INUSE", 0.2, null, true, false));
 
-        IllegalStateException refused = assertThrows(IllegalStateException.class,
+        // The EXACT type, not its IllegalStateException supertype: LlmModelRegistry wraps every
+        // SQLException as a plain IllegalStateException too, so asserting the supertype accepts a
+        // broken database as proof the guard fired. A mutation reverting the guard's type stayed green.
+        ModelInUseException refused = assertThrows(ModelInUseException.class,
                 () -> models.update(UUID.fromString(created.id()),
                         meteredModel("TEST-RENAME-GUARD-INUSE-NEW")));
 
