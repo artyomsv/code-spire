@@ -42,15 +42,21 @@ public class LlmModelPricer {
     public List<ChargeLine> priceCall(String model, ModelUsage usage) {
         List<TokenCount> counts = usage == null ? List.of() : usage.counts();
         if (counts.isEmpty()) {
-            // A defensive contract of this public method, NOT the live path — every current caller
-            // (ResultSaga's three charge sites) null-checks before reaching here, because a null usage
-            // also means there is no model name to write into llm_charge.model (NOT NULL).
+            // Reachable with a NON-NULL usage: TokenUsageMapper.map returns an all-zero ModelUsage
+            // (empty counts, reconciled=true) when a vendor reports every token dimension as zero or
+            // missing — an OpenAI-compatible gateway answering prompt_tokens=0, completion_tokens=0
+            // does exactly this. Deleting this branch does NOT throw on that path: pricingFor would
+            // still run, the stream below would yield an empty charge-line list, recordCharges would
+            // write zero rows, and the call would vanish from the ledger SILENTLY — no row, no error,
+            // no attention row. That silent disappearance is the failure this whole change exists to
+            // prevent. A null usage (no model name to write into the NOT NULL llm_charge.model) is the
+            // secondary, call-site-guarded half of this branch, not the reachable one.
             //
             // A trap in both directions, so neither half may be removed on the strength of the other:
-            // deleting this branch as "unreachable" leaves a public method that NPEs on a documented
-            // input, and dropping a call-site guard as "redundant because priceCall handles null"
-            // reinstates the NPE-into-cs.dlq it was added to stop — the guard is what keeps the
-            // warning and the dead-letter avoidance, not this branch.
+            // deleting this branch drops a live call from the ledger with no trace, and dropping a
+            // call-site guard as "redundant because priceCall handles null" reinstates the
+            // NPE-into-cs.dlq it was added to stop — the guard is what keeps the warning and the
+            // dead-letter avoidance, not this branch.
             return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
         }
         Pricing pricing = pricingFor(model);

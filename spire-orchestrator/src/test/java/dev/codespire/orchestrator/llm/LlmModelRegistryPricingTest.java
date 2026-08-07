@@ -159,6 +159,22 @@ class LlmModelRegistryPricingTest {
         assertTrue(lines.stream().allMatch(l -> l.costMillicents() == null));
     }
 
+    /**
+     * A non-null usage whose vendor reported no tokens at all (empty {@code counts}) — what
+     * {@code TokenUsageMapper.map} returns for an all-zero token report. Must degrade to the same
+     * unpriced TOTAL line as an unreconciled call, never vanish from the ledger with no trace.
+     */
+    @Test
+    void aUsageWithNoCountsAtAllStillRecordsAnUnknownTotalLine() {
+        List<ChargeLine> lines = registry.priceCall("TEST-EMPTY-COUNTS",
+                new ModelUsage("TEST-EMPTY-COUNTS", List.of(), 0, true));
+
+        assertEquals(1, lines.size());
+        assertEquals(TokenType.TOTAL, lines.get(0).tokenType());
+        assertEquals(PricingMode.UNKNOWN, lines.get(0).mode());
+        assertNull(lines.get(0).costMillicents());
+    }
+
     /** An unreconciled call has no split, so it cannot be metered even for a priced model. */
     @Test
     void anUnreconciledCallYieldsASingleUnknownTotalLine() {
