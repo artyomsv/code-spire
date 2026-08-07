@@ -264,10 +264,19 @@ public class AttentionQueries {
      * token breakdown did not sum to its own total (recorded as {@code TOTAL} instead of a split)
      * are both silent by construction: neither contributes to a money total, so a genuine $0.00
      * and "we could not account for N calls" would otherwise look identical on screen.
+     *
+     * <p>The two rows are made mutually exclusive by construction, each naming its own cause rather
+     * than a shared symptom. {@code LlmModelPricer.priceCall} returns EITHER per-type lines OR one
+     * {@code TOTAL} line, never both, so a {@code TOTAL} row is always the unreconciled case — even
+     * when it is also priced {@code UNKNOWN} (a metered model has no split to apply a rate to). The
+     * unpriced query excludes {@code TOTAL} so that case is reported as a mapping defect, not sent to
+     * the LLM settings page where entering a rate would do nothing: the call is unpriced BECAUSE it
+     * did not reconcile, not because a rate is missing. Do not "simplify" this exclusion away.
      */
     private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
         int unpriced = count(c,
-                "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE pricing_mode = 'UNKNOWN'");
+                "SELECT count(DISTINCT call_ref) FROM llm_charge "
+                        + "WHERE pricing_mode = 'UNKNOWN' AND token_type <> 'TOTAL'");
         if (unpriced > 0) {
             rows.add(new AttentionView("LLM_COST_UNPRICED", Severity.WARNING, null,
                     unpriced + " LLM call(s) could not be priced, so the reported cost is lower than"
@@ -276,9 +285,13 @@ public class AttentionQueries {
         int unreconciled = count(c,
                 "SELECT count(DISTINCT call_ref) FROM llm_charge WHERE token_type = 'TOTAL'");
         if (unreconciled > 0) {
+            // Not a setting to fix: a reconciliation failure is a TokenUsageMapper defect, so there
+            // is no operator page that helps and the action is deliberately null.
             rows.add(new AttentionView("LLM_USAGE_UNRECONCILED", Severity.WARNING, null,
                     unreconciled + " LLM call(s) reported a token breakdown that did not match their"
-                            + " own total, so only the total was recorded.", "/settings/llm"));
+                            + " own total, so only the total was recorded and those calls are not"
+                            + " priced. This is a mapping defect rather than a setting, so the"
+                            + " figures will not change until it is fixed.", null));
         }
     }
 

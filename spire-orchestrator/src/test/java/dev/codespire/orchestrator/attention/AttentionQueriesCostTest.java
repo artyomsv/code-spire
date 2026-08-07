@@ -44,17 +44,53 @@ class AttentionQueriesCostTest {
                 && r.dismiss() == null));
     }
 
+    /**
+     * On a metered model this fixture is unpriced AND unreconciled at once (see the fixture's own
+     * javadoc), which is exactly the double-report case the two codes must not both raise for. Only
+     * the mapping-defect row should appear — pricing has nothing to fix here.
+     */
     @Test
-    void anUnreconciledCallRaisesItsOwnRow() {
+    void anUnreconciledCallRaisesOnlyItsOwnRowNotTheUnpricedOne() {
         insertUnreconciledCharge("review::TEST-WS/TEST-REPO#2", "TEST-MODEL");
 
-        assertTrue(queries.collect().stream()
-                .anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+        List<AttentionView> rows = queries.collect();
+
+        assertTrue(rows.stream().anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())
+                && r.action() == null
+                && r.dismiss() == null));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
     }
 
     @Test
     void aFullyPricedLedgerRaisesNeitherRow() {
         insertMeteredCharge("review::TEST-WS/TEST-REPO#3", "TEST-MODEL");
+
+        List<AttentionView> rows = queries.collect();
+
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+    }
+
+    /**
+     * The case that justifies having two codes rather than one: an unmetered model's cost is an
+     * ASSERTED zero, not an unknown, so an unreconciled call on it must raise only the mapping-defect
+     * row and never the pricing row — unlike the metered fixture above, {@code pricing_mode} here is
+     * genuinely not {@code UNKNOWN}.
+     */
+    @Test
+    void anUnreconciledUnmeteredCallRaisesOnlyTheUnreconciledRow() {
+        insertUnreconciledUnmeteredCharge("review::TEST-WS/TEST-REPO#4", "TEST-MODEL");
+
+        List<AttentionView> rows = queries.collect();
+
+        assertTrue(rows.stream().anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+    }
+
+    /** A reconciled, priced call on an unmetered model raises neither row. */
+    @Test
+    void aReconciledUnmeteredChargeRaisesNeitherRow() {
+        insertUnmeteredCharge("review::TEST-WS/TEST-REPO#5", "TEST-MODEL");
 
         List<AttentionView> rows = queries.collect();
 
@@ -84,6 +120,21 @@ class AttentionQueriesCostTest {
     /** A reconciled call on a catalogued metered model, priced normally. */
     private void insertMeteredCharge(String reviewId, String model) {
         insert(reviewId, "CANARY-METERED", model, "METERED", "INPUT", "250000", "2");
+    }
+
+    /**
+     * An unreconciled call on an UNMETERED model: {@code LlmModelPricer} still has no split to price,
+     * but an unmetered model's cost is an asserted zero rather than unknown, so this is
+     * {@code pricing_mode='UNMETERED'} with a zero rate/cost — unlike {@link #insertUnreconciledCharge},
+     * it must NOT also read as unpriced.
+     */
+    private void insertUnreconciledUnmeteredCharge(String reviewId, String model) {
+        insert(reviewId, "CANARY-UNRECONCILED-UNMETERED", model, "UNMETERED", "TOTAL", "0", "0");
+    }
+
+    /** A reconciled call on an unmetered model: {@code ChargeLine.unmetered(type, tokens)} per type. */
+    private void insertUnmeteredCharge(String reviewId, String model) {
+        insert(reviewId, "CANARY-UNMETERED", model, "UNMETERED", "INPUT", "0", "0");
     }
 
     private void insert(String reviewId, String callRef, String model, String pricingMode,
