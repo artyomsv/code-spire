@@ -6,6 +6,7 @@ import dev.codespire.contract.review.ConversationLevel;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ConversationPolicy;
@@ -104,18 +105,21 @@ public class ConversationSaga {
             return Optional.empty();
         }
 
-        Optional<String> llmCred = workerLlmCredentials.packDefault(e.repo().workspace());
-        if (llmCred.isEmpty()) {
-            timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(),
-                    "no default LLM provider configured");
-            LOG.infof("Follow-up skipped for %s — no default LLM provider configured for workspace '%s'",
-                    e.reviewId(), e.repo().workspace());
+        // Resolving the default credential also answers whether the model can be priced — the same
+        // pre-spend guard the review path applies, on a path that used to have none: an unpriceable
+        // model refused new reviews while an author replying in a live thread still made the bot spend,
+        // up to the turn cap or unbounded with an @-mention. ADR-023 argued this path was safe by
+        // construction because the registry guard makes an unpriceable provider impossible; V30
+        // falsifies that, creating rateless models in SQL without passing through the registry at all.
+        DefaultLlm llm = workerLlmCredentials.resolveDefault(e.repo().workspace());
+        if (!llm.isSpendable()) {
+            skipUnspendable(e, llm);
             return Optional.empty();
         }
         LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
-                workerCredentials.pack(provider), llmCred.get(), botMentioned,
+                workerCredentials.pack(provider), llm.packed(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
                 promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP),
                 findingsOwnedByOtherThreads(e.reviewId(), target.thread())));
@@ -136,6 +140,22 @@ public class ConversationSaga {
                         .filter(f -> f.threadRef() != null && !f.threadRef().equals(thread.value()))
                         .toList())
                 .orElseGet(List::of);
+    }
+
+    /**
+     * A reply that will not be answered because the call cannot be paid for, said out loud.
+     *
+     * <p>Timeline note AND dashboard note, in the shape of the sibling skips: someone is waiting in that
+     * thread, and this project has already been burned by the bot going quiet for a reason nobody could
+     * see — the turn cap used to record a note and post nothing, indistinguishable from a lost webhook.
+     * Posting a notice into the thread is deliberately NOT done here: unlike the turn cap, this is a
+     * misconfiguration the operator fixes and the reply then happens on the next attempt.
+     */
+    private void skipUnspendable(AuthorReplied e, DefaultLlm llm) {
+        timeline.record("integration", "skipped:AnswerFollowUp", e.reviewId(), llm.detail());
+        projection.setNote(e.reviewId(), llm.note());
+        LOG.infof("Follow-up skipped for %s — %s (workspace '%s')",
+                e.reviewId(), llm.detail(), e.repo().workspace());
     }
 
     /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */

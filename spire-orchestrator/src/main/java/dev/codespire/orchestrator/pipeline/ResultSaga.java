@@ -23,6 +23,7 @@ import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -144,29 +145,14 @@ public class ResultSaga {
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
-                // GenerateReview also needs the LLM credential (ADR-018): resolve the
-                // global-default provider and pack it encrypted; skip if none is set.
+                // GenerateReview also needs the LLM credential (ADR-018): resolve the global-default
+                // provider and pack it encrypted. The resolve also answers whether the model can be
+                // priced — the pre-spend guard, which arrives with the credential so it cannot be
+                // skipped here.
                 String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
-                java.util.Optional<String> llmCred = workerLlmCredentials.packDefault(workspace);
-                if (llmCred.isEmpty()) {
-                    timeline.record("result", "skipped:GenerateReview", e.reviewId(),
-                            "no default LLM provider configured");
-                    projection.setNote(e.reviewId(),
-                            "No default LLM provider configured — register one in Settings → LLM.");
-                    LOG.warnf("Skipping GenerateReview for %s — no default LLM provider set", e.reviewId());
-                    return;
-                }
-                // Pre-spend guard. Pricing happens when the result comes back, so this is the last
-                // point at which an unpriceable call can be prevented rather than merely reported.
-                String model = workerLlmCredentials.defaultModelName().orElse("");
-                if (!llmModels.isPriceable(model)) {
-                    timeline.record("result", "skipped:GenerateReview", e.reviewId(),
-                            "model '" + model + "' has no usable pricing");
-                    projection.setNote(e.reviewId(), "Model '" + model + "' has no usable pricing — set"
-                            + " input and output rates in Settings → LLM → Models, or mark it UNMETERED"
-                            + " if it is self-hosted.");
-                    LOG.warnf("Skipping GenerateReview for %s — model '%s' is not priceable",
-                            e.reviewId(), model);
+                DefaultLlm llm = workerLlmCredentials.resolveDefault(workspace);
+                if (!llm.isSpendable()) {
+                    skipUnspendable(e.reviewId(), "GenerateReview", llm);
                     return;
                 }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
@@ -176,7 +162,7 @@ public class ResultSaga {
                         promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE);
                 emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.contextRef(), 1, null, scmCred, llmCred.get(), prior, reviewPrompt, reconcilePrompt));
+                        e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
@@ -390,6 +376,17 @@ public class ResultSaga {
             return "Failed at " + e.phase() + " — provider unavailable, cannot retry.";
         }
         return "Failed terminally at " + e.phase() + ".";
+    }
+
+    /**
+     * A paid command that will not be issued, said out loud: timeline note, dashboard note and a WARN.
+     * The dashboard note is what turns "nothing happened" into "here is what to fix" — the same shape
+     * as {@link #emitWithCredential}'s missing-provider skip.
+     */
+    private void skipUnspendable(String reviewId, String phase, DefaultLlm llm) {
+        timeline.record("result", "skipped:" + phase, reviewId, llm.detail());
+        projection.setNote(reviewId, llm.note());
+        LOG.warnf("Skipping %s for %s — %s", phase, reviewId, llm.detail());
     }
 
     /**

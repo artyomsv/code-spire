@@ -16,6 +16,7 @@ import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
@@ -254,23 +255,16 @@ class ResultSagaPricingTest {
                 return Optional.of("packed-scm-cred");
             }
         };
+        // Priceability now arrives WITH the credential, so this one fake decides both — a caller can no
+        // longer resolve a credential without being told whether spending it can be priced.
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("packed-llm-cred");
-            }
-
-            @Override
-            public Optional<String> defaultModelName() {
-                return Optional.of(model);
+            public DefaultLlm resolveDefault(String workspace) {
+                return priceable ? DefaultLlm.spendable("packed-llm-cred", model)
+                        : DefaultLlm.notPriceable(model);
             }
         };
         saga.llmModels = new LlmModelRegistry() {
-            @Override
-            public boolean isPriceable(String candidate) {
-                return priceable;
-            }
-
             @Override
             public List<ChargeLine> priceCall(String candidate, ModelUsage usage) {
                 return List.of(ChargeLine.metered(dev.codespire.contract.review.TokenType.TOTAL,

@@ -88,19 +88,31 @@ the old value exactly as deleting it would, and was the one path that could stil
 guard after it had passed. `update` now refuses a rename while any provider references the current name,
 reusing the same in-use count and message as `delete`.
 
-**Why only the review path refuses, and the conversation path does not.** `ConversationSaga` builds
-`AnswerFollowUp` with no priceability check of its own — deliberately, not by omission. A follow-up
-answers a human who is already waiting in a live thread, and this project has already been burned by the
-bot going silent for a reason nobody could see: the turn cap used to record a dashboard note and post
-nothing, indistinguishable from a lost webhook, until it became an explicit `NotifyTurnCap` notice. Adding
-a silent pre-spend skip to follow-ups would reintroduce that exact failure shape on a path a human is
-actively watching. So the conversation path records its cost honestly — `ChargeKind.FOLLOWUP` lines land
-in the same ledger, priced or `UNKNOWN` like any other call — and relies on the registry guard making an
-unpriceable provider *impossible to create* rather than declining to answer one that already exists.
-**Renaming a catalogued model was the hole in that argument**: before the fix above, a rename could
-orphan a provider the conversation path was already trusting, with no pre-spend check of its own to catch
-it. It is refused now, for exactly this reason — the conversation path's safety depends on the registry
-guard holding on *both* the provider side and the model side.
+**The conversation path is guarded too, and the argument that it needn't be was wrong.** This ADR
+originally held that `ConversationSaga` could emit `AnswerFollowUp` — a paid call — with no priceability
+check of its own, because the registry guard makes an unpriceable provider *impossible to create*, and
+because a silent pre-spend skip would reintroduce the failure shape the `NotifyTurnCap` notice exists to
+remove: the bot going quiet in a thread a human is actively watching. The second half of that still
+holds. **The first half is falsified by V30 itself**: the migration leaves every legacy zero-priced model
+rateless by writing SQL directly, so the unpriceable state arrives without passing through the registry
+guard at all. On an upgraded deployment new reviews were correctly refused while an author replying to a
+live thread still made the bot spend — up to the turn cap, or unbounded once it is @-mentioned, which is
+deliberately cap-exempt. A transient `SQLException` in `pricingFor` produces the same asymmetry.
+
+So the guard is applied on that path as well, and the answer to "would it go quiet?" is *no*: the skip
+records a timeline note naming the model and a dashboard note naming the fix, in the same shape as the
+sibling missing-credential skip. It posts nothing into the thread, unlike the turn cap — the turn cap is
+a hand-off with nothing further to come, where this is a misconfiguration whose fix makes the next reply
+work. And rather than leave the check duplicated at two emit sites, "resolve the default credential" and
+"confirm it can be priced" became one answer (`WorkerLlmCredentials.resolveDefault` → `DefaultLlm`): a
+caller cannot take the credential without being told, so the *next* emit site is guarded by construction
+instead of by remembering. The conversation path still records its cost honestly either way —
+`ChargeKind.FOLLOWUP` lines land in the same ledger, priced or `UNKNOWN` like any other call.
+
+**Renaming a catalogued model was the other hole in the original argument**: a rename could orphan a
+provider the conversation path was already trusting. It is refused now — the registry guard has to hold
+on *both* the provider side and the model side — but it is no longer the only thing standing between an
+unpriceable model and a paid follow-up.
 
 **`UNIQUE (call_ref, token_type)` — the double-charge fix.** The method this replaced was an unguarded
 `INSERT` with a fresh `UUID` and no uniqueness, protected only by `ResultSaga.ifCurrentRun`'s staleness
