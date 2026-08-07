@@ -316,8 +316,8 @@ where cost comes from: nowhere yet, rather than a fabricated zero.
 - Modify: `spire-contract/src/test/resources/contract-schema.txt`
 - Modify: `spire-llm/src/main/java/dev/codespire/llm/LangChain4jLlmProvider.java:147-152`
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ResultSaga.java:163-169, 235, 422-444`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:346-395, 961-966, 1078-1091, 1317-1347`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewDetail.java:46, 73-75`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:346-395, 961-966, 1078-1091, 1149-1152, 1290, 1317-1351, 1474-1483`
+- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewDetail.java:45-46, 66, 73-75`
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewSummary.java`
 - Test: `spire-contract/src/test/java/dev/codespire/contract/review/ModelUsageTest.java`
 
@@ -523,7 +523,10 @@ entirely, and simplify the `ReviewGenerated` branch:
 Also remove the `recordLlmCall` calls at 166, 168 and 235, and the `llmModels` injection if nothing
 else uses it. Task 8 reinstates recording, against the new ledger.
 
-`ReviewProjection.java` — five changes, all of them deletions of dropped-column access:
+`ReviewProjection.java` — seven changes, all of them deletions of dropped-column access. **Find every
+reader before you start**: `grep -n 'r\.model\|r\.tokensIn\|r\.tokensOut\|r\.costMillicents'` over the
+file, and confirm your edits cover every hit. Six of the seven below were found that way rather than by
+reading the plan, so do not assume this list is exhaustive either.
 
 1. **`recordOutcome` (346-372):** drop `model`, `tokens_in`, `tokens_out`, `cost_millicents` from the
    `UPDATE` and delete the whole `usage == null` branch. It now writes only `findings_count`,
@@ -532,9 +535,20 @@ else uses it. Task 8 reinstates recording, against the new ledger.
 3. **Delete `withReviewCall` (1338-1347)** — it synthesized a "review" call row out of the dropped
    `review_status` columns. With the ledger as the only source there is nothing to merge, so
    `toDetail` (1317-1328) passes the charge lines straight through.
-4. **Trim `ReviewRow`** of its `model`, `tokensIn`, `tokensOut`, `costMillicents` fields and stop
-   reading them in whatever maps the row.
-5. **Replace `llmCalls(String)` (1078-1091) with `chargeLines(String)`** reading the new ledger:
+4. **Delete `usageView(ReviewRow)` (1474-1483), `ReviewDetail.UsageView` (`:66`) and the `usage`
+   component of `ReviewDetail` (`:45`).** It reads all four dropped columns to render a single
+   model/prompt/completion/cost summary. The per-type charge breakdown Task 10 builds is a strict
+   superset of it, so re-deriving this legacy display from the ledger only to delete it two tasks later
+   is pure churn. **Consequence to accept, not work around:** the review-detail page shows no usage
+   figures between this task and Task 10. That window already exists regardless — this task changes
+   `ReviewDetail`'s `llmCalls` component to `chargeLines`, which the UI does not read until Task 10.
+5. **Trim `ReviewRow` (1149-1152)** of its `model`, `tokensIn`, `tokensOut`, `costMillicents` fields and
+   stop selecting/reading them wherever the row is mapped. `Integer`-typed token fields and a nullable
+   `Long` cost go together — remove all four.
+6. **`llmTypeFor(Connection, String model)` (:1290)** still takes a model NAME and maps it to a vendor
+   type, so it survives unchanged — but confirm its caller now feeds it the ledger-derived model rather
+   than `r.model`, which no longer exists.
+7. **Replace `llmCalls(String)` (1078-1091) with `chargeLines(String)`** reading the new ledger:
 
 ```java
     /** Every charge line recorded for a review, oldest first — the cost card's raw material. */
@@ -566,7 +580,9 @@ else uses it. Task 8 reinstates recording, against the new ledger.
     }
 ```
 
-and change the `llmCalls` component (line 46) to `List<ChargeLineView> chargeLines`.
+and change the `llmCalls` component (line 46) to `List<ChargeLineView> chargeLines`. The `usage`
+component and its `UsageView` record are deleted outright per change 4 above — `ReviewDetail` loses one
+component as well as changing another.
 
 **`listSummaries` (961-966)** selects `rs.*` and names `rs.cost_millicents` and `rs.model`, so it
 breaks at runtime once the columns are gone. Re-derive all three from the ledger — the query is
@@ -2420,6 +2436,8 @@ If the component passes 250 lines, extract the model form into `SettingsLlmModel
 - [ ] **Step 5: Create `ReviewCostCard.tsx`**
 
 Group `lines` by a `kind`+`pricedAt` key, render tokens/rate/cost per type, sum only non-null costs, and render "N call(s) could not be priced — this total is partial" when `unpricedCalls > 0`. Label `UNMETERED` lines "self-hosted (unmetered)". Keep it under 250 lines and under 8 props. Wire it into the review detail page in place of the old per-call cost list.
+
+**This card also replaces the deleted `UsageView`.** Task 2 removed the server's legacy single-row model/prompt/completion/cost summary (`ReviewDetail.usage` and its `UsageView` record) because this card is a strict superset of it, so the review-detail page has shown no usage figures since Task 2. Delete the UI's `usage` rendering and its `api.ts` interface in this same pass — leaving either behind means `tsc` fails on a field the server no longer sends, or the page renders a permanently empty panel.
 
 - [ ] **Step 6: Run the UI suite**
 
