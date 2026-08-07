@@ -140,7 +140,14 @@ export interface ReviewEvent {
   loc?: string;
 }
 
-export interface ReviewDetail extends ReviewSummary {
+// The detail endpoint's Java record omits four ReviewSummary components — model, llmType,
+// costMillicents, carriedOverFindings are list-only projections the detail payload never sends.
+// `extends ReviewSummary` used to declare them anyway, so a component could read one off a detail
+// payload, get `undefined`, and render as if the field were simply absent/zero — which is exactly
+// how `unpricedCalls` shipped as a silent `undefined` before it was wired into the record. Omit<>
+// makes the next such field a compile error instead of a repeat of that.
+export interface ReviewDetail
+  extends Omit<ReviewSummary, 'model' | 'llmType' | 'costMillicents' | 'carriedOverFindings'> {
   // findings/blockerCount (from ReviewSummary) stay this RUN's raw counts — the findings card's
   // "+ N more" math depends on that meaning. openFindings/openBlockers are the reconciled
   // currently-open counts (this run's new findings + still-open/unchanged reconciliation,
