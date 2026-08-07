@@ -2672,7 +2672,6 @@ the test matrix:
 
 `METERED` + `TOTAL` is unreachable — the ledger's `CHECK (token_type <> 'TOTAL' OR pricing_mode <> 'METERED')`
 forbids it, because an unreconciled call has no split for a rate to apply to.
-```
 
 - [ ] **Step 4: Run the tests**
 
