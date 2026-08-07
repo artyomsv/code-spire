@@ -719,6 +719,45 @@ usage, so the event store is untouched and no upcaster is needed."
 
 **If the reconciliation test fails for a vendor, the subtraction above is wrong for it — flip that vendor's inclusive/exclusive assumption. Do NOT relax the assertion.** Getting this wrong is precisely what the invariant exists to catch, and a relaxed assertion converts a caught bug into a silent mispricing.
 
+### What each vendor's total actually covers — read this before writing the mapper
+
+The cross-check compares the buckets against `totalTokenCount()`, which only works where that value is
+a genuine grand total. **On Anthropic it is not.** Verified by disassembling
+`langchain4j-anthropic-1.18.1.jar`, not inferred:
+
+- `AnthropicTokenUsage(Builder)` calls `super(builder.inputTokenCount, builder.outputTokenCount)`; the
+  two cache fields become its own fields and never reach the base class.
+- The base `TokenUsage(Integer, Integer)` constructor derives the third value as `sum(input, output)`.
+- `AnthropicTokenUsage.Builder` has **no `totalTokenCount(...)` setter** — one cannot be supplied.
+
+So on Anthropic `totalTokenCount()` is always exactly `input + output`, **excluding cache reads and
+writes**. Checking "all buckets sum to the vendor total" would therefore fail on every cached Anthropic
+call and degrade it to a single unpriceable `TOTAL` line — making cached calls, the ones caching exists
+to make cheap, the only ones we cannot price.
+
+So cross-check only the buckets the vendor's total actually covers:
+
+| Vendor | Total covers | Buckets outside the check |
+|---|---|---|
+| OpenAI | every bucket (cached ⊂ input, reasoning ⊂ output, total = prompt + completion) | none |
+| Gemini | every bucket (cached ⊂ prompt, total includes thoughts) | none |
+| **Anthropic** | `INPUT + OUTPUT` only | `CACHED_INPUT`, `CACHE_WRITE` |
+| Plain `TokenUsage` | `INPUT + OUTPUT` | none exist |
+
+`ModelUsage.reportedTotal` is the sum of **all** buckets — the call's true token count — while
+`reconciled` reports whether the *checkable* subset agreed. For Anthropic no independent grand total
+exists, and saying so is better than inventing one.
+
+**Builder APIs, all verified present by `javap` so your test compiles first time:**
+`OpenAiTokenUsage.builder()` takes `.inputTokenCount(Integer)`, `.inputTokensDetails(...)`,
+`.outputTokenCount(Integer)`, `.outputTokensDetails(...)`, `.totalTokenCount(Integer)`;
+`OpenAiTokenUsage.InputTokensDetails.builder().cachedTokens(Integer)` and
+`OpenAiTokenUsage.OutputTokensDetails.builder().reasoningTokens(Integer)` both exist.
+`GoogleAiGeminiTokenUsage.builder()` takes `.inputTokenCount`, `.outputTokenCount`, `.totalTokenCount`,
+`.cachedContentTokenCount`, `.thoughtsTokenCount`.
+`AnthropicTokenUsage.builder()` takes `.inputTokenCount`, `.outputTokenCount`,
+`.cacheCreationInputTokens`, `.cacheReadInputTokens` — **and nothing else.**
+
 - [ ] **Step 1: Write the failing test**
 
 `spire-llm/src/test/java/dev/codespire/llm/TokenUsageMapperTest.java`:
@@ -754,9 +793,11 @@ class TokenUsageMapperTest {
         for (TokenType type : TokenType.values()) {
             summed += usage.tokensOf(type);
         }
-        assertTrue(usage.reconciled(), "buckets must reconcile against the vendor total");
+        assertTrue(usage.reconciled(),
+                "the buckets the vendor's total covers must agree with that total");
         assertEquals(usage.reportedTotal(), summed,
-                "every token must be counted exactly once across the buckets");
+                "reportedTotal must be the sum of EVERY bucket — the call's true token count, which on "
+                        + "Anthropic exceeds the vendor's own input+output total");
     }
 
     @Test
@@ -778,14 +819,20 @@ class TokenUsageMapperTest {
         assertPartitions(usage);
     }
 
+    /**
+     * Anthropic reports cache reads and writes as line items ADDITIONAL to its input count, and its
+     * builder cannot be given a total at all — LangChain4j derives one as input + output, excluding
+     * both cache buckets. So the partition sums to more than the vendor's "total", and the cross-check
+     * must cover only INPUT + OUTPUT. Checking all four against that total would fail on every cached
+     * call and make cached calls the only unpriceable ones.
+     */
     @Test
-    void anthropicTreatsCacheCountsAsAdditiveLineItems() {
+    void anthropicTreatsCacheCountsAsAdditiveLineItemsOutsideItsTotal() {
         AnthropicTokenUsage vendor = AnthropicTokenUsage.builder()
                 .inputTokenCount(600)
                 .cacheReadInputTokens(400)
                 .cacheCreationInputTokens(50)
                 .outputTokenCount(200)
-                .totalTokenCount(1250)
                 .build();
 
         ModelUsage usage = TokenUsageMapper.map("TEST-MODEL", vendor);
@@ -795,6 +842,27 @@ class TokenUsageMapperTest {
         assertEquals(50, usage.tokensOf(TokenType.CACHE_WRITE));
         assertEquals(200, usage.tokensOf(TokenType.OUTPUT));
         assertPartitions(usage);
+        // reportedTotal is the TRUE token count (all four buckets), not the vendor's partial figure.
+        assertEquals(1250, usage.reportedTotal());
+    }
+
+    /**
+     * Pins the Anthropic semantics the mapper depends on, so a LangChain4j upgrade that starts folding
+     * cache tokens into the derived total is caught here rather than by every cached call silently
+     * degrading to an unpriceable TOTAL line.
+     */
+    @Test
+    void anthropicsDerivedTotalStillExcludesCacheTokens() {
+        AnthropicTokenUsage vendor = AnthropicTokenUsage.builder()
+                .inputTokenCount(600)
+                .cacheReadInputTokens(400)
+                .cacheCreationInputTokens(50)
+                .outputTokenCount(200)
+                .build();
+
+        assertEquals(800, vendor.totalTokenCount(),
+                "LangChain4j derives Anthropic's total as input + output only. If this now includes the "
+                        + "cache buckets, TokenUsageMapper's Anthropic cross-check must cover them too.");
     }
 
     @Test
@@ -874,7 +942,9 @@ import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import dev.langchain4j.model.output.TokenUsage;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Maps a vendor's token accounting onto the neutral {@link TokenType} partition.
@@ -900,16 +970,43 @@ public final class TokenUsageMapper {
             return unreconciled(model, 0);
         }
         List<TokenCount> counts = partition(usage);
-        int summed = counts.stream().mapToInt(TokenCount::tokens).sum();
-        Integer reported = usage.totalTokenCount();
+        int fullTotal = sumOf(counts, EnumSet.allOf(TokenType.class));
+        Integer vendorTotal = usage.totalTokenCount();
         // No vendor total means nothing contradicts the partition — trust it and record our own sum.
-        if (reported == null) {
-            return new ModelUsage(model, counts, summed, true);
+        if (vendorTotal == null) {
+            return new ModelUsage(model, counts, fullTotal, true);
         }
-        if (reported != summed) {
-            return unreconciled(model, reported);
+        if (sumOf(counts, coveredByTotal(usage)) != vendorTotal) {
+            // Our arithmetic is the suspect party here, so record the vendor's own figure rather than
+            // a sum derived from the extraction that just failed its own check.
+            return unreconciled(model, vendorTotal);
         }
-        return new ModelUsage(model, counts, reported, true);
+        return new ModelUsage(model, counts, fullTotal, true);
+    }
+
+    /**
+     * Which buckets the vendor's own total accounts for.
+     *
+     * <p>Anthropic's is derived by LangChain4j from input and output alone — its builder cannot even be
+     * given a total — so its two cache buckets sit OUTSIDE the cross-check. Including them would fail
+     * every cached Anthropic call and leave exactly the cheap calls unpriceable. Every other vendor
+     * reports a genuine grand total that covers all of its buckets.
+     */
+    private static Set<TokenType> coveredByTotal(TokenUsage usage) {
+        if (usage instanceof AnthropicTokenUsage) {
+            return EnumSet.of(TokenType.INPUT, TokenType.OUTPUT);
+        }
+        return EnumSet.allOf(TokenType.class);
+    }
+
+    private static int sumOf(List<TokenCount> counts, Set<TokenType> covered) {
+        int total = 0;
+        for (TokenCount count : counts) {
+            if (covered.contains(count.type())) {
+                total += count.tokens();
+            }
+        }
+        return total;
     }
 
     private static ModelUsage unreconciled(String model, int total) {
