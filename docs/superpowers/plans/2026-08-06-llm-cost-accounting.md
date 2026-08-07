@@ -1243,6 +1243,36 @@ class LlmModelRegistryPricingTest {
         assertEquals(200_000L, input.costMillicents());
     }
 
+    /**
+     * The Anthropic shape, and the reason pricing must iterate {@code counts()} rather than any single
+     * total. Anthropic reports cache reads and writes as buckets OUTSIDE its own token total, so pricing
+     * anything against a total would bill those tokens at the wrong rate or not at all — and cached
+     * tokens are the ones a cache exists to make cheap, so under-billing them is the expensive mistake.
+     * Each bucket must be priced at its own rate.
+     */
+    @Test
+    void everyBucketIsPricedAtItsOwnRateIncludingTheCacheBuckets() {
+        metered("TEST-METERED-CACHE", Map.of(
+                "INPUT", 300_000L, "OUTPUT", 600_000L, "CACHED_INPUT", 30_000L, "CACHE_WRITE", 375_000L));
+
+        List<ChargeLine> lines = registry.priceCall("TEST-METERED-CACHE",
+                new ModelUsage("TEST-METERED-CACHE",
+                        List.of(new TokenCount(TokenType.INPUT, 1_000_000),
+                                new TokenCount(TokenType.CACHED_INPUT, 1_000_000),
+                                new TokenCount(TokenType.CACHE_WRITE, 1_000_000),
+                                new TokenCount(TokenType.OUTPUT, 1_000_000)),
+                        4_000_000, true));
+
+        assertEquals(4, lines.size());
+        assertEquals(30_000L, lines.stream().filter(l -> l.tokenType() == TokenType.CACHED_INPUT)
+                .findFirst().orElseThrow().costMillicents(),
+                "a cached-input token must cost its OWN rate, not the fresh-input rate");
+        assertEquals(375_000L, lines.stream().filter(l -> l.tokenType() == TokenType.CACHE_WRITE)
+                .findFirst().orElseThrow().costMillicents());
+        // The call's cost is the sum of its lines — no total-based shortcut can produce this figure.
+        assertEquals(1_305_000L, lines.stream().mapToLong(ChargeLine::costMillicents).sum());
+    }
+
     /** Self-hosted inference: an ASSERTED zero, which must read differently from an absent price. */
     @Test
     void anUnmeteredModelChargesAnExplicitZero() {
