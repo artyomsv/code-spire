@@ -62,7 +62,7 @@ class LlmProviderResourceTest {
         m.put("name", "OpenAI");
         m.put("type", "openai");
         m.put("baseUrl", llm.baseUrl()); // validator appends /models -> hits the stub
-        m.put("model", "gpt-4o");
+        m.put("model", "TEST-MODEL");
         if (apiKey != null) {
             m.put("apiKey", apiKey);
         }

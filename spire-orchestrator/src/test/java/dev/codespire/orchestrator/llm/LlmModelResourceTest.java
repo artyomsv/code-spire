@@ -14,6 +14,7 @@ import java.util.UUID;
 import static io.restassured.RestAssured.given;
 import static io.restassured.RestAssured.when;
 import static org.hamcrest.Matchers.equalTo;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,8 +30,17 @@ class LlmModelResourceTest {
     @Inject
     LlmModelRegistry registry;
 
+    @Inject
+    LlmProviderRegistry providers;
+
     @BeforeEach
     void clean() {
+        // Providers first: the catalog's delete guard refuses to remove a model an llm_provider row
+        // names, and every @QuarkusTest class in this module shares one application and one database.
+        // A sibling class that leaves a provider behind — this class included, if a test fails between
+        // creating a model and its provider — would otherwise make this method throw, and whether it
+        // throws would depend on which class or test ran first: a green suite that depends on order.
+        providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
         registry.list().forEach(m -> registry.delete(UUID.fromString(m.id())));
     }
 
@@ -111,5 +121,22 @@ class LlmModelResourceTest {
 
         // an uncatalogued model has no profile — caller falls back to the legacy dialect
         assertEquals(java.util.Optional.empty(), registry.profileForName("not-registered"));
+    }
+
+    /**
+     * The hazard this ordering fixes. A sibling test class that leaves a provider behind used to make
+     * clean() throw, so whether this class passed depended on which class ran first. Creating the
+     * collision explicitly here means a revert of clean()'s provider-first ordering fails on purpose
+     * rather than waiting for an unlucky class order in CI.
+     */
+    @Test
+    void cleanSucceedsEvenWhenAProviderStillReferencesACataloguedModel() {
+        registry.create(new LlmModelInput("openai", "TEST-CLEAN-COLLISION", "TEST clean collision",
+                "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
+                null, null, null, Map.of(), true));
+        providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
+                "sk-test", "TEST-CLEAN-COLLISION", 0.2, null, true, true));
+
+        assertDoesNotThrow(this::clean);
     }
 }
