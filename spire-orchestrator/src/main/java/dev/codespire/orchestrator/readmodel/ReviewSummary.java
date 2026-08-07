@@ -32,5 +32,8 @@ public record ReviewSummary(
         String llmType,
         Instant updatedAt,
         boolean answering,
-        String prState) {
+        String prState,
+        /** Distinct calls the ledger could not price — lets the UI tell "zero spend" apart from
+         *  "some calls have no known price yet" (never conflated into {@code costMillicents}). */
+        int unpricedCalls) {
 }

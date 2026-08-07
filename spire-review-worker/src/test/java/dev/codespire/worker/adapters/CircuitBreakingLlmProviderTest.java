@@ -149,7 +149,7 @@ class CircuitBreakingLlmProviderTest {
 
     @Test
     void aSuccessfulCallPassesTheCompletionThrough() {
-        Completion completion = new Completion("body", new ModelUsage("test-model", 1, 2, 0));
+        Completion completion = new Completion("body", ModelUsage.of("test-model", 1, 2));
         CircuitBreakingLlmProvider provider =
                 guard(provider(() -> CompletableFuture.completedFuture(completion)));
 

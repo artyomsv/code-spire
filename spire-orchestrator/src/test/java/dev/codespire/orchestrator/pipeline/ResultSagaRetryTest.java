@@ -290,7 +290,7 @@ class ResultSagaRetryTest {
         PriorRun cleanPrior = new PriorRun(COMMIT, "sum-prior-1", List.of());
         var saga = sagaForReviewGenerated(cleanPrior, Optional.of("packed-cred"));
 
-        var result = new ReviewResult(List.of(), "all clean", new ModelUsage(null, 0, 0, 0));
+        var result = new ReviewResult(List.of(), "all clean", ModelUsage.of(null, 0, 0));
         saga.on(new ReviewGenerated(REVIEW_ID, 412L, COMMIT, result));
 
         assertEquals(1, emitted.size(), "one PostComments command emitted");
@@ -334,10 +334,6 @@ class ResultSagaRetryTest {
 
             @Override
             public void recordOutcome(String reviewId, ReviewResult result, int stage) {
-            }
-
-            @Override
-            public void recordLlmCall(String reviewId, String kind, ModelUsage usage) {
             }
 
             @Override

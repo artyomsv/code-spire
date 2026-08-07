@@ -132,7 +132,7 @@ class OrchestratorChoreographyTest {
 
         // a STALE result for A arrives after the supersede -> dropped, no PostComments
         produce("cs.results", new IntegrationEvent.ReviewGenerated(REVIEW_ID, 77, COMMIT_A,
-                new ReviewResult(List.of(), "stale summary", new ModelUsage("m", 0, 0, 0))));
+                new ReviewResult(List.of(), "stale summary", ModelUsage.of("m", 0, 0))));
 
         // B's flow continues normally
         produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_B, 1, List.of("java"), 100, false, Set.of(), null));
@@ -144,7 +144,7 @@ class OrchestratorChoreographyTest {
         // finish B's run
         produce("cs.results", new IntegrationEvent.ContextAssembled(REVIEW_ID, 77, COMMIT_B, null, Set.of("RULES"), Set.of()));
         produce("cs.results", new IntegrationEvent.ReviewGenerated(REVIEW_ID, 77, COMMIT_B,
-                new ReviewResult(List.of(), "summary B", new ModelUsage("m", 0, 0, 0))));
+                new ReviewResult(List.of(), "summary B", ModelUsage.of("m", 0, 0))));
         // B: ContextAssembled -> GenerateReview (#6), ReviewGenerated -> PostComments (#7)
         List<String> all = expectCommands(7, "PostComments");
         assertTrue(all.stream().anyMatch(c -> c.contains("\"type\":\"PostComments\"") && c.contains(COMMIT_B)));

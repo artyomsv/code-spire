@@ -42,8 +42,7 @@ public record ReviewDetail(
         List<String> timings,
         List<FindingView> findingsList,
         List<ReconciliationView> reconciliation,
-        UsageView usage,
-        List<LlmCall> llmCalls,
+        List<ChargeLineView> chargeLines,
         String note,
         String errorDetail,
         List<EventView> events,
@@ -62,16 +61,21 @@ public record ReviewDetail(
                                      String threadRef, boolean resolvedThread) {
     }
 
-    /** Model usage as display strings (tokens formatted, cost as dollars). */
-    public record UsageView(String model, String prompt, String completion, String cost, String latency) {
-    }
-
     /**
-     * One LLM call in the review's lifetime — the review generation ({@code kind = "review"}) or a
-     * conversation follow-up ({@code kind = "followup"}) — for the cost-breakdown UI (roadmap 11).
+     * One token dimension of one LLM call, priced. {@code rateMillicentsPerMillion} and
+     * {@code costMillicents} are null exactly when {@code pricingMode} is "UNKNOWN" — never 0, which
+     * would be indistinguishable from an UNMETERED model's asserted zero.
+     *
+     * <p>{@code kind}, {@code tokenType} and {@code pricingMode} are Strings here, not the enums they
+     * mirror, deliberately: this is an outbound view read straight from the ledger, whose CHECK
+     * constraints already restrict those columns. The enums exist to protect the WRITE path, where a
+     * typo'd literal costs a lost charge; a display type has nothing to lose by carrying the stored
+     * value verbatim, and typing it would force this record to be defined after the enums rather than
+     * alongside the query that fills it.
      */
-    public record LlmCall(String kind, String model, int tokensIn, int tokensOut, long costMillicents,
-                          String createdAt) {
+    public record ChargeLineView(String kind, String model, String tokenType, int tokens,
+                                 Long rateMillicentsPerMillion, Long costMillicents,
+                                 String pricingMode, String pricedAt) {
     }
 
     /**

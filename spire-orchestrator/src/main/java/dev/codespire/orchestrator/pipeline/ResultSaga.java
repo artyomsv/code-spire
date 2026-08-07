@@ -14,7 +14,6 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.port.ScmType;
-import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
@@ -76,9 +75,6 @@ public class ResultSaga {
 
     @Inject
     dev.codespire.orchestrator.context.WorkerContextCredentials workerContextCredentials;
-
-    @Inject
-    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
@@ -160,13 +156,7 @@ public class ResultSaga {
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
-                // Price the token usage against the model catalog (roadmap 11) before recording.
-                ReviewResult pricedResult = priced(e.result());
-                projection.recordOutcome(e.reviewId(), pricedResult, ReviewProjection.STAGE_COMMENTS);
-                projection.recordLlmCall(e.reviewId(), "review", pricedResult.usage());
-                if (e.reconcileUsage() != null) {
-                    projection.recordLlmCall(e.reviewId(), "reconcile", priceUsage(e.reconcileUsage()));
-                }
+                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
                 java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
                 String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
                 if (!e.verdicts().isEmpty()) {
@@ -178,7 +168,7 @@ public class ResultSaga {
                 // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
                 // posted_findings_json semantics unchanged since the two columns hold the same
                 // findings in that case).
-                projection.recordOpenFindings(e.reviewId(), pricedResult, e.verdicts(),
+                projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
                         prior.map(PriorRun::findings).orElse(List.of()));
                 if (e.result().truncated()) {
                     projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
@@ -230,10 +220,7 @@ public class ResultSaga {
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
                         Previews.of(e.answerText()), e.threadRef().value());
-                // Price + record the follow-up's LLM call for the cost breakdown (roadmap 11).
-                if (e.usage() != null) {
-                    projection.recordLlmCall(e.reviewId(), "followup", priceUsage(e.usage()));
-                }
+                // Charge recording against the ledger returns in a later task (roadmap 11).
                 projection.touch(e.reviewId());
             }
             case FollowUpPosted e -> {
@@ -417,30 +404,6 @@ public class ResultSaga {
             return ReviewProjection.STAGE_COMMENTS;
         }
         return ReviewProjection.STAGE_REVIEW; // generate / llm / unknown
-    }
-
-    /** Fill in the review cost by pricing the token usage against the model catalog (roadmap 11). */
-    private ReviewResult priced(ReviewResult result) {
-        ModelUsage u = result.usage();
-        if (u == null || u.model() == null) {
-            return result;
-        }
-        long cost = llmModels.costMillicents(u.model(), u.tokensIn(), u.tokensOut());
-        if (cost == u.costMillicents()) {
-            return result;
-        }
-        // Preserve the truncated flag when re-pricing (4-arg constructor).
-        return new ReviewResult(result.findings(), result.summary(),
-                new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(), cost), result.truncated());
-    }
-
-    /** Price a follow-up call's token usage against the model catalog (mirrors {@link #priced(ReviewResult)}). */
-    private ModelUsage priceUsage(ModelUsage u) {
-        if (u == null || u.model() == null) {
-            return u;
-        }
-        return new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(),
-                llmModels.costMillicents(u.model(), u.tokensIn(), u.tokensOut()));
     }
 
     private String reviewIdOf(IntegrationEvent event) {

@@ -146,10 +146,9 @@ public class LangChain4jLlmProvider implements LlmProvider {
         TokenUsage usage = response.tokenUsage();
         return new Completion(
                 response.aiMessage().text(),
-                new ModelUsage(params.model(),
+                ModelUsage.of(params.model(),
                         usage != null && usage.inputTokenCount() != null ? usage.inputTokenCount() : 0,
-                        usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0,
-                        0L)); // cost accounting lands with the pricing table
+                        usage != null && usage.outputTokenCount() != null ? usage.outputTokenCount() : 0));
     }
 
     /** The same params with temperature suppressed (profile.supportsTemperature = false). */

@@ -49,7 +49,7 @@ class WireFormatRoundTripTest {
                 "review::sandbox/demo-repo#42", 42, "abc123",
                 new ReviewResult(
                         List.of(new Finding("src/App.java", new LineRange(3, 4), Severity.MAJOR, "msg", null)),
-                        "summary", new ModelUsage("m", 10, 5, 0)));
+                        "summary", ModelUsage.of("m", 10, 5)));
         IntegrationEvent back = mapper.readValue(
                 mapper.writerFor(IntegrationEvent.class).writeValueAsString(original), IntegrationEvent.class);
         assertEquals(original, back);

@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import dev.codespire.contract.review.TokenType;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -93,23 +94,18 @@ class LlmChargeSchemaIT {
      * The ledger's token_type CHECK must accept every token type the code can produce. Without this,
      * adding a new type without amending the migration turns a new billing dimension into a runtime
      * insert failure — the charge is lost at exactly the moment it first occurs.
-     *
-     * <p>Driven by a literal list because dev.codespire.contract.review.TokenType does not exist yet:
-     * until it does, this can only prove the list agrees with the CHECK, both written from the same
-     * source. It becomes a real drift guard once the enum arrives and drives the loop.
      */
     @Test
     void theTokenTypeCheckAcceptsEveryKnownTokenType() {
-        String[] tokenTypes = {"INPUT", "CACHED_INPUT", "CACHE_WRITE", "OUTPUT", "REASONING", "TOTAL"};
-        for (String tokenType : tokenTypes) {
+        for (TokenType type : TokenType.values()) {
             // A distinct call_ref per iteration: other tests already charge (call_ref, token_type)
             // pairs like ('CANARY-INPUTUNKNOWN', 'INPUT'), and this loop must not collide with them.
             String sql = "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
                     + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
-                    + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-ENUM-" + tokenType
-                    + "', 'review', 'TEST-MODEL', 'UNKNOWN', '" + tokenType + "', 10, NULL, NULL)";
+                    + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-ENUM-" + type.name()
+                    + "', 'review', 'TEST-MODEL', 'UNKNOWN', '" + type.name() + "', 10, NULL, NULL)";
             assertDoesNotThrow(() -> exec(sql),
-                    "llm_charge.token_type CHECK rejects " + tokenType
+                    "llm_charge.token_type CHECK rejects TokenType." + type
                             + " — add it to the CHECK in V30__llm_charge_ledger.sql");
         }
     }

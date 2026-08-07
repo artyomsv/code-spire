@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.FindingVerdict;
-import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
@@ -342,56 +341,21 @@ public class ReviewProjection {
         });
     }
 
-    /** Record the generated review's findings + usage against the row. */
+    /** Record the generated review's findings against the row. Usage/cost live on the ledger
+     *  ({@code llm_charge}), written separately — see roadmap item 11. */
     public void recordOutcome(String reviewId, ReviewResult result, int stage) {
         // Findings quote the source under review — encrypt at rest (AAD = reviewId).
         String findingsJson = encryption.encryptString(toFindingsJson(result.findings()), reviewId);
-        var usage = result.usage();
         update("""
-                UPDATE review_status SET findings_count = ?, findings_json = ?, model = ?, tokens_in = ?,
-                        tokens_out = ?, cost_millicents = ?, stage = ?, updated_at = now()
+                UPDATE review_status SET findings_count = ?, findings_json = ?, stage = ?, updated_at = now()
                 WHERE review_id = ?
                 """, ps -> {
             ps.setInt(1, result.findings().size());
             ps.setString(2, findingsJson);
-            if (usage == null) {
-                ps.setNull(3, java.sql.Types.VARCHAR);
-                ps.setNull(4, java.sql.Types.INTEGER);
-                ps.setNull(5, java.sql.Types.INTEGER);
-                ps.setNull(6, java.sql.Types.BIGINT);
-            } else {
-                ps.setString(3, usage.model());
-                ps.setInt(4, usage.tokensIn());
-                ps.setInt(5, usage.tokensOut());
-                ps.setLong(6, usage.costMillicents());
-            }
-            ps.setInt(7, stage);
-            ps.setString(8, reviewId);
+            ps.setInt(3, stage);
+            ps.setString(4, reviewId);
         });
         broadcast(reviewId);
-    }
-
-    /**
-     * Record one LLM call in the review's lifetime — the review generation ({@code kind = "review"}) or
-     * a conversation follow-up ({@code kind = "followup"}) — for the cost-breakdown UI (roadmap 11).
-     * Null-usage safe: a call with no usage (e.g. a legacy follow-up event) records nothing.
-     */
-    public void recordLlmCall(String reviewId, String kind, ModelUsage usage) {
-        if (usage == null) {
-            return;
-        }
-        update("""
-                INSERT INTO review_llm_call (id, review_id, kind, model, tokens_in, tokens_out, cost_millicents)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, ps -> {
-            ps.setObject(1, java.util.UUID.randomUUID());
-            ps.setString(2, reviewId);
-            ps.setString(3, kind);
-            ps.setString(4, usage.model());
-            ps.setInt(5, usage.tokensIn());
-            ps.setInt(6, usage.tokensOut());
-            ps.setLong(7, usage.costMillicents());
-        });
     }
 
     /**
@@ -952,17 +916,25 @@ public class ReviewProjection {
     // ---- reads (REST + WS) -------------------------------------------------
 
     public List<ReviewSummary> listSummaries() {
-        // The LLM vendor for the badge comes from the catalog (name -> type); a scalar subquery keeps
-        // it one-row-per-review and yields NULL for uncatalogued models (shown as a neutral chip).
-        // total_cost_millicents sums every review_llm_call row (the review generation plus every
-        // reconcile/follow-up call), falling back to the last run's cost_millicents for a review that
-        // predates per-call tracking — the list row must show the review's LIFETIME cost, not just the
-        // last run's (fixes #2).
+        // The model/vendor badges and lifetime cost now come from the ledger (llm_charge) — the
+        // review_status columns they used to read (model, cost_millicents) were dropped with
+        // review_llm_call (roadmap 11). The ledger is empty until Task 8 starts writing charges, so
+        // these read as honestly zero/uncatalogued until then, not as a stand-in for an unpriced call.
+        // unpriced_calls counts distinct calls the ledger could not price, so the UI can tell "zero
+        // spend" apart from "some calls have no known price yet".
         String sql = """
-                SELECT rs.*, (SELECT m.type FROM llm_model m WHERE m.name = rs.model LIMIT 1) AS llm_type,
-                       COALESCE((SELECT SUM(c.cost_millicents) FROM review_llm_call c
-                                 WHERE c.review_id = rs.review_id), rs.cost_millicents) AS total_cost_millicents
-                FROM review_status rs ORDER BY rs.updated_at DESC
+                SELECT rs.*,
+                       (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                         ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
+                       (SELECT m.type FROM llm_model m
+                         WHERE m.name = (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                                          ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
+                       COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
+                                  WHERE c.review_id = rs.review_id), 0)                          AS total_cost_millicents,
+                       COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
+                                  WHERE c.review_id = rs.review_id AND c.pricing_mode = 'UNKNOWN'), 0)
+                                                                                                  AS unpriced_calls
+                  FROM review_status rs ORDER BY rs.updated_at DESC
                 """;
         List<ReviewSummary> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
@@ -992,7 +964,7 @@ public class ReviewProjection {
 
             return Optional.of(toDetail(row,
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
-                    llmCalls(reviewId), attached.findings(), reconciliation));
+                    chargeLines(reviewId), attached.findings(), reconciliation));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
@@ -1073,24 +1045,29 @@ public class ReviewProjection {
         };
     }
 
-    /** Every LLM call recorded for a review (the generation + each follow-up), oldest first — the raw
-     * material for the cost-breakdown UI (roadmap 11). */
-    public List<ReviewDetail.LlmCall> llmCalls(String reviewId) {
-        List<ReviewDetail.LlmCall> out = new ArrayList<>();
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT kind, model, tokens_in, tokens_out, cost_millicents, created_at FROM review_llm_call "
-                             + "WHERE review_id = ? ORDER BY created_at")) {
+    /** Every charge line recorded for a review, oldest first — the cost card's raw material. */
+    public List<ReviewDetail.ChargeLineView> chargeLines(String reviewId) {
+        List<ReviewDetail.ChargeLineView> out = new ArrayList<>();
+        String sql = """
+                SELECT kind, model, token_type, tokens, rate_millicents_per_million, cost_millicents,
+                       pricing_mode, priced_at
+                  FROM llm_charge WHERE review_id = ? ORDER BY priced_at, token_type
+                """;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    out.add(new ReviewDetail.LlmCall(rs.getString("kind"), rs.getString("model"),
-                            rs.getInt("tokens_in"), rs.getInt("tokens_out"), rs.getLong("cost_millicents"),
-                            rs.getTimestamp("created_at").toInstant().toString()));
+                    // rate/cost are NULLABLE — read via getObject(..., Long.class) so NULL stays NULL.
+                    // getLong would coerce "unpriced" back into 0, which is the bug this branch removes.
+                    Long rate = rs.getObject("rate_millicents_per_million", Long.class);
+                    Long cost = rs.getObject("cost_millicents", Long.class);
+                    out.add(new ReviewDetail.ChargeLineView(rs.getString("kind"), rs.getString("model"),
+                            rs.getString("token_type"), rs.getInt("tokens"), rate, cost,
+                            rs.getString("pricing_mode"), rs.getTimestamp("priced_at").toInstant().toString()));
                 }
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to load LLM calls for " + reviewId, e);
+            throw new IllegalStateException("Failed to load charge lines for " + reviewId, e);
         }
         return out;
     }
@@ -1110,7 +1087,12 @@ public class ReviewProjection {
             if (row == null) {
                 return; // header not written yet (events can race ahead) — nothing to push
             }
-            summary = row.toSummary(llmTypeFor(c, row.model()), openCounts(row), cumulativeCost(c, row));
+            // Same ledger-derived figures as listSummaries' join, computed separately here since this
+            // path loads one row outside that query (plain SELECT * FROM review_status).
+            String model = latestModelFor(c, reviewId);
+            LedgerSummary ledger = new LedgerSummary(model, llmTypeFor(c, model),
+                    cumulativeCost(c, reviewId), unpricedCallsFor(c, reviewId));
+            summary = row.toSummary(ledger, openCounts(row));
         } catch (SQLException e) {
             LOG.debugf("broadcast load failed for %s: %s", reviewId, e.getMessage());
             return;
@@ -1146,17 +1128,29 @@ public class ReviewProjection {
 
     // ---- row mapping -------------------------------------------------------
 
+    /**
+     * The model/vendor/cost figures a review's ledger rows resolve to — always travel together
+     * ({@link #listSummaries}' join and {@link #broadcast}'s per-row lookup both produce one of
+     * these), so they are a parameter object rather than four separate arguments.
+     *
+     * @param unpricedCalls distinct calls the ledger could not price — lets the UI tell "zero
+     *                      spend" apart from "some calls have no known price yet"
+     */
+    private record LedgerSummary(String model, String llmType, long totalCostMillicents, int unpricedCalls) {
+    }
+
     private record ReviewRow(String id, String workspace, String slug, long pr, String title, String author,
                              String authorId, String branch, String base, String sha, String htmlUrl,
                              String providerType, String status, boolean answering, int stage, int findings,
-                             String findingsJson, String reconciliationJson, String model, Integer tokensIn,
-                             Integer tokensOut, Long costMillicents, String note, String errorDetail, int attempt,
-                             Instant createdAt, Instant updatedAt, String prState) {
-        ReviewSummary toSummary(String llmType, OpenCounts openCounts, long totalCostMillicents) {
+                             String findingsJson, String reconciliationJson, String note, String errorDetail,
+                             int attempt, Instant createdAt, Instant updatedAt, String prState) {
+        ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
-                    openCounts.carriedOver(), totalCostMillicents, model == null ? "" : model,
-                    llmType == null ? "" : llmType, updatedAt, answering, prState);
+                    openCounts.carriedOver(), ledger.totalCostMillicents(),
+                    ledger.model() == null ? "" : ledger.model(),
+                    ledger.llmType() == null ? "" : ledger.llmType(), updatedAt, answering, prState,
+                    ledger.unpricedCalls());
         }
     }
 
@@ -1171,7 +1165,9 @@ public class ReviewProjection {
 
     private ReviewSummary toSummary(ResultSet rs) throws SQLException {
         ReviewRow row = readRow(rs);
-        return row.toSummary(rs.getString("llm_type"), openCounts(row), rs.getLong("total_cost_millicents"));
+        LedgerSummary ledger = new LedgerSummary(rs.getString("model"), rs.getString("llm_type"),
+                rs.getLong("total_cost_millicents"), rs.getInt("unpriced_calls"));
+        return row.toSummary(ledger, openCounts(row));
     }
 
     /** Count of blocker-severity (critical) findings on a row — drives the detail page's
@@ -1267,23 +1263,41 @@ public class ReviewProjection {
 
     /**
      * Cumulative cost for a single row loaded outside {@link #listSummaries}'s subquery (the
-     * {@link #broadcast} path) — same fallback rule as the SQL: sum every {@code review_llm_call}
-     * row, falling back to the row's own {@code cost_millicents} when there are none yet.
+     * {@link #broadcast} path) — sums every {@code llm_charge} row for the review. Honestly zero
+     * when there are no charges yet, never a stand-in for an unpriced one.
      */
-    private long cumulativeCost(Connection c, ReviewRow row) throws SQLException {
+    private long cumulativeCost(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT SUM(cost_millicents) FROM review_llm_call WHERE review_id = ?")) {
-            ps.setString(1, row.id());
+                "SELECT COALESCE(SUM(cost_millicents), 0) FROM llm_charge WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    long sum = rs.getLong(1);
-                    if (!rs.wasNull()) {
-                        return sum;
-                    }
-                }
+                return rs.next() ? rs.getLong(1) : 0L;
             }
         }
-        return row.costMillicents() == null ? 0L : row.costMillicents();
+    }
+
+    /** The most recently priced call's model for a review, from the ledger — {@code review_status}
+     *  no longer carries a model column, so this is now the only source for it. */
+    private String latestModelFor(Connection c, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT model FROM llm_charge WHERE review_id = ? ORDER BY priced_at DESC LIMIT 1")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        }
+    }
+
+    /** How many distinct calls landed on the ledger with no known price — same predicate as
+     *  {@link #listSummaries}'s join, computed separately for the {@link #broadcast} path's single row. */
+    private int unpricedCallsFor(Connection c, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE review_id = ? AND pricing_mode = 'UNKNOWN'")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        }
     }
 
     /** The LLM vendor for a model name, from the catalog; null when uncatalogued or no model yet. */
@@ -1306,15 +1320,14 @@ public class ReviewProjection {
                 rs.getString("source_branch"), rs.getString("dest_branch"), rs.getString("commit_sha"),
                 rs.getString("html_url"), rs.getString("provider_type"),
                 rs.getString("status"), rs.getBoolean("answering"), rs.getInt("stage"), rs.getInt("findings_count"),
-                rs.getString("findings_json"), rs.getString("reconciliation_json"), rs.getString("model"),
-                (Integer) rs.getObject("tokens_in"), (Integer) rs.getObject("tokens_out"),
-                (Long) rs.getObject("cost_millicents"), rs.getString("note"), rs.getString("error_detail"),
-                rs.getInt("attempt"),
+                rs.getString("findings_json"), rs.getString("reconciliation_json"), rs.getString("note"),
+                rs.getString("error_detail"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
                 rs.getString("pr_state"));
     }
 
-    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events, List<ReviewDetail.LlmCall> llmCalls,
+    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
+                                  List<ReviewDetail.ChargeLineView> chargeLines,
                                   List<ReviewDetail.FindingView> findings,
                                   List<ReviewDetail.ReconciliationView> reconciliation) {
         // Same reconciled-open figures the list row shows (openCounts) — the header badge must
@@ -1324,30 +1337,8 @@ public class ReviewProjection {
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.answering, r.stage, r.findings,
                 blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
                 computeStages(r.status, r.stage),
-                List.of("", "", "", "", "", ""), findings, reconciliation, usageView(r),
-                withReviewCall(r, llmCalls), r.note, decryptError(r.errorDetail, r.id), events, r.prState);
-    }
-
-    /**
-     * Guarantee the review's own generation call leads the cost breakdown. Reviews created before
-     * per-call tracking ({@code review_llm_call}) existed hold their usage only on the review_status
-     * row; once follow-ups add rows, the breakdown would render those but silently drop the initial
-     * review. Synthesize the missing {@code review} call from the stored review usage — the same real
-     * figures already surfaced as the legacy single-usage view — and put it first (it ran first).
-     */
-    private List<ReviewDetail.LlmCall> withReviewCall(ReviewRow r, List<ReviewDetail.LlmCall> calls) {
-        boolean hasReview = calls.stream().anyMatch(c -> "review".equals(c.kind()));
-        if (hasReview || r.model == null) {
-            return calls;
-        }
-        ReviewDetail.LlmCall reviewCall = new ReviewDetail.LlmCall("review", r.model,
-                r.tokensIn == null ? 0 : r.tokensIn, r.tokensOut == null ? 0 : r.tokensOut,
-                r.costMillicents == null ? 0L : r.costMillicents,
-                r.createdAt == null ? null : r.createdAt.toString());
-        List<ReviewDetail.LlmCall> merged = new ArrayList<>(calls.size() + 1);
-        merged.add(reviewCall);
-        merged.addAll(calls);
-        return merged;
+                List.of("", "", "", "", "", ""), findings, reconciliation,
+                chargeLines, r.note, decryptError(r.errorDetail, r.id), events, r.prState);
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
@@ -1469,18 +1460,6 @@ public class ReviewProjection {
 
     private static String withRemainder(long major, long minor, String majorUnit, String minorUnit) {
         return minor == 0 ? "+" + major + majorUnit : "+" + major + majorUnit + " " + minor + minorUnit;
-    }
-
-    private ReviewDetail.UsageView usageView(ReviewRow r) {
-        if (r.model == null) {
-            return null;
-        }
-        String cost = r.costMillicents == null ? "—"
-                : String.format(java.util.Locale.ROOT, "$%.3f", r.costMillicents / 100_000.0);
-        return new ReviewDetail.UsageView(r.model,
-                r.tokensIn == null ? "—" : String.format(java.util.Locale.ROOT, "%,d", r.tokensIn),
-                r.tokensOut == null ? "—" : String.format(java.util.Locale.ROOT, "%,d", r.tokensOut),
-                cost, "—");
     }
 
     private String toFindingsJson(List<Finding> findings) {

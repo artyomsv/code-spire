@@ -68,11 +68,12 @@ class ReconciliationTypesTest {
                 "thread-1", "src/A.java", 7, FindingVerdict.Status.RESOLVED, "fix confirmed"));
         IntegrationEvent evt = new IntegrationEvent.ReviewGenerated(
                 "review::ws/repo#1", 1L, "bbb222", null, verdicts,
-                new ModelUsage("gpt-x", 10, 5, 42));
+                ModelUsage.of("gpt-x", 10, 5));
         IntegrationEvent.ReviewGenerated back =
                 (IntegrationEvent.ReviewGenerated) mapper.readValue(mapper.writeValueAsString(evt), IntegrationEvent.class);
         assertEquals(verdicts, back.verdicts());
-        assertEquals(42, back.reconcileUsage().costMillicents());
+        assertEquals(10, back.reconcileUsage().tokensOf(TokenType.INPUT));
+        assertEquals(5, back.reconcileUsage().tokensOf(TokenType.OUTPUT));
     }
 
     // --- AuthorReplied.topLevel wire compat (summary-comment conversations) ---
