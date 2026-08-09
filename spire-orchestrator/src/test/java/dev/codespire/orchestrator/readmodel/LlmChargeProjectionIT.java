@@ -154,18 +154,19 @@ class LlmChargeProjectionIT {
     }
 
     /**
-     * Deleting a review deletes its ledger, because a re-registration of the same PR is the SAME
-     * {@code review_id} — {@code ReviewIds.reviewId(repo, pr)} is stable per PR, not per run.
+     * Archiving a review KEEPS its ledger. This assertion used to run the other way — it pinned the
+     * hard delete that removed the charge rows — and inverting it rather than deleting it is the
+     * point: it is the direct guard against anyone reinstating that {@code DELETE}, which is how real
+     * paid usage disappeared with a row removed for being clutter.
      *
-     * <p>{@code deleteReview} already clears the worker's claims for exactly this reason, and its own
-     * comment says why: delete-then-re-register is that same key. The ledger has the identical
-     * property and {@code llm_charge.review_id} is plain TEXT with no FK, so nothing cascaded. Left
-     * behind, the orphaned rows made the NEW review render the deleted run's money and model as its
-     * own, kept the unpriced attention row raised for reviews that no longer exist, and collided with
-     * the new run's own {@code call_ref} so its real charge was discarded too.
+     * <p>The hazard the deletion was defending against is closed differently now. {@code review_id} is
+     * {@code ReviewIds.reviewId(repo, pr)} — stable per PR, not per run — so orphaned charges would be
+     * inherited by a re-registration of the same PR. Archiving keeps the review ROW, so the PR cannot
+     * be registered afresh and there is no second review to inherit anything. {@code llm_charge
+     * .archived_at} covers the remaining case, a future purge, and is deliberately not written here.
      */
     @Test
-    void deletingAReviewDeletesItsChargesSoAReRegisteredPrCannotInheritThem() {
+    void archivingAReviewKeepsItsChargesSoRecordedSpendSurvives() {
         long pr = 9106L;
         String reviewId = reviewId(pr);
         projection.registerHeader(reviewId, new RepoRef("TEST-WS", "TEST-REPO"), pr,
@@ -174,13 +175,14 @@ class LlmChargeProjectionIT {
         projection.recordCharges(call(reviewId, "CANARY-REF-6",
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L))));
 
-        assertTrue(projection.deleteReview("TEST-WS", "TEST-REPO", pr), "the review existed");
+        assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview("TEST-WS", "TEST-REPO", pr),
+                "the review existed and was archivable");
 
-        assertTrue(projection.chargeLines(reviewId).isEmpty(), "the deleted review's lines are gone");
-        ReviewProjection.CostSummary inherited = projection.costOf(reviewId);
-        assertEquals(0L, inherited.knownCostMillicents(),
-                "a re-registered PR would render the deleted run's spend as its own");
-        assertNull(inherited.lastModel(), "and its model as the model it has not called yet");
+        assertFalse(projection.chargeLines(reviewId).isEmpty(), "the archived review's lines are kept");
+        ReviewProjection.CostSummary retained = projection.costOf(reviewId);
+        assertEquals(200_000L, retained.knownCostMillicents(),
+                "an archived review still reports the money it actually spent");
+        assertEquals("TEST-MODEL", retained.lastModel(), "and the model that spent it");
     }
 
     /**
