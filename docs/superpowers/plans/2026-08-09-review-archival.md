@@ -4,46 +4,61 @@
 
 **Goal:** Deleting a review archives it instead of destroying it, so recorded LLM usage and cost are never lost.
 
-**Architecture:** A nullable `archived_at` on `review_status` marks a review archived; nothing is deleted. The PR is *retired* — six paths (four integration events, the re-run endpoint, the manual-register endpoint) refuse to act on an archived review, and inbound SCM events get a one-time "this review is archived" notice modelled on the existing turn-cap notice. `llm_charge.archived_at` exists but is written only by a future purge, so an archived review keeps its own cost visible while a purged review's orphans stay out of the PR that later inherits its id.
+**Architecture:** A nullable `archived_at` on `review_status` marks a review archived; nothing is deleted. The PR is *retired* — four integration events plus the re-run and manual-register endpoints refuse to act on an archived review, and inbound conversational events get a one-time "this review is archived" notice modelled on the existing turn-cap notice. `llm_charge.archived_at` exists but is written only by a future purge, so an archived review keeps its own cost visible while a purged review's orphans stay out of the PR that later inherits its id.
 
 **Tech Stack:** Java 25, Quarkus 3.38.1, Gradle Kotlin DSL, Postgres + Flyway, Kafka (Redpanda), React 19 + Vite + vitest.
 
 **Spec:** `docs/superpowers/specs/2026-08-09-review-archival-design.md` — read it before starting.
 
+**Branch:** `feat/review-archival`, stacked on the unmerged `feat/llm-cost-accounting`. Do not rebase.
+
 ## Global Constraints
 
-- Money in millicents (1/100,000 dollar). Never `double`/`float`/`BigDecimal` for money.
-- **No synthetic data that could pass for real.** Test fixtures use `TEST-`/`CANARY-` prefixes and obviously-synthetic values. Never a real vendor's real price.
-- `spire-contract` and `spire-diff` are framework-free: JDK plus `jackson-annotations` only. Build-enforced by `PureModulesAreFrameworkFreeTest`.
+- Money in millicents. Never `double`/`float`/`BigDecimal` for money.
+- **No synthetic data that could pass for real.** Fixtures use `TEST-`/`CANARY-` prefixes.
+- `spire-contract` is framework-free: JDK plus `jackson-annotations` only.
 - 4-space Java indent, 2-space TS. Explicit types over `var`. `interface` over `type` for TS object shapes.
-- Max 3 Java method params (use a parameter object beyond that). Methods ≤30 lines, classes ≤300, React components ≤250 lines / ≤8 props / ≤8 `useState`.
-- **Never mention AI/agentic authoring in commit messages** — no model names, no vendor names as authorship, no "generated with". Describe what changed and why.
-- Commit subject imperative, ≤72 chars. **Wrap commit body lines at 72 chars.**
+- Max 3 Java method params, methods ≤30 lines, classes ≤300, React components ≤250 lines / ≤8 props / ≤8 `useState`.
+- **Never mention AI/agentic authoring in commit messages.** Subject imperative ≤72 chars; **wrap body lines at 72**.
 - lucide-react icons only, never emoji.
-- Run `./gradlew testFast` (Docker-free, ~25s) and `./gradlew :spire-orchestrator:test` as you go. Do **not** run `./gradlew assemble` — it fails in this environment for a known reason (JDK 21 `JAVA_HOME` vs toolchain 25) and CI covers it.
+- Verify with `./gradlew testFast` and `./gradlew :spire-orchestrator:test`. **Never `./gradlew assemble`** — it fails here for a known reason (JDK 21 `JAVA_HOME` vs toolchain 25); CI covers it.
+
+## Verified API facts — use these exact names
+
+A review of the first draft found five invented signatures. These are the real ones:
+
+| Use | Not |
+|---|---|
+| `CostSummary.knownCostMillicents()` | `totalMillicents()` |
+| `ReviewSummary.pr()` | `prId()` |
+| `loadDetail(String workspace, String slug, long pr)` | `loadDetail(reviewId)` |
+| `updateStatus(id, "completed", STAGE_DONE)` | `markCompleted(...)` |
+| `new ObjectMapper()` in contract wire tests | `WireMapper.create()` |
+
+`ReviewProjection.update(...)` returns **void** (`:1702`), so any statement needing an affected-row count must use the `Connection`/`PreparedStatement` form. Verified present and usable as assumed: `broadcast`, `broadcastRemoval`, `scheduleRetry` (4-arg), `setAnswering`, `claimDueRetries`, `LOG`, `ReviewDetail.status()/prState()/answering()`, `ReviewSummary.model()/unpricedCalls()`.
+
+## Two architecture decisions the first draft left open
+
+**Archive broadcasts a removal, not a row update.** An archived review leaves the live list, and archived reviews are *frozen*, so they need no live updates. `broadcastRemoval` therefore stays in use, `ReviewsSocket` keeps feeding live rows only, and the Show-archived view is a plain REST fetch. This avoids pushing archived rows through a socket whose `onOpen` snapshot **replaces** the client list (`useLiveReviews.ts:85-88`) — which would otherwise drop archived rows on every reconnect, and ADR-022's 5-minute cookie expiry makes reconnects routine.
+
+**The notice fires on three events, not four.** All four gate, but `PullRequestClosed` does **not** notify: it is not a human asking a question, and the notice fires once *ever*, so spending it on a close would leave the person who later asks a real question with silence.
 
 ## File Structure
 
 | File | Responsibility |
 |---|---|
-| `spire-orchestrator/src/main/resources/db/migration/V32__review_archival.sql` | **Create.** `archived_at` on both tables, partial index. |
-| `.../orchestrator/readmodel/ArchiveOutcome.java` | **Create.** The four-valued result of an archive attempt. |
-| `.../orchestrator/readmodel/ReviewProjection.java` | **Modify.** `deleteReview` → `archiveReview`/`unarchiveReview`; add the ledger filters. |
-| `.../orchestrator/web/ReviewsResource.java` | **Modify.** `DELETE` → `POST /archive` + `POST /unarchive`; `?includeArchived`. |
-| `.../orchestrator/attention/AttentionQueries.java` | **Modify.** Exclude archived from `reviewRows`. |
-| `.../orchestrator/attention/CostAttentionRow.java` | **Modify.** Exclude purged charges from both queries. |
-| `.../orchestrator/pipeline/IntegrationSaga.java` | **Modify.** Gate four events; emit `NotifyArchived`. |
-| `.../orchestrator/pipeline/ReviewRerunService.java` | **Modify.** Refuse an archived review. |
-| `.../orchestrator/ingress/ManualRegisterResource.java` | **Modify.** 409 on an archived PR. |
-| `.../orchestrator/pipeline/ResultSaga.java` | **Modify.** Handle `ArchivedNotified`. |
-| `spire-contract/.../command/ActionCommand.java` | **Modify.** Add `NotifyArchived`. |
-| `spire-contract/.../event/IntegrationEvent.java` | **Modify.** Add `ArchivedNotified`. |
-| `spire-contract/.../event/EventKeys.java` | **Modify.** Key `ArchivedNotified` by reviewId. |
-| `spire-review-worker/.../pipeline/FollowUpWorker.java` | **Modify.** `notifyArchived`. |
-| `spire-review-worker/.../pipeline/CommandDispatcher.java` | **Modify.** Route `NotifyArchived`. |
-| `spire-ui/src/api.ts` | **Modify.** `archiveReview`/`unarchiveReview`, `includeArchived`. |
-| `spire-ui/src/components/ReviewsList.tsx` | **Modify.** Show-archived checkbox, archived marker. |
-| `spire-ui/src/components/ReviewDetail.tsx` | **Modify.** Archive/Unarchive buttons. |
+| `spire-orchestrator/src/main/resources/db/migration/V32__review_archival.sql` | **Create.** Both columns, partial index. |
+| `.../orchestrator/readmodel/ArchiveOutcome.java` | **Create.** Four-valued archive result. |
+| `.../orchestrator/readmodel/ReviewProjection.java` | **Modify.** Archive/unarchive/`archived`; ledger filters; `archivedAt` on both view records. |
+| `.../orchestrator/readmodel/ReviewSummary.java`, `ReviewDetail.java` | **Modify.** Add `archivedAt`. |
+| `.../orchestrator/web/ReviewsResource.java`, `ReviewsSocket.java` | **Modify.** Archive/unarchive endpoints, `includeArchived`. |
+| `.../orchestrator/attention/AttentionQueries.java`, `CostAttentionRow.java` | **Modify.** Exclude archived/purged. |
+| `.../orchestrator/pipeline/IntegrationSaga.java`, `ReviewRerunService.java`, `ResultSaga.java` | **Modify.** Gates and the result event. |
+| `.../orchestrator/ingress/ManualRegisterResource.java` | **Modify.** 409 on archived. |
+| `spire-contract/.../command/ActionCommand.java`, `event/IntegrationEvent.java`, `event/EventKeys.java` | **Modify.** `NotifyArchived`, `ArchivedNotified`, `ARCHIVED_SLOT`. |
+| `spire-review-worker/.../pipeline/FollowUpWorker.java`, `CommandDispatcher.java` | **Modify.** The notice handler. |
+| `spire-ui/src/api.ts`, `useLiveReviews.ts`, `App.tsx`, `components/ReviewsList.tsx`, `components/ReviewDetail.tsx` | **Modify.** Show-archived, Archive/Unarchive. |
+| `.../orchestrator/readmodel/ReviewFixtures.java` | **Create (Task 2).** Shared test fixtures — five later tasks depend on them. |
 
 ---
 
@@ -53,8 +68,7 @@
 - Create: `spire-orchestrator/src/main/resources/db/migration/V32__review_archival.sql`
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/ReviewArchivalSchemaIT.java`
 
-**Interfaces:**
-- Produces: columns `review_status.archived_at` and `llm_charge.archived_at`, both `TIMESTAMPTZ NULL`.
+**Interfaces:** Produces `review_status.archived_at`, `llm_charge.archived_at`, both `TIMESTAMPTZ NULL`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -67,6 +81,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -85,7 +100,7 @@ class ReviewArchivalSchemaIT {
                  WHERE table_schema = 'orchestrator' AND table_name = ? AND column_name = ?
                 """;
         try (Connection c = dataSource.getConnection();
-             var ps = c.prepareStatement(sql)) {
+             PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, table);
             ps.setString(2, column);
             try (ResultSet rs = ps.executeQuery()) {
@@ -102,7 +117,7 @@ class ReviewArchivalSchemaIT {
 }
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [ ] **Step 2: Run it, confirm it fails**
 
 Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchivalSchemaIT*"`
 Expected: FAIL — `review_status.archived_at ==> expected: <true> but was: <false>`
@@ -111,8 +126,7 @@ Expected: FAIL — `review_status.archived_at ==> expected: <true> but was: <fal
 
 ```sql
 -- Deleting a review used to destroy its charge ledger, so real paid usage vanished with a row
--- removed for being clutter. Archival replaces that: nothing is deleted, and a NULL archived_at
--- means live.
+-- removed for being clutter. Archival replaces that: nothing is deleted, NULL archived_at = live.
 --
 -- review_status.archived_at is written by archiving. llm_charge.archived_at is NOT: it is written
 -- only by a future purge, in the same transaction that hard-deletes the review row. Stamping the
@@ -127,10 +141,9 @@ CREATE INDEX review_status_live_updated
     ON review_status (updated_at DESC) WHERE archived_at IS NULL;
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+- [ ] **Step 4: Run it, confirm it passes**
 
 Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchivalSchemaIT*"`
-Expected: PASS
 
 - [ ] **Step 5: Commit**
 
@@ -142,100 +155,199 @@ git commit -m "Add the archival marker to the review row and the ledger"
 
 ---
 
-### Task 2: `archiveReview` and `unarchiveReview`
+### Task 2: Archive, unarchive, and the REST surface
 
 **Files:**
-- Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ArchiveOutcome.java`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:732-780` (replace `deleteReview`)
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/ReviewArchivalTest.java`
+- Create: `.../orchestrator/readmodel/ArchiveOutcome.java`
+- Create: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/ReviewFixtures.java`
+- Modify: `.../readmodel/ReviewProjection.java:724-774` (remove `deleteReview`), `:945` (`listSummaries`), the `ReviewSummary`/`ReviewDetail` mappers
+- Modify: `.../readmodel/ReviewSummary.java`, `.../readmodel/ReviewDetail.java` (add `archivedAt`)
+- Modify: `.../web/ReviewsResource.java:54` (list), `:182` (replace `delete`), `.../web/ReviewsSocket.java:26`
+- Modify: `spire-orchestrator/src/test/.../ReviewProjectionTest.java:191,197,227`, `LlmChargeProjectionIT.java:177`
+- Test: `spire-orchestrator/src/test/.../readmodel/ReviewArchivalTest.java`, `.../web/ReviewArchiveResourceTest.java`
 
 **Interfaces:**
-- Consumes: `review_status.archived_at` (Task 1).
-- Produces: `ArchiveOutcome archiveReview(String workspace, String slug, long pr)`, `boolean unarchiveReview(String workspace, String slug, long pr)` on `ReviewProjection`.
+- Consumes: `archived_at` (Task 1).
+- Produces: `ArchiveOutcome archiveReview(String, String, long)`, `boolean unarchiveReview(String, String, long)`, `boolean archived(String reviewId)`, `List<ReviewSummary> listSummaries(boolean includeArchived)`, `archivedAt` on both view records, and `ReviewFixtures`.
 
-- [ ] **Step 1: Write the failing tests**
+**Why the endpoint change is in this task, not its own:** removing `deleteReview` breaks `ReviewsResource.delete` at `:182` immediately. Split across two tasks, Task 2 could not compile, so it could not run its own tests. They are one deliverable.
 
-Add to `ReviewArchivalTest.java`. Follow the existing `ReviewProjectionTest` setup for creating a review row (read `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/ReviewProjectionTest.java:180-200` and reuse its fixture helpers verbatim).
+- [ ] **Step 1: Write the shared fixtures**
+
+Five later tasks need these and none exist today. `ReviewProjectionTest:180-200` is the old hard-delete test, **not** a fixture source. Build on the real primitives: `registerHeader`, `updateStatus`, and `recordCharges(ChargeCall)` — read `LlmChargeProjectionIT` for the charge-seeding pattern and copy it.
+
+```java
+package dev.codespire.orchestrator.readmodel;
+
+/**
+ * Shared review fixtures. Written once here because five tasks need them; every value is
+ * obviously-synthetic (TEST- prefixes, round token counts) so a fixture can never be mistaken for a
+ * real review or a real vendor price.
+ */
+public final class ReviewFixtures {
+
+    public static final String WS = "TEST-WS";
+    public static final String REPO = "TEST-REPO";
+
+    private static final AtomicLong NEXT_PR = new AtomicLong(9_000_000L);
+
+    private ReviewFixtures() {
+    }
+
+    /** A PR number no other test uses — the module shares one database across test classes. */
+    public static long newPr() {
+        return NEXT_PR.incrementAndGet();
+    }
+
+    public static String reviewIdFor(long pr) { /* ReviewIds.reviewId(new RepoRef(WS, REPO), pr) */ }
+
+    public static void seedCompletedReviewWithCharges(ReviewProjection p, long pr) { /* … */ }
+
+    public static void seedCompletedReviewWithoutCharges(ReviewProjection p, long pr) { /* … */ }
+
+    public static void seedReviewingReview(ReviewProjection p, long pr) { /* … */ }
+
+    public static void seedFailedReview(ReviewProjection p, long pr) { /* … */ }
+}
+```
+
+Fill each body using the real projection methods. `seedCompletedReviewWithCharges` must register the header, set status via `updateStatus(id, "completed", STAGE_DONE)`, and record at least two charge lines through `recordCharges` so cost assertions have something to sum.
+
+- [ ] **Step 2: Write the failing tests**
+
+`ReviewArchivalTest`:
 
 ```java
 @Test
 void archivingKeepsEveryChargeRow() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
-    long before = projection.costOf(reviewId("TEST-WS", "TEST-REPO", pr)).totalMillicents();
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    String id = ReviewFixtures.reviewIdFor(pr);
+    long before = projection.costOf(id).knownCostMillicents();
+    assertTrue(before > 0, "the fixture must record real spend or this test proves nothing");
 
-    assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview("TEST-WS", "TEST-REPO", pr));
+    assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
 
-    assertEquals(before, projection.costOf(reviewId("TEST-WS", "TEST-REPO", pr)).totalMillicents(),
+    assertEquals(before, projection.costOf(id).knownCostMillicents(),
             "archiving must not destroy recorded spend");
 }
 
 @Test
+void anArchivedReviewStillShowsItsOwnCostModelAndLines() {
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    String id = ReviewFixtures.reviewIdFor(pr);
+    projection.archiveReview(WS, REPO, pr);
+
+    assertTrue(projection.costOf(id).knownCostMillicents() > 0);
+    assertFalse(projection.chargeLines(id).isEmpty(), "its charge lines are still readable");
+    assertNotNull(projection.costOf(id).lastModel(), "and so is the model that ran it");
+}
+
+@Test
 void archivingPreservesStatusAndPrState() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    projection.archiveReview(WS, REPO, pr);
 
-    projection.archiveReview("TEST-WS", "TEST-REPO", pr);
-
-    ReviewDetail detail = projection.loadDetail(reviewId("TEST-WS", "TEST-REPO", pr)).orElseThrow();
-    assertEquals("completed", detail.status(), "an archived review still reports its outcome");
+    ReviewDetail detail = projection.loadDetail(WS, REPO, pr).orElseThrow();
+    assertEquals("completed", detail.status());
     assertEquals("OPEN", detail.prState());
+    assertNotNull(detail.archivedAt(), "and it knows it is archived");
 }
 
 @Test
 void archiveDistinguishesAllFourOutcomes() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
+    assertEquals(ArchiveOutcome.ALREADY_ARCHIVED, projection.archiveReview(WS, REPO, pr));
+    assertEquals(ArchiveOutcome.NOT_FOUND, projection.archiveReview(WS, REPO, ReviewFixtures.newPr()));
 
-    assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview("TEST-WS", "TEST-REPO", pr));
-    assertEquals(ArchiveOutcome.ALREADY_ARCHIVED, projection.archiveReview("TEST-WS", "TEST-REPO", pr));
-    assertEquals(ArchiveOutcome.NOT_FOUND, projection.archiveReview("TEST-WS", "TEST-REPO", 999_999L));
-
-    long running = newPr();
-    seedReviewingReview("TEST-WS", "TEST-REPO", running);
-    assertEquals(ArchiveOutcome.STILL_RUNNING, projection.archiveReview("TEST-WS", "TEST-REPO", running));
+    long running = ReviewFixtures.newPr();
+    ReviewFixtures.seedReviewingReview(projection, running);
+    assertEquals(ArchiveOutcome.STILL_RUNNING, projection.archiveReview(WS, REPO, running));
 }
 
 @Test
 void archivingClearsTheRetryScheduleAndTheAnsweringFlag() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
-    projection.scheduleRetry(reviewId("TEST-WS", "TEST-REPO", pr), 2, "TEST retry",
-            Instant.now().plusSeconds(60));
-    projection.setAnswering(reviewId("TEST-WS", "TEST-REPO", pr), true);
-    // scheduleRetry sets status back to 'reviewing'; archive must be attempted from a settled row.
-    projection.markCompleted(reviewId("TEST-WS", "TEST-REPO", pr));
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    String id = ReviewFixtures.reviewIdFor(pr);
+    projection.scheduleRetry(id, 2, "TEST retry", Instant.now().plusSeconds(60));
+    projection.setAnswering(id, true);
+    projection.updateStatus(id, "completed", ReviewProjection.STAGE_DONE);
 
-    assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview("TEST-WS", "TEST-REPO", pr));
+    assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
 
-    assertTrue(projection.claimDueRetries(Instant.now().plusSeconds(120)).isEmpty(),
-            "an archived review must not be swept back into the pipeline");
-    assertFalse(projection.loadDetail(reviewId("TEST-WS", "TEST-REPO", pr)).orElseThrow().answering(),
-            "an archived review must not show a responding pill forever");
+    // NOT isEmpty(): this module shares one database, and a sweep would claim other tests' due rows.
+    assertFalse(projection.claimDueRetries(Instant.now().plusSeconds(120)).contains(id));
+    assertFalse(projection.loadDetail(WS, REPO, pr).orElseThrow().answering());
 }
 
 @Test
 void unarchiveRestoresTheReviewToTheLiveList() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
-    projection.archiveReview("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    projection.archiveReview(WS, REPO, pr);
 
-    assertTrue(projection.unarchiveReview("TEST-WS", "TEST-REPO", pr));
+    assertTrue(projection.unarchiveReview(WS, REPO, pr));
 
-    assertTrue(projection.listSummaries(false).stream()
-                    .anyMatch(s -> s.prId() == pr),
-            "an unarchived review is live again");
+    assertTrue(projection.listSummaries(false).stream().anyMatch(s -> s.pr() == pr));
 }
 ```
 
-If `markCompleted` or `answering()` do not exist under those names, read `ReviewProjection` and `ReviewDetail` and use the real ones — do not invent them.
+`ReviewArchiveResourceTest` (`@QuarkusTest`, `@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})`):
 
-- [ ] **Step 2: Run and confirm they fail**
+```java
+@Test
+void archivingAnUnknownReviewIs404() {
+    given().when().post("/api/reviews/TEST-WS/TEST-REPO/9999999/archive").then().statusCode(404);
+}
 
-Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchivalTest*"`
-Expected: FAIL — `cannot find symbol: method archiveReview`
+@Test
+void archivingTwiceIs409WithAnActionableMessage() {
+    long pr = seedCompleted();
+    given().when().post(path(pr, "archive")).then().statusCode(204);
+    given().when().post(path(pr, "archive")).then().statusCode(409)
+            .body(containsString("already archived"));
+}
 
-- [ ] **Step 3: Create the outcome type**
+@Test
+void archivingARunningReviewIs409AndSaysToWait() {
+    long pr = seedReviewing();
+    given().when().post(path(pr, "archive")).then().statusCode(409)
+            .body(containsString("still running"));
+}
+
+@Test
+void archivedReviewsAreHiddenByDefaultAndVisibleOnRequest() {
+    long pr = seedCompleted();
+    given().when().post(path(pr, "archive")).then().statusCode(204);
+
+    when().get("/api/reviews").then().statusCode(200)
+            .body("findAll { it.pr == " + pr + " }", hasSize(0));
+    when().get("/api/reviews?includeArchived=true").then().statusCode(200)
+            .body("findAll { it.pr == " + pr + " }", hasSize(1));
+}
+
+@Test
+void unarchiveRestoresTheReview() {
+    long pr = seedCompleted();
+    given().when().post(path(pr, "archive")).then().statusCode(204);
+    given().when().post(path(pr, "unarchive")).then().statusCode(204);
+    when().get("/api/reviews").then().body("findAll { it.pr == " + pr + " }", hasSize(1));
+}
+```
+
+Note the JSON path is `it.pr`, not `it.prId` — `ReviewSummary`'s component is `pr`.
+
+- [ ] **Step 3: Run and confirm they fail**
+
+Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchival*" --tests "*ReviewArchiveResource*"`
+Expected: FAIL — `cannot find symbol: method archiveReview`.
+
+- [ ] **Step 4: Create `ArchiveOutcome`**
 
 ```java
 package dev.codespire.orchestrator.readmodel;
@@ -253,9 +365,13 @@ public enum ArchiveOutcome {
 }
 ```
 
-- [ ] **Step 4: Replace `deleteReview` with `archiveReview` + `unarchiveReview`**
+- [ ] **Step 5: Add `archivedAt` to both view records**
 
-Delete the whole `deleteReview` method (`ReviewProjection.java:732-780`, including its javadoc) and add:
+Add `Instant archivedAt` as a component of `ReviewSummary` and `ReviewDetail`, populate it from the new column in every mapper that builds them (including `broadcast`'s per-row lookup), and add it to the TS types in Task 9. Fix all construction sites the compiler flags.
+
+- [ ] **Step 6: Replace `deleteReview`**
+
+Remove `deleteReview` — its real span is **`:724-774`**, stopping *before* the shared `deleteBy` helper at `:776`, which the re-run path still uses. Add:
 
 ```java
     /**
@@ -267,10 +383,10 @@ Delete the whole `deleteReview` method (`ReviewProjection.java:732-780`, includi
      * otherwise resurrect the review minutes later, and {@code answering} so an archived review does
      * not display a responding pill forever.
      *
-     * <p>Refuses while the review is running: {@code ResultSaga.ifCurrentRun} guards on commit alone,
-     * so an in-flight worker's results would still write status, findings and charges to a row that is
-     * supposed to be frozen — and those late charges would carry a NULL archived_at into a future
-     * purge, becoming exactly the orphan the column exists to prevent.
+     * <p>Refuses while running: {@code ResultSaga.ifCurrentRun} guards on commit alone, so an in-flight
+     * worker's results would still write status, findings and charges to a row that is supposed to be
+     * frozen — and those late charges would carry a NULL archived_at into a future purge, becoming
+     * exactly the orphan the column exists to prevent.
      */
     public ArchiveOutcome archiveReview(String workspace, String slug, long pr) {
         String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
@@ -287,15 +403,20 @@ Delete the whole `deleteReview` method (`ReviewProjection.java:732-780`, includi
                     ps.setString(1, reviewId);
                     updated = ps.executeUpdate();
                 }
-                ArchiveOutcome outcome = updated > 0 ? ArchiveOutcome.ARCHIVED : whyNotArchived(c, reviewId);
+                ArchiveOutcome outcome = updated > 0
+                        ? ArchiveOutcome.ARCHIVED : whyNotArchived(c, reviewId);
                 c.commit();
                 if (outcome == ArchiveOutcome.ARCHIVED) {
-                    broadcast(reviewId);
+                    // A removal, not an update: the row leaves the LIVE list, and an archived review is
+                    // frozen, so it needs no further live updates. Show-archived is a REST fetch.
+                    broadcastRemoval(reviewId);
                 }
                 return outcome;
             } catch (SQLException e) {
                 c.rollback();
                 throw e;
+            } finally {
+                c.setAutoCommit(true);
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to archive " + reviewId, e);
@@ -318,29 +439,25 @@ Delete the whole `deleteReview` method (`ReviewProjection.java:732-780`, includi
         }
     }
 
-    /**
-     * Undo an archive. One UPDATE, because archiving stamped nothing else — the ledger is stamped only
-     * by a purge. Releasing the notice claim is left to the caller (see ReviewsResource), which owns
-     * the worker-schema access.
-     */
+    /** Undo an archive. One statement, because archiving stamped nothing else. */
     public boolean unarchiveReview(String workspace, String slug, long pr) {
         String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
-        boolean restored = update("""
-                UPDATE review_status SET archived_at = NULL, updated_at = now()
-                 WHERE review_id = ? AND archived_at IS NOT NULL
-                """, ps -> ps.setString(1, reviewId)) > 0;
-        if (restored) {
-            broadcast(reviewId);
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE review_status SET archived_at = NULL, updated_at = now()
+                      WHERE review_id = ? AND archived_at IS NOT NULL
+                     """)) {
+            ps.setString(1, reviewId);
+            boolean restored = ps.executeUpdate() > 0;
+            if (restored) {
+                broadcast(reviewId);
+            }
+            return restored;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to unarchive " + reviewId, e);
         }
-        return restored;
     }
-```
 
-If `update(...)` does not return an affected-row count, read its signature at `ReviewProjection.java:1644` and use the connection-based form shown in `archiveReview` instead.
-
-Also add an `archived(String reviewId)` accessor, which Tasks 5–7 all need:
-
-```java
     /** Whether this review has been archived — the gate every resurrection path consults. */
     public boolean archived(String reviewId) {
         try (Connection c = dataSource.getConnection();
@@ -351,17 +468,36 @@ Also add an `archived(String reviewId)` accessor, which Tasks 5–7 all need:
                 return rs.next();
             }
         } catch (SQLException e) {
-            // Fail CLOSED is wrong here: a transient read fault would silently retire a live review and
-            // stop every reply on it. Fail open and let the operation proceed, as it did before archival.
+            // Fail OPEN: failing closed would silently retire a live review on a transient read fault
+            // and stop every reply on it. Proceed as the code did before archival existed.
             LOG.errorf(e, "Could not read archival state for %s — treating as live", reviewId);
             return false;
         }
     }
+
+    /** Release the archived-notice claim so a later re-archive notifies again. */
+    public void releaseArchivedNoticeClaim(String reviewId) {
+        try (Connection c = dataSource.getConnection()) {
+            if (!tableExists(c, "worker.comment_idempotency")) {
+                return;
+            }
+            // Targeted: clearWorkerIdempotency would also drop the cached LLM result, so the next
+            // event would pay for the model again.
+            deleteBy(c, """
+                    DELETE FROM worker.comment_idempotency
+                     WHERE review_id = ? AND commit = ? AND anchor_key = ?
+                    """, reviewId, ArchivedNotice.SLOT, ArchivedNotice.KEY);
+        } catch (SQLException e) {
+            LOG.errorf(e, "Could not release the archived-notice claim for %s", reviewId);
+        }
+    }
 ```
 
-- [ ] **Step 5: Add `includeArchived` to `listSummaries`**
+`deleteBy`'s existing signature takes a single id — extend it or inline a `PreparedStatement` with three binds, whichever matches the file's style.
 
-`listSummaries` currently ends `FROM review_status rs ORDER BY rs.updated_at DESC` (`ReviewProjection.java:963`). Change the signature to `listSummaries(boolean includeArchived)` and insert before the `ORDER BY`:
+- [ ] **Step 7: Add `includeArchived` to `listSummaries`**
+
+Change `listSummaries()` (`:945`) to `listSummaries(boolean includeArchived)` and insert before the `ORDER BY`:
 
 ```sql
                   FROM review_status rs
@@ -369,19 +505,75 @@ Also add an `archived(String reviewId)` accessor, which Tasks 5–7 all need:
                  ORDER BY rs.updated_at DESC
 ```
 
-binding `includeArchived` as the first parameter. Update every existing caller to pass `false`.
+Two main callers: `ReviewsResource:54` passes the new query param; **`ReviewsSocket:26` passes `false`** — the socket carries live rows only, per the architecture decision above. Thirteen test call sites also need `false`.
 
-- [ ] **Step 6: Run and confirm they pass**
+- [ ] **Step 8: Replace the REST endpoint**
 
-Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchivalTest*"`
-Expected: PASS
+Delete `ReviewsResource.delete` (`:182`) and add:
 
-- [ ] **Step 7: Commit**
+```java
+    /**
+     * Archive a review. Not a DELETE: nothing is destroyed, and a DELETE verb that destroys nothing
+     * misdescribes the operation to every future reader of this API.
+     */
+    @POST
+    @RolesAllowed("spire-admin")
+    @Path("/{workspace}/{slug}/{pr}/archive")
+    public Response archive(@PathParam("workspace") String workspace,
+                            @PathParam("slug") String slug,
+                            @PathParam("pr") long pr) {
+        return switch (projection.archiveReview(workspace, slug, pr)) {
+            case ARCHIVED -> Response.noContent().build();
+            case ALREADY_ARCHIVED -> throw conflict("This review is already archived.");
+            case STILL_RUNNING -> throw conflict("This review is still running. "
+                    + "Wait for it to finish, or cancel it, then archive.");
+            case NOT_FOUND -> throw new NotFoundException(
+                    "No review for " + workspace + "/" + slug + "#" + pr);
+        };
+    }
+
+    @POST
+    @RolesAllowed("spire-admin")
+    @Path("/{workspace}/{slug}/{pr}/unarchive")
+    public Response unarchive(@PathParam("workspace") String workspace,
+                              @PathParam("slug") String slug,
+                              @PathParam("pr") long pr) {
+        if (!projection.unarchiveReview(workspace, slug, pr)) {
+            throw new NotFoundException("No archived review for " + workspace + "/" + slug + "#" + pr);
+        }
+        // Re-arm the one-time notice, so a later re-archive can announce itself again.
+        projection.releaseArchivedNoticeClaim(
+                ReviewIds.reviewId(new RepoRef(workspace, slug), pr));
+        return Response.noContent().build();
+    }
+
+    /**
+     * A ClientErrorException built from a bare string sets the EXCEPTION's message, not the response
+     * entity, so the sentence explaining what to do never reaches the client. Build the response.
+     */
+    private static ClientErrorException conflict(String message) {
+        return new ClientErrorException(
+                Response.status(Response.Status.CONFLICT).entity(message).build());
+    }
+```
+
+`case X -> throw conflict(...)` is legal in a Java 25 switch expression — this compiles as written. Add the `ClientErrorException` import (absent from this file); `NotFoundException` is already imported.
+
+Add `@QueryParam("includeArchived") @DefaultValue("false") boolean includeArchived` to the list method at `:54`.
+
+- [ ] **Step 9: Fix the existing tests that call `deleteReview`**
+
+`ReviewProjectionTest:191,197,227` and `LlmChargeProjectionIT:177` all call it. **`LlmChargeProjectionIT`'s assertion must be inverted** — it currently asserts the ledger *is* cleared on delete, which is precisely the behaviour being reversed. Rewrite it to assert the charges survive, and rename it to say so.
+
+- [ ] **Step 10: Run the whole module**
+
+Run: `./gradlew :spire-orchestrator:test`
+Expected: PASS.
+
+- [ ] **Step 11: Commit**
 
 ```bash
-git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ArchiveOutcome.java \
-        spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java \
-        spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/ReviewArchivalTest.java
+git add spire-orchestrator/src
 git commit -F- <<'EOF'
 Archive a review instead of destroying it
 
@@ -398,159 +590,32 @@ design promises is frozen and leave a charge no future purge stamps.
 Returns an enum rather than a boolean: the UPDATE matches zero rows
 for all three failure cases, so a boolean could not tell an operator
 which one they hit.
+
+Archiving broadcasts a removal rather than an update. The row leaves
+the live list, and an archived review is frozen, so the socket keeps
+carrying live rows only and the archived view is a plain fetch.
+
+The ledger test that asserted charges were cleared on delete now
+asserts they survive -- it pinned the behaviour being reversed.
 EOF
 ```
 
 ---
 
-### Task 3: Archive and unarchive over REST
+### Task 3: Keep a purged review's charges off the PR that reuses its id
 
 **Files:**
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/web/ReviewsResource.java:175-186` (replace `delete`)
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/web/ReviewArchiveResourceTest.java`
+- Modify: `.../readmodel/ReviewProjection.java` lines `954`, `957` (**inner subquery only**), `959`, `961`, `1085`, `1195`, `1197`, `1410`, `1422`, `1434`
+- Modify: `.../attention/CostAttentionRow.java` — the `UNPRICED` and `UNRECONCILED` queries
+- Test: `spire-orchestrator/src/test/.../readmodel/PurgedChargeIsolationIT.java`
 
-**Interfaces:**
-- Consumes: `ArchiveOutcome archiveReview(...)`, `boolean unarchiveReview(...)`, `listSummaries(boolean)` (Task 2).
-- Produces: `POST /api/reviews/{workspace}/{slug}/{pr}/archive`, `POST …/unarchive`, `GET /api/reviews?includeArchived=true`.
+**Interfaces:** Consumes `llm_charge.archived_at` (Task 1), `ReviewFixtures` (Task 2).
 
-- [ ] **Step 1: Write the failing tests**
-
-```java
-@Test
-void archivingAnUnknownReviewIs404() {
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/999999/archive")
-            .then().statusCode(404);
-}
-
-@Test
-void archivingTwiceIs409WithAnActionableMessage() {
-    long pr = seedCompletedReview();
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/" + pr + "/archive")
-            .then().statusCode(204);
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/" + pr + "/archive")
-            .then().statusCode(409).body(containsString("already archived"));
-}
-
-@Test
-void archivingARunningReviewIs409AndSaysToWait() {
-    long pr = seedReviewingReview();
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/" + pr + "/archive")
-            .then().statusCode(409).body(containsString("still running"));
-}
-
-@Test
-void archivedReviewsAreHiddenByDefaultAndVisibleOnRequest() {
-    long pr = seedCompletedReview();
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/" + pr + "/archive").then().statusCode(204);
-
-    when().get("/api/reviews").then().statusCode(200)
-            .body("findAll { it.prId == " + pr + " }", hasSize(0));
-    when().get("/api/reviews?includeArchived=true").then().statusCode(200)
-            .body("findAll { it.prId == " + pr + " }", hasSize(1));
-}
-
-@Test
-void unarchiveRestoresTheReview() {
-    long pr = seedCompletedReview();
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/" + pr + "/archive").then().statusCode(204);
-    given().when().post("/api/reviews/TEST-WS/TEST-REPO/" + pr + "/unarchive").then().statusCode(204);
-    when().get("/api/reviews").then().body("findAll { it.prId == " + pr + " }", hasSize(1));
-}
-```
-
-Annotate the class `@QuarkusTest` and `@TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})`, matching `LlmModelResourceTest`.
-
-- [ ] **Step 2: Run and confirm they fail**
-
-Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchiveResourceTest*"`
-Expected: FAIL — 404/405 on the archive path, which does not exist yet.
-
-- [ ] **Step 3: Replace the DELETE endpoint**
-
-Remove the `delete` method entirely and add:
-
-```java
-    /**
-     * Archive a review. Not a DELETE: nothing is destroyed, and a DELETE verb that destroys nothing
-     * misdescribes the operation to every future reader of this API.
-     */
-    @POST
-    @RolesAllowed("spire-admin")
-    @Path("/{workspace}/{slug}/{pr}/archive")
-    public Response archive(@PathParam("workspace") String workspace,
-                            @PathParam("slug") String slug,
-                            @PathParam("pr") long pr) {
-        return switch (projection.archiveReview(workspace, slug, pr)) {
-            case ARCHIVED -> Response.noContent().build();
-            case ALREADY_ARCHIVED -> conflict("This review is already archived.");
-            case STILL_RUNNING -> conflict("This review is still running. "
-                    + "Wait for it to finish, or cancel it, then archive.");
-            case NOT_FOUND -> throw new NotFoundException(
-                    "No review for " + workspace + "/" + slug + "#" + pr);
-        };
-    }
-
-    @POST
-    @RolesAllowed("spire-admin")
-    @Path("/{workspace}/{slug}/{pr}/unarchive")
-    public Response unarchive(@PathParam("workspace") String workspace,
-                              @PathParam("slug") String slug,
-                              @PathParam("pr") long pr) {
-        if (!projection.unarchiveReview(workspace, slug, pr)) {
-            throw new NotFoundException("No archived review for " + workspace + "/" + slug + "#" + pr);
-        }
-        return Response.noContent().build();
-    }
-
-    /**
-     * A ClientErrorException built from a bare string sets the EXCEPTION's message, not the response
-     * entity, so the sentence explaining what to do never reaches the client. Build the response.
-     */
-    private static ClientErrorException conflict(String message) {
-        return new ClientErrorException(
-                Response.status(Response.Status.CONFLICT).entity(message).build());
-    }
-```
-
-Note `conflict(...)` returns the exception for the `switch` to throw — change the two `conflict(...)` arms to `throw conflict(...)` if the compiler objects to mixing values and throws in a switch expression; a plain `if/else` chain is acceptable here.
-
-- [ ] **Step 4: Add `includeArchived` to the list endpoint**
-
-Find the `GET` list method in `ReviewsResource` and add `@QueryParam("includeArchived") @DefaultValue("false") boolean includeArchived`, passing it to `projection.listSummaries(includeArchived)`.
-
-- [ ] **Step 5: Run and confirm they pass**
-
-Run: `./gradlew :spire-orchestrator:test --tests "*ReviewArchiveResourceTest*"`
-Expected: PASS
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/web/ReviewsResource.java \
-        spire-orchestrator/src/test/java/dev/codespire/orchestrator/web/ReviewArchiveResourceTest.java
-git commit -m "Serve archive and unarchive instead of delete"
-```
-
----
-
-### Task 4: Keep a purged review's charges out of the PR that inherits its id
-
-**Files:**
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` — lines `954`, `957`, `959`, `961` (listSummaries), `1085` (chargeLines), `1195`+`1197` (costOf), `1410` (cumulativeCost), `1422` (latestModelFor), `1434` (unpricedCallsFor)
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/CostAttentionRow.java` — both enum constants' queries
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/PurgedChargeIsolationIT.java`
-
-**Interfaces:**
-- Consumes: `llm_charge.archived_at` (Task 1).
-- Produces: nothing new; changes existing query behaviour only.
-
-**Why this task exists:** `llm_charge.archived_at` is written only by a future purge, so today every row is NULL and these filters are no-ops. They must land now anyway, because the day the purge is written is the day a re-registered PR starts inheriting a dead review's money — and that is the defect this whole design is guarding.
+**Why now, before any purge exists:** these filters are no-ops today, because only a purge stamps rows. They land now because the day the purge is written is the day a re-registered PR starts reporting a dead review's money as its own.
 
 - [ ] **Step 1: Write the failing test**
 
 ```java
-package dev.codespire.orchestrator.readmodel;
-
 /**
  * A purge hard-deletes the review row and stamps its charges. The PR is then registrable again, and
  * review_id is stable per PR — so the new review reads the old rows unless every ledger query filters.
@@ -559,70 +624,59 @@ package dev.codespire.orchestrator.readmodel;
 @QuarkusTest
 class PurgedChargeIsolationIT {
 
-    @Inject
-    ReviewProjection projection;
-
-    @Inject
-    DataSource dataSource;
-
     @Test
     void aReRegisteredPrInheritsNothingFromAPurgedReview() throws SQLException {
-        long pr = newPr();
-        String id = ReviewIds.reviewId(new RepoRef("TEST-WS", "TEST-REPO"), pr);
-        seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
+        long pr = ReviewFixtures.newPr();
+        String id = ReviewFixtures.reviewIdFor(pr);
+        ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+        assertTrue(projection.costOf(id).knownCostMillicents() > 0, "fixture recorded spend");
 
-        // Simulate the future purge: stamp the ledger, drop the review row.
-        stampAllCharges(id);
-        deleteReviewRowDirectly(id);
+        stampAllCharges(id);             // UPDATE llm_charge SET archived_at = now() WHERE review_id = ?
+        deleteReviewRowDirectly(id);     // DELETE FROM review_status WHERE review_id = ?
 
-        // The PR is registered again — same review_id, brand new review, no charges of its own.
-        seedCompletedReviewWithoutCharges("TEST-WS", "TEST-REPO", pr);
+        ReviewFixtures.seedCompletedReviewWithoutCharges(projection, pr);
 
-        assertEquals(0L, projection.costOf(id).totalMillicents(),
+        assertEquals(0L, projection.costOf(id).knownCostMillicents(),
                 "a re-registered PR must not inherit a purged review's spend");
-        assertTrue(projection.chargeLines(id).isEmpty(),
-                "a re-registered PR must not inherit a purged review's charge lines");
+        assertTrue(projection.chargeLines(id).isEmpty(), "nor its charge lines");
         ReviewSummary row = projection.listSummaries(false).stream()
-                .filter(s -> s.prId() == pr).findFirst().orElseThrow();
+                .filter(s -> s.pr() == pr).findFirst().orElseThrow();
         assertEquals("", row.model(), "nor its model badge");
+        assertEquals("", row.llmType(), "nor the vendor badge derived from that model");
         assertEquals(0, row.unpricedCalls(), "nor its unpriced-call count");
     }
 }
 ```
 
-`stampAllCharges` runs `UPDATE llm_charge SET archived_at = now() WHERE review_id = ?`; `deleteReviewRowDirectly` runs `DELETE FROM review_status WHERE review_id = ?`. Both go straight through the `DataSource` — the purge does not exist yet, and this test is what makes writing it safe later.
-
-If `ReviewSummary`'s accessors are not `model()` / `unpricedCalls()`, read the record and use the real names.
+The `llmType` assertion matters: line `957`'s nested subquery is the one easiest to miss, and without this line the test cannot catch it. If `ReviewSummary`'s vendor component has a different name, use the real one.
 
 - [ ] **Step 2: Run and confirm it fails**
 
 Run: `./gradlew :spire-orchestrator:test --tests "*PurgedChargeIsolationIT*"`
-Expected: FAIL — the assertion on `totalMillicents` reports the purged review's spend.
+Expected: FAIL on `knownCostMillicents`.
 
-- [ ] **Step 3: Add the filter to every ledger read**
+- [ ] **Step 3: Add the filter to all ten ledger reads**
 
-Append `AND archived_at IS NULL` (or `AND c.archived_at IS NULL` where the query aliases the table as `c`) to **all ten** sites listed under **Files**. Two need care:
+Append `AND archived_at IS NULL` (or `AND c.archived_at IS NULL` where aliased) at every listed line. Two traps:
 
-- `listSummaries` line `957` nests a subquery inside another — filter the **inner** `SELECT model FROM llm_charge` as well as the outer, or the vendor badge still resolves from a purged model name.
-- `costOf` (`1195`, `1197`) has two separate references; both need it.
+- **Line 957: filter the INNER subquery only.** The outer query selects from `llm_model`, which has no `archived_at` — adding it there is a SQL error, not a stricter filter.
+- **`costOf` has two separate references** (`1195`, `1197`); both need it.
 
-Leave the `INSERT` at `1124` alone, and leave every point read by `review_id` that is *not* a ledger read (`commitOf`, `loadDetail`'s row fetch) unfiltered — an archived review must still answer for itself.
+Leave the `INSERT` at `1124` alone, and leave `commitOf` and `loadDetail`'s row fetch unfiltered — they read `review_status`, and an archived review must still answer for itself.
 
-- [ ] **Step 4: Add the filter to both cost attention rows**
+- [ ] **Step 4: Filter both cost attention rows**
 
-In `CostAttentionRow.java`, add `AND archived_at IS NULL` to the `UNPRICED` and `UNRECONCILED` count queries, so a purged review cannot keep a cost warning raised.
+In `CostAttentionRow.java`, add `AND archived_at IS NULL` to the `UNPRICED` and `UNRECONCILED` count queries.
 
-- [ ] **Step 5: Run the full orchestrator suite**
+- [ ] **Step 5: Run the module**
 
 Run: `./gradlew :spire-orchestrator:test`
-Expected: PASS, including `PurgedChargeIsolationIT`. If `LlmChargeProjectionIT` or `AttentionQueriesCostTest` fail, a filter went on a query that serves an archived review's own page — re-read Step 3.
+Expected: PASS. If `LlmChargeProjectionIT` or `AttentionQueriesCostTest` fail, a filter landed on a query serving an archived review's own page — re-read Step 3.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java \
-        spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/CostAttentionRow.java \
-        spire-orchestrator/src/test/java/dev/codespire/orchestrator/readmodel/PurgedChargeIsolationIT.java
+git add spire-orchestrator/src
 git commit -F- <<'EOF'
 Keep a purged review's charges off the PR that reuses its id
 
@@ -642,58 +696,48 @@ EOF
 
 ---
 
-### Task 5: Stop the attention panel and the retry sweep from resurrecting archived reviews
+### Task 4: Attention panel and retry sweep
 
 **Files:**
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/AttentionQueries.java:173-184` (`reviewRows`)
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java:305-313` (`claimDueRetries`)
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/attention/ArchivedReviewAttentionTest.java`
-
-**Interfaces:**
-- Consumes: `archiveReview` (Task 2).
+- Modify: `.../attention/AttentionQueries.java:173-184` (`reviewRows`, **both** queries in the method)
+- Modify: `.../readmodel/ReviewProjection.java:305-313` (`claimDueRetries`)
+- Test: `spire-orchestrator/src/test/.../attention/ArchivedReviewAttentionTest.java`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```java
 @Test
 void anArchivedFailedReviewStopsRaisingAttention() {
-    long pr = newPr();
-    seedFailedReview("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedFailedReview(projection, pr);
     assertTrue(hasRowFor(pr), "a failed review raises attention while live");
 
-    projection.archiveReview("TEST-WS", "TEST-REPO", pr);
+    projection.archiveReview(WS, REPO, pr);
 
-    assertFalse(hasRowFor(pr),
-            "archiving is a fix; a permanently-lit row breaks the panel's own contract");
+    assertFalse(hasRowFor(pr), "archiving is a fix; a permanently-lit row breaks the panel's contract");
 }
 
 @Test
 void anArchivedReviewIsNotSweptBackIntoThePipeline() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
-    String id = reviewId("TEST-WS", "TEST-REPO", pr);
-    // Set retry_at directly, bypassing archive's own clearing, to prove the sweep also filters.
-    setRetryAtDirectly(id, Instant.now().minusSeconds(1));
-    projection.archiveReview("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    String id = ReviewFixtures.reviewIdFor(pr);
+    projection.archiveReview(WS, REPO, pr);
+    // Set retry_at directly, AFTER archiving, so this tests the sweep's own filter and not just
+    // archive's clearing. A test that only exercised the clearing would pass with the filter missing.
     setRetryAtDirectly(id, Instant.now().minusSeconds(1));
 
-    assertFalse(projection.claimDueRetries(Instant.now()).contains(id),
-            "the sweep must skip archived reviews even if retry_at is somehow set");
+    assertFalse(projection.claimDueRetries(Instant.now()).contains(id));
 }
 ```
-
-The second test deliberately re-sets `retry_at` **after** archiving. Archive clearing it is one defence; the sweep filtering is the other, and a test that only exercised the first would pass with the second missing.
 
 - [ ] **Step 2: Run and confirm they fail**
 
 Run: `./gradlew :spire-orchestrator:test --tests "*ArchivedReviewAttentionTest*"`
-Expected: FAIL on both.
 
 - [ ] **Step 3: Filter both queries**
 
-In `AttentionQueries.reviewRows`, add `AND archived_at IS NULL` to the `REVIEW_STUCK` query and to every other query in that method.
-
-In `claimDueRetries`, change the `WHERE` to:
+Add `AND archived_at IS NULL` to **both** queries inside `reviewRows`, and change `claimDueRetries`'s `WHERE` to:
 
 ```sql
                  WHERE retry_at IS NOT NULL AND retry_at <= ? AND archived_at IS NULL
@@ -701,89 +745,84 @@ In `claimDueRetries`, change the `WHERE` to:
 
 - [ ] **Step 4: Run and confirm they pass**
 
-Run: `./gradlew :spire-orchestrator:test --tests "*ArchivedReviewAttentionTest*"`
-Expected: PASS
-
 - [ ] **Step 5: Commit**
 
 ```bash
-git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/AttentionQueries.java \
-        spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java \
-        spire-orchestrator/src/test/java/dev/codespire/orchestrator/attention/ArchivedReviewAttentionTest.java
+git add spire-orchestrator/src
 git commit -m "Exclude archived reviews from attention and the retry sweep"
 ```
 
 ---
 
-### Task 6: Refuse the two non-event paths that resurrect an archived review
+### Task 5: Refuse the two non-event resurrection paths
 
 **Files:**
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ReviewRerunService.java:50-60`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/ingress/ManualRegisterResource.java:111-121`
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/pipeline/ArchivedReviewGateTest.java`
+- Modify: `.../pipeline/ReviewRerunService.java:50-60`
+- Modify: `.../ingress/ManualRegisterResource.java:111-121` (a local `reviewId` **already exists at `:117`** — reuse it, do not redeclare)
+- Test: `spire-orchestrator/src/test/.../pipeline/ArchivedReviewGateTest.java`
 
-**Interfaces:**
-- Consumes: `boolean archived(String reviewId)` (Task 2).
+**Interfaces:** Consumes `archived(String)` (Task 2).
 
-**Why these two are separate from Task 7:** neither is an integration event, so neither passes through `IntegrationSaga`. A gate placed only in the saga leaves both open.
+**Why separate from Task 6:** neither path is an integration event, so neither passes through `IntegrationSaga`. A gate placed only in the saga leaves both open.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```java
 @Test
 void aRerunOfAnArchivedReviewIsRefusedAndLeavesItsNoticeClaimIntact() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
-    projection.archiveReview("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    String id = ReviewFixtures.reviewIdFor(pr);
+    seedArchivedNoticeClaim(id);
+    projection.archiveReview(WS, REPO, pr);
 
-    assertThrows(NotFoundException.class,
-            () -> rerunService.rerun("TEST-WS", "TEST-REPO", pr),
-            "an archived review must not be re-run");
+    assertThrows(ClientErrorException.class, () -> rerunService.rerun(WS, REPO, pr));
+
+    assertTrue(archivedNoticeClaimExists(id),
+            "the re-run must not clear the once-ever notice claim on its way to refusing");
 }
 
 @Test
 void registeringAnArchivedPrIs409NotASilentSuccess() {
-    long pr = newPr();
-    seedCompletedReviewWithCharges("TEST-WS", "TEST-REPO", pr);
-    projection.archiveReview("TEST-WS", "TEST-REPO", pr);
+    long pr = ReviewFixtures.newPr();
+    ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+    projection.archiveReview(WS, REPO, pr);
 
     given().contentType(ContentType.JSON)
             .body("{\"workspace\":\"TEST-WS\",\"slug\":\"TEST-REPO\",\"pr\":" + pr + "}")
-            .when().post("/api/register")
+            .when().post("/api/reviews/register")
             .then().statusCode(409).body(containsString("archived"));
 }
 ```
 
-Read `ManualRegisterResource` for its actual `@Path` and request body shape before writing the second test — do not assume `/api/register`.
+The claim-survival assertion is the half the first draft named in its test title and never checked. The register path is **`/api/reviews/register`** — verify against `ManualRegisterResource`'s `@Path` before running.
 
 - [ ] **Step 2: Run and confirm they fail**
 
-Run: `./gradlew :spire-orchestrator:test --tests "*ArchivedReviewGateTest*"`
-Expected: FAIL — the re-run succeeds; the register returns 200.
-
 - [ ] **Step 3: Gate the re-run**
 
-In `ReviewRerunService.rerun`, immediately after `String reviewId = ReviewIds.reviewId(repo, pr);`:
+In `ReviewRerunService.rerun`, immediately after the `reviewId` is computed and **before** `clearWorkerIdempotency`:
 
 ```java
         // Archived means retired. This path is REST, not an integration event, so the saga's gate never
         // sees it — and its first act below (clearWorkerIdempotency) deletes ALL claims for the review,
         // including the archived-notice claim that is supposed to fire once ever.
         if (projection.archived(reviewId)) {
-            throw new NotFoundException("Review " + workspace + "/" + slug + "#" + pr
-                    + " is archived. Unarchive it before re-running.");
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity("This review is archived. Unarchive it before re-running.").build());
         }
 ```
 
+409, not 404 — the review exists, the request conflicts with its state, and the manual-register path answers 409 for the same condition.
+
 - [ ] **Step 4: Gate the manual register**
 
-In `ManualRegisterResource`, before `integration.send(event)`:
+Before `integration.send(event)`, reusing the existing `reviewId` local at `:117`:
 
 ```java
-        String reviewId = ReviewIds.reviewId(repo, pr.prId());
         // The saga would drop this event for an archived review, but silently: the caller would get a
         // 200 with a reviewId and nothing would happen. A silent non-response reads as a lost webhook,
-        // which this project has already had to fix once for the conversation turn cap.
+        // which this project already had to fix once for the conversation turn cap.
         if (projection.archived(reviewId)) {
             throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
                     .entity("This pull request's review is archived. Unarchive it to review again.")
@@ -791,19 +830,14 @@ In `ManualRegisterResource`, before `integration.send(event)`:
         }
 ```
 
-Inject `ReviewProjection projection` if the class does not already hold one.
+Inject `ReviewProjection` if absent.
 
 - [ ] **Step 5: Run and confirm they pass**
-
-Run: `./gradlew :spire-orchestrator:test --tests "*ArchivedReviewGateTest*"`
-Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ReviewRerunService.java \
-        spire-orchestrator/src/main/java/dev/codespire/orchestrator/ingress/ManualRegisterResource.java \
-        spire-orchestrator/src/test/java/dev/codespire/orchestrator/pipeline/ArchivedReviewGateTest.java
+git add spire-orchestrator/src
 git commit -F- <<'EOF'
 Refuse re-run and re-registration of an archived review
 
@@ -815,38 +849,47 @@ review and re-armed a notice meant to fire once.
 
 Registering an archived PR answered 200 with a reviewId while the
 saga dropped the event, so an operator saw success and nothing
-happened. It now answers 409.
+happened. Both now answer 409.
 EOF
 ```
 
 ---
 
-### Task 7: The archived notice — contract types
+### Task 6: The archived notice — contract types
 
 **Files:**
-- Modify: `spire-contract/src/main/java/dev/codespire/contract/command/ActionCommand.java:34` (subtype list) and `:199` (beside `NotifyTurnCap`)
-- Modify: `spire-contract/src/main/java/dev/codespire/contract/event/IntegrationEvent.java:44` and `:268`
-- Modify: `spire-contract/src/main/java/dev/codespire/contract/event/EventKeys.java:28`
+- Create: `spire-contract/src/main/java/dev/codespire/contract/command/ArchivedNotice.java`
+- Modify: `.../command/ActionCommand.java:34`, `:199`
+- Modify: `.../event/IntegrationEvent.java:44`, `:268`
+- Modify: `.../event/EventKeys.java:28`
 - Test: `spire-contract/src/test/java/dev/codespire/contract/ArchivedNoticeWireTest.java`
 
-**Interfaces:**
-- Produces: `ActionCommand.NotifyArchived(String reviewId, RepoRef repo, long prId, ThreadRef threadRef, String scmCredential)` and `IntegrationEvent.ArchivedNotified(String reviewId, ThreadRef threadRef, String commentId)`.
+**Interfaces:** Produces `ActionCommand.NotifyArchived(String reviewId, RepoRef repo, long prId, ThreadRef threadRef, String scmCredential)`, `IntegrationEvent.ArchivedNotified(String reviewId, ThreadRef threadRef, String commentId)`, and `ArchivedNotice.SLOT` / `.KEY`.
 
 - [ ] **Step 1: Write the failing test**
+
+Use a plain `new ObjectMapper()` — the contract wire tests do not have a `WireMapper` factory. Read a neighbouring wire test and copy its setup exactly.
 
 ```java
 @Test
 void theArchivedNoticeRoundTripsOverTheWire() throws Exception {
-    ObjectMapper mapper = WireMapper.create();   // use the project's existing mapper factory
+    ObjectMapper mapper = new ObjectMapper();
     ActionCommand command = new ActionCommand.NotifyArchived(
             "review::TEST-WS/TEST-REPO#1", new RepoRef("TEST-WS", "TEST-REPO"), 1L,
             new ThreadRef("TEST-THREAD"), "TEST-CREDENTIAL");
 
     String json = mapper.writeValueAsString(command);
-    ActionCommand back = mapper.readValue(json, ActionCommand.class);
-
-    assertEquals(command, back);
+    assertEquals(command, mapper.readValue(json, ActionCommand.class));
     assertTrue(json.contains("\"NotifyArchived\""), "the discriminator names the subtype");
+}
+
+@Test
+void aTopLevelNoticeCarriesNoThread() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    ActionCommand command = new ActionCommand.NotifyArchived(
+            "review::TEST-WS/TEST-REPO#1", new RepoRef("TEST-WS", "TEST-REPO"), 1L, null,
+            "TEST-CREDENTIAL");
+    assertEquals(command, mapper.readValue(mapper.writeValueAsString(command), ActionCommand.class));
 }
 
 @Test
@@ -855,25 +898,38 @@ void theArchivedNotifiedEventIsKeyedByReviewId() {
             "review::TEST-WS/TEST-REPO#1", new ThreadRef("TEST-THREAD"), "TEST-COMMENT");
     assertEquals("review::TEST-WS/TEST-REPO#1", EventKeys.of(event));
 }
-
-@Test
-void aTopLevelNoticeCarriesNoThread() throws Exception {
-    ObjectMapper mapper = WireMapper.create();
-    ActionCommand command = new ActionCommand.NotifyArchived(
-            "review::TEST-WS/TEST-REPO#1", new RepoRef("TEST-WS", "TEST-REPO"), 1L, null,
-            "TEST-CREDENTIAL");
-    assertEquals(command, mapper.readValue(mapper.writeValueAsString(command), ActionCommand.class));
-}
 ```
-
-Read a neighbouring wire test (e.g. the one covering `NotifyTurnCap`) for the real mapper factory and `EventKeys` entry-point names, and match them.
 
 - [ ] **Step 2: Run and confirm it fails**
 
 Run: `./gradlew :spire-contract:test --tests "*ArchivedNoticeWireTest*"`
-Expected: FAIL — `NotifyArchived` does not exist.
 
-- [ ] **Step 3: Add the command**
+- [ ] **Step 3: Add the shared slot constants**
+
+The orchestrator releases this claim on unarchive and the worker takes it, so the two services must agree on one definition:
+
+```java
+package dev.codespire.contract.command;
+
+/**
+ * The idempotency coordinates of the archived notice. Shared because the worker TAKES this claim and
+ * the orchestrator RELEASES it on unarchive; two literals in two services would drift into a notice
+ * that never re-arms, with nothing failing.
+ *
+ * <p>The slot is a constant rather than a thread ref, which is what makes the notice fire once per
+ * REVIEW instead of once per thread.
+ */
+public final class ArchivedNotice {
+
+    public static final String SLOT = "archived-notice";
+    public static final String KEY = "archived";
+
+    private ArchivedNotice() {
+    }
+}
+```
+
+- [ ] **Step 4: Add the command and the event**
 
 In `ActionCommand.java`, beside `NotifyTurnCap`:
 
@@ -881,97 +937,79 @@ In `ActionCommand.java`, beside `NotifyTurnCap`:
     /**
      * Tell a human that this review is archived and no further reviews will run for the pull request.
      *
-     * <p>Carries no LLM credential — the notice is fixed text, so retiring a PR costs no tokens and
-     * always says the same thing. {@code threadRef} is null for a top-level PR comment and non-null to
-     * reply inside a thread, so the notice appears where the event that triggered it arrived.
-     *
-     * <p>The worker claims a CONSTANT idempotency slot for this, not the thread, which is what makes it
-     * fire once per review rather than once per thread.
+     * <p>Carries no LLM credential — the notice is fixed text, so retiring a PR costs no tokens.
+     * {@code threadRef} is null for a top-level PR comment and non-null to reply inside a thread, so
+     * the notice appears where the event that triggered it arrived.
      */
     record NotifyArchived(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String scmCredential) implements ActionCommand {
     }
 ```
 
-and register it in the `@JsonSubTypes` list at `:34`:
-
-```java
-        @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived"),
-```
-
-- [ ] **Step 4: Add the result event**
-
-In `IntegrationEvent.java`, beside `TurnCapNotified`:
+register it at `:34`, then in `IntegrationEvent.java`:
 
 ```java
     /**
      * The archived notice was posted. Deliberately NOT FollowUpPosted, which bumps the conversation
-     * turn count — this notice consumes no turn and involves no model. Carries the thread so the
-     * orchestrator can attribute it on the timeline the way it attributes a turn-cap notice.
+     * turn count — this notice consumes no turn and involves no model. {@code threadRef} is null when
+     * the notice went to the top-level PR comment.
      */
     record ArchivedNotified(String reviewId, ThreadRef threadRef, String commentId)
             implements IntegrationEvent {
     }
 ```
 
-register it in `@JsonSubTypes` at `:44`, and add to `EventKeys` at `:28`:
+register it at `:44`, and add to `EventKeys` at `:28`:
 
 ```java
             case IntegrationEvent.ArchivedNotified e -> e.reviewId();
 ```
 
-- [ ] **Step 5: Run and confirm it passes, then refresh the contract snapshot**
+`EventKeys`' switch is exhaustive with no `default`, so omitting this is a compile error rather than a runtime surprise.
+
+- [ ] **Step 5: Run, then refresh the contract snapshot**
 
 Run: `./gradlew :spire-contract:test`
-Expected: PASS. `ContractSchemaSnapshotTest` will fail with a diff — inspect it, confirm it shows exactly the two new types, then update the golden file it names.
+`ContractSchemaSnapshotTest` will fail with a diff — inspect it, confirm it shows exactly the two new types, then update the golden file it names.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add spire-contract/src/main/java/dev/codespire/contract/ \
-        spire-contract/src/test/java/dev/codespire/contract/
+git add spire-contract/src
 git commit -m "Add the archived-notice command and its result event"
 ```
 
 ---
 
-### Task 8: The archived notice — worker handler
+### Task 7: The archived notice — worker handler
 
 **Files:**
-- Modify: `spire-review-worker/src/main/java/dev/codespire/worker/pipeline/FollowUpWorker.java` (beside `notifyTurnCap`, `:151`)
-- Modify: `spire-review-worker/src/main/java/dev/codespire/worker/pipeline/CommandDispatcher.java:60`
-- Test: `spire-review-worker/src/test/java/dev/codespire/worker/pipeline/ArchivedNoticeWorkerTest.java`
+- Modify: `spire-review-worker/.../pipeline/FollowUpWorker.java` (beside `notifyTurnCap`, `:151`)
+- Modify: `spire-review-worker/.../pipeline/CommandDispatcher.java:60`
+- Test: `spire-review-worker/src/test/.../pipeline/ArchivedNoticeWorkerTest.java`
 
-**Interfaces:**
-- Consumes: `ActionCommand.NotifyArchived`, `IntegrationEvent.ArchivedNotified` (Task 7).
-- Produces: `void notifyArchived(ActionCommand.NotifyArchived command)` on `FollowUpWorker`.
+**Interfaces:** Consumes `NotifyArchived`, `ArchivedNotified`, `ArchivedNotice` (Task 6). No `WorkerScmClients` change is needed — `forCommand` reads the `scmCredential()` interface accessor, which the new record's component satisfies.
 
 - [ ] **Step 1: Write the failing tests**
-
-Model the fakes on the existing turn-cap coverage in this file's sibling tests.
 
 ```java
 @Test
 void theNoticePostsOnceHoweverManyEventsArrive() {
     worker.notifyArchived(notice("TEST-THREAD"));
     worker.notifyArchived(notice("TEST-THREAD"));
-
-    assertEquals(1, comments.replies().size(), "the notice fires once per review");
+    assertEquals(1, comments.replies().size());
 }
 
 @Test
 void theNoticeIsClaimedPerReviewNotPerThread() {
     worker.notifyArchived(notice("TEST-THREAD-A"));
     worker.notifyArchived(notice("TEST-THREAD-B"));
-
-    assertEquals(1, comments.replies().size(),
-            "a second thread must not produce a second notice");
+    assertEquals(1, comments.replies().size(), "a second thread must not produce a second notice");
 }
 
 @Test
 void aNoticeWithNoThreadGoesToTheTopLevelPrComment() {
     worker.notifyArchived(notice(null));
-
     assertEquals(1, comments.summaries().size());
     assertTrue(comments.replies().isEmpty());
 }
@@ -979,14 +1017,12 @@ void aNoticeWithNoThreadGoesToTheTopLevelPrComment() {
 @Test
 void theNoticeBrokersNoModelCall() {
     worker.notifyArchived(notice("TEST-THREAD"));
-
     assertTrue(llm.calls().isEmpty(), "retiring a PR must cost no tokens");
 }
 
 @Test
 void theNoticeEmitsArchivedNotifiedNotFollowUpPosted() {
     worker.notifyArchived(notice("TEST-THREAD"));
-
     assertInstanceOf(IntegrationEvent.ArchivedNotified.class, results.emitted().getFirst(),
             "FollowUpPosted would bump the turn count for a notice that consumed no turn");
 }
@@ -994,43 +1030,7 @@ void theNoticeEmitsArchivedNotifiedNotFollowUpPosted() {
 
 - [ ] **Step 2: Run and confirm they fail**
 
-Run: `./gradlew :spire-review-worker:test --tests "*ArchivedNoticeWorkerTest*"`
-Expected: FAIL — `notifyArchived` does not exist.
-
 - [ ] **Step 3: Implement the handler**
-
-```java
-    private static final String ARCHIVED_SLOT = "archived-notice";
-    private static final String ARCHIVED_NOTICE_KEY = "archived";
-
-    /**
-     * Post the one-time notice that this review is archived.
-     *
-     * <p>The claim slot is a CONSTANT, not the thread ref: that is what makes this once per REVIEW.
-     * The store's key is (review_id, commit, anchor_key) and nothing depends on that middle column
-     * holding a real commit — the follow-up path already puts a thread ref there.
-     */
-    public void notifyArchived(ActionCommand.NotifyArchived command) {
-        WorkerScmClients.Clients clients = scm.forCommand(command);
-        if (idempotency.claim(command.reviewId(), ARCHIVED_SLOT, ARCHIVED_NOTICE_KEY)
-                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
-            // INFO, not DEBUG: this is the only record that an inbound event went unanswered on
-            // purpose. Bounded by human activity, so it cannot get noisy.
-            LOG.infof("Archived notice already posted for %s — staying quiet", command.reviewId());
-            return;
-        }
-        CommentRef ref = command.threadRef() == null
-                ? clients.comments().postSummary(command.repo(), command.prId(), ARCHIVED_TEXT)
-                : clients.comments().replyInThread(command.repo(), command.prId(),
-                        command.threadRef(), ARCHIVED_TEXT);
-        idempotency.markPosted(command.reviewId(), ARCHIVED_SLOT, ARCHIVED_NOTICE_KEY, ref.commentId());
-        LOG.infof("Posted archived notice for %s", command.reviewId());
-        results.emit(new IntegrationEvent.ArchivedNotified(
-                command.reviewId(), command.threadRef(), ref.commentId()));
-    }
-```
-
-with the text as a constant on the class:
 
 ```java
     /**
@@ -1039,42 +1039,65 @@ with the text as a constant on the class:
      */
     private static final String ARCHIVED_TEXT =
             "This review has been archived, so no further reviews will run for this pull request.";
+
+    /**
+     * Post the one-time notice that this review is archived. The claim slot is a CONSTANT, not the
+     * thread ref, which is what makes this once per REVIEW. The store's key is
+     * (review_id, commit, anchor_key) and nothing depends on that middle column holding a real commit
+     * — the follow-up path already puts a thread ref there.
+     */
+    public void notifyArchived(ActionCommand.NotifyArchived command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        if (idempotency.claim(command.reviewId(), ArchivedNotice.SLOT, ArchivedNotice.KEY)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            // INFO, not DEBUG: the only record that an inbound event went unanswered on purpose.
+            LOG.infof("Archived notice already posted for %s — staying quiet", command.reviewId());
+            return;
+        }
+        CommentRef ref = command.threadRef() == null
+                ? clients.comments().postSummary(command.repo(), command.prId(), ARCHIVED_TEXT)
+                : clients.comments().replyInThread(command.repo(), command.prId(),
+                        command.threadRef(), ARCHIVED_TEXT);
+        idempotency.markPosted(command.reviewId(), ArchivedNotice.SLOT, ArchivedNotice.KEY,
+                ref.commentId());
+        LOG.infof("Posted archived notice for %s", command.reviewId());
+        results.emit(new IntegrationEvent.ArchivedNotified(
+                command.reviewId(), command.threadRef(), ref.commentId()));
+    }
 ```
 
 - [ ] **Step 4: Route the command**
 
-In `CommandDispatcher.java`, beside line 60:
+In `CommandDispatcher.java` beside `:60`: `case NotifyArchived c -> followUpWorker.notifyArchived(c);` plus the import.
 
-```java
-                case NotifyArchived c -> followUpWorker.notifyArchived(c);
-```
-
-and add the import.
-
-- [ ] **Step 5: Run and confirm they pass**
+- [ ] **Step 5: Run the module**
 
 Run: `./gradlew :spire-review-worker:test`
-Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add spire-review-worker/src/main/java/dev/codespire/worker/pipeline/ \
-        spire-review-worker/src/test/java/dev/codespire/worker/pipeline/ArchivedNoticeWorkerTest.java
+git add spire-review-worker/src
 git commit -m "Post a one-time notice when a retired PR gets activity"
 ```
 
 ---
 
-### Task 9: Gate the four integration events and emit the notice
+### Task 8: Gate the four integration events
 
 **Files:**
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/IntegrationSaga.java:94-140`
-- Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ResultSaga.java:271-279` (handle `ArchivedNotified`)
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/pipeline/ArchivedEventGateTest.java`
+- Modify: `.../pipeline/IntegrationSaga.java` — the `handle()` switch
+- Modify: `.../pipeline/ResultSaga.java:271-279` (add `ArchivedNotified`)
+- Test: `spire-orchestrator/src/test/.../pipeline/ArchivedEventGateTest.java`
 
-**Interfaces:**
-- Consumes: `archived(String)` (Task 2), `NotifyArchived` (Task 7).
+**Interfaces:** Consumes `archived(String)` (Task 2), `NotifyArchived` (Task 6). `IntegrationSaga` already holds `reviewProviders` and `workerCredentials`, so it can broker the SCM credential exactly as `ConversationSaga` does for `NotifyTurnCap` — read that call site and mirror it.
+
+**Three rules the first draft missed:**
+1. **Fold `isBotAuthored` into the gate.** The bot's own notice echoes back as `AuthorReplied`; without this it re-enters the gate and emits a command forever (harmless but noisy).
+2. **Apply the author allowlist.** The `/review` security fix gated paid work on it; a notice that answers any prober would partly reverse that. Use the same `authorAllowed` helper.
+3. **`PullRequestClosed` gates but does not notify.** The notice fires once *ever*; spending it on a close leaves the human who later asks a real question with silence.
+
+Also: if no provider resolves, **emit nothing**. A credential-less command reaches the worker's stub-sink fallback, which would consume the once-ever claim while posting nothing real.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1084,54 +1107,63 @@ git commit -m "Post a one-time notice when a retired PR gets activity"
  * review_status's primary key forbids a second row for one PR regardless of any gate.
  */
 @ParameterizedTest
-@MethodSource("inboundEvents")
-void anInboundEventLeavesAnArchivedReviewUnchangedAndEmitsOnlyTheNotice(IntegrationEvent event) {
-    seedArchivedReview("TEST-WS", "TEST-REPO", PR);
-    String before = snapshotOf(reviewId("TEST-WS", "TEST-REPO", PR));
+@MethodSource("conversationalEvents")
+void aConversationalEventLeavesAnArchivedReviewUnchangedAndNotifiesOnce(IntegrationEvent event) {
+    long pr = seedArchived();
+    String before = snapshotOf(ReviewFixtures.reviewIdFor(pr));
 
     saga.on(event);
 
-    assertEquals(before, snapshotOf(reviewId("TEST-WS", "TEST-REPO", PR)),
-            "an archived review is frozen");
+    assertEquals(before, snapshotOf(ReviewFixtures.reviewIdFor(pr)), "an archived review is frozen");
     assertEquals(1, commands.emitted().size());
     assertInstanceOf(ActionCommand.NotifyArchived.class, commands.emitted().getFirst());
 }
 
-static Stream<IntegrationEvent> inboundEvents() {
-    return Stream.of(authorReplied(), manualCommand("review"), prUpdated(), prClosed());
+static Stream<IntegrationEvent> conversationalEvents() {
+    return Stream.of(authorReplied(), manualCommand("review"), prUpdated());
 }
 
 @Test
-void closingAnArchivedPrDoesNotMoveItsPrState() {
-    seedArchivedReview("TEST-WS", "TEST-REPO", PR);
-
+void closingAnArchivedPrIsGatedButSpendsNoNotice() {
+    long pr = seedArchived();
     saga.on(prClosed());
 
-    assertEquals("OPEN", projection.loadDetail(reviewId("TEST-WS", "TEST-REPO", PR))
-            .orElseThrow().prState(), "an archived review's badge is frozen at archival");
+    assertEquals("OPEN", projection.loadDetail(WS, REPO, pr).orElseThrow().prState(),
+            "an archived review's badge is frozen at archival");
+    assertTrue(commands.emitted().isEmpty(),
+            "a close is not a question; the once-ever notice must stay available");
+}
+
+@Test
+void theBotsOwnNoticeDoesNotRetriggerTheGate() {
+    long pr = seedArchived();
+    saga.on(authorRepliedBy(BOT_ACCOUNT_ID));
+    assertTrue(commands.emitted().isEmpty());
+}
+
+@Test
+void anUnlistedAuthorGetsNoNotice() {
+    long pr = seedArchivedWithAllowlist("TEST-ALICE");
+    saga.on(authorRepliedBy("TEST-MALLORY"));
+    assertTrue(commands.emitted().isEmpty());
 }
 ```
 
-`prClosed()` is the case the first draft of the design missed, and it is the one that writes `pr_state` — so the second test is the one that would catch a gate placed on only three of the four events.
+Use `@QuarkusTest` so the "row unchanged" assertion reads a real row, and swap the command emitter for a capturing fake — with container-free fakes that assertion would be vacuous.
 
 - [ ] **Step 2: Run and confirm they fail**
 
-Run: `./gradlew :spire-orchestrator:test --tests "*ArchivedEventGateTest*"`
-Expected: FAIL — the events are handled normally; `pr_state` moves to `CLOSED`.
-
 - [ ] **Step 3: Gate the switch**
 
-At the top of the `switch (event)` in `IntegrationSaga`, before any case runs, extract the review id and check. For `AuthorReplied` the check must run **before** `threads.markThreadLocation`, which otherwise writes to an archived review:
+At the top of `handle()`, before any case runs — and for `AuthorReplied` this must precede `threads.markThreadLocation`, which otherwise writes to an archived review:
 
 ```java
         String archivedId = archivedReviewIdOf(event);
         if (archivedId != null) {
-            notifyArchived(archivedId, event);
+            notifyArchivedOnce(archivedId, event);
             return;
         }
 ```
-
-with:
 
 ```java
     /** The review id of an archived review this event targets, or null if it is live or unknown. */
@@ -1147,57 +1179,55 @@ with:
     }
 ```
 
-`notifyArchived(...)` records a timeline entry and emits the command, brokering the SCM credential the same way `ConversationSaga` does for `NotifyTurnCap` — read that call site and mirror it. Pass the event's thread ref for `AuthorReplied`, and `null` for the other three.
+`notifyArchivedOnce` records a timeline entry always, and emits `NotifyArchived` only when **all** of these hold: the event is not `PullRequestClosed`; the author is not the bot; the author passes `authorAllowed`; and a provider resolves so a real credential can be brokered.
 
 - [ ] **Step 4: Handle the result event**
 
-In `ResultSaga`, beside the `TurnCapNotified` case, add an `ArchivedNotified` case that appends a timeline entry. It must **not** call anything that bumps the conversation turn count.
+Beside `TurnCapNotified` in `ResultSaga`, add an `ArchivedNotified` case appending a timeline entry. **Null-guard `threadRef`** — the turn-cap handler dereferences it via `rootOf`, and this event's is nullable. Do not call anything that bumps the conversation turn count.
 
-- [ ] **Step 5: Run and confirm they pass**
+- [ ] **Step 5: Run the module**
 
 Run: `./gradlew :spire-orchestrator:test`
-Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add spire-orchestrator/src/main/java/dev/codespire/orchestrator/pipeline/ \
-        spire-orchestrator/src/test/java/dev/codespire/orchestrator/pipeline/ArchivedEventGateTest.java
+git add spire-orchestrator/src
 git commit -F- <<'EOF'
 Retire an archived PR and answer its activity once
 
-Four inbound events now stop at an archived review and produce a
-one-time notice instead: a reply, a slash command, a PR update and a
-PR close. The close is the one that writes pr_state, so without it an
-archived review's badge would still move on the first merge --
-breaking the frozen-state property archival promises.
+Four inbound events now stop at an archived review: a reply, a slash
+command, a PR update and a PR close. The close is the one that writes
+pr_state, so without it an archived review's badge would still move on
+the first merge, breaking the frozen-state property archival promises.
 
-The reply path checks before recording the thread location, which
-would otherwise write to the archived review on the way past.
+Only the first three produce the notice. A close is not a human asking
+a question, and the notice fires once ever, so spending it there would
+leave the person who later asks a real question with silence.
+
+The gate also drops the bot's own echoed notice and unlisted authors:
+without the first it re-triggers itself forever, and without the second
+a notice would answer probers the review path itself refuses.
 EOF
 ```
 
 ---
 
-### Task 10: UI — Show archived, Archive and Unarchive
+### Task 9: UI — Show archived, Archive and Unarchive
 
 **Files:**
-- Modify: `spire-ui/src/api.ts:197` (replace the DELETE call)
-- Modify: `spire-ui/src/components/ReviewsList.tsx`
-- Modify: `spire-ui/src/components/ReviewDetail.tsx:24,158-162`
-- Test: `spire-ui/src/components/ReviewsList.test.ts`, `spire-ui/src/components/ReviewDetail.test.tsx`
+- Modify: `spire-ui/src/api.ts:197`, `spire-ui/src/useLiveReviews.ts`, `spire-ui/src/App.tsx`
+- Modify: `spire-ui/src/components/ReviewsList.tsx`, `spire-ui/src/components/ReviewDetail.tsx`
+- Test: `spire-ui/src/components/ReviewsList.test.tsx` (**new `.tsx`** — the existing `.test.ts` cannot hold JSX), `spire-ui/src/components/ReviewDetail.archive.test.tsx`
 
-**Interfaces:**
-- Consumes: `POST …/archive`, `POST …/unarchive`, `GET /api/reviews?includeArchived=true` (Task 3).
+**Architecture note:** `ReviewsList` is **presentational** — it receives rows as props from `useLiveReviews` via `App` and never calls `apiFetch`. The Show-archived state therefore lives where the fetch lives, not in the list.
 
 - [ ] **Step 1: Write the failing tests**
 
-```ts
-it('asks the server for archived rows only when the box is checked', async () => {
-  render(<ReviewsList />);
+```tsx
+it('requests archived rows only when the box is checked', async () => {
+  render(<App />);
   await screen.findByText(/TEST-REPO/);
-  expect(apiFetch).toHaveBeenLastCalledWith(expect.stringContaining('/api/reviews'), undefined);
-
   await userEvent.click(screen.getByLabelText(/show archived/i));
 
   expect(apiFetch).toHaveBeenLastCalledWith(
@@ -1205,13 +1235,10 @@ it('asks the server for archived rows only when the box is checked', async () =>
 });
 
 it('marks an archived row so it cannot be mistaken for live work', async () => {
-  render(<ReviewsList />);
-  await userEvent.click(screen.getByLabelText(/show archived/i));
-  expect(await screen.findByText(/archived/i)).toBeInTheDocument();
+  render(<ReviewsList reviews={[archivedRow()]} />);
+  expect(screen.getByText(/archived/i)).toBeInTheDocument();
 });
-```
 
-```tsx
 it('archives instead of deleting', async () => {
   render(<ReviewDetail />);
   await userEvent.click(await screen.findByLabelText(/archive review/i));
@@ -1231,7 +1258,6 @@ it('offers unarchive on an archived review and never both at once', async () => 
 - [ ] **Step 2: Run and confirm they fail**
 
 Run: `cd spire-ui && npm test -- --run ReviewsList ReviewDetail`
-Expected: FAIL — no such label.
 
 - [ ] **Step 3: Replace the API client call**
 
@@ -1243,6 +1269,7 @@ export async function archiveReview(workspace: string, slug: string, pr: number)
     `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${pr}/archive`,
     { method: 'POST' },
   );
+  // The 409 body carries an actionable sentence ("still running", "already archived") — surface it.
   if (!res.ok) { throw new Error(await res.text()); }
 }
 
@@ -1255,26 +1282,29 @@ export async function unarchiveReview(workspace: string, slug: string, pr: numbe
 }
 ```
 
-The 409 body carries an actionable sentence ("still running", "already archived"), so surface `res.text()` rather than a generic message.
+Add `archivedAt: string | null` to the `ReviewSummary` and `ReviewDetail` TS interfaces, and an `includeArchived` argument to `fetchReviews`.
 
-Add `includeArchived` to the list fetch, appending `?includeArchived=true` when set.
+- [ ] **Step 4: Lift the Show-archived state to the fetch**
 
-- [ ] **Step 4: Add the checkbox and the archived marker**
+Add the flag to `useLiveReviews` (or to `App`, wherever `fetchReviews` is called), refetching when it changes. The WebSocket keeps carrying **live rows only** — an archived review is frozen and needs no live updates, and the socket's `onOpen` snapshot replaces the client list, which would otherwise drop archived rows on every reconnect.
 
-In `ReviewsList.tsx`, add one `useState<boolean>` for `showArchived`, a labelled checkbox beside the existing filter chips, and pass the flag to the fetch. Render an **Archived** badge on any row whose `archivedAt` is non-null, using a lucide-react icon (never emoji).
+- [ ] **Step 5: Add the checkbox and the archived marker**
 
-Watch the component budget: `ReviewsList.tsx` was 244 lines and the cap is 250. If this pushes it over, extract the filter bar into its own component in the same commit.
+Render the labelled checkbox beside the existing filter chips, and an **Archived** badge on any row with a non-null `archivedAt`, using a lucide-react icon.
 
-- [ ] **Step 5: Swap the detail-page button**
+`ReviewsList.tsx` was 244 lines against a 250 cap — if this pushes it over, extract the filter bar into its own component in the same commit.
 
-In `ReviewDetail.tsx`, rename `confirmDelete` to `confirmArchive`, change the tooltip and `aria-label` to "Archive review", call `archiveReview`, and render an **Unarchive review** button instead when the review is archived. Update the confirmation copy: it no longer destroys anything, so wording about permanent deletion is now false.
+- [ ] **Step 6: Swap the detail-page button**
 
-- [ ] **Step 6: Run tests and the type check**
+Rename `confirmDelete` → `confirmArchive`, change the tooltip and `aria-label` to "Archive review", call `archiveReview`, and render **Unarchive review** instead when `archivedAt` is set. Update the confirmation copy — it no longer destroys anything, so wording about permanent deletion is now false.
+
+`ReviewDetail.tsx` is **already 256 lines**, over the cap before this task adds to it. Extract the action buttons into their own component here rather than growing it further.
+
+- [ ] **Step 7: Run tests and the type check**
 
 Run: `cd spire-ui && npm test -- --run && npx tsc --noEmit`
-Expected: PASS, `tsc` silent.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add spire-ui/src
@@ -1283,28 +1313,23 @@ git commit -m "Archive reviews from the dashboard instead of deleting them"
 
 ---
 
-### Task 11: Record the decision
+### Task 10: Record the decision
 
-**Files:**
-- Modify: `docs/DECISIONS.md` (new ADR at the end; ADR-023's ledger section gains a pointer)
-- Modify: `CLAUDE.md` (status entry)
-- Modify: `docs/SMOKE-TEST.md` (a mode covering archive → activity → notice → unarchive)
+**Files:** `docs/DECISIONS.md`, `CLAUDE.md`, `docs/SMOKE-TEST.md`
 
-- [ ] **Step 1: Write the ADR**
+- [ ] **Step 1: Write ADR-024**
 
-Add ADR-024 recording: delete became archive; retaining AI usage outranks the clean-slate property it replaced; the clean slate was never complete anyway, since `review_thread` is deleted nowhere; retirement is a **spend boundary** — an author's push must not silently re-bill an operator who archived to be done — and specifically *not* what makes retention safe, which was the first draft's reasoning and was false; charges are stamped at purge rather than at archive, because stamping at archive hid an archived review's cost from its own detail page.
-
-Add a pointer in ADR-023's ledger section, whose "delete is a true clean slate" reasoning no longer describes the system.
+Record: delete became archive; retaining AI usage outranks the clean-slate property it replaced; the clean slate was never complete anyway, since `review_thread` is deleted nowhere; retirement is a **spend boundary** — an author's push must not silently re-bill an operator who archived to be done — and specifically *not* what makes retention safe, which was the first draft's reasoning and was false; charges are stamped at purge rather than at archive, because stamping at archive hid an archived review's cost from its own detail page. Add a pointer from ADR-023's ledger section, whose "delete is a true clean slate" reasoning no longer describes the system.
 
 - [ ] **Step 2: Update CLAUDE.md**
 
-Add a status entry under the ADR-023 bullet covering the migration, the six gated paths, the notice, and the new test counts (run the suites and use the real numbers — do not estimate).
+Add a status entry covering the migration, the six gated paths, the notice, and the new test counts. **Run the suites and use the real numbers** — do not estimate.
 
 - [ ] **Step 3: Add the runbook mode**
 
-Append a SMOKE-TEST mode: archive a completed review → confirm it leaves the list and reappears with Show archived → reply on the PR → confirm exactly one notice arrives → reply again → confirm no second notice → `/review` → confirm no review starts → unarchive → confirm it is live and a later archive notifies again.
+Archive a completed review → confirm it leaves the list and reappears with Show archived → reply on the PR → confirm exactly one notice → reply again → confirm no second notice → `/review` → confirm no review starts → close the PR → confirm the badge does not move → unarchive → confirm it is live and a later archive notifies again.
 
-- [ ] **Step 4: Run the full verification**
+- [ ] **Step 4: Full verification**
 
 ```bash
 ./gradlew testFast --rerun-tasks
@@ -1312,7 +1337,7 @@ Append a SMOKE-TEST mode: archive a completed review → confirm it leaves the l
 cd spire-ui && npm test -- --run && npx tsc --noEmit
 ```
 
-Expected: all green. Use `--rerun-tasks`; a 2-second "BUILD SUCCESSFUL" is a cached pass, not a run.
+Use `--rerun-tasks`; a 2-second "BUILD SUCCESSFUL" is a cached pass, not a run.
 
 - [ ] **Step 5: Commit**
 
@@ -1323,12 +1348,14 @@ git commit -m "Record archival as the replacement for hard delete"
 
 ---
 
+## Ordering
+
+Task 2 must precede 3, 4, 5, 8 and 9 (it defines `archived`, `listSummaries(boolean)`, `archivedAt` and the fixtures). Task 6 must precede 7 and 8. Tasks 3, 4 and 5 are mutually independent. Task 8 is the only one needing two predecessors (2 and 6).
+
 ## Self-review
 
-**Spec coverage.** Every spec section maps to a task: data model → 1; archive/unarchive/outcomes/refuse-while-running → 2; API surface and `includeArchived` → 3; the ledger filter list → 4; attention + retry sweep → 5; the two non-event gates → 6; notice contract → 7; notice worker → 8; the four event gates and frozen `pr_state` → 9; UI → 10; ADR/CLAUDE/runbook → 11. The spec's 15 tests all appear. The purge is correctly absent — the spec lists it under "deliberately not built".
+**Spec coverage.** All 15 spec tests appear: 1→T2, 2→T2, 3→T2, 4→T3, 5→T3, 6→T7, 7→T7, 8→T8, 9→T8, 10→T5, 11→T4, 12→T2, 13→T2, 14→T2, 15→T5. The purge is correctly absent.
 
-**Placeholders.** None. Three tasks say "read the neighbouring file and match its names" (the `ReviewProjectionTest` fixtures, the `WireMapper` factory, the `ManualRegisterResource` path) — that is a deliberate instruction to verify against real code rather than a gap, because inventing those names is how a plan produces code that does not compile.
+**Placeholders.** `ReviewFixtures`' method bodies are the one deliberate gap, with the exact primitives named — writing them requires reading `LlmChargeProjectionIT`'s seeding pattern, and inventing them here is how the first draft produced five methods that do not exist.
 
-**Type consistency.** `ArchiveOutcome` has the same four values in Tasks 2, 3 and the spec. `archived(String reviewId)` is defined in Task 2 and consumed in 6 and 9. `NotifyArchived`'s five components and `ArchivedNotified`'s three are identical in Tasks 7, 8 and 9. `listSummaries(boolean)` is introduced in Task 2 and used in 3, 4 and 10. `ARCHIVED_SLOT` is defined once, in Task 8.
-
-**One ordering constraint worth stating:** Task 9 consumes both Task 2's `archived(...)` and Task 7's command, so it cannot move earlier. Tasks 4, 5, 6 and 10 are independent of the notice and can proceed in parallel with 7 and 8 if desired.
+**Type consistency.** `ArchiveOutcome` has four values throughout. `archived(String)` is defined in T2, used in T5 and T8. `ArchivedNotice.SLOT`/`.KEY` are defined once in T6 and used in T2 (release) and T7 (claim). `NotifyArchived`'s five components and `ArchivedNotified`'s three are identical across T6, T7, T8. Every accessor now matches the verified list at the top of this document.
