@@ -32,7 +32,7 @@ class ReviewProjectionPriorRunIT {
 
     /**
      * Conversation activity (a reply becoming visible, a follow-up's cost landing) writes
-     * appendEvent/recordLlmCall/bumpTurn but none of those touch review_status — without a
+     * appendEvent/bumpTurn but none of those touch review_status — without a
      * dedicated bump, the dashboard's live feed (keyed off updated_at) never learns about it.
      */
     @Test
@@ -106,7 +106,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "aaa111", "http://x", "github", "reviewing", 0);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
-                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+                "summary", ModelUsage.of("m", 1, 1)), 4);
         threads.markFindingThread(reviewId, new ThreadRef("thread-9"), "src/A.java", 7);
         projection.recordPosted(reviewId, "aaa111", "sum-1");
 
@@ -130,7 +130,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c40", "http://x", "github", "reviewing", 0);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
-                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+                "summary", ModelUsage.of("m", 1, 1)), 4);
         threads.markFindingThread(reviewId, new ThreadRef("3610391801"), "src/A.java", 7);
         threads.markFindingThread(reviewId, new ThreadRef("3648554983"), "src/A.java", 7);
         projection.recordPosted(reviewId, "c40", "sum-40");
@@ -152,7 +152,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c43", "http://x", "github", "reviewing", 0);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
-                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+                "summary", ModelUsage.of("m", 1, 1)), 4);
         threads.markFindingThread(reviewId, new ThreadRef("bot-finding-thread"), "src/A.java", 7);
         // Written LATER, so it wins the loc index on insertion order alone.
         threads.markThreadLocation(reviewId, new ThreadRef("human-thread"), "src/A.java", 7);
@@ -177,7 +177,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c41", "http://x", "gitlab", "reviewing", 0);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
-                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+                "summary", ModelUsage.of("m", 1, 1)), 4);
         // Deliberately ordered so that sorting the refs as text picks the WRONG (older) one.
         threads.markFindingThread(reviewId, new ThreadRef("discussion-aaa1"), "src/A.java", 7);
         threads.markFindingThread(reviewId, new ThreadRef("discussion-zzz9"), "src/A.java", 7);
@@ -195,7 +195,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "new111", "http://x", "github", "reviewing", 0);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/A.java", new LineRange(7, 7), Severity.MAJOR, "leak", null)),
-                "summary", new ModelUsage("m", 1, 1, 1)), 4);
+                "summary", ModelUsage.of("m", 1, 1)), 4);
 
         projection.recordPosted(reviewId, "stale00", "sum-X");
         assertTrue(projection.priorRunFor(reviewId).isEmpty());
@@ -297,7 +297,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c2", "http://x", "github", "reviewing", 0);
         ReviewResult result = new ReviewResult(
                 List.of(new Finding("src/New.java", new LineRange(3, 3), Severity.MINOR, "new issue", null)),
-                "summary", new ModelUsage("m", 1, 1, 1));
+                "summary", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result, 4);
 
         List<FindingVerdict> verdicts = List.of(
@@ -324,7 +324,7 @@ class ReviewProjectionPriorRunIT {
         String reviewId = "review::ws/prior-run-it#10";
         projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 10L,
                 "t", "a", "aid", "src", "dst", "c9", "http://x", "github", "reviewing", 0);
-        ReviewResult result = new ReviewResult(List.of(), "summary", new ModelUsage("m", 1, 1, 1));
+        ReviewResult result = new ReviewResult(List.of(), "summary", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result, 4);
 
         // Old.java was renamed to New.java by the follow-up commit; the reconcile call's verdict
@@ -353,7 +353,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c3", "http://x", "github", "reviewing", 0);
         ReviewResult result = new ReviewResult(
                 List.of(new Finding("src/New.java", new LineRange(3, 3), Severity.MINOR, "new issue", null)),
-                "summary", new ModelUsage("m", 1, 1, 1));
+                "summary", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result, 4);
 
         List<FindingVerdict> verdicts = List.of(
@@ -419,7 +419,7 @@ class ReviewProjectionPriorRunIT {
                 List.of(
                         new Finding("src/Dup.java", new LineRange(4, 4), Severity.MAJOR, "first issue", null),
                         new Finding("src/Dup.java", new LineRange(4, 4), Severity.MINOR, "second issue", null)),
-                "summary", new ModelUsage("m", 1, 1, 1));
+                "summary", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result, 4);
         projection.recordOpenFindings(reviewId, result, List.of(), List.of());
         projection.recordPosted(reviewId, "c11", "sum");
@@ -468,7 +468,7 @@ class ReviewProjectionPriorRunIT {
                 List.of(
                         new Finding("src/Legacy.java", new LineRange(9, 9), Severity.MAJOR, "legacy first", null),
                         new Finding("src/Legacy.java", new LineRange(9, 9), Severity.MINOR, "legacy second", null)),
-                "summary", new ModelUsage("m", 1, 1, 1));
+                "summary", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result, 4);
         projection.recordPosted(reviewId, "c12", "sum");
 
@@ -492,7 +492,7 @@ class ReviewProjectionPriorRunIT {
                 List.of(
                         new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MAJOR, "issue A", null),
                         new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MINOR, "issue B", null)),
-                "summary1", new ModelUsage("m", 1, 1, 1));
+                "summary1", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result1, 4);
         projection.recordOpenFindings(reviewId, result1, List.of(), List.of());
         projection.recordPosted(reviewId, "c13", "sum1");
@@ -514,7 +514,7 @@ class ReviewProjectionPriorRunIT {
                 List.of(
                         new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MAJOR, "issue A", null),
                         new Finding("src/Idempotent.java", new LineRange(5, 5), Severity.MINOR, "issue B", null)),
-                "summary2", new ModelUsage("m", 1, 1, 1));
+                "summary2", ModelUsage.of("m", 1, 1));
         projection.recordOutcome(reviewId, result2, 4);
 
         List<FindingVerdict> verdicts = List.of(
@@ -535,17 +535,17 @@ class ReviewProjectionPriorRunIT {
                 "round 2: re-merging the same constituents must yield the identical message (idempotent)");
     }
 
+    /**
+     * Cost is asserted against the ledger in a later task (roadmap 11) — {@code recordOutcome} no
+     * longer stores it and the per-call ledger writer ({@code recordCharges}) doesn't exist yet, so
+     * this only exercises the reconciliation half of the old cumulative-cost test.
+     */
     @Test
-    void listSummaryShowsCumulativeCostAndOpenReconciledFindings() {
+    void listSummaryShowsOpenReconciledFindings() {
         String reviewId = "review::ws/list-recon-it#1";
         projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 1L,
                 "t", "a", "aid", "src", "dst", "c2", "http://x", "github", "completed", 6);
-        // last run: 0 new findings, its own cost overwrites cost_millicents
-        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum",
-                new ModelUsage("m", 1, 1, 738)), 6);
-        projection.recordLlmCall(reviewId, "review", new ModelUsage("m", 1, 1, 2189));
-        projection.recordLlmCall(reviewId, "review", new ModelUsage("m", 1, 1, 738));
-        projection.recordLlmCall(reviewId, "reconcile", new ModelUsage("m", 1, 1, 965));
+        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum", ModelUsage.of("m", 1, 1)), 6);
         // reconciliation carries one STILL_OPEN critical
         projection.recordReconciliation(reviewId,
                 List.of(new FindingVerdict("t-1", "src/A.java", 12,
@@ -554,7 +554,6 @@ class ReviewProjectionPriorRunIT {
 
         ReviewSummary summary = projection.listSummaries().stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
-        assertEquals(2189 + 738 + 965, summary.costMillicents(), "cumulative across all LLM calls");
         assertEquals(1, summary.findings(), "one still-open reconciliation finding");
         assertEquals(1, summary.blockerCount(), "the still-open critical");
     }
@@ -564,8 +563,7 @@ class ReviewProjectionPriorRunIT {
         String reviewId = "review::ws/list-recon-it#2";
         projection.registerHeader(reviewId, new RepoRef("ws", "list-recon-it"), 2L,
                 "t", "a", "aid", "src", "dst", "c3", "http://x", "github", "completed", 6);
-        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum",
-                new ModelUsage("m", 1, 1, 100)), 6);
+        projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum", ModelUsage.of("m", 1, 1)), 6);
         // all prior findings resolved
         projection.recordReconciliation(reviewId,
                 List.of(new FindingVerdict("t-9", "src/B.java", 3,
@@ -583,12 +581,11 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c1", "http://x", "github", "completed", 6);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/C.java", new LineRange(4, 4), Severity.BLOCKER, "leak", null)),
-                "sum", new ModelUsage("m", 1, 1, 500)), 6);
+                "sum", ModelUsage.of("m", 1, 1)), 6);
         ReviewSummary summary = projection.listSummaries().stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertEquals(1, summary.findings());
         assertEquals(1, summary.blockerCount());
-        assertEquals(500, summary.costMillicents(), "no llm_call rows -> falls back to cost_millicents");
     }
 
     /**
@@ -603,7 +600,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c4b", "http://x", "github", "completed", 6);
         // last run found no new findings...
         projection.recordOutcome(reviewId, new ReviewResult(List.of(), "sum",
-                new ModelUsage("m", 1, 1, 100)), 6);
+                ModelUsage.of("m", 1, 1)), 6);
         // ...but reconciliation carries one STILL_OPEN critical from a prior run.
         projection.recordReconciliation(reviewId,
                 List.of(new FindingVerdict("t-cf", "src/A.java", 5,
@@ -635,7 +632,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c7", "http://x", "github", "completed", 6);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/New.java", new LineRange(9, 9), Severity.MAJOR, "raised now", null)),
-                "sum", new ModelUsage("m", 1, 1, 0)), 6);
+                "sum", ModelUsage.of("m", 1, 1)), 6);
         projection.recordReconciliation(reviewId,
                 List.of(new FindingVerdict("t-old", "src/Old.java", 3,
                         FindingVerdict.Status.STILL_OPEN, "still there")),
@@ -661,7 +658,7 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c8", "http://x", "github", "completed", 6);
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/Same.java", new LineRange(3, 3), Severity.MAJOR, "same spot", null)),
-                "sum", new ModelUsage("m", 1, 1, 0)), 6);
+                "sum", ModelUsage.of("m", 1, 1)), 6);
         // Null thread ref on both sides, so each keys by location and they collide — the case where
         // a carried finding and a freshly-raised one describe the same anchor.
         projection.recordReconciliation(reviewId,

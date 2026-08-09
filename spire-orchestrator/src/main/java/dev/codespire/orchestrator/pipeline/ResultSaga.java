@@ -19,6 +19,11 @@ import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
+import dev.codespire.orchestrator.llm.CallRefs;
+import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeKind;
+import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -75,10 +80,14 @@ public class ResultSaga {
     dev.codespire.orchestrator.llm.WorkerLlmCredentials workerLlmCredentials;
 
     @Inject
-    dev.codespire.orchestrator.context.WorkerContextCredentials workerContextCredentials;
+    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
+
+    /** Which run of a review a charge belongs to — a re-run spends again on the same commit. */
+    @Inject
+    dev.codespire.orchestrator.llm.ReviewRuns runs;
 
     @Inject
-    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
+    dev.codespire.orchestrator.context.WorkerContextCredentials workerContextCredentials;
 
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
@@ -136,16 +145,14 @@ public class ResultSaga {
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
-                // GenerateReview also needs the LLM credential (ADR-018): resolve the
-                // global-default provider and pack it encrypted; skip if none is set.
+                // GenerateReview also needs the LLM credential (ADR-018): resolve the global-default
+                // provider and pack it encrypted. The resolve also answers whether the model can be
+                // priced — the pre-spend guard, which arrives with the credential so it cannot be
+                // skipped here.
                 String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
-                java.util.Optional<String> llmCred = workerLlmCredentials.packDefault(workspace);
-                if (llmCred.isEmpty()) {
-                    timeline.record("result", "skipped:GenerateReview", e.reviewId(),
-                            "no default LLM provider configured");
-                    projection.setNote(e.reviewId(),
-                            "No default LLM provider configured — register one in Settings → LLM.");
-                    LOG.warnf("Skipping GenerateReview for %s — no default LLM provider set", e.reviewId());
+                DefaultLlm llm = workerLlmCredentials.resolveDefault(workspace);
+                if (!llm.isSpendable()) {
+                    skipUnspendable(e.reviewId(), "GenerateReview", llm);
                     return;
                 }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
@@ -155,18 +162,13 @@ public class ResultSaga {
                         promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE);
                 emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.contextRef(), 1, null, scmCred, llmCred.get(), prior, reviewPrompt, reconcilePrompt));
+                        e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
             case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                         e.result().findings().size() + " findings");
-                // Price the token usage against the model catalog (roadmap 11) before recording.
-                ReviewResult pricedResult = priced(e.result());
-                projection.recordOutcome(e.reviewId(), pricedResult, ReviewProjection.STAGE_COMMENTS);
-                projection.recordLlmCall(e.reviewId(), "review", pricedResult.usage());
-                if (e.reconcileUsage() != null) {
-                    projection.recordLlmCall(e.reviewId(), "reconcile", priceUsage(e.reconcileUsage()));
-                }
+                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+                chargeGeneratedCalls(e);
                 java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
                 String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
                 if (!e.verdicts().isEmpty()) {
@@ -178,7 +180,7 @@ public class ResultSaga {
                 // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
                 // posted_findings_json semantics unchanged since the two columns hold the same
                 // findings in that case).
-                projection.recordOpenFindings(e.reviewId(), pricedResult, e.verdicts(),
+                projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
                         prior.map(PriorRun::findings).orElse(List.of()));
                 if (e.result().truncated()) {
                     projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
@@ -230,9 +232,12 @@ public class ResultSaga {
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
                         Previews.of(e.answerText()), e.threadRef().value());
-                // Price + record the follow-up's LLM call for the cost breakdown (roadmap 11).
                 if (e.usage() != null) {
-                    projection.recordLlmCall(e.reviewId(), "followup", priceUsage(e.usage()));
+                    // Thread AND triggering comment: the worker claims on the pair, so a follow-up's
+                    // ledger identity has to be the pair too or turn 2 is dropped as turn 1's redelivery.
+                    charge(new ChargeRequest(e.reviewId(),
+                            CallRefs.followUpSlot(e.threadRef().value(), e.triggeringCommentId()),
+                            ChargeKind.FOLLOWUP), e.usage());
                 }
                 projection.touch(e.reviewId());
             }
@@ -374,6 +379,17 @@ public class ResultSaga {
     }
 
     /**
+     * A paid command that will not be issued, said out loud: timeline note, dashboard note and a WARN.
+     * The dashboard note is what turns "nothing happened" into "here is what to fix" — the same shape
+     * as {@link #emitWithCredential}'s missing-provider skip.
+     */
+    private void skipUnspendable(String reviewId, String phase, DefaultLlm llm) {
+        timeline.record("result", "skipped:" + phase, reviewId, llm.detail());
+        projection.setNote(reviewId, llm.note());
+        LOG.warnf("Skipping %s for %s — %s", phase, reviewId, llm.detail());
+    }
+
+    /**
      * Resolve the workspace's provider credential (ADR-015) and emit the built
      * command. If the provider was disabled/removed mid-review the credential is
      * absent, so the command is skipped with a visible note rather than emitted
@@ -392,6 +408,58 @@ public class ResultSaga {
             return;
         }
         commands.emit(build.apply(cred.get()));
+    }
+
+    /**
+     * Which paid call this is. {@code slot} is {@link CallRefs#reviewSlot} for a review or reconcile
+     * call and {@link CallRefs#followUpSlot} for a follow-up — between them these carry the worker's
+     * whole idempotency identity, so the ref derived from one is stable across redelivery and distinct
+     * across genuinely separate calls.
+     */
+    private record ChargeRequest(String reviewId, String slot, ChargeKind kind) {
+    }
+
+    /**
+     * The paid calls one {@code ReviewGenerated} stands for: the review call, and the ADR-019 reconcile
+     * call when a follow-up commit triggered one. Both share the run-discriminated slot, since both
+     * were made for this run of this commit.
+     */
+    private void chargeGeneratedCalls(ReviewGenerated e) {
+        ModelUsage reviewUsage = e.result().usage();
+        if (reviewUsage == null) {
+            // Guarded like the two sibling sites below, which is what this one was missing:
+            // charge() dereferences the usage for the model name, so a usage-less result
+            // NPE'd the WHOLE handler into cs.dlq — findings, verdicts and PostComments with
+            // it. Not charged either: llm_charge.model is NOT NULL and there is no model to
+            // name, and a blank one would feed latestModelFor and render the review's real
+            // spend as "no charges recorded yet".
+            //
+            // WARN rather than silence because this cannot happen by design:
+            // TokenUsageMapper always answers a ModelUsage (a null input yields an
+            // unreconciled TOTAL), so a null here means the worker emitted a result with no
+            // accounting at all — a defect upstream, not a case to absorb. Recording nothing
+            // quietly would hide it behind an empty cost card.
+            LOG.warnf("No usage on ReviewGenerated for %s — no charge recorded; the worker"
+                    + " emitted a result without token accounting", e.reviewId());
+        }
+        if (reviewUsage == null && e.reconcileUsage() == null) {
+            return; // nothing was paid for, so do not spend a query resolving which run this is
+        }
+        String slot = CallRefs.reviewSlot(e.commit(), runs.currentRun(e.reviewId()));
+        if (reviewUsage != null) {
+            charge(new ChargeRequest(e.reviewId(), slot, ChargeKind.REVIEW), reviewUsage);
+        }
+        if (e.reconcileUsage() != null) {
+            charge(new ChargeRequest(e.reviewId(), slot, ChargeKind.RECONCILE), e.reconcileUsage());
+        }
+    }
+
+    /** Price a call and append its lines. */
+    private void charge(ChargeRequest request, ModelUsage usage) {
+        List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
+        projection.recordCharges(new ChargeCall(request.reviewId(),
+                CallRefs.of(request.reviewId(), request.slot(), request.kind()),
+                request.kind(), usage.model(), lines));
     }
 
     /** ADR-013: a superseded/cancelled run's results never trigger the next command. */
@@ -417,30 +485,6 @@ public class ResultSaga {
             return ReviewProjection.STAGE_COMMENTS;
         }
         return ReviewProjection.STAGE_REVIEW; // generate / llm / unknown
-    }
-
-    /** Fill in the review cost by pricing the token usage against the model catalog (roadmap 11). */
-    private ReviewResult priced(ReviewResult result) {
-        ModelUsage u = result.usage();
-        if (u == null || u.model() == null) {
-            return result;
-        }
-        long cost = llmModels.costMillicents(u.model(), u.tokensIn(), u.tokensOut());
-        if (cost == u.costMillicents()) {
-            return result;
-        }
-        // Preserve the truncated flag when re-pricing (4-arg constructor).
-        return new ReviewResult(result.findings(), result.summary(),
-                new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(), cost), result.truncated());
-    }
-
-    /** Price a follow-up call's token usage against the model catalog (mirrors {@link #priced(ReviewResult)}). */
-    private ModelUsage priceUsage(ModelUsage u) {
-        if (u == null || u.model() == null) {
-            return u;
-        }
-        return new ModelUsage(u.model(), u.tokensIn(), u.tokensOut(),
-                llmModels.costMillicents(u.model(), u.tokensIn(), u.tokensOut()));
     }
 
     private String reviewIdOf(IntegrationEvent event) {

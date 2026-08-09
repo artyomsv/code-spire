@@ -47,9 +47,22 @@ class AttentionQueriesTest {
         }
     }
 
+    /**
+     * The model name every {@code llm_provider} fixture here uses, deliberately NOT the repo-wide
+     * {@code TEST-MODEL}. Whether the default provider's model is priceable now decides a row, and
+     * priceability lives in {@code llm_model} — a table other suites also write. Sharing a name would
+     * make this class's outcome depend on which suite ran first.
+     */
+    private static final String MODEL = "TEST-ATTENTION-MODEL";
+
     @BeforeEach
     void reset() {
         sql("DELETE FROM llm_provider");
+        // Providers before the catalog they reference, matching the in-use guard's own direction.
+        // Reset rather than tolerated: an uncatalogued model is unpriceable BY DESIGN, so a stray
+        // catalog row left by an earlier suite would silently decide MODEL_NOT_PRICEABLE here.
+        sql("DELETE FROM llm_model_rate");
+        sql("DELETE FROM llm_model");
         sql("DELETE FROM provider_author");
         sql("DELETE FROM scm_provider");
         sql("DELETE FROM context_provider");
@@ -68,12 +81,78 @@ class AttentionQueriesTest {
         assertFalse(found.contains("LLM_DEFAULT_MISSING"), found.toString());
     }
 
-    /** A fully configured system must produce NOTHING. This is the unconditional-firing guard. */
+    /**
+     * A fully configured system must produce NOTHING. This is the unconditional-firing guard.
+     *
+     * <p>"Configured" now includes a priceable model: the pre-spend guard refuses to call an
+     * unpriceable one, so a deployment without rates is not configured however complete its registries
+     * look. Catalogue-with-rates is what the operator does, so it is what the fixture does.
+     */
     @Test
     void aFullyConfiguredSystemReportsNothing() {
+        catalogueMeteredModelWithRates();
         insertLlmProvider("TEST-llm", true, true);
         insertScmProvider("TEST-scm", "acct-1", "test-bot");
         assertEquals(List.of(), queries.collect());
+    }
+
+    /**
+     * The state a V30 upgrade GUARANTEES for any model that carried a legacy zero price: catalogued,
+     * METERED, and with no rates, because the migration refuses to invent the numbers the old coercion
+     * destroyed. Every review then stops at the pre-spend guard and sits in {@code REVIEWING} — so
+     * without this row the bell is green until {@code REVIEW_STUCK} fires minutes later, pointing at
+     * the symptom instead of the cause.
+     */
+    @Test
+    void aMeteredDefaultModelWithNoRatesIsReportedAsBlocking() {
+        catalogueModel("METERED");
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "MODEL_NOT_PRICEABLE".equals(v.code()))
+                .findFirst().orElseThrow(() -> new AssertionError("no pricing row in " + queries.collect()));
+
+        assertEquals(AttentionView.Severity.BLOCKING, row.severity(),
+                "no review can run at all, which is what BLOCKING means on this panel");
+        assertEquals(MODEL, row.subject(), "the row must name the model an operator has to go fix");
+        assertEquals("/settings/llm", row.action());
+        assertNull(row.dismiss(), "fixing the rates is what clears this — it must not be dismissable");
+    }
+
+    /** An uncatalogued model has no rates to find, so it is unpriceable for the same reason. */
+    @Test
+    void anUncataloguedDefaultModelIsReportedAsBlocking() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        assertTrue(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
+    }
+
+    /**
+     * An UNMETERED model is priceable — its cost is an asserted zero, not an unknown — so a
+     * self-hosted deployment must not be nagged. This is the row's own zero-vs-unknown distinction.
+     */
+    @Test
+    void anUnmeteredDefaultModelRaisesNoPricingRow() {
+        catalogueModel("UNMETERED");
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
+    }
+
+    /**
+     * Only the DEFAULT provider's model matters: it is the one every review is brokered against, and
+     * flagging a non-default provider's model would report a problem no review can currently hit.
+     */
+    @Test
+    void aNonDefaultProvidersUnpriceableModelIsNotReported() {
+        catalogueMeteredModelWithRates();
+        insertLlmProvider("TEST-llm-default", true, true);
+        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature, enabled, "
+                + "is_default) VALUES ('" + UUID.randomUUID() + "', 'TEST-llm-other', 'openai', "
+                + "'https://llm.example.invalid', 'TEST-KEY', 'TEST-UNCATALOGUED-MODEL', 0.0, TRUE, FALSE)");
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
     }
 
     /** An enabled provider exists but nothing is marked default, so brokering cannot pick one. */
@@ -399,8 +478,27 @@ class AttentionQueriesTest {
     private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
         sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, model, temperature, enabled, is_default) "
                 + "VALUES ('" + UUID.randomUUID() + "', '" + name + "', 'openai', "
-                + "'https://llm.example.invalid', 'TEST-KEY', 'TEST-MODEL', 0.0, "
+                + "'https://llm.example.invalid', 'TEST-KEY', '" + MODEL + "', 0.0, "
                 + enabled + ", " + isDefault + ")");
+    }
+
+    /** Catalogue {@link #MODEL} in the given pricing mode, with no rates. */
+    private void catalogueModel(String pricingMode) {
+        sql("INSERT INTO llm_model (id, type, name, label, pricing_mode) VALUES ('"
+                + UUID.randomUUID() + "', 'openai', '" + MODEL + "', '" + MODEL + "', '"
+                + pricingMode + "')");
+    }
+
+    /**
+     * A metered model an operator has finished configuring: both rates the pricer requires are present.
+     * Obviously-synthetic rates — one millicent per million tokens is not any vendor's price.
+     */
+    private void catalogueMeteredModelWithRates() {
+        catalogueModel("METERED");
+        sql("INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million) "
+                + "SELECT id, 'INPUT', 1 FROM llm_model WHERE name = '" + MODEL + "'");
+        sql("INSERT INTO llm_model_rate (model_id, token_type, rate_millicents_per_million) "
+                + "SELECT id, 'OUTPUT', 1 FROM llm_model WHERE name = '" + MODEL + "'");
     }
 
     private void insertScmProvider(String name, String botAccountId, String botUsername) {

@@ -43,6 +43,9 @@ public class LlmProviderResource {
     @Inject
     LlmKeyValidator validator;
 
+    @Inject
+    LlmModelRegistry models;
+
     /** Mirrors ProviderResource: fail-closed https+public-address check, relaxed only in %dev/%test. */
     @ConfigProperty(name = "spire.security.allow-insecure-provider-urls")
     boolean allowInsecureProviderUrls;
@@ -145,40 +148,58 @@ public class LlmProviderResource {
 
     private void validate(LlmProviderInput in, boolean creating) {
         if (in == null) {
-            throw new BadRequestException("LLM provider body is required");
+            throw badRequest("LLM provider body is required");
         }
         requireField(in.name(), "name");
         requireField(in.type(), "type");
         requireField(in.baseUrl(), "baseUrl");
         requireField(in.model(), "model");
         if (!TYPES.contains(in.type())) {
-            throw new BadRequestException("Unsupported LLM provider type '" + in.type()
+            throw badRequest("Unsupported LLM provider type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
+        }
+        // A model outside the catalog has no rates, so every call this provider makes would be
+        // recorded unpriced. Refuse the configuration rather than discover it per review.
+        //
+        // This duplicates LlmProviderRegistry.requirePriceableModel — deliberately, not redundantly.
+        // The registry throws a plain IllegalArgumentException, which no ExceptionMapper in this
+        // module translates, so without this check the same refusal would answer 500 instead of 400.
+        // Keep this until that mapper exists (tracked in techdebt) — do not delete it as duplication.
+        if (!models.isPriceable(in.model())) {
+            throw badRequest("Model '" + in.model() + "' is not in the catalog with usable"
+                    + " pricing. Add it under Settings -> LLM -> Models first, with a rate for input and"
+                    + " output tokens — or mark it UNMETERED if it is self-hosted and costs nothing.");
         }
         // SSRF guard: the baseUrl is dereferenced server-side (key ping) and later by the worker.
         PublicHttpsGuard.validate(in.baseUrl(), allowInsecureProviderUrls);
         if (in.temperature() != null && (in.temperature() < 0 || in.temperature() > 2)) {
-            throw new BadRequestException("temperature must be between 0 and 2");
+            throw badRequest("temperature must be between 0 and 2");
         }
         if (in.maxTokens() != null && in.maxTokens() < 1) {
-            throw new BadRequestException("maxTokens must be a positive integer");
+            throw badRequest("maxTokens must be a positive integer");
         }
         if (creating && (in.apiKey() == null || in.apiKey().isBlank())) {
-            throw new BadRequestException("apiKey is required");
+            throw badRequest("apiKey is required");
         }
     }
 
     private static void requireField(String value, String name) {
         if (value == null || value.isBlank()) {
-            throw new BadRequestException(name + " is required");
+            throw badRequest(name + " is required");
         }
+    }
+
+    // BadRequestException(String) only sets the exception's own message, not the HTTP response
+    // body — the entity must be set explicitly so callers see the actionable errors.
+    private static BadRequestException badRequest(String message) {
+        return new BadRequestException(Response.status(Response.Status.BAD_REQUEST).entity(message).build());
     }
 
     private static UUID uuid(String id) {
         try {
             return UUID.fromString(id);
         } catch (IllegalArgumentException e) {
-            throw new BadRequestException("Invalid LLM provider id");
+            throw badRequest("Invalid LLM provider id");
         }
     }
 }

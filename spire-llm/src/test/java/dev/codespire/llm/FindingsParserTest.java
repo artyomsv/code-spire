@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FindingsParserTest {
 
-    private static final ModelUsage USAGE = new ModelUsage("test-model", 10, 5, 0);
+    private static final ModelUsage USAGE = ModelUsage.of("test-model", 10, 5);
 
     @Test
     void parsesCleanJson() {

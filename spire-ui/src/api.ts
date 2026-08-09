@@ -33,11 +33,17 @@ export interface ReviewSummary {
   findings: number;
   blockerCount: number; // number of blocker-severity (critical) findings — drives the outcome badge
   carriedOverFindings: number; // how many of `findings` were already open before this run
-  costMillicents: number; // review cost (1/100,000 dollar); 0 = unpriced/uncatalogued model
+  // Sum of the charge lines that COULD be priced (1/100,000 dollar). 0 means either no charge has
+  // landed yet OR every priced charge was an asserted UNMETERED zero — `unpricedCalls` is what tells
+  // those apart from "some calls have no known price yet"; never conflate a 0 here with unpriced.
+  costMillicents: number;
   model: string; // model that produced the review, e.g. "gemini-3.1-pro-preview" ('' if none yet)
   llmType: string; // LLM vendor from the catalog: 'openai' | 'anthropic' | 'gemini' | '' (uncatalogued)
   updatedAt: string; // ISO-8601
   answering?: boolean; // transient: true while the bot is composing a follow-up reply
+  // Distinct calls the ledger could not price — lets the UI tell "zero spend" apart from "some
+  // calls have no known price yet" (never conflated into `costMillicents`).
+  unpricedCalls: number;
 }
 
 export interface Finding {
@@ -91,23 +97,37 @@ export async function fetchThreadMessages(
   return res.json();
 }
 
-export interface Usage {
-  model: string;
-  prompt: string;
-  completion: string;
-  cost: string;
-  latency: string;
-}
+/** The neutral token-billing dimensions. Mirrors the server's TokenType. TOTAL is the degraded
+ *  case — an unreconciled call's whole token count — and can never carry a rate. */
+export type TokenType = 'INPUT' | 'CACHED_INPUT' | 'CACHE_WRITE' | 'OUTPUT' | 'REASONING' | 'TOTAL';
 
-/** One LLM call in a review's lifetime — the initial review generation, a conversation follow-up,
- *  or a re-review reconciliation pass. */
-export interface LlmCall {
-  kind: string; // 'review' | 'followup' | 'reconcile'
+/** How a model's tokens are costed. UNKNOWN is a runtime outcome, never an operator's choice. */
+export type PricingMode = 'METERED' | 'UNMETERED' | 'UNKNOWN';
+
+/** Which paid call a charge belongs to. Mirrors the server's ChargeKind; stored and sent as the name. */
+export type ChargeKind = 'REVIEW' | 'RECONCILE' | 'FOLLOWUP';
+
+/**
+ * One token dimension of one LLM call, priced. `costMillicents` is null exactly when `pricingMode` is
+ * 'UNKNOWN' — never 0, which would be indistinguishable from an UNMETERED model's asserted zero.
+ *
+ * The per-token rate is not sent: a rate is operator-entered configuration, and configuration reads are
+ * admin-only (ADR-022), while this payload is served to viewers. A cost without its rate is still
+ * honest — `pricingMode` says which world the model is in — and the rate remains on the ledger row and
+ * on the admin-only Models page.
+ *
+ * `callRef` is the ledger's own call identity — group by it, not by `pricedAt`, which two calls of one
+ * review can share.
+ */
+export interface ChargeLineView {
+  callRef: string;
+  kind: ChargeKind;
   model: string;
-  tokensIn: number;
-  tokensOut: number;
-  costMillicents: number;
-  createdAt?: string; // ISO-8601 timestamp of when the call happened
+  tokenType: TokenType;
+  tokens: number;
+  costMillicents: number | null;
+  pricingMode: PricingMode;
+  pricedAt: string; // ISO-8601
 }
 
 export interface ReviewEvent {
@@ -123,7 +143,14 @@ export interface ReviewEvent {
   loc?: string;
 }
 
-export interface ReviewDetail extends ReviewSummary {
+// The detail endpoint's Java record omits four ReviewSummary components — model, llmType,
+// costMillicents, carriedOverFindings are list-only projections the detail payload never sends.
+// `extends ReviewSummary` used to declare them anyway, so a component could read one off a detail
+// payload, get `undefined`, and render as if the field were simply absent/zero — which is exactly
+// how `unpricedCalls` shipped as a silent `undefined` before it was wired into the record. Omit<>
+// makes the next such field a compile error instead of a repeat of that.
+export interface ReviewDetail
+  extends Omit<ReviewSummary, 'model' | 'llmType' | 'costMillicents' | 'carriedOverFindings'> {
   // findings/blockerCount (from ReviewSummary) stay this RUN's raw counts — the findings card's
   // "+ N more" math depends on that meaning. openFindings/openBlockers are the reconciled
   // currently-open counts (this run's new findings + still-open/unchanged reconciliation,
@@ -135,8 +162,7 @@ export interface ReviewDetail extends ReviewSummary {
   timings: string[]; // length 6, e.g. "0.8s" or ""
   findingsList: Finding[];
   reconciliation?: ReconciliationItem[]; // re-review verdicts against the prior run's findings
-  usage: Usage | null;
-  llmCalls: LlmCall[]; // every LLM call for this review, in call order (review generation + follow-ups)
+  chargeLines: ChargeLineView[]; // every priced token dimension of every LLM call, oldest first
   note: string | null; // observe/stalled/superseded explanation, may be empty
   errorDetail: string | null; // technical error behind a terminal failure (e.g. the LLM provider's message)
   events: ReviewEvent[];
@@ -695,8 +721,8 @@ export interface LlmModelView {
   type: LlmType;
   name: string; // wire model id, e.g. gpt-4o
   label: string;
-  inputPriceMillicentsPerMillion: number; // millicents per 1M input tokens
-  outputPriceMillicentsPerMillion: number;
+  pricingMode: Exclude<PricingMode, 'UNKNOWN'>; // UNKNOWN is a runtime outcome, never a catalog entry
+  rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>; // millicents per 1M tokens; empty under UNMETERED
   outputTokenParam: OutputTokenParam; // max_tokens (chat) vs max_completion_tokens (reasoning)
   supportsTemperature: boolean; // false = omit temperature (reasoning models)
   reasoningEffort: string | null; // low | medium | high, or null
@@ -709,8 +735,8 @@ export interface LlmModelInput {
   type: LlmType;
   name: string;
   label: string;
-  inputPriceMillicentsPerMillion: number;
-  outputPriceMillicentsPerMillion: number;
+  pricingMode: Exclude<PricingMode, 'UNKNOWN'>;
+  rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>;
   outputTokenParam?: OutputTokenParam;
   supportsTemperature?: boolean;
   reasoningEffort?: string | null;

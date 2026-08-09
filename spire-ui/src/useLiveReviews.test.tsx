@@ -77,6 +77,7 @@ function summary(id: string, updatedAt: string, over: Partial<ReviewSummary> = {
     model: '',
     llmType: '',
     updatedAt,
+    unpricedCalls: 0,
     ...over,
   };
 }

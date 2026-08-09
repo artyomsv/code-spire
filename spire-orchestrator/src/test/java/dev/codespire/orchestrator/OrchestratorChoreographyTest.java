@@ -67,6 +67,9 @@ class OrchestratorChoreographyTest {
     @Inject
     dev.codespire.orchestrator.llm.LlmProviderRegistry llmProviders;
 
+    @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
+
     private KafkaProducer<String, String> producer;
 
     /**
@@ -94,9 +97,18 @@ class OrchestratorChoreographyTest {
         }
         // GenerateReview needs a default LLM provider (ADR-018); the worker runs in
         // stub mode here, but the orchestrator still packs the default's credential.
+        // The model must also be catalogued — ResultSaga's pre-spend guard now refuses to start a
+        // review it cannot price, so an uncatalogued model would make this test's own GenerateReview
+        // expectation stall the same way an operator's misconfiguration would. UNMETERED, since this
+        // is a fake test model, not a real vendor whose rates would need entering.
+        if (llmModels.list().stream().noneMatch(m -> m.name().equals("TEST-MODEL"))) {
+            llmModels.create(new dev.codespire.orchestrator.llm.LlmModelInput(
+                    "openai", "TEST-MODEL", "TEST-MODEL", "UNMETERED", Map.of(),
+                    null, null, null, null, true));
+        }
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(
-                    "test-llm", "openai", "http://localhost", "sk-test", "gpt-4o",
+                    "test-llm", "openai", "http://localhost", "sk-test", "TEST-MODEL",
                     0.2, null, true, true));
         }
     }
@@ -132,7 +144,7 @@ class OrchestratorChoreographyTest {
 
         // a STALE result for A arrives after the supersede -> dropped, no PostComments
         produce("cs.results", new IntegrationEvent.ReviewGenerated(REVIEW_ID, 77, COMMIT_A,
-                new ReviewResult(List.of(), "stale summary", new ModelUsage("m", 0, 0, 0))));
+                new ReviewResult(List.of(), "stale summary", ModelUsage.of("m", 0, 0))));
 
         // B's flow continues normally
         produce("cs.results", new IntegrationEvent.DiffFetched(REVIEW_ID, 77, COMMIT_B, 1, List.of("java"), 100, false, Set.of(), null));
@@ -144,7 +156,7 @@ class OrchestratorChoreographyTest {
         // finish B's run
         produce("cs.results", new IntegrationEvent.ContextAssembled(REVIEW_ID, 77, COMMIT_B, null, Set.of("RULES"), Set.of()));
         produce("cs.results", new IntegrationEvent.ReviewGenerated(REVIEW_ID, 77, COMMIT_B,
-                new ReviewResult(List.of(), "summary B", new ModelUsage("m", 0, 0, 0))));
+                new ReviewResult(List.of(), "summary B", ModelUsage.of("m", 0, 0))));
         // B: ContextAssembled -> GenerateReview (#6), ReviewGenerated -> PostComments (#7)
         List<String> all = expectCommands(7, "PostComments");
         assertTrue(all.stream().anyMatch(c -> c.contains("\"type\":\"PostComments\"") && c.contains(COMMIT_B)));

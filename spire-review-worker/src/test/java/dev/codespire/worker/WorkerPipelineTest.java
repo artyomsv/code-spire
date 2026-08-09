@@ -122,7 +122,7 @@ class WorkerPipelineTest {
         ReviewResult findings = new ReviewResult(
                 List.of(new Finding("src/Demo.java", new LineRange(2, 2), Severity.INFO,
                         "STUB finding: split test.", null)),
-                "STUB summary", new ModelUsage("stub-model", 0, 0, 0));
+                "STUB summary", ModelUsage.of("stub-model", 0, 0));
 
         sendCommand(new ActionCommand.PostComments(REVIEW_ID, REPO, 42, COMMIT, findings, cred()));
         List<String> results = consumeResults(5);

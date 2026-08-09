@@ -33,9 +33,28 @@ public class WorkerLlmCredentials {
     @Inject
     ObjectMapper mapper;
 
-    /** The encrypted default LLM credential bound to a workspace, or empty when no default is set. */
-    public Optional<String> packDefault(String workspace) {
-        return registry.resolveDefault().map(cfg -> pack(cfg, workspace));
+    /**
+     * The encrypted default LLM credential bound to a workspace, or the reason it must not be spent.
+     *
+     * <p>The priceability check lives HERE rather than at each emit site, because pricing happens only
+     * when the result comes back: this is the last point at which an unpriceable call can be prevented
+     * rather than merely reported, and a caller cannot take the credential without being told. The
+     * review path checked; the conversation path did not, so an upgraded deployment refused new reviews
+     * while an author replying in a live thread still made the bot spend.
+     *
+     * <p>An unpriceable model is refused BEFORE packing, so no credential is encrypted for a call that
+     * will not be made.
+     */
+    public DefaultLlm resolveDefault(String workspace) {
+        Optional<LlmProviderConfig> cfg = registry.resolveDefault();
+        if (cfg.isEmpty()) {
+            return DefaultLlm.noDefaultProvider();
+        }
+        String model = cfg.get().model();
+        if (!models.isPriceable(model)) {
+            return DefaultLlm.notPriceable(model);
+        }
+        return DefaultLlm.spendable(pack(cfg.get(), workspace), model);
     }
 
     private String pack(LlmProviderConfig cfg, String workspace) {

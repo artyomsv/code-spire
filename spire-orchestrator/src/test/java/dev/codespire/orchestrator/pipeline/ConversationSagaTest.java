@@ -15,6 +15,7 @@ import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -179,8 +180,8 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("llm-cred");
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
         saga.timeline = new TimelineBroadcaster() {
@@ -249,8 +250,8 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("llm-cred");
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
         saga.timeline = new TimelineBroadcaster() {
@@ -293,8 +294,8 @@ class ConversationSagaTest {
         ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("llm-cred");
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
         saga.projection = projectionWith(List.of(
@@ -316,8 +317,8 @@ class ConversationSagaTest {
         ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("llm-cred");
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
         saga.projection = new ReviewProjection() {
@@ -356,8 +357,8 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("llm-cred");
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
         saga.projection = new ReviewProjection() {
@@ -455,7 +456,7 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
+            public DefaultLlm resolveDefault(String workspace) {
                 throw new AssertionError("the cap notice is fixed text — it must not need an LLM credential");
             }
         };
@@ -509,8 +510,8 @@ class ConversationSagaTest {
         // The mention override takes the paid path, so this saga needs a working LLM credential.
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public Optional<String> packDefault(String workspace) {
-                return Optional.of("llm-cred");
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
 
@@ -520,6 +521,80 @@ class ConversationSagaTest {
                 assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.orElseThrow(),
                         "a direct mention past the cap is answered, not handed off again");
         assertTrue(answer.mentioned(), "the command records that a mention is what let this through");
+    }
+
+    // --- the pre-spend guard on the paid follow-up call ---
+
+    /**
+     * A follow-up is a paid call and had no priceability guard, while the review path refused one.
+     * ADR-023 argued this path was safe by construction — the registry refuses an unpriceable provider —
+     * but V30 creates rateless models directly in SQL, so an upgraded deployment refuses new reviews
+     * while an author replying in a live thread still makes the bot spend, up to the turn cap or
+     * unbounded once it is @-mentioned.
+     *
+     * <p>The refusal must be VISIBLE on both surfaces. Going quiet is the failure mode this project has
+     * already been burned by (the turn cap posted nothing and only noted it), so the timeline names the
+     * model and the dashboard note names the fix.
+     */
+    @Test
+    void anUnpriceableDefaultModelRefusesToAnswerAndSaysWhy() {
+        List<String> types = new ArrayList<>();
+        List<String> details = new ArrayList<>();
+        List<String> dashboardNotes = new ArrayList<>();
+        ConversationSaga saga = cappedThreadSaga(0, types);
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.notPriceable("TEST-RATELESS-MODEL");
+            }
+        };
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+                types.add(type);
+                details.add(detail);
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void setNote(String reviewId, String note) {
+                dashboardNotes.add(note);
+            }
+        };
+
+        Optional<ActionCommand> cmd = saga.planFollowUp(inlineReply(List.of()));
+
+        assertTrue(cmd.isEmpty(), "an unpriceable model must not produce a paid AnswerFollowUp");
+        assertTrue(types.contains("skipped:AnswerFollowUp"), "the skip belongs on the timeline");
+        assertTrue(details.stream().anyMatch(d -> d.contains("TEST-RATELESS-MODEL")),
+                "the note must name the model rather than just report a skip: " + details);
+        assertTrue(dashboardNotes.stream().anyMatch(n -> n.contains("Settings")),
+                "and the dashboard must name the fix: " + dashboardNotes);
+    }
+
+    /** No default provider at all takes the same visible path, not a silent one. */
+    @Test
+    void noDefaultLlmProviderRefusesToAnswerAndSaysWhy() {
+        List<String> types = new ArrayList<>();
+        List<String> dashboardNotes = new ArrayList<>();
+        ConversationSaga saga = cappedThreadSaga(0, types);
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.noDefaultProvider();
+            }
+        };
+        saga.projection = new ReviewProjection() {
+            @Override
+            public void setNote(String reviewId, String note) {
+                dashboardNotes.add(note);
+            }
+        };
+
+        assertTrue(saga.planFollowUp(inlineReply(List.of())).isEmpty());
+        assertTrue(types.contains("skipped:AnswerFollowUp"));
+        assertTrue(dashboardNotes.stream().anyMatch(n -> n.contains("Settings → LLM")),
+                "the operator has to be told which page fixes it: " + dashboardNotes);
     }
 
     @Test

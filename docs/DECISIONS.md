@@ -4,7 +4,172 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
-## ADR-022 — Operator auth is a cookie session per service, not a bearer token
+## ADR-023 — LLM cost is a charge-line ledger with snapshotted rates, and zero is a category
+
+**Context.** The pre-existing accounting turned *unknown* into *zero* in four places, each individually
+defensible: a blank price field defaulted to `0` in the UI, a `0` rate passed REST validation (which
+rejected only negatives), a registry coercion turned a missing rate into `0L`, and a `SQLException`
+during pricing lookup answered `0L` rather than propagating. None of the four was a bug in isolation —
+each layer's own logic was correct for what it alone could see. The result was a stored cost that could
+mean "this call was free," "the operator forgot to enter a price," or "the database blipped for a
+second," with nothing in the row to tell those apart. A fleet spend cap built on that ledger would
+install cleanly, look correct, and never fire for exactly the calls it exists to stop — the same failure
+shape as the LLM circuit breaker once recording a failed future as a success (debt wave 2): a control
+that is present, inert and trusted. Fixing the accounting had to come before the caps, not alongside them.
+
+**Decision.** Cost becomes a **charge-line ledger** (`llm_charge`, migration V30): one row per token
+type per call, priced at the rate in force when the call happened, with a `pricing_mode` of `METERED`,
+`UNMETERED` or `UNKNOWN` recorded on the row itself rather than inferred from the number.
+
+**Why the rate travels with the charge instead of being re-derived from a catalog.** The alternative —
+keep prices in `llm_model`/`llm_model_rate` and join on `priced_at` — was considered and rejected as a
+**temporal price catalog**. It makes every statistics read an interval join, it leaves "what did we
+actually charge" contingent on the catalog's integrity forever (a later `DELETE` or a bad backfill
+silently rewrites history), and it does not even solve the case it exists for: an operator who enters a
+price *today* still has no recorded price for *yesterday*'s calls, because nothing wrote one at the time.
+Snapshotting `rate_millicents_per_million` onto the charge line at write time makes every figure
+reproducible as `tokens × rate ÷ 1e6` **by construction**, not by convention — a later price edit is
+structurally invisible to history rather than merely discouraged from touching it.
+
+That rate is stored, not served. A review's charge-line payload is viewer-readable and a rate is
+operator-entered configuration, which ADR-022 makes admin-only *including its reads*; carrying it on the
+review view put one value on both sides of that rule, and `CACHED_INPUT`/`CACHE_WRITE`/`REASONING` rates
+had no viewer-visible counterpart to be inferred from the way INPUT/OUTPUT did. So reproducibility is a
+property of the **ledger row**, not of the page: the review page shows what a call cost and which world
+its model is in, and the rate behind it is on the admin-only Models page and in the row itself. It is also
+bounded above (`MAX_RATE_MILLICENTS_PER_MILLION`, ~$10,000 per million tokens) — not a pricing policy but
+an overflow guard, since `tokens × rate` in `long` millicents wraps into a **negative** cost past roughly
+9.2e12, and a negative charge subtracts from every total it lands in while raising none of the attention
+rows an unpriced call does. V31 adds the matching `CHECK`.
+
+**Why `pricing_mode` is a category, not a stricter number check.** The blank-becomes-zero defect
+survives any single-layer fix, because the layers disagree about what a bare `0` *means* and each is
+right about its own slice: the UI's default is a reasonable convenience, the REST layer's "reject
+negatives" is a reasonable bound, and the registry's null-coercion is a reasonable fallback for a column
+that used to be `NOT NULL`. No amount of tightening the *number* check closes the gap, because both "this
+model is free" and "nobody told us the price" arrive as the same `0`. `pricing_mode` removes the
+ambiguity at the source: `METERED` requires a rate `> 0` for `INPUT` and `OUTPUT` (the two dimensions
+every vendor reports on every call) and rejects `0` outright; `UNMETERED` is the operator's explicit
+assertion that inference is free, and carries no rates at all. A model saved without stating which world
+it is in cannot exist.
+
+**The token partition, cross-checked per vendor.** `spire-llm`'s `TokenUsageMapper` maps each vendor's
+usage object onto a neutral `TokenType` partition (`INPUT`/`CACHED_INPUT`/`CACHE_WRITE`/`OUTPUT`/
+`REASONING`), asserting `Σ(per-type tokens) == totalTokenCount()` — arithmetic the vendor computed
+independently, which is what makes the check meaningful rather than circular. **The cross-check is
+per-vendor, not uniform**, because the vendors disagree about what their own total covers: OpenAI's and
+Gemini's cached-token counts are a *subset* of the headline input count and get subtracted out; Anthropic's
+cache reads and writes are *additional* line items, and — verified against the LangChain4j builder, which
+has no setter for it — **Anthropic's own `totalTokenCount()` is derived as `input + output` and excludes
+both cache buckets entirely**. Comparing every bucket against the vendor total, as an earlier draft of
+this design did, would have made every *cached* Anthropic call fail reconciliation and degrade to a
+single unpriceable `TOTAL` line — the cheap calls being the only calls we could not price, exactly
+backwards from what a cost ledger is for. A vendor whose usage is entirely absent or that reports no
+tokens still writes one `TOTAL` line at `tokens = 0`, because a call that happened must be countable even
+when the vendor reported nothing — `SUM` over zero rows is indistinguishable from a call that never
+occurred.
+
+**The priceable-model rule is enforced twice, and neither guard may be collapsed.** Pricing is
+**post-hoc**: `ResultSaga` prices a call only after `ReviewGenerated` returns, by which point the LLM
+spend has already happened. That ordering is what forces the guards to split across three places instead
+of living in one:
+
+- **Config time** (`LlmProviderRegistry.create`/`update`) — a provider naming a model the catalog cannot
+  price is refused before it can be saved, so the bad configuration cannot exist. This guard was added
+  late, in a follow-up task, after a review observed the rule was enforced only at `LlmProviderResource`
+  — its one existing caller — rather than at the invariant's actual boundary. A choreography test that
+  registered a provider through the registry directly, bypassing the REST edge, proved the gap live: an
+  uncatalogued model reached the pipeline and could only be caught downstream.
+- **Pre-spend** (`ResultSaga`, immediately before emitting `GenerateReview`) — because config-time can
+  only stop a *save*, not a model an operator deleted or renamed out from under a provider after the
+  fact, and because it is the last point at which an unpriceable review can still be **refused** rather
+  than merely reported. Skips with a dashboard note, mirroring the existing credential-missing skip.
+- **Post-hoc** (`LlmModelPricer.pricingFor`) — the backstop for everything upstream missed: a lookup
+  failure, a redelivery racing a mid-flight catalog edit, or (before this task) a rename. Records
+  `pricing_mode = 'UNKNOWN'` and raises attention. **Never** fabricates a price, and never fails a review
+  whose money is already spent.
+
+Collapsing either of the first two loses something distinct: dropping the registry guard means a caller
+that bypasses the one resource that has it — a seeder, an import, a future second write path — can still
+create an unpriceable provider; dropping the saga's pre-spend check means the only remaining guard runs
+*after* the money is gone, which is reporting, not prevention. The registry guard also does the same
+double duty on the **model** side: `LlmModelRegistry.delete` already refused to remove a catalogued model
+a provider still names, but `update` had no equivalent — renaming a model orphaned every provider naming
+the old value exactly as deleting it would, and was the one path that could still defeat the config-time
+guard after it had passed. `update` now refuses a rename while any provider references the current name,
+reusing the same in-use count and message as `delete`.
+
+**The conversation path is guarded too, and the argument that it needn't be was wrong.** This ADR
+originally held that `ConversationSaga` could emit `AnswerFollowUp` — a paid call — with no priceability
+check of its own, because the registry guard makes an unpriceable provider *impossible to create*, and
+because a silent pre-spend skip would reintroduce the failure shape the `NotifyTurnCap` notice exists to
+remove: the bot going quiet in a thread a human is actively watching. The second half of that still
+holds. **The first half is falsified by V30 itself**: the migration leaves every legacy zero-priced model
+rateless by writing SQL directly, so the unpriceable state arrives without passing through the registry
+guard at all. On an upgraded deployment new reviews were correctly refused while an author replying to a
+live thread still made the bot spend — up to the turn cap, or unbounded once it is @-mentioned, which is
+deliberately cap-exempt. A transient `SQLException` in `pricingFor` produces the same asymmetry.
+
+So the guard is applied on that path as well, and the answer to "would it go quiet?" is *no*: the skip
+records a timeline note naming the model and a dashboard note naming the fix, in the same shape as the
+sibling missing-credential skip. It posts nothing into the thread, unlike the turn cap — the turn cap is
+a hand-off with nothing further to come, where this is a misconfiguration whose fix makes the next reply
+work. And rather than leave the check duplicated at two emit sites, "resolve the default credential" and
+"confirm it can be priced" became one answer (`WorkerLlmCredentials.resolveDefault` → `DefaultLlm`): a
+caller cannot take the credential without being told, so the *next* emit site is guarded by construction
+instead of by remembering. The conversation path still records its cost honestly either way —
+`ChargeKind.FOLLOWUP` lines land in the same ledger, priced or `UNKNOWN` like any other call.
+
+**Renaming a catalogued model was the other hole in the original argument**: a rename could orphan a
+provider the conversation path was already trusting. It is refused now — the registry guard has to hold
+on *both* the provider side and the model side — but it is no longer the only thing standing between an
+unpriceable model and a paid follow-up.
+
+**`UNIQUE (call_ref, token_type)` — the double-charge fix.** The method this replaced was an unguarded
+`INSERT` with a fresh `UUID` and no uniqueness, protected only by `ResultSaga.ifCurrentRun`'s staleness
+check — `isReviewing() && commit == currentCommit`. Between `ReviewGenerated` and `ReviewCompleted` the
+review is still reviewing at the same commit, so a redelivered result passed that check and inserted a
+second row for a call that happened once. Today that only inflates a dashboard figure; under a spend cap
+built on this ledger it would corrupt the control. The constraint makes the illegal state
+unrepresentable at the storage layer rather than merely discouraged in the service that writes it.
+
+**What this ADR does not claim.** `ModelUsage` is a Kafka wire type and this branch reshaped it in
+place — same name, new components, the money field removed so a worker adapter cannot express a cost
+even by accident. The ADR-013 contract-compat snapshot gate stayed green through that change, but **it
+did not catch it and could not have**: `ContractSchemaSnapshotTest` renders each record component as
+`name: TypeName` and never recurses, so the golden file records `usage:
+dev.codespire.contract.review.ModelUsage` and nothing about that type's own shape — reshaping it is
+invisible to the gate by construction. The break is safe because `DomainEvent` carries no usage field at
+all (verified directly, not assumed) so the event store is untouched, and because in-flight Kafka
+messages live under short retention (ADR-014) — **not** because a compatibility check approved it.
+Crediting a gate that did not run is the kind of claim a future reader would rely on and shouldn't. Filed
+as `techdebt/spire-contract/3-2-contract-snapshot-does-not-recurse-into-nested-wire-types.md`, since the
+same blind spot covers every other nested wire type in the contract.
+
+**Consequences.**
+- **One legacy dataset, not preserved.** `review_llm_call` is dropped rather than migrated: every `0` in
+  it is ambiguous between "was unpriced at the time" and "was free," and the distinguishing information
+  was never recorded, so no migration could recover it honestly. `llm_model`'s rates migrate only where
+  unambiguous — a rate `> 0` can only have been operator-entered, since the old coercion produced `0` —
+  so a model with any zero rate is left without rates and the new guards then treat it as unpriceable.
+  **One-time operator action:** any model saved with a zero rate must be given real rates or marked
+  `UNMETERED` in Settings → Models before it will run another review. This is the guard working as
+  specified, not a regression.
+- `review_status.model` / `tokens_in` / `tokens_out` / `cost_millicents` are dropped with no replacement
+  column — they were a rollup of the ledger being replaced, and the ledger itself is now the source of
+  truth for a review's total, a call's breakdown, or a fleet aggregate, all as the same `SUM` over
+  `llm_charge` with a different `WHERE`.
+- **Fleet cost/abuse caps** (`docs/ROADMAP.md`, "Explicitly deferred") now have a ledger honest enough to
+  build a cap on — see `docs/SECURITY.md` for the consequence that carries forward: a money cap is inert
+  by design on an `UNMETERED` deployment, so the caps will need a token- or call-count axis regardless.
+
+**Rejected.** A temporal price catalog (above). A stricter numeric validator in place of `pricing_mode`
+(above — no number check distinguishes the two meanings of `0`). Cascading a model rename into every
+referencing `llm_provider.model` automatically, instead of refusing the rename: a silent cascade changes
+provider configuration the operator did not touch, where refusing and naming the fix leaves the operator
+in control of which side moves.
+
+---
 
 **Context.** SECURITY.md specified the shape years before it was built: *"auth-code + PKCE at the UI;
 JWT bearer validated per request against the issuer's JWKS."* That is the modern default, and for a

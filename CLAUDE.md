@@ -513,6 +513,138 @@ The design is fully specified in `docs/` — **treat those files as the source o
   reports rather than blocks, now for the one honest remaining reason: `p/default` resolves from the
   Semgrep registry at run time, so a blocking gate would let a rule added upstream redden an untouched
   branch. Blocking wants a pinned ruleset first.
+- **LLM cost accounting rebuilt as a priced charge-line ledger (ADR-023, 2026-08-07):** the fleet
+  cost/abuse caps item (ROADMAP "Explicitly deferred") turned out to need this first — reading what it
+  would build on found four separate, individually-defensible places where *unknown* became *zero*
+  (a blank UI field defaulting to `0`, REST accepting `0` as valid, a registry `null → 0L` coercion,
+  and a `SQLException` answering `0L`), so a spend cap built on the old numbers would install cleanly
+  and never fire for exactly the calls it exists to stop — the same failure shape as the LLM circuit
+  breaker once recording a failed future as a success. `llm_charge` (migration `V30`) replaces
+  `review_llm_call` and the four `review_status` rollup columns entirely: one row per token type per
+  call, priced at the rate **in force when the call happened** and snapshotted onto the row rather than
+  re-derived from a mutable catalog (a temporal price catalog was considered and rejected — every read
+  becomes an interval join, and it doesn't even solve the case it exists for, since an operator entering
+  a price today still has no recorded price for yesterday). `llm_model.pricing_mode`
+  (`METERED`/`UNMETERED`; `UNKNOWN` is a ledger-only runtime outcome, never an operator's choice) makes
+  zero a category instead of a number, because no amount of tightening a numeric check distinguishes
+  "this model is free" from "nobody told us the price" when both used to arrive as the same `0`.
+  `spire-llm`'s `TokenUsageMapper` partitions each vendor's usage onto the neutral `TokenType`
+  (`INPUT`/`CACHED_INPUT`/`CACHE_WRITE`/`OUTPUT`/`REASONING`/`TOTAL`) and cross-checks
+  `Σ(per-type tokens)` against the vendor's own `totalTokenCount()` — **per vendor, not uniformly**,
+  because Anthropic's total is derived by LangChain4j as `input + output` and excludes both its cache
+  buckets entirely; a uniform check (an earlier draft's mistake, caught before it shipped) would have
+  made every *cached* Anthropic call fail reconciliation and degrade to a single unpriceable `TOTAL`
+  line — the cheap calls being the only ones that couldn't be priced. `LlmModelPricer` never returns a
+  zero for a price it could not find; a lookup fault resolves to `pricing_mode='UNKNOWN'` plus an
+  attention row, not a coerced `0`. The priceable-model rule is enforced **twice, deliberately**: at
+  `LlmProviderRegistry.create`/`update` (added after a review proved live, via a choreography test that
+  registered a provider through the registry directly, that the rule was enforced only at
+  `LlmProviderResource` — its one existing REST caller — and not at the invariant's own boundary) and
+  again pre-spend in `ResultSaga` immediately before `GenerateReview`, because pricing itself is
+  post-hoc and that saga check is the last point an unpriceable review can still be **refused** rather
+  than merely reported. `LlmModelRegistry.update` now also refuses to **rename** a catalogued model
+  still referenced by a provider, mirroring the pre-existing delete guard — a rename orphaned every
+  referencing provider identically to a delete and was the one path left that could defeat the
+  config-time guard after it had passed; caught because the **conversation path keeps no pre-spend
+  check of its own** (a follow-up answers a human already waiting, and the project already learned from
+  the silent turn cap that an unexplained non-response reads as a lost webhook, so `AnswerFollowUp`
+  records cost honestly instead of declining to answer), which makes the registry-side guard the only
+  thing standing between a follow-up and an unpriceable call. `UNIQUE (call_ref, token_type)` closes a
+  real double-charge window: the write this replaced was an unguarded `INSERT` protected only by
+  `ResultSaga.ifCurrentRun`'s staleness check, so a redelivered result between `ReviewGenerated` and
+  `ReviewCompleted` — still "reviewing" at the same commit — charged the same call twice. **One
+  documented gap, not glossed over:** the ADR-013 contract-compat snapshot gate stayed green through
+  `ModelUsage` losing its cost field and gaining the token-count list, but it did not catch that change
+  and could not have — `ContractSchemaSnapshotTest` renders a nested record component as `name:
+  TypeName` and never recurses into it, so the golden file never described `ModelUsage`'s own shape in
+  the first place. The break is safe because `DomainEvent` carries no usage field (verified directly)
+  and Kafka retention is short (ADR-014), not because any check approved it — filed as
+  `techdebt/spire-contract/3-2-contract-snapshot-does-not-recurse-into-nested-wire-types.md`, since the
+  same blind spot covers every other nested wire type. One operator-facing consequence of the migration:
+  a catalog model previously saved with a zero rate cannot be migrated honestly (a rate `> 0` is the
+  only unambiguous signal that it was operator-entered) and is left without rates, so it must be given
+  real rates or marked `UNMETERED` before it will run another review — the guard working as specified.
+  SECURITY.md's cost-controls section and ROADMAP's deferred fleet-caps note both now carry the
+  consequence forward: a money-denominated cap will be inert by design on an `UNMETERED` deployment, so
+  the eventual cap needs a token- or call-count axis regardless of pricing mode. **1138 Java tests
+  across 142 suites (`testFast` 497/61 + `testServices` — gateway 63/9, worker 153/17, orchestrator
+  425/55); 290 `spire-ui` vitest tests across 40 files; `tsc --noEmit` silent.**
+- **The cost ledger reviewed on four lenses, every finding closed (2026-08-08):** the ADR-023 work above
+  had already had twelve task reviews and a whole-branch pass, all aimed at the *cost invariant*. A
+  security / code-quality / rules / QA sweep then found **two more money-losing defects**, both invisible
+  to a green suite and both about the **lifetime of a charge's identity** rather than the correctness of
+  its arithmetic — which is why the earlier passes could not see them.
+  - **A re-run's charges were silently discarded, keeping only run 1's spend.** `CallRefs` documented its
+    own premise — for a review or reconcile call "the key is a constant, so the commit in the slot
+    position carries the identity by itself" — and that holds only while the worker's idempotency claim
+    is never cleared. `ReviewRerunService` clears it **on purpose**, so the LLM genuinely runs again;
+    `call_ref` then reproduced the first run's key and `ON CONFLICT … DO NOTHING` dropped every line,
+    with no row, no log and no attention row. Re-run ten times, the cost card still showed run 1. Both
+    entry points reached it (the Re-run button and a `/review` PR comment). **It was also a regression:**
+    the `review_llm_call` write this replaced used a random UUID primary key, so it recorded every re-run
+    correctly — V30's `UNIQUE (call_ref, token_type)` closed a real double-charge on redelivery, but the
+    key it chose could not tell a redelivery from a second genuine call. Fixed with `ReviewRuns`, which
+    counts `ReviewRequested` events in the review's own stream. **Deliberately not
+    `review_status.attempt`**, which is the obvious existing column and is wrong twice over: nothing
+    bumps it on a re-run (only `retryPipeline`/`scheduleRetry` write it), so the fix would have been
+    *inert*; and it **does** bump on auto-retry, which must **share** the charge identity because
+    `onReviewFailed` leaves the claims so the worker re-emits its persisted result — reusing it would
+    have charged one paid call two or three times, turning silently-lost money into silently-inflated
+    money, which is strictly worse for the cap this ledger exists to enable. Re-run and auto-retry need
+    opposite treatment of the same key, so no single column can serve both. Derived rather than stored
+    because `deleteReview` clears `event_log` alongside the ledger, so the count and the charges cannot
+    drift apart.
+  - **`deleteReview` cleared four tables and the worker claims but not `llm_charge`** — and its own
+    comment explained why the claims must go ("a delete-then-re-register is that same key … so delete is
+    a true clean slate"). `review_id` is `ReviewIds.reviewId(repo, pr)`, stable per PR, with no FK and so
+    no cascade. Re-registering the PR therefore **inherited the deleted run's money and model**, and the
+    new run's own charge was then discarded by the collision above. The branch got this "all sites"
+    discipline right for `context_blob`; the ledger did not inherit it.
+  - **`/review` spent money with no author allowlist check.** The `ManualCommandReceived` branch gated
+    only on the self-loop guard, while the PR-open path a hundred lines away did check, under the comment
+    "unlisted authors never get touched". So anyone who could comment on a PR could force unlimited paid
+    calls — each of which was then also uncharged, per the first finding. The gate now sits **ahead of
+    the command switch**, so a future command cannot arrive ungated, and refusal is timeline-only: a
+    reply would confirm to a prober that the command is wired and would cost an API call per probe.
+  - **A negative vendor token count permanently dead-lettered a paid review.** `remainder()` floored and
+    said why, but the vendor's own reported total passed through unchecked and `nonEmpty()`'s `> 0` filter
+    never saw it, so a `"total_tokens": -1` from a buggy OpenAI-compatible proxy violated the
+    `tokens >= 0` CHECK *inside* the `ReviewGenerated` handler — **before** the `PostComments` emit. Paid,
+    findings computed, nothing posted, and permanent on every replay. The instructive part: refusing
+    negatives in `TokenCount`'s constructor — the right place — would have **relocated** the outage
+    rather than removed it, because `zeroIfNull` only handled null, so a negative would then have thrown
+    out of `map()` instead. A guard at the correct boundary is only a fix once the callers can no longer
+    produce the bad value.
+  - **An implausibly large rate wrote a negative cost.** `(long) tokens * rate` had no overflow check and
+    every bound was one-sided (the validator, the `llm_model_rate` CHECK and the UI all bounded the rate
+    only *below*), so an admin typo silently **subtracted** from both a review's total and the
+    deployment-wide sum. `Math.multiplyExact` alone would only have converted that into a dead-lettered
+    review after the money was spent, so the fix that matters is the **upper bound at save**; `V31` adds
+    the `cost_millicents >= 0` CHECK behind it.
+  - **The two cost attention rows could never be cleared**, which would have made them the first
+    permanently-lit rows in a panel whose whole contract is "fixing the cause removes the row" — and
+    V30 *guarantees* that state on any upgraded deployment, since every legacy zero-priced model is left
+    rateless. They now count from an acknowledgement watermark (`CostAttentionRow`). A plain time window
+    was the simpler option and was rejected: it silently forgets a real backlog nobody acted on.
+  - **Per-token rates were readable by a viewer** on `ReviewDetail`, while every registry read is
+    admin-only *because* rates are configuration (ADR-022's third rule). Field dropped — the UI renders a
+    cost without needing the rate that produced it.
+  - **Two follow-up spend paths were unguarded**, and the ADR-023 claim that the conversation path is
+    safe by construction was **falsified**: V30 creates rateless models directly in SQL, so it reaches
+    the unpriceable state without passing the registry guard. Both `DECISIONS.md` and `ROADMAP.md` stated
+    that rationale and both are corrected — the ROADMAP copy was the worse of the two, presenting the
+    absence of a check as a deliberate design decision with a justification.
+  - **What the passes could and could not see, worth knowing before commissioning another:** the two
+    Criticals were found by reading *paths* rather than files, the negative-token and overflow defects by
+    asking which direction each bound was missing, and two coverage gaps by asking which half of a
+    two-sided property went unasserted (`ResultSagaRetryTest` proved retry does not *dispatch* twice but
+    never that it does not *charge* twice — every fake overrode `recordCharges` to a no-op). One security
+    finding's *proposed fix* was wrong even though its diagnosis was right, so a review's remedy needs
+    verifying as independently as its claim. **1179 Java tests across 147 suites; 295 `spire-ui` vitest
+    tests across 40 files; `tsc --noEmit` silent.** Two debt entries added
+    (`techdebt/spire-ui/4-3-…` — the first UI entry; `techdebt/spire-orchestrator/3-3-the-charge-ledger-…`
+    — the ledger keys on a `reviewId` carrying no provider, so one workspace name registered on two SCMs
+    sums two unrelated PRs, which a per-repo spend cap would inherit).
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

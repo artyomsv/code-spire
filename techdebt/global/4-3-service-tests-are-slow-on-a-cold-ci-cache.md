@@ -49,3 +49,25 @@ Only worth acting on if cold runs become frequent:
    evicted, so the cold path is hit rarely.
 
 Do not move `testServices` off the pull-request path on the strength of the original measurement.
+
+## Do not reach for parallel test execution here (added 2026-08-07, ADR-023)
+
+Speeding this job up with `maxParallelForks` in `spire-orchestrator/build.gradle.kts` — the obvious first
+idea, and the reason this warning lives in this file rather than a new one — **would break the module's
+test suite**, in a way that passes locally and fails intermittently in CI.
+
+`LlmModelRegistry.delete(...)` refuses to remove an `llm_model` row that any `llm_provider` row names
+(ADR-023's catalog guard). Several `@QuarkusTest` classes create providers and catalogued models in
+`@BeforeEach` with no `@AfterEach`, and they share one Quarkus application and one Dev Services Postgres.
+`LlmModelResourceTest.clean()` is the only caller of `delete`, and it is safe **only** because it deletes
+every provider before any model, and because the module currently runs strictly sequentially — no
+`maxParallelForks` is set and no `junit-platform.properties` exists.
+
+Under parallel forks, another class's `@BeforeEach` can create a provider **between** `clean()`'s two
+deletion steps. The model delete then throws `IllegalStateException("Model 'X' is in use by 1 LLM
+provider(s)")` and the whole class errors out — with a frequency that depends on timing, so it will look
+like flakiness rather than a design constraint.
+
+If parallelism here is ever genuinely needed, give the affected classes their own `@TestProfile` with an
+isolated datasource, or add `@AfterEach` cleanup, **before** raising the fork count. Do not treat the
+resulting failures as flaky tests to retry.

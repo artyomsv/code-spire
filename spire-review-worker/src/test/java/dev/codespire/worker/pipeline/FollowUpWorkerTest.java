@@ -49,7 +49,7 @@ class FollowUpWorkerTest {
         when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123")))
                 .thenReturn(new Diff("abc123", List.of(), false));
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
-                new Completion("Because the caller can pass null.", new ModelUsage("m", 1, 1, 0))));
+                new Completion("Because the caller can pass null.", ModelUsage.of("m", 1, 1))));
         when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
                 .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
 
@@ -83,7 +83,7 @@ class FollowUpWorkerTest {
         when(diffs.fetchDiff(eq(repo), eq(5L), eq("head-9")))
                 .thenReturn(new Diff("head-9", List.of(), false));
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
-                new Completion("Because the caller can pass null.", new ModelUsage("m", 1, 1, 0))));
+                new Completion("Because the caller can pass null.", ModelUsage.of("m", 1, 1))));
         when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
                 .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
 
@@ -198,7 +198,7 @@ class FollowUpWorkerTest {
                 List.of(new ThreadMessage("octocat", "why?", false)));
         when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123"))).thenReturn(twoFileDiff());
         when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
-                new Completion("ok", new ModelUsage("m", 1, 1, 0))));
+                new Completion("ok", ModelUsage.of("m", 1, 1))));
         when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
                 .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
 

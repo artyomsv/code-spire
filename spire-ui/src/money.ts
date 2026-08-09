@@ -1,8 +1,15 @@
 // Money helpers. All amounts are millicents (1/100,000 dollar) per the money rule.
 
-/** A review cost (millicents) as a display string; em-dash when unpriced (0). */
-export function formatCost(millicents: number): string {
-  if (!millicents || millicents <= 0) {
+/**
+ * A cost (millicents) as a display string.
+ *
+ * `null` and a zero are deliberately different: null means the call could not be priced, while zero
+ * is an operator's assertion that an UNMETERED model costs nothing to call. Collapsing them — as this
+ * function used to, treating `0` as "unpriced" — is the conflation the charge ledger was built to
+ * remove.
+ */
+export function formatCost(millicents: number | null): string {
+  if (millicents === null || millicents === undefined) {
     return '—';
   }
   return `$${(millicents / 100_000).toFixed(3)}`;

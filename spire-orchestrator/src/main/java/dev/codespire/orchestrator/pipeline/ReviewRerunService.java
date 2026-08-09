@@ -60,7 +60,9 @@ public class ReviewRerunService {
                         + workspace + "'. Add one under Settings -> Providers."));
 
         // Drop the worker's cached result + comment claims BEFORE re-requesting, so the worker re-runs
-        // the LLM instead of re-emitting the stored result.
+        // the LLM instead of re-emitting the stored result. This is what makes a re-run a genuinely
+        // SECOND paid call on an unchanged (reviewId, commit) — the ledger identity has to move with it
+        // (CallRefs.reviewSlot), or the second call's charges collide with the first's and are dropped.
         projection.clearWorkerIdempotency(reviewId);
 
         var emitted = lifecycle.handle(reviewId, new RecordCommand.RequestReview(commit, "rerun", true));

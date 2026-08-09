@@ -239,10 +239,20 @@ public sealed interface IntegrationEvent {
         }
     }
 
-    /** {@code usage} is the follow-up LLM call's token/cost accounting (cost breakdown, roadmap 11);
-     * null when deserializing a legacy event recorded before this field existed. */
+    /**
+     * {@code usage} is the follow-up LLM call's token/cost accounting (cost breakdown, roadmap 11);
+     * null when deserializing a legacy event recorded before this field existed.
+     *
+     * <p>{@code triggeringCommentId} is the comment this turn answers, and it is on the wire because
+     * the orchestrator cannot re-derive it. The worker's idempotency claim — the thing that decides
+     * whether a paid call may happen — is keyed on the (thread, triggering comment) PAIR, so turn 2 of
+     * one conversation is a legitimately distinct call. A thread ref alone identifies the
+     * conversation, not the turn: every turn of a thread collapsed onto one ledger identity and the
+     * charges for turns 2..N were discarded as redeliveries, silently. Also null on a legacy event,
+     * where the derivation falls back to the thread ref it used at the time.
+     */
     record FollowUpGenerated(String reviewId, ThreadRef threadRef, String answerText,
-                             ModelUsage usage) implements IntegrationEvent {
+                             ModelUsage usage, String triggeringCommentId) implements IntegrationEvent {
     }
 
     record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId) implements IntegrationEvent {

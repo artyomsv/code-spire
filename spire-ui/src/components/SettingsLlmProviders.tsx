@@ -1,28 +1,25 @@
 import { useEffect, useState } from 'react';
 import {
   checkLlmProvider,
-  createLlmModel,
   createLlmProvider,
   deleteLlmModel,
   deleteLlmProvider,
   fetchLlmModels,
   fetchLlmProviders,
   setDefaultLlmProvider,
-  updateLlmModel,
   updateLlmProvider,
-  type LlmModelInput,
   type LlmModelView,
   type LlmProviderInput,
   type LlmProviderView,
   type LlmType,
-  type OutputTokenParam,
 } from '../api';
-import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
+import { RATE_TYPES, TOKEN_TYPE_LABEL, formatRate, sumRates } from '../llmPricing';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Select from './Select';
 import Tooltip from './Tooltip';
+import SettingsLlmModelForm from './SettingsLlmModelForm';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
@@ -32,15 +29,6 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   anthropic: 'https://api.anthropic.com/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
 };
-
-// Per-model API dialect (ADR-018): newer OpenAI reasoning models need
-// max_completion_tokens instead of max_tokens and reject a custom temperature.
-const TOKEN_PARAMS: { value: OutputTokenParam; label: string }[] = [
-  { value: 'MAX_TOKENS', label: 'max_tokens · classic chat models' },
-  { value: 'MAX_COMPLETION_TOKENS', label: 'max_completion_tokens · reasoning models' },
-  { value: 'NONE', label: 'none · no output cap' },
-];
-const REASONING_EFFORTS = ['', 'low', 'medium', 'high'];
 
 /** A one-glance hint of a model's non-default API dialect, or '' when it's the classic one. */
 export function profileHint(m: LlmModelView): string {
@@ -57,13 +45,30 @@ export function defaultBaseUrl(type: string): string {
   return DEFAULT_BASE_URLS[type] ?? '';
 }
 
-/** Models most-expensive-first by combined input+output price per 1M tokens; ties by label. */
+/** Models most-expensive-first by summed per-type rates; ties by label. An UNMETERED model's empty
+ *  `rates` sums to 0 and sorts last — correctly, since it is the cheapest thing in the list. */
 export function byExpenseDesc(models: LlmModelView[]): LlmModelView[] {
-  return [...models].sort((a, b) => {
-    const ea = a.inputPriceMillicentsPerMillion + a.outputPriceMillicentsPerMillion;
-    const eb = b.inputPriceMillicentsPerMillion + b.outputPriceMillicentsPerMillion;
-    return eb - ea || a.label.localeCompare(b.label);
-  });
+  return [...models].sort((a, b) => sumRates(b.rates) - sumRates(a.rates) || a.label.localeCompare(b.label));
+}
+
+/** The catalog table's compact rate cell. */
+export interface RatesSummary {
+  text: string;
+  /** True for a METERED model with no rate at all — the state a legacy upgrade can leave behind
+   *  (the migration skips a model whose old price was ever zero rather than fabricate a rate for
+   *  it) and the one state in this cell that needs an operator's attention, not just a read. */
+  warn: boolean;
+}
+
+/** "Self-hosted" for UNMETERED; a flagged "Not priced" for a METERED model with no rate at all
+ *  (never a blank cell, which reads as nothing to report rather than as something to fix); else
+ *  each priced dimension joined together — never "$0.00" for a self-hosted model, which would read
+ *  as a priced free tier rather than as an operator's assertion that there is no per-token cost. */
+export function ratesSummary(m: LlmModelView): RatesSummary {
+  if (m.pricingMode === 'UNMETERED') return { text: 'Self-hosted', warn: false };
+  const priced = RATE_TYPES.filter((t) => m.rates[t] != null);
+  if (priced.length === 0) return { text: 'Not priced', warn: true };
+  return { text: priced.map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatRate(m.rates[t]!)}/1M`).join(' · '), warn: false };
 }
 
 // Per-provider connectivity status, keyed by provider id.
@@ -132,10 +137,6 @@ export default function SettingsLlmProviders() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }
-
-  function priceLabel(mc: number): string {
-    return `$${millicentsPerMillionToDollars(mc).toFixed(2)}`;
   }
 
   return (
@@ -237,7 +238,8 @@ export default function SettingsLlmProviders() {
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : models.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
-            No models yet — add one (name + price per 1M tokens) so reviews can be priced and providers can pick it.
+            No models yet — add one (name + rate per 1M tokens, or mark it self-hosted) so reviews can
+            be priced and providers can pick it.
           </div>
         ) : (
           <table className="prov-table">
@@ -245,34 +247,35 @@ export default function SettingsLlmProviders() {
               <tr>
                 <th>Model</th>
                 <th>Type</th>
-                <th className="cell-r">Input / 1M</th>
-                <th className="cell-r">Output / 1M</th>
+                <th>Rates / 1M tokens</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {byExpenseDesc(models).map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
-                    {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
-                  </td>
-                  <td className="mono">{m.type}</td>
-                  <td className="cell-r mono">{priceLabel(m.inputPriceMillicentsPerMillion)}</td>
-                  <td className="cell-r mono">{priceLabel(m.outputPriceMillicentsPerMillion)}</td>
-                  <td>
-                    <div className="prov-actions">
-                      <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" />
-                      <IconButton
-                        kind="delete"
-                        onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
-                        title="Delete"
-                        aria-label="Delete"
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {byExpenseDesc(models).map((m) => {
+                const rates = ratesSummary(m);
+                return (
+                  <tr key={m.id}>
+                    <td>
+                      {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
+                      {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
+                    </td>
+                    <td className="mono">{m.type}</td>
+                    <td className={`mono${rates.warn ? ' rate-unset' : ''}`}>{rates.text}</td>
+                    <td>
+                      <div className="prov-actions">
+                        <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" />
+                        <IconButton
+                          kind="delete"
+                          onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
+                          title="Delete"
+                          aria-label="Delete"
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -291,7 +294,7 @@ export default function SettingsLlmProviders() {
       )}
 
       {modelForm && (
-        <LlmModelForm
+        <SettingsLlmModelForm
           initial={modelForm === 'new' ? null : modelForm}
           onClose={() => setModelForm(null)}
           onSaved={async () => {
@@ -544,213 +547,3 @@ function LlmProviderForm({
   );
 }
 
-function LlmModelForm({
-  initial,
-  onClose,
-  onSaved,
-}: {
-  initial: LlmModelView | null;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const editing = initial !== null;
-  const [type, setType] = useState<LlmType>(initial?.type ?? 'openai');
-  const [name, setName] = useState(initial?.name ?? '');
-  const [label, setLabel] = useState(initial?.label ?? '');
-  const [inputPrice, setInputPrice] = useState(
-    initial ? String(millicentsPerMillionToDollars(initial.inputPriceMillicentsPerMillion)) : '',
-  );
-  const [outputPrice, setOutputPrice] = useState(
-    initial ? String(millicentsPerMillionToDollars(initial.outputPriceMillicentsPerMillion)) : '',
-  );
-  const [outputTokenParam, setOutputTokenParam] = useState<OutputTokenParam>(
-    initial?.outputTokenParam ?? 'MAX_TOKENS',
-  );
-  const [supportsTemperature, setSupportsTemperature] = useState(initial?.supportsTemperature ?? true);
-  const [reasoningEffort, setReasoningEffort] = useState(initial?.reasoningEffort ?? '');
-  const [extraParams, setExtraParams] = useState(
-    initial && initial.extraParams && Object.keys(initial.extraParams).length > 0
-      ? JSON.stringify(initial.extraParams, null, 2)
-      : '',
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    let parsedExtra: Record<string, unknown> = {};
-    if (extraParams.trim()) {
-      let value: unknown;
-      try {
-        value = JSON.parse(extraParams);
-      } catch {
-        setError('Extra params must be valid JSON.');
-        return;
-      }
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        setError('Extra params must be a JSON object, e.g. {"service_tier": "flex"}.');
-        return;
-      }
-      parsedExtra = value as Record<string, unknown>;
-    }
-    setBusy(true);
-    setError(null);
-    const input: LlmModelInput = {
-      type,
-      name: name.trim(),
-      label: label.trim() || name.trim(),
-      inputPriceMillicentsPerMillion: dollarsToMillicentsPerMillion(Number(inputPrice) || 0),
-      outputPriceMillicentsPerMillion: dollarsToMillicentsPerMillion(Number(outputPrice) || 0),
-      outputTokenParam,
-      supportsTemperature,
-      reasoningEffort: reasoningEffort.trim() || null,
-      extraParams: parsedExtra,
-      enabled: initial?.enabled ?? true,
-    };
-    try {
-      if (editing && initial) {
-        await updateLlmModel(initial.id, input);
-      } else {
-        await createLlmModel(input);
-      }
-      await onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{editing ? 'Edit model' : 'Add model'}</h3>
-        <form className="modal-body" onSubmit={submit}>
-          <div className="field-row-2">
-            <label className="field">
-              <span>Type</span>
-              <Select
-                ariaLabel="Type"
-                value={type}
-                options={LLM_TYPES.map((t) => ({ value: t, label: t }))}
-                onChange={(v) => setType(v as LlmType)}
-              />
-            </label>
-            <label className="field">
-              <span>Model name</span>
-              <input className="mono" placeholder="gpt-4o" value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-          </div>
-
-          <label className="field">
-            <span>
-              Label <span className="field-optional">defaults to the model name</span>
-            </span>
-            <input placeholder="GPT-4o" value={label} onChange={(e) => setLabel(e.target.value)} />
-          </label>
-
-          <div className="field-row-2">
-            <label className="field">
-              <span>Input price $ / 1M tokens</span>
-              <input
-                className="mono"
-                inputMode="decimal"
-                placeholder="2.50"
-                value={inputPrice}
-                onChange={(e) => setInputPrice(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Output price $ / 1M tokens</span>
-              <input
-                className="mono"
-                inputMode="decimal"
-                placeholder="10.00"
-                value={outputPrice}
-                onChange={(e) => setOutputPrice(e.target.value)}
-              />
-            </label>
-          </div>
-          <small className="field-hint">
-            Enter the provider's current published price per 1M tokens — used to cost each review.
-          </small>
-
-          <div className="field-sep">API parameters</div>
-
-          {/* Output-cap dialect + reasoning effort are OpenAI-specific; Anthropic/Gemini use a fixed
-              native shape (temperature + a single output cap). */}
-          {type === 'openai' && (
-            <div className="field-row-2">
-              <label className="field">
-                <span>Output token limit</span>
-                <Select
-                  ariaLabel="Output token limit"
-                  value={outputTokenParam}
-                  options={TOKEN_PARAMS.map((t) => ({ value: t.value, label: t.label }))}
-                  onChange={(v) => {
-                    const next = v as OutputTokenParam;
-                    setOutputTokenParam(next);
-                    // Reasoning models that require max_completion_tokens also reject a custom
-                    // temperature — preset the toggle so it's not a second thing to remember.
-                    if (next === 'MAX_COMPLETION_TOKENS') setSupportsTemperature(false);
-                  }}
-                />
-              </label>
-              <label className="field">
-                <span>
-                  Reasoning effort <span className="field-optional">optional</span>
-                </span>
-                <Select
-                  ariaLabel="Reasoning effort"
-                  value={reasoningEffort}
-                  options={REASONING_EFFORTS.map((r) => ({ value: r, label: r === '' ? '— none —' : r }))}
-                  onChange={setReasoningEffort}
-                />
-              </label>
-            </div>
-          )}
-
-          {/* Temperature applies to every backend — some newer models (reasoning models, and newer
-              Claude models like Fable) reject or deprecate it, so it must be togglable for all types. */}
-          <label className="field-check">
-            <input
-              type="checkbox"
-              checked={supportsTemperature}
-              onChange={(e) => setSupportsTemperature(e.target.checked)}
-            />
-            <span>Model accepts a custom temperature (uncheck if the model rejects or deprecates it)</span>
-          </label>
-
-          {type === 'openai' && (
-            <label className="field">
-              <span>
-                Extra params <span className="field-optional">advanced · JSON</span>
-              </span>
-              <textarea
-                className="mono"
-                rows={3}
-                placeholder={'{ "service_tier": "flex" }'}
-                value={extraParams}
-                onChange={(e) => setExtraParams(e.target.value)}
-              />
-              <small className="field-hint">
-                Passed through verbatim to the model API — for parameters not covered above.
-              </small>
-            </label>
-          )}
-
-          {error && <div className="modal-msg modal-error">{error}</div>}
-
-          <div className="modal-actions">
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn" disabled={busy}>
-              {busy ? 'Saving…' : editing ? 'Save changes' : 'Add model'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}

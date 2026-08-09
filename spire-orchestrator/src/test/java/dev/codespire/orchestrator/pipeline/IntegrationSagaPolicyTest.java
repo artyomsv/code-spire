@@ -281,6 +281,50 @@ class IntegrationSagaPolicyTest {
         assertFalse(notes.contains("SelfLoopDropped"), "a human /review is not a self-loop");
     }
 
+    /**
+     * A {@code /review} comment spends real money — the rerun deliberately clears the worker's LLM
+     * idempotency claim so the model runs again — and nothing else bounds this path
+     * ({@code SPIRE_REVIEW_MAX_ATTEMPTS} bounds auto-retry, the turn cap bounds follow-ups). So the
+     * same per-provider allowlist that gates a PR event has to gate the command, or anyone who can
+     * comment on the PR can bill the operator once per comment.
+     *
+     * <p>No reply is posted to the refused author, and that is deliberate: answering confirms to a
+     * prober that the command exists and is wired, and turns each probe into a comment the operator
+     * pays an API call to post. The refusal is a timeline note plus a log line, exactly as the PR-open
+     * path records an unlisted author.
+     */
+    @Test
+    void reviewCommandFromAnAuthorOutsideTheAllowlistNeverReachesTheRerunService() {
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-9", "bob", "Bob")));
+        assertTrue(rerunInvocations.isEmpty(), "an unlisted author's /review must not spend an LLM call");
+        assertTrue(notes.contains("ManualCommandSkipped"), notes.toString());
+    }
+
+    /** The other half: the gate must refuse the unlisted author, not close the path for everyone. */
+    @Test
+    void reviewCommandFromAnAllowlistedAuthorStillRuns() {
+        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertEquals(List.of("acme/web#412"), rerunInvocations, "a listed author's /review still re-runs");
+        assertFalse(notes.contains("ManualCommandSkipped"), notes.toString());
+    }
+
+    /**
+     * An empty allowlist reviews everyone (existing, deliberate: an operator who lists nobody has
+     * opted every author in). The gate must not reinterpret that as "nobody".
+     */
+    @Test
+    void reviewCommandUnderAnEmptyAllowlistStillRuns() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "anyone", "Anyone")));
+        assertEquals(List.of("acme/web#412"), rerunInvocations);
+        assertFalse(notes.contains("ManualCommandSkipped"), notes.toString());
+    }
+
     @Test
     void reviewCommandOnUnknownPrIsSkippedNotFatal() {
         var saga = sagaWith(policyMode(false), provider(List.of()));

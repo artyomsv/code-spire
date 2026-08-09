@@ -15,6 +15,9 @@ import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
+import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -290,7 +293,7 @@ class ResultSagaRetryTest {
         PriorRun cleanPrior = new PriorRun(COMMIT, "sum-prior-1", List.of());
         var saga = sagaForReviewGenerated(cleanPrior, Optional.of("packed-cred"));
 
-        var result = new ReviewResult(List.of(), "all clean", new ModelUsage(null, 0, 0, 0));
+        var result = new ReviewResult(List.of(), "all clean", ModelUsage.of(null, 0, 0));
         saga.on(new ReviewGenerated(REVIEW_ID, 412L, COMMIT, result));
 
         assertEquals(1, emitted.size(), "one PostComments command emitted");
@@ -337,10 +340,6 @@ class ResultSagaRetryTest {
             }
 
             @Override
-            public void recordLlmCall(String reviewId, String kind, ModelUsage usage) {
-            }
-
-            @Override
             public Optional<PriorRun> priorRunFor(String reviewId) {
                 return Optional.of(priorRun);
             }
@@ -360,6 +359,13 @@ class ResultSagaRetryTest {
             @Override
             public void touch(String reviewId) {
             }
+
+            // recordCharges is concrete on the real class, so leaving it un-overridden would run the
+            // real body (a DataSource this anonymous instance never got) once ReviewGenerated reaches
+            // the pre-spend-priced charge() call this test's flow now passes through.
+            @Override
+            public void recordCharges(ChargeCall call) {
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
@@ -367,11 +373,27 @@ class ResultSagaRetryTest {
                 return credential;
             }
         };
+        // The saga needs a priceable model to price the ReviewGenerated call — this test's own
+        // assertions are about priorSummaryRef, not the ledger, so the lines themselves don't matter.
+        saga.llmModels = new LlmModelRegistry() {
+            @Override
+            public List<ChargeLine> priceCall(String model, ModelUsage usage) {
+                return List.of();
+            }
+        };
+        // A charge's slot carries which RUN of the commit it belongs to, resolved from the review's
+        // event stream — faked here so this test stays off the database, like recordCharges above.
+        saga.runs = new dev.codespire.orchestrator.llm.ReviewRuns() {
+            @Override
+            public int currentRun(String reviewId) {
+                return FIRST_RUN;
+            }
+        };
         return saga;
     }
 
     /**
-     * A follow-up's cost landing (recordLlmCall) must also bump the dashboard's live feed
+     * A follow-up's cost landing (the ledger charge write) must also bump the dashboard's live feed
      * (updated_at) — otherwise the new cost/turn only shows up after a hard refresh.
      */
     @Test
@@ -394,7 +416,8 @@ class ResultSagaRetryTest {
             }
         };
 
-        saga.on(new FollowUpGenerated(REVIEW_ID, new ThreadRef("t-1"), "because it leaks a resource", null));
+        saga.on(new FollowUpGenerated(REVIEW_ID, new ThreadRef("t-1"), "because it leaks a resource",
+                null, "TEST-COMMENT-1"));
 
         assertEquals(List.of(REVIEW_ID), touched, "a new follow-up turn must bump the live dashboard");
     }
