@@ -1048,18 +1048,27 @@ public class ReviewProjection {
         // these read as honestly zero/uncatalogued until then, not as a stand-in for an unpriced call.
         // unpriced_calls counts distinct calls the ledger could not price, so the UI can tell "zero
         // spend" apart from "some calls have no known price yet".
+        //
+        // All four ledger subqueries exclude purged charges, not just the cost SUM: filtering one of
+        // them would leave a dead review's model name and unpriced-call count leaking into the row of
+        // the PR that later reuses its review_id. The llm_type subquery is the one to watch — the
+        // filter belongs on its INNER llm_charge lookup, since the outer query reads llm_model, which
+        // has no archived_at at all.
         String sql = """
                 SELECT rs.*,
-                       (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                       (SELECT model FROM llm_charge c
+                         WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
                          ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
                        (SELECT m.type FROM llm_model m
-                         WHERE m.name = (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                         WHERE m.name = (SELECT model FROM llm_charge c
+                                          WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
                                           ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
                        COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
-                                  WHERE c.review_id = rs.review_id), 0)                          AS total_cost_millicents,
+                                  WHERE c.review_id = rs.review_id AND c.archived_at IS NULL), 0)
+                                                                                                  AS total_cost_millicents,
                        COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
-                                  WHERE c.review_id = rs.review_id AND c.pricing_mode = 'UNKNOWN'), 0)
-                                                                                                  AS unpriced_calls
+                                  WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
+                                    AND c.pricing_mode = 'UNKNOWN'), 0)                          AS unpriced_calls
                   FROM review_status rs
                  WHERE (? OR rs.archived_at IS NULL)
                  ORDER BY rs.updated_at DESC
@@ -1185,7 +1194,8 @@ public class ReviewProjection {
         String sql = """
                 SELECT call_ref, kind, model, token_type, tokens,
                        cost_millicents, pricing_mode, priced_at
-                  FROM llm_charge WHERE review_id = ? ORDER BY priced_at, token_type
+                  FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
+                 ORDER BY priced_at, token_type
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
@@ -1290,14 +1300,23 @@ public class ReviewProjection {
     public record CostSummary(long knownCostMillicents, int unpricedCalls, String lastModel) {
     }
 
-    /** A review's cost, derived from the ledger — see {@link CostSummary}. */
+    /**
+     * A review's cost, derived from the ledger — see {@link CostSummary}.
+     *
+     * <p>Like every other {@code llm_charge} read, it excludes purged charges. That is not a
+     * restriction on which review may see its own money: {@code archived_at} is stamped on a charge
+     * only by a purge, in the transaction that hard-deletes the review row, so an archived review's
+     * lines are never stamped and this still reports its full spend. What the filter excludes is the
+     * ledger of a review that no longer exists, which would otherwise be read as the spend of the PR
+     * that re-registers under the same {@code review_id}.
+     */
     public CostSummary costOf(String reviewId) {
         String sql = """
                 SELECT COALESCE(SUM(cost_millicents), 0)                                    AS known_cost,
                        COUNT(DISTINCT CASE WHEN pricing_mode = 'UNKNOWN' THEN call_ref END) AS unpriced_calls,
-                       (SELECT model FROM llm_charge WHERE review_id = ?
+                       (SELECT model FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
                          ORDER BY priced_at DESC LIMIT 1)                                    AS last_model
-                  FROM llm_charge WHERE review_id = ?
+                  FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
@@ -1511,7 +1530,8 @@ public class ReviewProjection {
      */
     private long cumulativeCost(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COALESCE(SUM(cost_millicents), 0) FROM llm_charge WHERE review_id = ?")) {
+                "SELECT COALESCE(SUM(cost_millicents), 0) FROM llm_charge"
+                        + " WHERE review_id = ? AND archived_at IS NULL")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong(1) : 0L;
@@ -1523,7 +1543,8 @@ public class ReviewProjection {
      *  no longer carries a model column, so this is now the only source for it. */
     private String latestModelFor(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT model FROM llm_charge WHERE review_id = ? ORDER BY priced_at DESC LIMIT 1")) {
+                "SELECT model FROM llm_charge WHERE review_id = ? AND archived_at IS NULL"
+                        + " ORDER BY priced_at DESC LIMIT 1")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getString(1) : null;
@@ -1535,7 +1556,8 @@ public class ReviewProjection {
      *  {@link #listSummaries}'s join, computed separately for the {@link #broadcast} path's single row. */
     private int unpricedCallsFor(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE review_id = ? AND pricing_mode = 'UNKNOWN'")) {
+                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE review_id = ?"
+                        + " AND archived_at IS NULL AND pricing_mode = 'UNKNOWN'")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : 0;

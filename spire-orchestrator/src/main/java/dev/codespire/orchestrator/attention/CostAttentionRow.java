@@ -25,6 +25,11 @@ import java.util.Optional;
  *
  * <p>Each constant carries its own whole query, following {@code AttentionQueries.Registry}: nothing is
  * assembled at runtime, so there is no string building to reason about.
+ *
+ * <p>Both exclude purged charges ({@code archived_at IS NULL}), like every other ledger read. A purge
+ * hard-deletes the review these calls belonged to, so there is no page left to send an operator to and
+ * no rate anyone can now enter — the row would name a backlog nothing can act on, and no watermark
+ * clears it because the count is not what makes it unactionable.
  */
 enum CostAttentionRow {
 
@@ -37,7 +42,8 @@ enum CostAttentionRow {
     UNPRICED("LLM_COST_UNPRICED", "attention.llm-cost-unpriced.ack-at",
             """
             SELECT count(DISTINCT call_ref) FROM llm_charge
-             WHERE pricing_mode = 'UNKNOWN' AND token_type <> 'TOTAL' AND priced_at > ?""",
+             WHERE pricing_mode = 'UNKNOWN' AND token_type <> 'TOTAL'
+               AND archived_at IS NULL AND priced_at > ?""",
             " LLM call(s) could not be priced, so the reported cost is lower than the real spend.",
             "/settings/llm"),
 
@@ -52,7 +58,7 @@ enum CostAttentionRow {
     UNRECONCILED("LLM_USAGE_UNRECONCILED", "attention.llm-usage-unreconciled.ack-at",
             """
             SELECT count(DISTINCT call_ref) FROM llm_charge
-             WHERE token_type = 'TOTAL' AND priced_at > ?""",
+             WHERE token_type = 'TOTAL' AND archived_at IS NULL AND priced_at > ?""",
             " LLM call(s) reported a token breakdown that did not match their own total, or reported no"
                     + " usage at all, so only an undivided total was recorded. On a metered model such"
                     + " a call cannot be priced at all; on an unmetered one its cost is still the"
