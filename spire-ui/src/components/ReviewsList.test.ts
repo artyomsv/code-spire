@@ -31,6 +31,7 @@ const summary = (over: Partial<ReviewSummary> = {}): ReviewSummary => ({
   llmType: '',
   updatedAt: '2026-08-07T00:00:00Z',
   unpricedCalls: 0,
+  archivedAt: null,
   ...over,
 });
 

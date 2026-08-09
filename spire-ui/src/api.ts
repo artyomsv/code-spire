@@ -44,6 +44,10 @@ export interface ReviewSummary {
   // Distinct calls the ledger could not price — lets the UI tell "zero spend" apart from "some
   // calls have no known price yet" (never conflated into `costMillicents`).
   unpricedCalls: number;
+  // ISO-8601 when this review was archived, null while it is live. A third dimension beside `status`
+  // and `prState`, not a value of either: an archived review still reports that it completed or
+  // failed, which is the statistic the row is retained for.
+  archivedAt: string | null;
 }
 
 export interface Finding {
@@ -168,8 +172,12 @@ export interface ReviewDetail
   events: ReviewEvent[];
 }
 
-export async function fetchReviews(): Promise<ReviewSummary[]> {
-  const res = await apiFetch('/api/reviews');
+/**
+ * The reviews list. Archived rows are excluded unless asked for — they are retained work, not
+ * current work, and the busiest screen in the app defaults to what is live.
+ */
+export async function fetchReviews(includeArchived = false): Promise<ReviewSummary[]> {
+  const res = await apiFetch(includeArchived ? '/api/reviews?includeArchived=true' : '/api/reviews');
   if (!res.ok) throw new Error(`Failed to load reviews (${res.status})`);
   return res.json();
 }
@@ -186,17 +194,35 @@ export async function fetchReviewDetail(
   return res.json();
 }
 
-/** Permanently delete a review and all of its data (row, timeline, event stream). */
-export async function deleteReview(
+const reviewPath = (workspace: string, slug: string, pr: string | number) =>
+  `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}`;
+
+/**
+ * Archive a review: it leaves the live list and its pull request is retired, but nothing is
+ * destroyed — the timeline, the findings and above all the recorded LLM spend all stay readable.
+ *
+ * <p>Not a DELETE, because it deletes nothing. A refusal (409) carries a sentence saying which of
+ * the three refusals it is — already archived, still running — and what to do; `throwResponse`
+ * surfaces that body rather than a generic message, which is the whole reason the endpoint builds a
+ * response entity instead of a bare status.
+ */
+export async function archiveReview(
   workspace: string,
   slug: string,
   pr: string | number,
 ): Promise<void> {
-  const res = await apiFetch(
-    `/api/reviews/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}/${encodeURIComponent(String(pr))}`,
-    { method: 'DELETE' },
-  );
-  if (!res.ok) await throwResponse(res, 'Failed to delete review');
+  const res = await apiFetch(`${reviewPath(workspace, slug, pr)}/archive`, { method: 'POST' });
+  if (!res.ok) await throwResponse(res, 'Failed to archive review');
+}
+
+/** Return an archived review to the live list. One statement server-side; archiving stamped nothing. */
+export async function unarchiveReview(
+  workspace: string,
+  slug: string,
+  pr: string | number,
+): Promise<void> {
+  const res = await apiFetch(`${reviewPath(workspace, slug, pr)}/unarchive`, { method: 'POST' });
+  if (!res.ok) await throwResponse(res, 'Failed to unarchive review');
 }
 
 /** Re-run a review's pipeline on its stored commit (force restart; re-runs the LLM, re-posts). */

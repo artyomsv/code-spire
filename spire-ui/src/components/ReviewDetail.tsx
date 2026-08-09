@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
-import { deleteReview, fetchReviewDetail, rerunReview, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
-import { ExternalLink, RotateCw, Trash2 } from 'lucide-react';
-import Tooltip from './Tooltip';
-import { CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, openInLabel, prStateBadge, safeHttpUrl, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
-import ConfirmDialog from './ConfirmDialog';
-import { useMe } from '../hooks/useMe';
-import { canAdminister } from '../auth';
+import { Link, useParams } from 'react-router';
+import { fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
+import { archivedBadge, CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, prStateBadge, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
+import ReviewActions from './ReviewActions';
 import ReviewCostCard from './ReviewCostCard';
 
 interface Props {
@@ -17,13 +13,9 @@ interface Props {
 
 export default function ReviewDetail({ reviews }: Props) {
   const { workspace, slug, pr } = useParams();
-  const navigate = useNavigate();
   const [detail, setDetail] = useState<ReviewDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmRerun, setConfirmRerun] = useState(false);
-  const admin = canAdminister(useMe().me);
 
   // Monotonic request id: a response only applies while it is still the latest
   // load for the current params — otherwise navigating A→B can let A's slower
@@ -95,7 +87,6 @@ export default function ReviewDetail({ reviews }: Props) {
   }
 
   const r = detail;
-  const prUrl = safeHttpUrl(r.htmlUrl);
 
   return (
     <section className="content" id="view-detail">
@@ -116,6 +107,7 @@ export default function ReviewDetail({ reviews }: Props) {
               answering: r.answering,
             })}
             {prStateBadge(r.prState)}
+            {archivedBadge(r.archivedAt)}
             <span className="sep">·</span>
             <span>@{r.author}</span>
             <span className="sep">·</span>
@@ -126,98 +118,8 @@ export default function ReviewDetail({ reviews }: Props) {
             <span className="sha">{r.sha}</span>
           </div>
         </div>
-        <div className="actions">
-          {prUrl && (
-            <Tooltip label={openInLabel(r)}>
-              <a
-                className="icon-btn"
-                href={prUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={openInLabel(r)}
-              >
-                <ExternalLink size={16} />
-              </a>
-            </Tooltip>
-          )}
-          {/* Both are admin: a re-run spends money on a fresh model call, and a delete is
-              irreversible. Hidden from a viewer rather than disabled — the API refuses them either
-              way, so offering a control that can only fail is noise. */}
-          {admin && (r.status === 'completed' || r.status === 'failed') && (
-            <Tooltip label="Re-run review on the same commit">
-              <button
-                className="icon-btn rerun"
-                aria-label="Re-run review"
-                onClick={() => setConfirmRerun(true)}
-              >
-                <RotateCw size={16} />
-              </button>
-            </Tooltip>
-          )}
-          {admin && (
-            <Tooltip label="Delete review">
-              <button
-                className="icon-btn danger"
-                aria-label="Delete review"
-                onClick={() => setConfirmDelete(true)}
-              >
-                <Trash2 size={16} />
-              </button>
-            </Tooltip>
-          )}
-        </div>
+        <ReviewActions review={r} onChanged={load} />
       </div>
-
-      {confirmRerun && (
-        <ConfirmDialog
-          title="Re-run this review?"
-          message={
-            <>
-              <p>
-                Re-runs the model on{' '}
-                <span className="mono">
-                  {r.repo}#{r.pr}
-                </span>{' '}
-                at the same commit and posts fresh comments.
-              </p>
-              <p>Previously posted comments on the pull request are not removed.</p>
-            </>
-          }
-          confirmLabel="Re-run"
-          busyLabel="Starting…"
-          onConfirm={async () => {
-            await rerunReview(r.workspace, r.slug, r.pr);
-            load(); // reflect the in-progress state immediately (live updates follow)
-          }}
-          onClose={() => setConfirmRerun(false)}
-        />
-      )}
-
-      {confirmDelete && (
-        <ConfirmDialog
-          title="Delete this review?"
-          message={
-            <>
-              <p>
-                This permanently deletes the review for{' '}
-                <span className="mono">
-                  {r.repo}#{r.pr}
-                </span>{' '}
-                — its findings, timeline and event stream. This cannot be undone.
-              </p>
-              <p>The pull request itself is not affected.</p>
-            </>
-          }
-          confirmLabel="Delete review"
-          busyLabel="Deleting…"
-          danger
-          onConfirm={async () => {
-            await deleteReview(r.workspace, r.slug, r.pr);
-            navigate('/');
-          }}
-          onClose={() => setConfirmDelete(false)}
-        />
-      )}
 
       <div className="card">
         <div className="head">
