@@ -53,7 +53,11 @@ public record ReviewDetail(
         String note,
         String errorDetail,
         List<EventView> events,
-        String prState) {
+        String prState,
+        /** When this review was archived, or null while it is live — see {@link ReviewSummary}. An
+         *  archived review keeps a fully working detail page, so this qualifies the page rather
+         *  than replacing anything on it. */
+        Instant archivedAt) {
 
     /** A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM
      *  thread it owns ({@code threadRef}, null when it has no conversation / predates thread linking). */

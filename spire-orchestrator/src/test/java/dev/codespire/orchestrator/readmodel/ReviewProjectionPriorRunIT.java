@@ -61,14 +61,14 @@ class ReviewProjectionPriorRunIT {
                 "t", "a", "aid", "src", "dst", "c15", "http://x", "github", "reviewing", 0);
 
         projection.setAnswering(reviewId, true);
-        ReviewSummary onSummary = projection.listSummaries().stream()
+        ReviewSummary onSummary = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertTrue(onSummary.answering(), "answering must surface on the list row once set");
         assertTrue(projection.loadDetail("ws", "prior-run-it", 16L).orElseThrow().answering(),
                 "answering must surface on the detail payload once set");
 
         projection.setAnswering(reviewId, false);
-        ReviewSummary offSummary = projection.listSummaries().stream()
+        ReviewSummary offSummary = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertFalse(offSummary.answering(), "answering must clear on the list row");
         assertFalse(projection.loadDetail("ws", "prior-run-it", 16L).orElseThrow().answering(),
@@ -92,7 +92,7 @@ class ReviewProjectionPriorRunIT {
         projection.registerHeader(reviewId, new RepoRef("ws", "prior-run-it"), 17L,
                 "t", "a", "aid", "src", "dst", "c17", "http://x", "github", "reviewing", 0);
 
-        ReviewSummary summary = projection.listSummaries().stream()
+        ReviewSummary summary = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertFalse(summary.answering(), "a new review run must reset the stale answering flag");
         assertFalse(projection.loadDetail("ws", "prior-run-it", 17L).orElseThrow().answering(),
@@ -552,7 +552,7 @@ class ReviewProjectionPriorRunIT {
                         FindingVerdict.Status.STILL_OPEN, "missing")),
                 List.of(new PriorFinding("src/A.java", 12, Severity.BLOCKER, "npe", "t-1")));
 
-        ReviewSummary summary = projection.listSummaries().stream()
+        ReviewSummary summary = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertEquals(1, summary.findings(), "one still-open reconciliation finding");
         assertEquals(1, summary.blockerCount(), "the still-open critical");
@@ -569,7 +569,7 @@ class ReviewProjectionPriorRunIT {
                 List.of(new FindingVerdict("t-9", "src/B.java", 3,
                         FindingVerdict.Status.RESOLVED, "fixed")),
                 List.of(new PriorFinding("src/B.java", 3, Severity.MAJOR, "x", "t-9")));
-        ReviewSummary summary = projection.listSummaries().stream()
+        ReviewSummary summary = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertEquals(0, summary.findings(), "resolved findings are not open");
     }
@@ -582,7 +582,7 @@ class ReviewProjectionPriorRunIT {
         projection.recordOutcome(reviewId, new ReviewResult(
                 List.of(new Finding("src/C.java", new LineRange(4, 4), Severity.BLOCKER, "leak", null)),
                 "sum", ModelUsage.of("m", 1, 1)), 6);
-        ReviewSummary summary = projection.listSummaries().stream()
+        ReviewSummary summary = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         assertEquals(1, summary.findings());
         assertEquals(1, summary.blockerCount());
@@ -607,7 +607,7 @@ class ReviewProjectionPriorRunIT {
                         FindingVerdict.Status.STILL_OPEN, "still there")),
                 List.of(new PriorFinding("src/A.java", 5, Severity.BLOCKER, "npe", "t-cf")));
 
-        ReviewSummary listRow = projection.listSummaries().stream()
+        ReviewSummary listRow = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
         ReviewDetail detail = projection.loadDetail("ws", "list-recon-it", 4L).orElseThrow();
 
@@ -638,7 +638,7 @@ class ReviewProjectionPriorRunIT {
                         FindingVerdict.Status.STILL_OPEN, "still there")),
                 List.of(new PriorFinding("src/Old.java", 3, Severity.MAJOR, "raised earlier", "t-old")));
 
-        ReviewSummary row = projection.listSummaries().stream()
+        ReviewSummary row = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
 
         assertEquals(2, row.findings(), "both are open");
@@ -666,7 +666,7 @@ class ReviewProjectionPriorRunIT {
                         FindingVerdict.Status.STILL_OPEN, "still there")),
                 List.of(new PriorFinding("src/Same.java", 3, Severity.MAJOR, "same spot", null)));
 
-        ReviewSummary row = projection.listSummaries().stream()
+        ReviewSummary row = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow();
 
         assertEquals(1, row.findings(), "one anchor, one open finding");
@@ -683,11 +683,11 @@ class ReviewProjectionPriorRunIT {
         String reviewId = "review::ws/pr-state-it#1";
         projection.registerHeader(reviewId, new RepoRef("ws", "pr-state-it"), 1L,
                 "t", "a", "aid", "src", "dst", "c1", "http://x", "github", "completed", 6);
-        assertEquals("OPEN", projection.listSummaries().stream()
+        assertEquals("OPEN", projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow().prState(),
                 "a new review's PR defaults OPEN");
         projection.setPrState(reviewId, "MERGED");
-        assertEquals("MERGED", projection.listSummaries().stream()
+        assertEquals("MERGED", projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(reviewId)).findFirst().orElseThrow().prState());
         assertEquals("MERGED", projection.loadDetail("ws", "pr-state-it", 1L).orElseThrow().prState());
     }

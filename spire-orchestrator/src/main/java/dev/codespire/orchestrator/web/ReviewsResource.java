@@ -15,14 +15,16 @@ import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewSummary;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.ServiceUnavailableException;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
@@ -50,8 +52,9 @@ public class ReviewsResource {
     ProviderClients clients;
 
     @GET
-    public List<ReviewSummary> list() {
-        return projection.listSummaries();
+    public List<ReviewSummary> list(@QueryParam("includeArchived") @DefaultValue("false")
+                                    boolean includeArchived) {
+        return projection.listSummaries(includeArchived);
     }
 
     /**
@@ -172,16 +175,48 @@ public class ReviewsResource {
         return Response.noContent().build();
     }
 
-    /** Permanently delete a review and all of its data (row, timeline, event stream). */
-    @DELETE
+    /**
+     * Archive a review. Not a DELETE: nothing is destroyed, and a DELETE verb that destroys nothing
+     * misdescribes the operation to every future reader of this API.
+     */
+    @POST
     @RolesAllowed("spire-admin")
-    @Path("/{workspace}/{slug}/{pr}")
-    public Response delete(@PathParam("workspace") String workspace,
-                           @PathParam("slug") String slug,
-                           @PathParam("pr") long pr) {
-        if (!projection.deleteReview(workspace, slug, pr)) {
-            throw new NotFoundException("No review for " + workspace + "/" + slug + "#" + pr);
+    @Path("/{workspace}/{slug}/{pr}/archive")
+    @Consumes(MediaType.WILDCARD) // no request body
+    public Response archive(@PathParam("workspace") String workspace,
+                            @PathParam("slug") String slug,
+                            @PathParam("pr") long pr) {
+        return switch (projection.archiveReview(workspace, slug, pr)) {
+            case ARCHIVED -> Response.noContent().build();
+            case ALREADY_ARCHIVED -> throw conflict("This review is already archived.");
+            case STILL_RUNNING -> throw conflict("This review is still running. "
+                    + "Wait for it to finish, or cancel it, then archive.");
+            case NOT_FOUND -> throw new NotFoundException(
+                    "No review for " + workspace + "/" + slug + "#" + pr);
+        };
+    }
+
+    @POST
+    @RolesAllowed("spire-admin")
+    @Path("/{workspace}/{slug}/{pr}/unarchive")
+    @Consumes(MediaType.WILDCARD) // no request body
+    public Response unarchive(@PathParam("workspace") String workspace,
+                              @PathParam("slug") String slug,
+                              @PathParam("pr") long pr) {
+        if (!projection.unarchiveReview(workspace, slug, pr)) {
+            throw new NotFoundException("No archived review for " + workspace + "/" + slug + "#" + pr);
         }
+        // Re-arm the one-time notice, so a later re-archive can announce itself again.
+        projection.releaseArchivedNoticeClaim(ReviewIds.reviewId(new RepoRef(workspace, slug), pr));
         return Response.noContent().build();
+    }
+
+    /**
+     * A ClientErrorException built from a bare string sets the EXCEPTION's message, not the response
+     * entity, so the sentence explaining what to do never reaches the client. Build the response.
+     */
+    private static ClientErrorException conflict(String message) {
+        return new ClientErrorException(
+                Response.status(Response.Status.CONFLICT).entity(message).build());
     }
 }
