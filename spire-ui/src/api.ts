@@ -6,6 +6,10 @@ export type ReviewStatus =
   | 'failed'
   | 'cancelled'
   | 'superseded'
+  // A spend or diff-size cap declined to run this review (ADR-025). Distinct from 'failed' on
+  // purpose: a policy decision is not an outage, and every consumer of this union that treats the
+  // two alike undoes the split. It is terminal and archivable.
+  | 'refused'
   | 'observed';
 
 export type StageState = 'done' | 'active' | 'pending' | 'failed';

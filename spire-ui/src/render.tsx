@@ -221,6 +221,7 @@ export const STATUS_LABEL: Record<ReviewStatus, string> = {
   failed: 'Attention',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
+  refused: 'Refused',
   observed: 'Observed',
 };
 
@@ -317,6 +318,17 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
     return (
       <div className="mini">
         <span className="lbl">{status === 'cancelled' ? 'cancelled' : 'superseded'}</span>
+      </div>
+    );
+  }
+  // Before this branch existed, a refused review fell through to the terminal "done" below and
+  // rendered as five green segments — a review the deployment declined to spend on, shown as a
+  // successful one. Stage segments are omitted entirely: a cap refuses at the diff or the review
+  // stage, so drawing progress would only invite reading how far it got as how far it should have.
+  if (status === 'refused') {
+    return (
+      <div className="mini">
+        <span className="lbl">refused</span>
       </div>
     );
   }

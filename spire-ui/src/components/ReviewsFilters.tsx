@@ -10,11 +10,36 @@ const CHIPS: { f: ChipFilter; label: string }[] = [
   { f: 'closed', label: 'Closed' },
 ];
 
+/**
+ * Whether a status wants an operator to do something. The single definition behind all three
+ * surfaces that say "needs attention": the chip's filter, the chip's count and the summary tile.
+ * They were three separate literal comparisons, which is precisely how a chip comes to read 0 while
+ * still opening onto rows — the same drift argument that gave the spend gates one `SpendGate`.
+ *
+ * <p>`refused` counts, and does not go to Closed. It is terminal like `cancelled` and `superseded`,
+ * so Closed is the tempting bucket, but those two mean "nothing to do" and a refusal always leaves
+ * the operator a decision: raise the cap, wait for the window, or split the pull request.
+ *
+ * <p>What settles it is the **diff-size** gate. The `CAP_REACHED` attention row comes from
+ * `SpendGate.decide()`, which reads the spend and call caps only — a review refused for a diff too
+ * large raises no attention row anywhere. Under Closed it would have no surface at all: not a row
+ * in the panel, and not a chip anyone would think to open. Needs attention is the only place it can
+ * be found, so both refusal kinds go there and the list agrees with the panel rather than
+ * contradicting it.
+ */
+export function needsAttention(status: ReviewStatus): boolean {
+  return status === 'failed' || status === 'refused';
+}
+
+/**
+ * Which chip a status falls under. Every status must fall under exactly one besides All, or a row
+ * exists that no chip can reach — which is what a refused review did before it was listed here.
+ */
 export function matchesChip(status: ReviewStatus, f: ChipFilter): boolean {
   if (f === 'all') return true;
   if (f === 'reviewing') return status === 'reviewing';
   if (f === 'completed') return status === 'completed';
-  if (f === 'failed') return status === 'failed';
+  if (f === 'failed') return needsAttention(status);
   return status === 'cancelled' || status === 'superseded';
 }
 
