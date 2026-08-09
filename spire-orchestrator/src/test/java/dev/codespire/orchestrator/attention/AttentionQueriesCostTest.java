@@ -113,6 +113,30 @@ class AttentionQueriesCostTest {
         assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
     }
 
+    /**
+     * A purge hard-deletes the review its charges belonged to, so there is no page left to send an
+     * operator to and no rate anyone can now enter. Both rows therefore ignore purged charges.
+     *
+     * <p>Asserted for BOTH codes and paired with the raised state first: they are two separate queries,
+     * so filtering only one is the easy mistake, and on a ledger that raised nothing to begin with the
+     * negative half would pass with neither filter present.
+     */
+    @Test
+    void aPurgedChargeRaisesNeitherCostRow() {
+        insertUnpricedCharge("review::TEST-WS/TEST-REPO#11", "TEST-MODEL");
+        insertUnreconciledCharge("review::TEST-WS/TEST-REPO#12", "TEST-MODEL");
+        List<AttentionView> whileLive = queries.collect();
+        assertTrue(whileLive.stream().anyMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+        assertTrue(whileLive.stream().anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+
+        // What the future purge stamps, in the transaction that deletes the review row.
+        sql("UPDATE llm_charge SET archived_at = now()");
+
+        List<AttentionView> rows = queries.collect();
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+    }
+
     // ---- acknowledgement: the rate on a written line is immutable, so a fix cannot clear these ----
 
     /**
