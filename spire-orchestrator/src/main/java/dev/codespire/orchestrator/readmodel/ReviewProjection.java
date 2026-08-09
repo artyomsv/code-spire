@@ -159,6 +159,26 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
+    /**
+     * The aggregate's terminal failure, projected without coarsening a status the saga already made
+     * more specific.
+     *
+     * <p>A spend cap's refusal reaches its end state through the same {@code RecordFailure} every
+     * other terminal failure uses: the aggregate has ONE terminal-failure event, and a second one
+     * would change the wire contract for a distinction only the read model draws. So {@code refused}
+     * is a refinement of {@code ReviewFailedTerminally}, and projecting that event unconditionally
+     * relabelled the refusal {@code failed} one Kafka round trip after {@code ResultSaga.refuse}
+     * wrote it — invisibly, since the note stayed right while the badge, the reviews list and the
+     * REVIEW_FAILED attention row all read the status.
+     */
+    public void projectTerminalFailure(String reviewId) {
+        update("""
+                UPDATE review_status SET status = 'failed', updated_at = now()
+                 WHERE review_id = ? AND lower(status) <> 'refused'
+                """, ps -> ps.setString(1, reviewId));
+        broadcast(reviewId);
+    }
+
     public void updateStatus(String reviewId, String status, int stage) {
         update("UPDATE review_status SET status = ?, stage = ?, updated_at = now() WHERE review_id = ?", ps -> {
             ps.setString(1, status);

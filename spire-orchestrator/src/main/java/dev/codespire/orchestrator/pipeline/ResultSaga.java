@@ -19,6 +19,7 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
@@ -354,6 +355,36 @@ public class ResultSaga {
         if (e.credentialRejected()) {
             markCredentialRejected(e.reviewId());
         }
+    }
+
+    /**
+     * End a review because policy refused to spend on it. Mirrors {@link #onReviewFailed}'s terminal
+     * shape so the aggregate leaves REVIEWING — without that the review sits there until REVIEW_STUCK
+     * fires, blaming a webhook or a worker for what was a deliberate decision, and ADR-024's archive
+     * guard refuses to clear anything still 'reviewing'.
+     *
+     * <p>Status is 'refused', not 'failed': the archive guard, the attention queries and the reviews
+     * list all key on status, so filing a policy decision as an infrastructure failure would put it in
+     * the same bucket as a genuine outage. This project split pr_state out of status for the same
+     * reason — two different facts cannot share one badge.
+     *
+     * <p>{@code setError} is deliberately NOT called. There is no provider or worker error here, and
+     * populating it would make the detail page show an infrastructure error for a policy decision.
+     */
+    private void refuse(String reviewId, String commit, String phase, int stage, CapRefusal refusal) {
+        projection.clearScheduledRetry(reviewId);
+        timeline.record("result", "refused:" + phase, reviewId, refusal.detail());
+        projection.updateStatus(reviewId, "refused", stage);
+        projection.setNote(reviewId, refusal.note());
+        LOG.warnf("Refused %s for %s — %s", phase, reviewId, refusal.detail());
+        // retryable=false, so the decider yields a terminal state and the run leaves REVIEWING.
+        lifecycle.handle(reviewId, new RecordCommand.RecordFailure(commit, phase, false));
+    }
+
+    /** Package-private passthrough: the gates that call {@link #refuse} arrive in later tasks, and
+     *  widening the method itself would make a saga-internal transition part of the bean's API. */
+    void refuseForTest(String reviewId, String commit, String phase, int stage, CapRefusal refusal) {
+        refuse(reviewId, commit, phase, stage, refusal);
     }
 
     /**

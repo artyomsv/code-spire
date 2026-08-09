@@ -168,7 +168,9 @@ public class AttentionQueries {
      * {@code ReviewState.Status}'s uppercase enum names. Comparing against the enum spelling made
      * every completed review on an open PR read as stuck and made a genuinely failed review
      * invisible, so both predicates fold case and the terminal set names all four terminal values.
-     * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled.
+     * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled, and
+     * so is {@code refused} — a review a spend cap declined to run has reached its end state, and
+     * reporting it here would blame a delivery path for a deliberate policy decision.
      *
      * <p>BOTH queries exclude archived reviews, not just the stuck one. Nothing an operator does makes
      * a failed review un-fail, so archiving it IS the resolution — and a {@code REVIEW_FAILED} row
@@ -178,7 +180,7 @@ public class AttentionQueries {
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         rows.addAll(perReviewRows(c, """
                 SELECT workspace, slug, pr_id FROM review_status
-                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded')
+                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded', 'refused')
                    AND pr_state = 'OPEN'
                    AND archived_at IS NULL
                    AND updated_at < now() - make_interval(mins => ?)
