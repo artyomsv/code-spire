@@ -4,6 +4,120 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-024 — Deleting a review archives it; recorded LLM spend is never destroyed
+
+**Context.** `ReviewProjection.deleteReview` was a true hard delete. One transaction removed the review
+row, its scoped timeline, the underlying event stream, the worker's idempotency claims, its context
+blob — and, as of ADR-023's review round, **its charge ledger**. That last one destroys real, paid
+usage: a review deleted for being clutter took its token counts, its model and its cost with it, and no
+query could reconstruct them. On the dev deployment a single delete removed four charge lines and
+11,454 millicents of genuine spend.
+
+That contradicts the principle ADR-023 was built on. Snapshotting `rate_millicents_per_million` onto
+each charge line exists so **a later price edit cannot rewrite history** — reproducibility by
+construction rather than by convention. It made cost immune to a *price* change and left the same
+history fully exposed to a *different* mechanism: a button whose whole purpose is tidying the list.
+A ledger that is authoritative about the past has to survive the housekeeping of the present, and one
+that a routine UI action can erase is authoritative only until someone tidies up.
+
+**Decision.** Deleting a review **archives** it. `review_status.archived_at` (migration V32) marks the
+review — `NULL` means live — and nothing is deleted: not the timeline, not `event_log`, not the
+worker's claims or context blob, and above all not `llm_charge`. `DELETE /api/reviews/{ws}/{slug}/{pr}`
+becomes `POST …/archive`, with `POST …/unarchive` to reverse it, because a `DELETE` verb that destroys
+nothing misdescribes the operation to every future reader of the API. The reviews list defaults to live
+rows, with **Show archived** including archived rows inline, visually marked; an archived review keeps
+a fully working detail page.
+
+**This reverses part of ADR-023's own review fix, and that is safe for a structural reason rather than
+a judgement call.** The `llm_charge` deletion closed a real defect: `review_id` is
+`ReviewIds.reviewId(repo, pr)` — stable per PR, not per run — and `llm_charge.review_id` is plain
+`TEXT` with no foreign key, so orphaned rows were not merely unreachable. `costOf` / `listSummaries` /
+`latestModelFor` key on `review_id` alone, so a **re-registered PR rendered the deleted run's money and
+model as its own**, and the new run's `call_ref` collided with the orphan, discarding a real charge.
+Every step of that hazard requires the review row to be **gone**, so the PR can be registered afresh.
+Archiving keeps the row, and the archived PR is retired, so there is no second review that could
+inherit anything. The hazard is closed by keeping the row rather than by destroying the evidence — the
+same outcome, reached without paying for it in history.
+
+**The clean slate the deletion defended was never complete anyway.** `review_thread` is deleted
+nowhere in the codebase, so a re-registered PR already inherited stale thread rows. This is worth
+recording rather than quietly relying on, because it changes how much the old behaviour could be
+trusted: the property being protected did not hold before this ADR either, so choosing retention over
+it gives up less than the argument for deletion implied.
+
+**Retirement is a spend boundary — and specifically NOT what makes retention safe.** An archived PR is
+retired: no push, `/command`, reply, close, re-run or scheduled retry starts work on it again. The
+first draft of this design justified retirement as the thing that keeps the retained ledger honest, and
+that reasoning was **false**. With nothing deleted, a resurrected PR's old charges are genuinely its
+own history, and `ReviewRuns.currentRun` — which counts `ReviewRequested` rows in the review's own
+retained `event_log` — stays correct across a resurrection. Retention needs no retirement at all.
+
+The correction is recorded rather than silently replaced because the false reason would have collapsed
+under the first person who checked it, and it would have taken the decision down with it: a reader who
+disproves the stated rationale reasonably concludes the behaviour is unnecessary and removes it. The
+real reason is narrower and holds: **an author pushing a commit must not silently re-bill an operator
+who archived the review to be done with it.** Retirement is a cost control, and the gate belongs where
+money is spent. It also keeps `review_status`'s `PRIMARY KEY (review_id)` intact, since a per-run
+review identity would mean changing the aggregate stream id — an event-store contract.
+
+Six paths enforce it, because no single choke point sees them all: four integration events
+(`AuthorReplied`, `ManualCommandReceived`, `PullRequestEventReceived`, `PullRequestClosed`) in
+`IntegrationSaga`, plus `ReviewRerunService` and `ManualRegisterResource`, which are REST and never
+reach the saga. `PullRequestClosed` is the one that would otherwise pass unnoticed: it writes
+`pr_state`, so without it an archived review's badge would still move on the next merge.
+
+**Charges are stamped at purge, not at archive.** `llm_charge.archived_at` exists, and every ledger
+read filters it, but **archiving never writes it** — only a future purge will, in the same transaction
+that hard-deletes the review row. Stamping at archive was the first draft and was self-defeating: the
+per-review cost reads are keyed by `review_id` alone and are *the same reads that serve the archived
+review's own detail page* (`loadDetail` → `chargeLines(reviewId)` + `costOf(reviewId)`) and its
+Show-archived list row. Filtering them would have shown an archived review a cost of zero and no model
+— contradicting the entire purpose of retaining the data, in the one place an operator would go to look
+at it. Stamping at purge gives every property wanted at once: an archived review keeps its own cost
+visible, a purged review's orphans stay off the PR that later inherits its `review_id`, and statistics
+ignore the filter and see everything ever spent.
+
+**Archived is a third dimension, not a status value.** `review_status` already carries two orthogonal
+facts: `status` (the run's outcome — `completed`, `failed`) and `pr_state` (`OPEN`/`MERGED`/`CLOSED`),
+split apart in July 2026 because a merged PR and a passed review are different facts one badge could
+not carry. Archival is a third, and overwriting `status` with it would destroy whether the run
+completed or failed — precisely the statistic the data is being retained for. An archived review still
+reports the outcome and the finding count it had at the moment it was archived.
+
+**Consequences.**
+- **Archiving a running review is refused** (`ArchiveOutcome.STILL_RUNNING`). `ResultSaga.ifCurrentRun`
+  guards on commit alone, so an in-flight worker's results would still write status, findings and
+  charges to a row this ADR promises is frozen — and those late charges would carry a `NULL`
+  `archived_at` into a purge, becoming exactly the orphan the column exists to prevent.
+- **`archiveReview` returns a four-valued enum, not a boolean.** The `UPDATE`'s `WHERE` matches zero
+  rows for all three failure cases, so a boolean could not tell "no such review" from "already
+  archived" from "still running", and each needs a different answer to the operator (404 / 409 / 409
+  with distinct text).
+- **Retirement is answered, not silent.** An inbound reply, `/command` or PR update on an archived
+  review posts a one-time notice (`NotifyArchived` → `ArchivedNotified`, fixed text, no LLM
+  credential). A close gates without notifying: it is not a human asking a question, and the notice
+  fires once *ever*, so spending it there would leave whoever later asks a real question with silence.
+  This project already learned once, from the conversation turn cap, that an unexplained non-response
+  reads as a lost webhook.
+- **Once per review means a second person replying in a *different* thread gets silence.**
+  `NotifyTurnCap` made the opposite call — one claim per thread — for exactly that reason. Chosen
+  deliberately here, and recorded so the trade-off is visible if it proves wrong in use.
+- **The purge itself is not built.** `llm_charge.archived_at` and the ten filtered ledger reads are its
+  groundwork, landed now because the day the purge is written is the day a re-registered PR starts
+  reporting a dead review's money as its own. When it is built it must stamp the charges in the same
+  transaction that deletes the review row.
+- **Already hard-deleted reviews are not backfilled.** Their rows are gone.
+
+**Rejected.** A parallel archive schema — every future migration would have to mirror into it or drift
+silently, "all reviews ever" would become a `UNION`, and `event_log` is the append-only source of truth
+`JdbcEventStore.load` rehydrates aggregates from, so relocating its rows mutates the event store rather
+than archiving a projection. A read-only `live_review` view — archived reviews must be visible in the
+same table behind a toggle, which a permanently-excluding view fights. Unarchive by manual SQL: since
+reversing an archive is one `UPDATE` (no charge rows need unstamping, per the stamp-at-purge decision),
+the alternative was never "no unarchive" but "unarchive as database surgery".
+
+---
+
 ## ADR-023 — LLM cost is a charge-line ledger with snapshotted rates, and zero is a category
 
 **Context.** The pre-existing accounting turned *unknown* into *zero* in four places, each individually
@@ -133,6 +247,13 @@ second row for a call that happened once. Today that only inflates a dashboard f
 built on this ledger it would corrupt the control. The constraint makes the illegal state
 unrepresentable at the storage layer rather than merely discouraged in the service that writes it.
 
+**Superseded in part by ADR-024.** This ADR's review round also made `deleteReview` clear `llm_charge` alongside the review's other rows,
+reasoning that "delete is a true clean slate" so a re-registered PR could not inherit an orphaned run's
+money. That reasoning no longer describes the system: **there is no hard delete.** Archiving keeps the
+review row, which retires the PR and so removes the second review that could have inherited anything —
+closing the same hazard without erasing the ledger this ADR exists to make trustworthy. The
+`archived_at` filters on the ledger reads remain, for a purge that does not exist yet.
+
 **What this ADR does not claim.** `ModelUsage` is a Kafka wire type and this branch reshaped it in
 place — same name, new components, the money field removed so a worker adapter cannot express a cost
 even by accident. The ADR-013 contract-compat snapshot gate stayed green through that change, but **it
@@ -170,6 +291,8 @@ provider configuration the operator did not touch, where refusing and naming the
 in control of which side moves.
 
 ---
+
+## ADR-022 — Operator auth is a cookie session per service, not a bearer token
 
 **Context.** SECURITY.md specified the shape years before it was built: *"auth-code + PKCE at the UI;
 JWT bearer validated per request against the issuer's JWKS."* That is the modern default, and for a
