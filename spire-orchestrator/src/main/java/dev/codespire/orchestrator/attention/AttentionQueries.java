@@ -169,12 +169,18 @@ public class AttentionQueries {
      * every completed review on an open PR read as stuck and made a genuinely failed review
      * invisible, so both predicates fold case and the terminal set names all four terminal values.
      * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled.
+     *
+     * <p>BOTH queries exclude archived reviews, not just the stuck one. Nothing an operator does makes
+     * a failed review un-fail, so archiving it IS the resolution — and a {@code REVIEW_FAILED} row
+     * that survived it would be this panel's first permanently-lit row, against the contract that
+     * fixing the cause removes the row.
      */
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         rows.addAll(perReviewRows(c, """
                 SELECT workspace, slug, pr_id FROM review_status
                  WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded')
                    AND pr_state = 'OPEN'
+                   AND archived_at IS NULL
                    AND updated_at < now() - make_interval(mins => ?)
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
                  ORDER BY updated_at
@@ -186,6 +192,7 @@ public class AttentionQueries {
         rows.addAll(perReviewRows(c, """
                 SELECT workspace, slug, pr_id FROM review_status
                  WHERE lower(status) = 'failed'
+                   AND archived_at IS NULL
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
                  ORDER BY updated_at DESC
                 """, null, "REVIEW_FAILED",

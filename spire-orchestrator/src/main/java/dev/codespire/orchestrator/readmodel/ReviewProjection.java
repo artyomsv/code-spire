@@ -302,13 +302,18 @@ public class ReviewProjection {
      * Claim every review whose retry has come due, clearing {@code retry_at} in the SAME statement that
      * reads it. Only one caller can win a given row, so replicas (or an overlapping sweep) cannot both
      * dispatch the same attempt — the claim IS the dispatch permit.
+     *
+     * <p>Skips archived reviews. {@link #archiveReview} already clears {@code retry_at}, and this is
+     * the second of the two defences on purpose: a due time can arrive AFTER the archive lands — from
+     * a result still in flight, or a replica mid-dispatch — and resurrecting a retired review minutes
+     * later is exactly the outcome archival promises will not happen.
      */
     public List<String> claimDueRetries(Instant now) {
         List<String> claimed = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
                      UPDATE review_status SET retry_at = NULL, updated_at = now()
-                      WHERE retry_at IS NOT NULL AND retry_at <= ?
+                      WHERE retry_at IS NOT NULL AND retry_at <= ? AND archived_at IS NULL
                       RETURNING review_id
                      """)) {
             ps.setTimestamp(1, Timestamp.from(now));
