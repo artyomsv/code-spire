@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
 import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
@@ -278,6 +279,18 @@ public class ResultSaga {
                 threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
                 projection.setAnswering(e.reviewId(), false);
             }
+            case ArchivedNotified e -> {
+                // Filed under the conversation root when the notice replied inside a thread, so it sits
+                // with the rest of that conversation. threadRef is null whenever the notice went to the
+                // top-level PR comment — the /review and PR-update paths, i.e. the common case — and
+                // rootOf binds it into a statement, so a null would throw an NPE inside a try whose
+                // catch (SQLException) cannot see it.
+                String threadRef = e.threadRef() == null
+                        ? null : threads.rootOf(e.reviewId(), e.threadRef()).value();
+                projection.appendEvent(e.reviewId(), "result", "ArchivedNotified",
+                        "told the pull request this review is archived", threadRef);
+                // No bumpTurn: a notice that answers nothing must not consume one of the thread's turns.
+            }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -496,6 +509,7 @@ public class ResultSaga {
             case FollowUpGenerated e -> e.reviewId();
             case FollowUpPosted e -> e.reviewId();
             case TurnCapNotified e -> e.reviewId();
+            case ArchivedNotified e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             default -> "";
         };

@@ -11,6 +11,8 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.scm.Author;
+import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
@@ -91,6 +93,13 @@ public class IntegrationSaga {
 
     private void handle(IntegrationEvent event) {
         timeline.record("integration", event.getClass().getSimpleName(), reviewIdOf(event), "");
+        // Ahead of the switch, so nothing an archived review owns is written on the way past — the
+        // AuthorReplied branch below records a thread location before it consults any policy.
+        String archivedId = archivedReviewIdOf(event);
+        if (archivedId != null) {
+            stopAtArchivedReview(archivedId, event);
+            return;
+        }
         switch (event) {
             case PullRequestEventReceived e -> onPullRequestEvent(e);
             case PullRequestClosed e -> {
@@ -137,6 +146,95 @@ public class IntegrationSaga {
             }
             default -> LOG.debugf("No integration reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * The id of the archived review this event targets, or null when it is live, unknown, or the event
+     * cannot reach a review at all — {@link #reviewIdOf} answers {@code ""} for exactly those.
+     */
+    private String archivedReviewIdOf(IntegrationEvent event) {
+        String reviewId = reviewIdOf(event);
+        return !reviewId.isEmpty() && projection.archived(reviewId) ? reviewId : null;
+    }
+
+    /**
+     * An archived pull request is retired: no push, {@code /command}, reply or close acts on it again.
+     * Retirement is a SPEND boundary — an author pushing a commit must not silently re-bill an operator
+     * who archived the review to be done with it.
+     *
+     * <p>The close is gated too, and it is the one that would otherwise go unnoticed: it is the event
+     * that writes {@code pr_state}, so without this an archived review's badge would still move on the
+     * next merge and the frozen-state promise would be false.
+     *
+     * <p>Always leaves a timeline note. A decision to stay silent that nobody can see is how the
+     * conversation turn cap read as a lost webhook for a whole live run.
+     */
+    private void stopAtArchivedReview(String reviewId, IntegrationEvent event) {
+        String what = event.getClass().getSimpleName();
+        timeline.record("integration", "ArchivedReviewSkipped", reviewId,
+                what + " ignored — this review is archived");
+        LOG.infof("Ignoring %s on %s — the review is archived, so the pull request is retired",
+                what, reviewId);
+        noticeTriggerOf(event).flatMap(trigger -> archivedNotice(reviewId, trigger))
+                .ifPresent(commands::emit);
+    }
+
+    /** What the notice needs from the event that triggered it: where to post, and who asked. */
+    private record NoticeTrigger(RepoRef repo, long prId, ThreadRef threadRef, Author author) {
+    }
+
+    /**
+     * The events that mean a human is waiting for an answer, and where the notice belongs: inside the
+     * thread a reply arrived in, else the top-level PR comment.
+     *
+     * <p>{@code PullRequestClosed} is absent, and this is an allowlist rather than a "not a close" test
+     * so no event added later inherits the notice by default. The notice fires once EVER: spending it
+     * on a close would leave whoever later asks a real question with silence.
+     */
+    private static Optional<NoticeTrigger> noticeTriggerOf(IntegrationEvent event) {
+        return switch (event) {
+            case AuthorReplied e -> Optional.of(new NoticeTrigger(e.repo(), e.prId(),
+                    e.topLevel() ? null : e.threadRef(), e.author()));
+            case ManualCommandReceived e ->
+                    Optional.of(new NoticeTrigger(e.repo(), e.prId(), null, e.author()));
+            case PullRequestEventReceived e ->
+                    Optional.of(new NoticeTrigger(e.repo(), e.prId(), null, e.author()));
+            default -> Optional.empty();
+        };
+    }
+
+    /**
+     * The notice command, or empty when the gate must stay silent. Three silences, each its own reason:
+     *
+     * <p>The bot's own posted notice echoes back as an {@code AuthorReplied}, so without the self-loop
+     * check it would re-enter this gate and emit a command on every echo, forever.
+     *
+     * <p>An author outside the provider's allowlist is refused for the same reason {@code /review} is
+     * (see {@link #onManualCommand}): a notice that answered any commenter would partly reverse a gate
+     * that exists to stop unlisted authors making the bot act.
+     *
+     * <p>With no resolvable provider there is no credential to broker, and a credential-less command
+     * reaches the worker's stub sink — which would consume the once-ever claim while posting nothing
+     * real, spending the notice permanently and invisibly.
+     */
+    private Optional<ActionCommand> archivedNotice(String reviewId, NoticeTrigger trigger) {
+        if (isBotAuthored(reviewId, trigger.author())) {
+            LOG.debugf("No archived notice on %s — the trigger is the bot's own comment", reviewId);
+            return Optional.empty();
+        }
+        Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
+        if (provider.isEmpty()) {
+            LOG.infof("No archived notice on %s — no provider resolves, so nothing could be posted "
+                    + "and the once-ever notice stays available", reviewId);
+            return Optional.empty();
+        }
+        if (!authorAllowed(provider.get().authors(), trigger.author())) {
+            LOG.infof("No archived notice on %s — author @%s is not in the provider allowlist",
+                    reviewId, username(trigger.author()));
+            return Optional.empty();
+        }
+        return Optional.of(new ActionCommand.NotifyArchived(reviewId, trigger.repo(), trigger.prId(),
+                trigger.threadRef(), workerCredentials.pack(provider.get())));
     }
 
     /**
