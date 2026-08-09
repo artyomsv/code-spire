@@ -2,6 +2,10 @@ package dev.codespire.orchestrator.attention;
 
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
+import dev.codespire.orchestrator.caps.CapPolicy;
+import dev.codespire.orchestrator.caps.CapRefusal;
+import dev.codespire.orchestrator.caps.SpendGate;
+import dev.codespire.orchestrator.caps.SpendWindow;
 import dev.codespire.orchestrator.dlq.DlqRepository;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -15,6 +19,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -52,6 +57,15 @@ public class AttentionQueries {
     @Inject
     CostAttentionAcks acks;
 
+    @Inject
+    SpendGate spendGate;
+
+    @Inject
+    CapPolicy capPolicy;
+
+    @Inject
+    SpendWindow spendWindow;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -68,6 +82,7 @@ public class AttentionQueries {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
         deadLetterRows(rows);
+        capRows(rows);
         rows.sort(Comparator.comparing((AttentionView v) -> v.severity().ordinal())
                 .thenComparing(AttentionView::code)
                 .thenComparing(v -> v.subject() == null ? "" : v.subject()));
@@ -339,6 +354,44 @@ public class AttentionQueries {
     /** Acknowledge a ledger-wide cost condition: calls already priced stop being counted. */
     void acknowledge(CostAttentionRow row) {
         acks.acknowledge(row);
+    }
+
+    /**
+     * Whether deployment-wide usage over the configured window exceeds either cap right now, asking
+     * the exact question {@link SpendGate#decide()} asks before every paid call. Sharing the decision,
+     * rather than re-comparing usage against the caps here, is what keeps this row and the two
+     * enforcement sites (the pre-spend gate, the conversation gate) from drifting on what "over the
+     * cap" means — a drift in a money gate is invisible until it fails to fire.
+     *
+     * <p>Carries no acknowledgement, unlike {@link CostAttentionRow}: those describe calls already made
+     * that no fix can un-make, while this describes usage right now, so it clears on its own once the
+     * charges that tripped it age out of the window or the operator raises the limit — never stored,
+     * never dismissed, exactly this panel's contract.
+     */
+    private void capRows(List<AttentionView> rows) {
+        CapRefusal decision = spendGate.decide();
+        if (decision.allowed()) {
+            return;
+        }
+        rows.add(new AttentionView("CAP_REACHED", Severity.BLOCKING, null,
+                capitalize(decision.detail()) + "." + recoveryClause(), "/settings/general"));
+    }
+
+    /**
+     * Names the instant the oldest in-window charge ages out — the concrete advantage a rolling window
+     * has over a fixed bucket, where the best available answer is "at the top of the hour". Empty when
+     * the ledger read failed, which leaves the row's own detail as the only wording rather than a
+     * fabricated instant.
+     */
+    private String recoveryClause() {
+        return spendWindow.oldestChargeAt(Instant.now().minus(capPolicy.window()))
+                .map(oldest -> " Capacity returns at "
+                        + oldest.plus(capPolicy.window()).truncatedTo(ChronoUnit.SECONDS) + ".")
+                .orElse("");
+    }
+
+    private static String capitalize(String text) {
+        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
     private void deadLetterRows(List<AttentionView> rows) {

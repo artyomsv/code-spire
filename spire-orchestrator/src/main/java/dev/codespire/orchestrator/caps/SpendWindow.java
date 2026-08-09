@@ -11,6 +11,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * What the deployment has already spent, as the spend gates see it: one read of the {@code llm_charge}
@@ -80,6 +81,33 @@ public class SpendWindow {
             LOG.errorf(e, "Could not read spend since %s — allowing the review rather than refusing it",
                     from);
             return Usage.none();
+        }
+    }
+
+    /**
+     * The earliest charge counted since {@code from}, or empty when the window holds nothing (or the
+     * read failed). This is the concrete advantage a rolling window has over a fixed bucket: the exact
+     * instant capacity returns is computable as {@code oldestChargeAt + window length}, since that
+     * charge is the next one to age out and usage cannot drop until it does.
+     *
+     * <p>No {@code archived_at} filter, for the same reason {@link #since} has none — a purged review's
+     * money still occupied the window while it was live, and the instant capacity returns does not
+     * change because the row was tidied away.
+     */
+    public Optional<Instant> oldestChargeAt(Instant from) {
+        String sql = "SELECT MIN(priced_at) AS oldest FROM llm_charge WHERE priced_at >= ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setTimestamp(1, Timestamp.from(from));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                Timestamp oldest = rs.getTimestamp("oldest");
+                return oldest == null ? Optional.empty() : Optional.of(oldest.toInstant());
+            }
+        } catch (SQLException e) {
+            LOG.errorf(e, "Could not read the oldest charge since %s", from);
+            return Optional.empty();
         }
     }
 }
