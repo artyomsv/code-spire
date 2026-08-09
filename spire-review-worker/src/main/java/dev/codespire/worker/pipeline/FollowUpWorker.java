@@ -2,8 +2,10 @@ package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
+import dev.codespire.contract.command.ArchivedNotice;
 import dev.codespire.worker.adapters.LlmFailures;
 import dev.codespire.worker.adapters.ProviderCircuits;
+import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
@@ -172,6 +174,35 @@ public class FollowUpWorker {
     static String capNoticeText(int turnCap) {
         return "I've replied " + turnCap + " times in this thread, so I'll hand it back to the team "
                 + "rather than keep going. @-mention me if you still need something here.";
+    }
+
+    /**
+     * Fixed text: no model is called, so this never varies. Unlike the turn cap, no policy
+     * overrides retirement, so it does not invite an @-mention.
+     */
+    private static final String ARCHIVED_TEXT =
+            "This review has been archived, so no further reviews will run for this pull request.";
+
+    /**
+     * Post the one-time notice that this review is archived. The claim slot is a CONSTANT, not the
+     * thread ref, so this fires once per REVIEW rather than once per thread. Null {@code threadRef}
+     * means the triggering event had no thread, so the notice goes to the top-level PR comment.
+     */
+    public void notifyArchived(ActionCommand.NotifyArchived command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        if (idempotency.claim(command.reviewId(), ArchivedNotice.SLOT, ArchivedNotice.KEY)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            // INFO, not DEBUG: the only record that an inbound event went unanswered on purpose.
+            LOG.infof("Archived notice already posted for %s — staying quiet", command.reviewId());
+            return;
+        }
+        CommentRef ref = command.threadRef() == null
+                ? clients.comments().postSummary(command.repo(), command.prId(), ARCHIVED_TEXT)
+                : clients.comments().replyInThread(command.repo(), command.prId(),
+                        command.threadRef(), ARCHIVED_TEXT);
+        idempotency.markPosted(command.reviewId(), ArchivedNotice.SLOT, ArchivedNotice.KEY, ref.commentId());
+        LOG.infof("Posted archived notice for %s", command.reviewId());
+        results.emit(new ArchivedNotified(command.reviewId(), command.threadRef(), ref.commentId()));
     }
 
     /**
