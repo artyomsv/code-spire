@@ -645,6 +645,65 @@ The design is fully specified in `docs/` — **treat those files as the source o
     (`techdebt/spire-ui/4-3-…` — the first UI entry; `techdebt/spire-orchestrator/3-3-the-charge-ledger-…`
     — the ledger keys on a `reviewId` carrying no provider, so one workspace name registered on two SCMs
     sums two unrelated PRs, which a per-repo spend cap would inherit).
+- **Deleting a review now archives it (ADR-024, 2026-08-09):** the hard delete destroyed the review's
+  charge ledger, so real paid usage vanished with a row removed for being clutter — the very history
+  ADR-023 snapshotted rates to protect from a *price edit* stayed erasable by a button whose whole
+  purpose is tidying the list. `review_status.archived_at` (**V32**, `NULL` = live) marks the review and
+  **nothing is deleted**: not the scoped timeline, not `event_log`, not the worker's claims or context
+  blob, and above all not `llm_charge`. `DELETE /api/reviews/{ws}/{slug}/{pr}` became `POST …/archive`
+  plus `POST …/unarchive`, because a `DELETE` verb that destroys nothing misdescribes the operation to
+  every future reader. This **reverses the `llm_charge` deletion added by ADR-023's own review round**,
+  and safely: that deletion closed a real defect (a re-registered PR inheriting an orphaned run's money
+  and colliding with its `call_ref`), but every step of that hazard needs the review row *gone* so the
+  PR can be registered afresh — archiving keeps the row and retires the PR, so no second review exists
+  to inherit anything. Archival is a **third dimension** beside `status` and `pr_state`, never a value
+  in either: overwriting `status` would destroy whether the run completed or failed, which is the
+  statistic the data is retained for. `llm_charge.archived_at` exists and ten ledger reads filter it,
+  but **archiving never writes it** — only a future purge will. Stamping at archive was self-defeating,
+  since the per-review cost reads key on `review_id` alone and are the same reads serving the archived
+  review's *own* detail page, so it would have shown zero cost and no model.
+  - **Six paths enforce retirement, because no one choke point sees them all** — four integration
+    events in `IntegrationSaga` (`AuthorReplied`, `ManualCommandReceived`, `PullRequestEventReceived`,
+    `PullRequestClosed`) plus `ReviewRerunService` and `ManualRegisterResource`, which are REST and
+    never reach the saga. The re-run's first act is `clearWorkerIdempotency`, which drops *every* claim
+    for the review including the once-ever notice's, so an ungated re-run both resurrected the review
+    and re-armed the notice; manual register answered 200 with a reviewId while the saga silently
+    dropped the event. Both now 409. **Retirement is a spend boundary, not what makes retention safe** —
+    with nothing deleted a resurrected PR's old charges are genuinely its own and `ReviewRuns` stays
+    correct; the real reason is that an author's push must not silently re-bill an operator who archived
+    to be done.
+  - **The notice fires on three of the four events, once per review.** `NotifyArchived` →
+    `ArchivedNotified` posts fixed text with no LLM credential (retiring a PR costs no tokens), in the
+    thread a reply arrived in or else the top-level PR comment. `PullRequestClosed` gates **without**
+    spending it: a close is not a human asking a question, and the notice fires once *ever*, so
+    spending it there leaves whoever later asks a real question with silence. `noticeTriggerOf` is an
+    allowlist rather than a "not a close" test, so no event added later inherits the notice by default.
+    Three further silences, each with its own reason: the bot's own notice echoes back as
+    `AuthorReplied` (without the self-loop check it re-emits forever), an author outside the allowlist
+    is refused exactly as `/review` refuses them, and with no resolvable provider nothing is emitted at
+    all — a credential-less command reaches the worker's stub sink, which would consume the once-ever
+    claim while posting nothing real. Unarchive clears `archived_at` and releases the notice claim, so
+    a later re-archive announces itself again.
+  - **The two findings most expensive to rediscover.** `ReviewThreadView.rootOf` binds its `ThreadRef`
+    into a statement immediately, so a null throws an **NPE inside a `try` whose `catch (SQLException)`
+    cannot see it** — and `ArchivedNotified.threadRef` is null for the common case (the `/review` and
+    PR-update paths post top-level), so `ResultSaga` must null-guard before calling it rather than copy
+    the `TurnCapNotified` handler, whose ref is never null. And the notice is claimed on a **constant**
+    slot (`ArchivedNotice.SLOT`, shared in `spire-contract` because the worker *takes* the claim and the
+    orchestrator *releases* it) rather than on a thread ref — that constant in the slot position is the
+    entire mechanism making it once-per-**review** instead of once-per-thread, which is how
+    `NotifyTurnCap` deliberately behaves.
+  - Archiving **refuses while the review is running** (`ResultSaga.ifCurrentRun` guards on commit alone,
+    so an in-flight result would write to a row promised frozen and leave a charge no purge stamps), and
+    clears `retry_at` (the 5s sweep would resurrect it) and `answering` (no permanent responding pill).
+    `archiveReview` returns a four-valued `ArchiveOutcome`, not a boolean: the `UPDATE`'s `WHERE`
+    matches zero rows for all three failure cases, so 404 / 409-already / 409-still-running are
+    indistinguishable otherwise. Archive broadcasts a **removal**, not a row update — the row leaves the
+    live list, an archived review is frozen, and the socket's `onOpen` snapshot *replaces* the client
+    list, so pushing archived rows through it would drop them on every routine 5-minute reconnect;
+    Show archived is a plain REST fetch (`?includeArchived=true`). **1219 Java tests across 157 suites**
+    (`testFast` 505/63 + `testServices` — gateway 63/9, orchestrator 493/67, worker 158/18); **312
+    `spire-ui` vitest tests across 43 files**; `tsc --noEmit` silent. Runbook: SMOKE-TEST **Mode L**.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

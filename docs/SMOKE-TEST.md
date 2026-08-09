@@ -5,7 +5,8 @@
 PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via
 webhook (Tailscale Funnel); **G** provider-parity regression script (run the same scenarios on every
 SCM); **H** the attention panel; **I** context provisioning across every provider type; **J** operator
-authentication; **K** the LLM cost ledger. Do A first — it validates your local stack in ~2 minutes.
+authentication; **K** the LLM cost ledger; **L** review archival and retirement. Do A first — it
+validates your local stack in ~2 minutes.
 
 Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
 
@@ -1061,3 +1062,130 @@ Delete any model/provider pair added only for this pass. For a pair still in use
 before you repointed it), repoint the provider at a different model — or delete the provider
 outright — before deleting the model itself; deleting an in-use model is refused by the same guard
 K-4 exercises.
+
+---
+
+## Mode L — review archival and retirement (ADR-024)
+
+Archiving replaced the hard delete: nothing is destroyed, and the pull request is **retired** so no
+further reviews run for it. This mode walks one review through archive → retirement → unarchive on a
+real PR. Sign in as `dev-admin` (or run with auth off) — archive, unarchive and re-run are admin-only.
+
+### Setup
+
+One **completed** review on a real PR from any earlier mode (B/C/D/E/F/G all work — this mode does not
+care which SCM), with the webhook still live so replies and `/review` reach the gateway. You will be
+commenting on that PR, so pick one you are happy to leave a few bot comments on. Note its cost and
+model from the review detail's "Model usage" card before you start — L-1 checks they survive.
+
+### L-1 — archiving destroys nothing and takes the review off the live list
+
+On the review detail page, press the **Archive review** button (the box icon; it sits where Delete used
+to). Read the confirmation copy, then confirm.
+
+**Expected:** 204, the row disappears from the reviews list, and the detail page keeps working — same
+`status` (`completed`, **not** overwritten by archival), same PR-state badge, same findings, and the
+**same cost, model and charge lines** as you noted in Setup. That last one is the whole point: the old
+delete took the charge ledger with it, so a review removed for being clutter destroyed real paid usage.
+
+Now tick **Show archived** above the reviews list.
+
+**Expected:** the row is back, faded, carrying an **Archived** tag with the archive timestamp on hover.
+Untick it and the row leaves again. The existing filter chips operate on whichever set the checkbox
+selects — Show archived is a different *request*, not another chip.
+
+Press **Archive review** again from a second browser tab (or `POST …/archive` directly).
+
+**Expected:** **409**, *"This review is already archived."* Archiving something that does not exist is
+**404**, and archiving a review that is **still running** is a third answer — **409**, *"This review is
+still running. Wait for it to finish, or cancel it, then archive."* Three distinguishable outcomes, not
+one boolean failure: an in-flight worker's result would otherwise write status, findings and charges to
+a row archival promises is frozen.
+
+### L-2 — a reply gets exactly one notice, ever
+
+Post a normal (non-command) reply on the PR as an **allowlisted** author — either in an existing
+finding thread or as a plain PR comment.
+
+**Expected:** the bot replies once with the fixed text *"This review has been archived, so no further
+reviews will run for this pull request."* — in the thread if you replied in one, otherwise as a
+top-level PR comment. The review's timeline shows an `ArchivedReviewSkipped` entry naming the event,
+then an `ArchivedNotified` entry (*"told the pull request this review is archived"*). No model was
+called, so the cost card is unchanged — confirm that, since it is the cheapest way to catch the notice
+accidentally acquiring an LLM credential.
+
+Reply **again**, and then reply once more in a **different** thread.
+
+**Expected:** **no second notice, either time.** The claim is taken on a constant slot rather than on
+the thread ref, which is what makes it once per *review* rather than once per thread — the opposite of
+the turn-cap notice, deliberately. The worker logs `Archived notice already posted for … — staying
+quiet` at INFO, and the orchestrator still records an `ArchivedReviewSkipped` timeline entry for each
+event, so the silence is visible somewhere rather than being indistinguishable from a lost webhook.
+
+Reply once as an author **not** in the provider's allowlist.
+
+**Expected:** nothing at all — no notice, no timeline notice entry beyond the skip, and the log says
+the author is not in the allowlist. A notice that answered any commenter would partly reverse the gate
+that stops unlisted authors making the bot act.
+
+### L-3 — the retired PR starts no new work
+
+Comment `/review` on the PR.
+
+**Expected:** **no review starts.** Status stays `completed`, the commit does not move, the pipeline
+does not restart, and no new charge lines appear. The timeline records the skip. (If the notice has
+not yet been spent — i.e. you skipped L-2 — this is one of the three events that spends it.)
+
+Push a new commit to the PR branch.
+
+**Expected:** same again — the update event is gated, no review runs, and the cost card is unchanged.
+This is the reason retirement exists: an author pushing a commit must not silently re-bill an operator
+who archived the review to be done with it.
+
+Now try the two paths that never reach the saga. Press **Re-run** — it should not be offered while the
+review is archived, so call it directly: `POST /api/reviews/{ws}/{slug}/{pr}/rerun`.
+
+**Expected:** **409**, *"This review is archived. Unarchive it before re-running."* Then check that the
+notice claim survived: reply on the PR again and confirm **still no second notice**. The re-run's first
+act is to clear every worker claim for the review, so an ungated re-run would both resurrect the review
+and silently re-arm a notice meant to fire once.
+
+Finally, register the same PR from **Register PR** in the dashboard.
+
+**Expected:** **409**, *"This pull request's review is archived. Unarchive it to review again."* — not
+a 200 with a reviewId and nothing happening, which is how this path used to behave.
+
+### L-4 — closing the PR does not move the badge
+
+Close (or merge) the pull request at the SCM.
+
+**Expected:** the PR-state badge **does not move** — it stays exactly as it was at archival, because an
+archived review is frozen on all three dimensions. And **no notice is posted**: the close is gated like
+the other three events but deliberately does not spend the once-ever notice, since a close is not a
+human asking a question and spending it there would leave whoever later asks a real question with
+silence. Only the timeline skip entry appears.
+
+Reopen the PR if you want to continue; it changes nothing while the review is archived.
+
+### L-5 — unarchive restores the review, and a later archive notifies again
+
+Press **Unarchive review** (the restore icon, offered only while archived — the Archive and Unarchive
+buttons are never both present) and confirm.
+
+**Expected:** 204, the review returns to the live list **without** Show archived ticked, the Archived
+tag is gone, and its cost and model are still the same figures from Setup. Now comment `/review`.
+
+**Expected:** a review actually runs this time — the PR is live again, and a new charge line appears.
+
+Let that review finish, then archive it again and post a reply on the PR.
+
+**Expected:** a **fresh notice**, because unarchive released the notice's idempotency claim. Without
+that release the second archival would be silent, which is the same "bot just stopped replying" symptom
+the turn-cap notice exists to prevent.
+
+### Cleanup
+
+Unarchive anything you archived only for this pass, or leave it archived — nothing was destroyed
+either way. Delete the bot's notice comments from the PR if you are reusing it for another mode; the
+claim is keyed in the worker's `comment_idempotency`, not to the comment existing, so deleting the
+comment does **not** re-arm the notice. Unarchive and re-archive if you need it armed again.
