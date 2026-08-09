@@ -23,6 +23,9 @@ public class ReviewsSocket {
 
     @OnOpen
     public String onOpen() throws JsonProcessingException {
-        return mapper.writeValueAsString(projection.listSummaries());
+        // Live rows only. This snapshot REPLACES the client's list on every reconnect (and ADR-022's
+        // cookie expiry makes reconnects routine), so archived rows sent here would be dropped again
+        // moments later — Show-archived is a plain REST fetch instead.
+        return mapper.writeValueAsString(projection.listSummaries(false));
     }
 }

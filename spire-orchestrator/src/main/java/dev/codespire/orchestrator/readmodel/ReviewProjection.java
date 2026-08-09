@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.readmodel;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.command.ArchivedNotice;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.FindingVerdict;
@@ -301,13 +302,18 @@ public class ReviewProjection {
      * Claim every review whose retry has come due, clearing {@code retry_at} in the SAME statement that
      * reads it. Only one caller can win a given row, so replicas (or an overlapping sweep) cannot both
      * dispatch the same attempt — the claim IS the dispatch permit.
+     *
+     * <p>Skips archived reviews. {@link #archiveReview} already clears {@code retry_at}, and this is
+     * the second of the two defences on purpose: a due time can arrive AFTER the archive lands — from
+     * a result still in flight, or a replica mid-dispatch — and resurrecting a retired review minutes
+     * later is exactly the outcome archival promises will not happen.
      */
     public List<String> claimDueRetries(Instant now) {
         List<String> claimed = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
                      UPDATE review_status SET retry_at = NULL, updated_at = now()
-                      WHERE retry_at IS NOT NULL AND retry_at <= ?
+                      WHERE retry_at IS NOT NULL AND retry_at <= ? AND archived_at IS NULL
                       RETURNING review_id
                      """)) {
             ps.setTimestamp(1, Timestamp.from(now));
@@ -722,54 +728,142 @@ public class ReviewProjection {
     }
 
     /**
-     * Permanently delete a review and everything derived from it: the read-model
-     * row, its scoped timeline ({@code review_event}), the underlying event
-     * stream ({@code event_log}, keyed by stream_id = reviewId) and its charge
-     * ledger ({@code llm_charge}). Done in one transaction so a review never
-     * half-vanishes. Returns false when there was no such review; broadcasts a
-     * removal so live clients drop the row.
+     * Archive a review: it leaves the live list but nothing is destroyed — not the timeline, not the
+     * event stream, not the worker's claims or context blob, and above all not the charge ledger.
+     * Deleting the ledger was how real paid usage disappeared with a row removed for being clutter.
+     *
+     * <p>Broadcasts a REMOVAL rather than an update. The row leaves the LIVE list, and an archived
+     * review is frozen, so it needs no further live updates; the socket's reconnect snapshot replaces
+     * the client's whole list, so an archived row pushed through it would be dropped on every
+     * reconnect anyway. Show-archived is a plain REST fetch.
      */
-    public boolean deleteReview(String workspace, String slug, long pr) {
+    public ArchiveOutcome archiveReview(String workspace, String slug, long pr) {
         String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
+        ArchiveOutcome outcome = archiveRow(reviewId);
+        if (outcome == ArchiveOutcome.ARCHIVED) {
+            broadcastRemoval(reviewId);
+        }
+        return outcome;
+    }
+
+    /**
+     * The archiving transaction itself.
+     *
+     * <p>Clears {@code retry_at} because {@link #claimDueRetries} sweeps every five seconds and would
+     * otherwise resurrect the review minutes later, and {@code answering} so an archived review does
+     * not display a responding pill forever.
+     *
+     * <p>Refuses while running: {@code ResultSaga.ifCurrentRun} guards on commit alone, so an in-flight
+     * worker's results would still write status, findings and charges to a row that is supposed to be
+     * frozen — and those late charges would carry a NULL archived_at into a future purge, becoming
+     * exactly the orphan the column exists to prevent.
+     */
+    private ArchiveOutcome archiveRow(String reviewId) {
+        String sql = """
+                UPDATE review_status
+                   SET archived_at = now(), retry_at = NULL, answering = false, updated_at = now()
+                 WHERE review_id = ? AND archived_at IS NULL AND lower(status) <> 'reviewing'
+                """;
         try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);
-            try {
-                boolean existed = deleteBy(c, "DELETE FROM review_status WHERE review_id = ?", reviewId) > 0;
-                deleteBy(c, "DELETE FROM review_event WHERE review_id = ?", reviewId);
-                deleteBy(c, "DELETE FROM event_log WHERE stream_id = ?", reviewId);
-                // The ledger has the same delete-then-re-register property as the worker claim below:
-                // review_id is ReviewIds.reviewId(repo, pr) — stable per PR, not per run — and
-                // llm_charge.review_id is plain TEXT with no FK, so nothing cascades. Left behind, the
-                // orphaned rows are not merely unreachable: costOf/listSummaries/latestModelFor key on
-                // review_id alone, so a RE-REGISTERED PR renders the deleted run's money and model as
-                // its own, the unpriced attention row stays raised for a review that no longer exists,
-                // and the new run's own call_ref collides with the deleted one — discarding a real
-                // charge. Deletion is right here (unlike on a re-run, where the spend history must
-                // survive). The durable fix is a REFERENCES review_status(review_id) ON DELETE CASCADE
-                // on llm_charge, deferred to its own migration so this PR keeps one.
-                deleteBy(c, "DELETE FROM llm_charge WHERE review_id = ?", reviewId);
-                // The worker (separate service, `worker` schema) caches the completed LLM result in
-                // comment_idempotency keyed by (review_id, commit) and RE-EMITS it on any redelivery
-                // for the same PR@commit — crash-safety so a retry never pays for the LLM twice. But a
-                // delete-then-re-register is that same key, so without clearing it here the worker
-                // resurrects the stale result and never calls the LLM again (observed: a re-registered
-                // review kept showing the old model). Clear it in the same transaction so delete is a
-                // true clean slate. Guarded because the worker schema may be absent (worker never
-                // started) — its absence must not block deleting an orchestrator review.
-                deleteWorkerClaims(c, reviewId);
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, reviewId);
+                ArchiveOutcome outcome = ps.executeUpdate() > 0
+                        ? ArchiveOutcome.ARCHIVED : whyNotArchived(c, reviewId);
                 c.commit();
-                if (existed) {
-                    broadcastRemoval(reviewId);
-                }
-                return existed;
+                return outcome;
             } catch (SQLException e) {
                 c.rollback();
                 throw e;
             } finally {
+                // The connection goes back to a pool — leaving it in manual-commit mode would hand the
+                // next borrower a transaction it never opened.
                 c.setAutoCommit(true);
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to delete review " + reviewId, e);
+            throw new IllegalStateException("Failed to archive " + reviewId, e);
+        }
+    }
+
+    /** Which of the three non-archiving cases applies, read inside the archiving transaction. */
+    private ArchiveOutcome whyNotArchived(Connection c, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT archived_at FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return ArchiveOutcome.NOT_FOUND;
+                }
+                // The row exists and the UPDATE skipped it, so exactly one of the two remaining
+                // predicates rejected it: it is already archived, or it is still running.
+                return rs.getTimestamp("archived_at") != null
+                        ? ArchiveOutcome.ALREADY_ARCHIVED
+                        : ArchiveOutcome.STILL_RUNNING;
+            }
+        }
+    }
+
+    /** Undo an archive. One statement, because archiving stamped nothing else. */
+    public boolean unarchiveReview(String workspace, String slug, long pr) {
+        String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE review_status SET archived_at = NULL, updated_at = now()
+                      WHERE review_id = ? AND archived_at IS NOT NULL
+                     """)) {
+            ps.setString(1, reviewId);
+            boolean restored = ps.executeUpdate() > 0;
+            if (restored) {
+                broadcast(reviewId);
+            }
+            return restored;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to unarchive " + reviewId, e);
+        }
+    }
+
+    /** Whether this review has been archived — the gate every resurrection path consults. */
+    public boolean archived(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT 1 FROM review_status WHERE review_id = ? AND archived_at IS NOT NULL")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            // Fail OPEN: failing closed would silently retire a live review on a transient read fault
+            // and stop every reply on it. Proceed as the code did before archival existed.
+            LOG.errorf(e, "Could not read archival state for %s — treating as live", reviewId);
+            return false;
+        }
+    }
+
+    /**
+     * Release the archived-notice claim so a later re-archive notifies again.
+     *
+     * <p>Targeted rather than {@link #clearWorkerIdempotency}, which would also drop the cached LLM
+     * result and make the next event pay for the model a second time. Three binds, so it does not go
+     * through {@link #deleteBy} — that helper exists for the single-id deletes.
+     */
+    public void releaseArchivedNoticeClaim(String reviewId) {
+        try (Connection c = dataSource.getConnection()) {
+            if (!tableExists(c, "worker.comment_idempotency")) {
+                return;
+            }
+            try (PreparedStatement ps = c.prepareStatement("""
+                    DELETE FROM worker.comment_idempotency
+                     WHERE review_id = ? AND commit = ? AND anchor_key = ?
+                    """)) {
+                ps.setString(1, reviewId);
+                ps.setString(2, ArchivedNotice.SLOT);
+                ps.setString(3, ArchivedNotice.KEY);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            // Never fatal to the unarchive it follows: the review is already restored, and the worst
+            // case is a re-archive that stays quiet rather than one that resurrects anything.
+            LOG.errorf(e, "Could not release the archived-notice claim for %s", reviewId);
         }
     }
 
@@ -794,8 +888,9 @@ public class ReviewProjection {
      * Delete ALL worker-owned per-review state (separate service, {@code worker} schema): its
      * idempotency claims (cached LLM result + posted-comment slots) AND its assembled-context blobs.
      * Each guarded independently because the worker schema — or a given table within it — may be absent
-     * (worker never started / migrated). Shared by {@link #deleteReview} (full delete) and
-     * {@link #clearWorkerIdempotency} (re-run): both must leave no worker orphans behind.
+     * (worker never started / migrated). Used by {@link #clearWorkerIdempotency} (re-run), which must
+     * leave no worker orphans behind. Archiving deliberately does NOT call it: an archived review keeps
+     * everything, including the cached result and the assembled context.
      *
      * <p>The context blob is deleted by {@code review_id}, so it catches every blob a review owns,
      * including ones superseded across re-runs — content and reference vanish together (no orphaned blob).
@@ -942,33 +1037,55 @@ public class ReviewProjection {
 
     // ---- reads (REST + WS) -------------------------------------------------
 
-    public List<ReviewSummary> listSummaries() {
+    /**
+     * The reviews list. Archived rows are excluded unless the caller asks for them: they are the
+     * dashboard's default view of LIVE work, and an archived review is retired rather than in flight.
+     *
+     * @param includeArchived true only for the UI's explicit "Show archived" fetch. The live feed
+     *                        ({@code ReviewsSocket}) always passes false — its reconnect snapshot
+     *                        replaces the client's whole list, so archived rows pushed through it
+     *                        would vanish on every reconnect.
+     */
+    public List<ReviewSummary> listSummaries(boolean includeArchived) {
         // The model/vendor badges and lifetime cost now come from the ledger (llm_charge) — the
         // review_status columns they used to read (model, cost_millicents) were dropped with
         // review_llm_call (roadmap 11). The ledger is empty until Task 8 starts writing charges, so
         // these read as honestly zero/uncatalogued until then, not as a stand-in for an unpriced call.
         // unpriced_calls counts distinct calls the ledger could not price, so the UI can tell "zero
         // spend" apart from "some calls have no known price yet".
+        //
+        // All four ledger subqueries exclude purged charges, not just the cost SUM: filtering one of
+        // them would leave a dead review's model name and unpriced-call count leaking into the row of
+        // the PR that later reuses its review_id. The llm_type subquery is the one to watch — the
+        // filter belongs on its INNER llm_charge lookup, since the outer query reads llm_model, which
+        // has no archived_at at all.
         String sql = """
                 SELECT rs.*,
-                       (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                       (SELECT model FROM llm_charge c
+                         WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
                          ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
                        (SELECT m.type FROM llm_model m
-                         WHERE m.name = (SELECT model FROM llm_charge c WHERE c.review_id = rs.review_id
+                         WHERE m.name = (SELECT model FROM llm_charge c
+                                          WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
                                           ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
                        COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
-                                  WHERE c.review_id = rs.review_id), 0)                          AS total_cost_millicents,
+                                  WHERE c.review_id = rs.review_id AND c.archived_at IS NULL), 0)
+                                                                                                  AS total_cost_millicents,
                        COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
-                                  WHERE c.review_id = rs.review_id AND c.pricing_mode = 'UNKNOWN'), 0)
-                                                                                                  AS unpriced_calls
-                  FROM review_status rs ORDER BY rs.updated_at DESC
+                                  WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
+                                    AND c.pricing_mode = 'UNKNOWN'), 0)                          AS unpriced_calls
+                  FROM review_status rs
+                 WHERE (? OR rs.archived_at IS NULL)
+                 ORDER BY rs.updated_at DESC
                 """;
         List<ReviewSummary> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                out.add(toSummary(rs));
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setBoolean(1, includeArchived);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(toSummary(rs));
+                }
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list reviews", e);
@@ -1082,7 +1199,8 @@ public class ReviewProjection {
         String sql = """
                 SELECT call_ref, kind, model, token_type, tokens,
                        cost_millicents, pricing_mode, priced_at
-                  FROM llm_charge WHERE review_id = ? ORDER BY priced_at, token_type
+                  FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
+                 ORDER BY priced_at, token_type
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
@@ -1187,14 +1305,23 @@ public class ReviewProjection {
     public record CostSummary(long knownCostMillicents, int unpricedCalls, String lastModel) {
     }
 
-    /** A review's cost, derived from the ledger — see {@link CostSummary}. */
+    /**
+     * A review's cost, derived from the ledger — see {@link CostSummary}.
+     *
+     * <p>Like every other {@code llm_charge} read, it excludes purged charges. That is not a
+     * restriction on which review may see its own money: {@code archived_at} is stamped on a charge
+     * only by a purge, in the transaction that hard-deletes the review row, so an archived review's
+     * lines are never stamped and this still reports its full spend. What the filter excludes is the
+     * ledger of a review that no longer exists, which would otherwise be read as the spend of the PR
+     * that re-registers under the same {@code review_id}.
+     */
     public CostSummary costOf(String reviewId) {
         String sql = """
                 SELECT COALESCE(SUM(cost_millicents), 0)                                    AS known_cost,
                        COUNT(DISTINCT CASE WHEN pricing_mode = 'UNKNOWN' THEN call_ref END) AS unpriced_calls,
-                       (SELECT model FROM llm_charge WHERE review_id = ?
+                       (SELECT model FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
                          ORDER BY priced_at DESC LIMIT 1)                                    AS last_model
-                  FROM llm_charge WHERE review_id = ?
+                  FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
@@ -1282,14 +1409,15 @@ public class ReviewProjection {
                              String authorId, String branch, String base, String sha, String htmlUrl,
                              String providerType, String status, boolean answering, int stage, int findings,
                              String findingsJson, String reconciliationJson, String note, String errorDetail,
-                             int attempt, Instant createdAt, Instant updatedAt, String prState) {
+                             int attempt, Instant createdAt, Instant updatedAt, String prState,
+                             Instant archivedAt) {
         ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
                     openCounts.carriedOver(), ledger.totalCostMillicents(),
                     ledger.model() == null ? "" : ledger.model(),
                     ledger.llmType() == null ? "" : ledger.llmType(), updatedAt, answering, prState,
-                    ledger.unpricedCalls());
+                    ledger.unpricedCalls(), archivedAt);
         }
     }
 
@@ -1407,7 +1535,8 @@ public class ReviewProjection {
      */
     private long cumulativeCost(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COALESCE(SUM(cost_millicents), 0) FROM llm_charge WHERE review_id = ?")) {
+                "SELECT COALESCE(SUM(cost_millicents), 0) FROM llm_charge"
+                        + " WHERE review_id = ? AND archived_at IS NULL")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong(1) : 0L;
@@ -1419,7 +1548,8 @@ public class ReviewProjection {
      *  no longer carries a model column, so this is now the only source for it. */
     private String latestModelFor(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT model FROM llm_charge WHERE review_id = ? ORDER BY priced_at DESC LIMIT 1")) {
+                "SELECT model FROM llm_charge WHERE review_id = ? AND archived_at IS NULL"
+                        + " ORDER BY priced_at DESC LIMIT 1")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getString(1) : null;
@@ -1431,7 +1561,8 @@ public class ReviewProjection {
      *  {@link #listSummaries}'s join, computed separately for the {@link #broadcast} path's single row. */
     private int unpricedCallsFor(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE review_id = ? AND pricing_mode = 'UNKNOWN'")) {
+                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE review_id = ?"
+                        + " AND archived_at IS NULL AND pricing_mode = 'UNKNOWN'")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : 0;
@@ -1462,7 +1593,13 @@ public class ReviewProjection {
                 rs.getString("findings_json"), rs.getString("reconciliation_json"), rs.getString("note"),
                 rs.getString("error_detail"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
-                rs.getString("pr_state"));
+                rs.getString("pr_state"), instantOrNull(rs.getTimestamp("archived_at")));
+    }
+
+    /** NULL means live, so it must stay null — {@code getTimestamp} yields null and only the
+     *  conversion needs guarding. */
+    private static Instant instantOrNull(Timestamp ts) {
+        return ts == null ? null : ts.toInstant();
     }
 
     /**
@@ -1491,7 +1628,7 @@ public class ReviewProjection {
                 computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation,
                 charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState);
+                events, r.prState, r.archivedAt);
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */

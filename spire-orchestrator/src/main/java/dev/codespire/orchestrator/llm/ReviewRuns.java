@@ -32,8 +32,9 @@ import java.sql.SQLException;
  * </ul>
  *
  * <p>Deliberately derived rather than stored: a persisted counter would need a column, and the count
- * is already recorded in the append-only log that {@code deleteReview} clears alongside the ledger,
- * so the two cannot drift apart.
+ * is already recorded in the append-only log, so the two cannot drift apart. This was written when a
+ * hard delete cleared {@code event_log} and {@code llm_charge} together; archiving now clears neither,
+ * which strengthens the property rather than weakening it — an archived review keeps both halves.
  */
 @ApplicationScoped
 public class ReviewRuns {

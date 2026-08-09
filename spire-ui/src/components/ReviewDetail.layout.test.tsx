@@ -56,6 +56,7 @@ const review: ReviewDetailData = {
   ],
   note: null,
   errorDetail: null,
+  archivedAt: null,
   events: [
     { ts: '2026-08-01T00:00:00Z', at: '+0.0s', lane: 'domain', type: 'ReviewRequested', det: '' },
     { ts: '2026-08-01T00:00:01Z', at: '+1.0s', lane: 'result', type: 'CommentsPosted', det: '' },

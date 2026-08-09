@@ -11,9 +11,11 @@ import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
@@ -56,6 +58,9 @@ public class ManualRegisterResource {
 
     @Inject
     IntegrationEmitter integration;
+
+    @Inject
+    ReviewProjection projection;
 
     /**
      * Either {@code url}, or {@code workspace} + {@code slug} + {@code pr}. When the
@@ -108,13 +113,22 @@ public class ManualRegisterResource {
                     + "Check the repo, PR number, and bot credentials.", Response.Status.BAD_GATEWAY);
         }
 
+        String reviewId = ReviewIds.reviewId(repo, pr.prId());
+        // The saga would drop this event for an archived review, but silently: the caller would get a
+        // 200 with a reviewId and nothing would happen. A silent non-response reads as a lost webhook,
+        // which this project already had to fix once for the conversation turn cap.
+        if (projection.archived(reviewId)) {
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity("This pull request's review is archived. Unarchive it to review again.")
+                    .build());
+        }
+
         IntegrationEvent event = new PullRequestEventReceived(
                 pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),
                 pr.sourceBranch(), pr.targetBranch(), pr.headCommit(), pr.author(), pr.htmlUrl(),
                 provider.type());
         integration.send(event);
 
-        String reviewId = ReviewIds.reviewId(repo, pr.prId());
         LOG.infof("Manually registered %s (author @%s)", reviewId,
                 pr.author() == null ? "unknown" : pr.author().username());
         return Map.of("reviewId", reviewId, "workspace", target.workspace,

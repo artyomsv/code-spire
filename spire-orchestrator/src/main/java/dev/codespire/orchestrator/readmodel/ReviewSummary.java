@@ -35,5 +35,9 @@ public record ReviewSummary(
         String prState,
         /** Distinct calls the ledger could not price — lets the UI tell "zero spend" apart from
          *  "some calls have no known price yet" (never conflated into {@code costMillicents}). */
-        int unpricedCalls) {
+        int unpricedCalls,
+        /** When this review was archived, or null while it is live. A third dimension beside
+         *  {@code status} and {@code prState}: archiving must not overwrite whether the run
+         *  completed or failed, which is the very statistic the row is retained for. */
+        Instant archivedAt) {
 }

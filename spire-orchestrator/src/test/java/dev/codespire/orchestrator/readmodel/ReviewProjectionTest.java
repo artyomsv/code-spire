@@ -54,7 +54,7 @@ class ReviewProjectionTest {
                 ReviewProjection.STAGE_DIFF);
         projection.appendEvent(id, "integration", "PullRequestEventReceived", "opened");
 
-        ReviewSummary found = projection.listSummaries().stream()
+        ReviewSummary found = projection.listSummaries(false).stream()
                 .filter(s -> s.id().equals(id)).findFirst().orElseThrow();
         assertEquals("acme", found.workspace());
         assertEquals("web", found.slug());
@@ -169,15 +169,21 @@ class ReviewProjectionTest {
         assertTrue(projection.loadDetail("acme", "web", 999999L).isEmpty());
     }
 
+    /**
+     * The counterpart of the hard delete this replaced. Archiving destroys none of the three things
+     * deleting used to remove, and the event stream in particular must survive: {@code ReviewRuns}
+     * counts {@code ReviewRequested} rows in {@code event_log} to tell a re-run's charges apart from
+     * the previous run's, so clearing it would silently merge two runs' spend.
+     */
     @Test
-    void deleteRemovesRowTimelineAndEventStream() throws Exception {
+    void archiveKeepsTheRowTheTimelineAndTheEventStream() throws Exception {
         long pr = 4106L;
         String id = ReviewIds.reviewId(REPO, pr);
-        projection.registerHeader(id, REPO, pr, "Delete me", "ddev", "acc-5",
+        projection.registerHeader(id, REPO, pr, "Archive me", "ddev", "acc-5",
                 "feature", "main", "dead", "https://x/pr/4106", "github", "reviewing",
                 ReviewProjection.STAGE_DIFF);
         projection.appendEvent(id, "integration", "PullRequestEventReceived", "opened");
-        // Seed the underlying event stream too, so we can assert it is cleared.
+        // Seed the underlying event stream too, so we can assert it survives.
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
                      "INSERT INTO event_log (event_id, stream_id, sequence, event_type, event_version, "
@@ -187,26 +193,31 @@ class ReviewProjectionTest {
             ps.setBytes(3, new byte[]{1});
             ps.executeUpdate();
         }
+        projection.updateStatus(id, "completed", ReviewProjection.STAGE_DONE);
 
-        assertTrue(projection.deleteReview("acme", "web", pr), "deleting an existing review reports success");
+        assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview("acme", "web", pr));
 
-        assertTrue(projection.loadDetail("acme", "web", pr).isEmpty(), "the read-model row is gone");
-        assertEquals(0, countBy("SELECT COUNT(*) FROM review_event WHERE review_id = ?", id), "timeline cleared");
-        assertEquals(0, countBy("SELECT COUNT(*) FROM event_log WHERE stream_id = ?", id), "event stream cleared");
+        assertTrue(projection.loadDetail("acme", "web", pr).isPresent(), "the read-model row stays");
+        assertEquals(1, countBy("SELECT COUNT(*) FROM review_event WHERE review_id = ?", id), "timeline kept");
+        assertEquals(1, countBy("SELECT COUNT(*) FROM event_log WHERE stream_id = ?", id), "event stream kept");
 
-        assertFalse(projection.deleteReview("acme", "web", pr), "deleting a missing review reports no-op");
+        assertEquals(ArchiveOutcome.NOT_FOUND, projection.archiveReview("acme", "web", 999998L),
+                "archiving a review that never existed is distinguishable from archiving twice");
     }
 
+    /**
+     * A re-run clears the worker's claims on purpose so the LLM runs again; archiving must not, since
+     * an archived review is frozen and its cached result costs nothing to keep.
+     */
     @Test
-    void deleteAlsoClearsTheWorkerIdempotencyClaims() throws Exception {
+    void archiveLeavesTheWorkerIdempotencyClaimsAlone() throws Exception {
         long pr = 4107L;
         String id = ReviewIds.reviewId(REPO, pr);
         projection.registerHeader(id, REPO, pr, "Rerun me", "rdev", "acc-7",
                 "feature", "main", "c0ffee", "https://x/pr/4107", "github", "completed",
                 ReviewProjection.STAGE_DONE);
 
-        // Stand in for the worker's own schema/table (the worker migrates it in prod). A claim row
-        // for this review must NOT survive delete, else a re-register resurrects the stale result.
+        // Stand in for the worker's own schema/table (the worker migrates it in prod).
         try (Connection c = dataSource.getConnection(); var st = c.createStatement()) {
             st.execute("CREATE SCHEMA IF NOT EXISTS worker");
             st.execute("CREATE TABLE IF NOT EXISTS worker.comment_idempotency ("
@@ -224,10 +235,10 @@ class ReviewProjectionTest {
         assertEquals(1, countBy("SELECT COUNT(*) FROM worker.comment_idempotency WHERE review_id = ?", id),
                 "precondition: the worker claim exists");
 
-        assertTrue(projection.deleteReview("acme", "web", pr));
+        assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview("acme", "web", pr));
 
-        assertEquals(0, countBy("SELECT COUNT(*) FROM worker.comment_idempotency WHERE review_id = ?", id),
-                "delete clears the worker's idempotency claims so a re-register runs the LLM fresh");
+        assertEquals(1, countBy("SELECT COUNT(*) FROM worker.comment_idempotency WHERE review_id = ?", id),
+                "archiving destroys nothing, the worker's cached result included");
     }
 
     @Test

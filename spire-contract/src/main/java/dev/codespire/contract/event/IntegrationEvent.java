@@ -41,7 +41,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.CommentsPosted.class, name = "CommentsPosted"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpGenerated.class, name = "FollowUpGenerated"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted"),
-        @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified")
+        @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified"),
+        @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified")
 })
 public sealed interface IntegrationEvent {
 
@@ -266,5 +267,14 @@ public sealed interface IntegrationEvent {
      * reusing it would let the notice about running out of turns consume one.
      */
     record TurnCapNotified(String reviewId, ThreadRef threadRef, String commentId) implements IntegrationEvent {
+    }
+
+    /**
+     * The archived notice was posted. Deliberately NOT FollowUpPosted, which bumps the conversation
+     * turn count — this notice consumes no turn and involves no model. {@code threadRef} is null when
+     * the notice went to the top-level PR comment.
+     */
+    record ArchivedNotified(String reviewId, ThreadRef threadRef, String commentId)
+            implements IntegrationEvent {
     }
 }

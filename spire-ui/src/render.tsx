@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle } from 'lucide-react';
+import { Archive, Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -83,6 +83,23 @@ export function prStateBadge(prState: PrState) {
     <span className={`pr-state ${cls}`} title={`Pull request ${label.toLowerCase()}`}>
       <Icon size={13} aria-hidden="true" />
       {label}
+    </span>
+  );
+}
+
+/**
+ * The archival marker, or nothing at all for a live review.
+ *
+ * <p>Shared by the list row and the detail header on purpose: archived rows sit inline in the same
+ * table as live work, and the detail page hides every action from a viewer — so in both places the
+ * marker is the only thing saying that a frozen review is not simply a live one that went quiet.
+ */
+export function archivedBadge(archivedAt: string | null | undefined) {
+  if (!archivedAt) return null;
+  return (
+    <span className="archived-tag" title={`Archived ${new Date(archivedAt).toLocaleString()}`}>
+      <Archive size={11} aria-hidden="true" />
+      Archived
     </span>
   );
 }

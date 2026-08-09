@@ -78,12 +78,16 @@ function summary(id: string, updatedAt: string, over: Partial<ReviewSummary> = {
     llmType: '',
     updatedAt,
     unpricedCalls: 0,
+    archivedAt: null,
     ...over,
   };
 }
 
 const OLDER = summary('review::TEST-WS/TEST-REPO#1', '2026-01-01T00:00:00Z');
 const NEWER = summary('review::TEST-WS/TEST-REPO#2', '2026-01-02T00:00:00Z');
+const ARCHIVED = summary('review::TEST-WS/TEST-REPO#3', '2026-01-03T00:00:00Z', {
+  archivedAt: '2026-01-04T00:00:00Z',
+});
 
 /** Resolves the REST snapshot only when the test says so, so "late" is a state a test can reach. */
 function deferredFetch() {
@@ -302,5 +306,60 @@ describe('useLiveReviews', () => {
 
     expect(socket.closed).toBe(true);
     expect(FakeSocket.open).toHaveLength(1);
+  });
+});
+
+/** Live rows and archived rows arrive by different routes, and only one of them is the socket. */
+function respondByUrl(live: ReviewSummary[], withArchived: ReviewSummary[]) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(url.includes('includeArchived=true') ? withArchived : live),
+      } as unknown as Response),
+    ),
+  );
+}
+
+describe('useLiveReviews — archived rows', () => {
+  beforeEach(() => {
+    FakeSocket.open = [];
+    vi.stubGlobal('WebSocket', FakeSocket);
+    respondByUrl([NEWER], [NEWER, ARCHIVED]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches archived rows only once asked, and drops them again when unasked', async () => {
+    const { result } = renderHook(() => useLiveReviews());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id]);
+
+    act(() => result.current.setShowArchived(true));
+    await waitFor(() => expect(result.current.reviews).toHaveLength(2));
+
+    act(() => result.current.setShowArchived(false));
+    await waitFor(() => expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id]));
+  });
+
+  /**
+   * The guard the whole two-list arrangement exists for. The socket carries LIVE rows only, and its
+   * snapshot frame REPLACES the client list — so if archived rows lived in that same list they would
+   * vanish on every reconnect, and with a five-minute session cookie a reconnect is the ordinary
+   * case rather than a rare one. The operator would watch rows disappear from a checked box.
+   */
+  it('keeps archived rows through a socket snapshot that carries only live work', async () => {
+    const { result } = renderHook(() => useLiveReviews());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setShowArchived(true));
+    await waitFor(() => expect(result.current.reviews).toHaveLength(2));
+
+    FakeSocket.push([NEWER, OLDER]); // a reconnect snapshot: live rows, no archived ones
+
+    expect(result.current.reviews.map((r) => r.id)).toContain(ARCHIVED.id);
+    expect(result.current.reviews).toHaveLength(3);
   });
 });

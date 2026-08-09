@@ -10,7 +10,9 @@ import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
 /**
@@ -50,6 +52,13 @@ public class ReviewRerunService {
     public boolean rerun(String workspace, String slug, long pr) {
         RepoRef repo = new RepoRef(workspace, slug);
         String reviewId = ReviewIds.reviewId(repo, pr);
+        // Archived means retired. This path is REST, not an integration event, so the saga's gate
+        // never sees it — and the first act below (clearWorkerIdempotency) deletes ALL claims for the
+        // review, including the archived-notice claim that is supposed to fire once ever.
+        if (projection.archived(reviewId)) {
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity("This review is archived. Unarchive it before re-running.").build());
+        }
         String commit = projection.commitOf(reviewId)
                 .orElseThrow(() -> new NotFoundException(
                         "No review for " + workspace + "/" + slug + "#" + pr));
