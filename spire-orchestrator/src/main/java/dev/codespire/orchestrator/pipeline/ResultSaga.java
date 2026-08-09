@@ -38,6 +38,8 @@ import org.jboss.logging.MDC;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /**
@@ -99,6 +101,11 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.policy.ReviewPolicy reviewPolicy;
 
+    /** The diff-size cap (Task 5) — read fresh from Settings on every DiffFetched, same posture as
+     *  {@code reviewPolicy}, so a changed limit takes effect without a restart. Unset means unlimited. */
+    @Inject
+    dev.codespire.orchestrator.caps.CapPolicy capPolicy;
+
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
     }
@@ -125,6 +132,15 @@ public class ResultSaga {
             // repo/prId are derived from the reviewId itself — no in-memory
             // registry, nothing lost on restart or scale-out (finding H2).
             case DiffFetched e -> ifCurrentRun(e.reviewId(), e.commit(), "DiffFetched", () -> {
+                // Task 5: refuse before the context fan-out ever runs — per-issue API calls, a bounded
+                // 20s wait and an encrypted blob write, all otherwise spent on a diff we will not review.
+                // The diff statistics live only on THIS event (ContextAssembled carries none of them),
+                // which is why the gate has to sit here rather than at the pre-spend check.
+                CapRefusal diffSize = diffSizeDecision(e);
+                if (diffSize.refused()) {
+                    refuse(e.reviewId(), e.commit(), "FetchDiff", ReviewProjection.STAGE_DIFF, diffSize);
+                    return;
+                }
                 projection.appendEvent(e.reviewId(), "result", "DiffFetched", e.changedFiles() + " files");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_CONTEXT);
                 // Pack every enabled context credential (Jira + Confluence) — null when none is configured,
@@ -385,6 +401,26 @@ public class ResultSaga {
      *  widening the method itself would make a saga-internal transition part of the bean's API. */
     void refuseForTest(String reviewId, String commit, String phase, int stage, CapRefusal refusal) {
         refuse(reviewId, commit, phase, stage, refusal);
+    }
+
+    /**
+     * Whether this diff exceeds either configured limit. Both figures are always named together
+     * ({@link CapRefusal#diffTooLarge}), independent of which one tripped it, so the operator reads one
+     * sentence rather than guessing which axis was the actual cause.
+     *
+     * <p>An unset limit never compares — {@code OptionalInt}/{@code OptionalLong} being empty is
+     * itself the "unlimited" case, not a zero to compare against.
+     */
+    private CapRefusal diffSizeDecision(DiffFetched e) {
+        OptionalInt maxFiles = capPolicy.maxChangedFiles();
+        if (maxFiles.isPresent() && e.changedFiles() > maxFiles.getAsInt()) {
+            return CapRefusal.diffTooLarge(e.changedFiles(), e.sizeBytes());
+        }
+        OptionalLong maxBytes = capPolicy.maxDiffBytes();
+        if (maxBytes.isPresent() && e.sizeBytes() > maxBytes.getAsLong()) {
+            return CapRefusal.diffTooLarge(e.changedFiles(), e.sizeBytes());
+        }
+        return CapRefusal.allow();
     }
 
     /**
