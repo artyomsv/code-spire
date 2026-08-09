@@ -82,6 +82,12 @@ class IntegrationSagaPolicyTest {
             }
         };
         saga.projection = new ReviewProjection() {
+            /** Every event now passes the archival gate first; these fixtures are all live reviews. */
+            @Override
+            public boolean archived(String reviewId) {
+                return false;
+            }
+
             @Override
             public void registerHeader(String reviewId, RepoRef repo, long prId, String title, String author,
                                        String authorId, String sourceBranch, String destBranch, String sha,
@@ -423,6 +429,12 @@ class IntegrationSagaPolicyTest {
             }
         };
         saga.projection = new ReviewProjection() {
+            /** The archival gate reads this before the reply is handled at all; this review is live. */
+            @Override
+            public boolean archived(String reviewId) {
+                return false;
+            }
+
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
             }
