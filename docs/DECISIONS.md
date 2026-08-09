@@ -4,6 +4,184 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-025 — Spend caps refuse before the call, and a refused review is `refused`, not `failed`
+
+**Context.** ADR-023 rebuilt LLM cost as a priced charge-line ledger precisely so that a fleet spend
+cap could be built on numbers that mean something. Nothing then read that ledger back. The bounds
+that did exist sound aggregate and are not: `maxTokens` caps one call's output, `SPIRE_REVIEW_MAX_ATTEMPTS`
+is the ADR-016 auto-retry budget rather than a spend budget, the conversation turn cap is per
+**thread**, and the diff token clip truncates a huge pull request instead of declining it. So a
+deployment could spend without limit, and "this diff is too large to be worth reviewing" was a
+judgement nobody was allowed to make.
+
+**The unbounded path was the conversation, and the codebase already said so.** `ConversationSaga.planFollowUp`
+emitted a paid `AnswerFollowUp` guarded only by `DefaultLlm.isSpendable()` — *can this model be
+priced*, a credential question rather than a budget one. Threads cost nothing to open, the turn cap
+bounds a single thread, and `CallRefs`' own javadoc states the rest outright: *"the default turn cap
+is 4, and an @-mention removes the cap entirely, so the loss was unbounded."* The comment immediately
+above that guard records that ADR-023 argued this path safe by construction and that V30 falsified it.
+The first draft of this design repeated the same assumption and gated only the `/review` path: it
+would have closed the front door and left the window up, in the one file that already explains why not
+to.
+
+**Decision.** Three gates, each sitting where its inputs already are, all speaking one refusal
+vocabulary — `CapRefusal`, a reason plus a timeline `detail()` and an operator-facing `note()`,
+modelled on `DefaultLlm` and deliberately *not* folded into `DefaultLlm.Refusal`, which answers "can
+this LLM be used"; merging them would drag budget policy into credential resolution, two concerns that
+change for different reasons.
+
+| Gate | Site | Refuses on |
+|---|---|---|
+| Diff size | `ResultSaga`, on `DiffFetched` | changed files / diff bytes |
+| Pre-spend | `ResultSaga`, before `GenerateReview` | window spend / call count |
+| Conversation | `ConversationSaga.planFollowUp` | window spend / call count |
+
+The diff gate has to be on `DiffFetched`: `changedFiles`, `sizeBytes` and `truncated` live on that
+event and **nowhere afterwards**, so checking later would need new wire fields or new columns — and it
+would first run the whole context fan-out (per-issue API calls, a bounded 20-second wait, an encrypted
+blob write) only to discard the result. The conversation gate sits **after** the @-mention override
+rather than beside it: the override must keep bypassing the *turn* cap and must not also bypass the
+*spend* cap, since that combination is what made the path unbounded. It also sits after the free
+`NotifyTurnCap`, which buys nothing and whose silence this project has already paid for once.
+
+Limits live in `app_setting`, surfaced under Settings → General. **Every limit is optional, and unset
+means unlimited** — a deployment that configures nothing behaves exactly as it does today. A non-null
+default would silently change a running deployment's behaviour on upgrade, which is the mistake V30
+made by leaving legacy models rateless and still the most operator-visible consequence of ADR-023. An
+unparseable stored value reads as unset for the same reason, failing open: a deployment that silently
+stops reviewing looks like an outage, while a wrong-looking field in Settings looks like exactly what
+it is. The window is the one setting with an effective default (a day), because a rolling window with
+no length is not a weaker cap but a meaningless one.
+
+**A refused review reaches a terminal state, and that state is `refused`.** The pre-spend refusal
+these gates are modelled on (`skipUnspendable`) writes a note and nothing else, so the review sits in
+`reviewing` until `REVIEW_STUCK` fires blaming *"a webhook delivery path or a worker"* —
+`AttentionQueries`' own javadoc records this — and, since ADR-024's archive guard refuses any row
+still `reviewing`, such a review cannot even be cleared. That is tolerable for `MODEL_NOT_PRICEABLE`,
+a configuration error an operator fixes once. It is unacceptable for a cap that refuses **routinely
+and by design**. So `ResultSaga.refuse` mirrors `onReviewFailed`'s terminal shape: clear the scheduled
+retry, record the timeline line, set status and note, and drive the aggregate terminal with
+`RecordFailure(retryable=false)`. `setError` is deliberately not called — there is no provider or
+worker error, and populating it would make the detail page show an infrastructure fault for a policy
+decision.
+
+`refused` rather than `failed` because status is load-bearing: the archive guard, the attention
+queries and the reviews-list filters all key on it. Filing a deliberate refusal as an infrastructure
+failure would put it in the same bucket as a genuine outage and make every routine refusal raise a
+`REVIEW_FAILED` row telling the operator to re-run it. This is the same split that took `pr_state` out
+of `status` — a merged PR and a passed review are different facts one badge could not carry, and so
+are a refusal and a failure.
+
+**And a projection was quietly overwriting it.** `refuse` routes through `RecordFailure` →
+`ReviewFailedTerminally`, and `DomainEventSink` projected that event as `status = 'failed'`
+unconditionally — relabelling the refusal one Kafka round trip after the saga wrote it, while the note
+stayed correct. The aggregate deliberately keeps **one** terminal-failure event; a second would change
+the wire contract for a distinction only the read model draws. `refused` is therefore a read-model
+*refinement* of `ReviewFailedTerminally`, and `projectTerminalFailure` declines to coarsen it
+(`WHERE … lower(status) <> 'refused'`). Worth recording because of how the defect presents: every
+saga-level test passed, since only a test reading the status *after* the event round trip can see it
+at all.
+
+**Every cap carries a call axis, not only money.** ADR-023 established that a money-denominated cap is
+**inert by design on an `UNMETERED` deployment**, where every charge is a legitimate asserted zero and
+`SUM(cost_millicents)` never approaches a positive limit. `SpendWindow` therefore reports two figures
+over the window: `SUM(cost_millicents)` and `COUNT(DISTINCT call_ref)` — one per *LLM call*, so a
+review, its reconcile and each follow-up count separately, which is also what makes the call axis the
+thing that genuinely bounds the conversation path. The pair closes the ADR-023 hole exactly: an
+`UNKNOWN`-priced row carries a NULL cost that `SUM` skips, and the call count catches it anyway.
+
+**The spend read must NOT filter `archived_at`.** Ten ledger reads beside it do, and every one of them
+is right to — they answer *"what does this review's page show"*. This one answers *"what has already
+been spent"*, and money spent is not un-spent by a row being tidied away. Copying the filter here
+would make archiving a way to hand budget back, so anyone who can clear a review could defeat the cap.
+It is called out because the surrounding code establishes the opposite pattern, which makes this the
+single most likely way the feature regresses.
+
+**One `SpendGate`, not one comparison per site.** The pre-spend gate, the conversation gate and the
+attention row all ask the same question and all get their answer from the same bean. Two copies would
+be free to drift — one gaining an axis, one keeping `>` where the other has `>=` — and drift in a
+money gate is invisible until it fails to fire. Sharing the decision makes "every site reaches the
+same verdict from the same inputs" true by construction rather than by test.
+
+**The cap is soft, and this ADR says so.** Charges are recorded after a call completes, so every
+review already in flight passes the pre-spend check before any of their charges land. Overshoot is
+bounded by *in-flight reviews × per-review cost* and is not eliminable without a reservation protocol,
+which is disproportionate here. Stating it is the point: a cap documented as exact and then observed
+to overshoot destroys trust in the number, whereas a cap documented as soft with a bounded overshoot
+is simply true.
+
+**Rolling window, not a fixed bucket.** A fixed bucket's only advantage is predictability, and it is a
+false one. With charge timestamps in the ledger, the exact instant capacity returns is computable —
+oldest in-window charge plus the window length — so the attention row can name it (*"Capacity returns
+at …"*), which is strictly more precise than *"resets at the top of the hour"*. The bucket keeps its
+boundary-gaming weakness (twice the limit across two adjacent buckets) and buys nothing in exchange.
+
+Naming that instant needs a second read, so `SpendWindow` gained `oldestChargeAt(Instant)` beyond the
+two figures `Usage` carries. It belongs there rather than as a third ad-hoc `llm_charge` query inside
+`AttentionQueries`, because one place reading that ledger is the whole point of the type — and it
+carries **no `archived_at` filter** for exactly the reason `since` does not: a purged review's money
+still occupied the window while it was live, and the instant capacity returns does not move because a
+row was tidied away. `Usage` deliberately does not grow a timestamp field; it answers "how much", and
+one record answering both would put a value in it that only one caller ever reads.
+
+**The `CAP_REACHED` row is `BLOCKING`, not `WARNING`.** A cap doing exactly what it was told is not a
+fault, and the first instinct is to file it below a real problem. That reads severity as blame.
+Severity here describes **impact**: while the cap holds, every subsequent paid call is refused at all
+three gates, so the operator-visible effect is the same "nothing will run" shape as
+`LLM_DEFAULT_MISSING` or `MODEL_NOT_PRICEABLE`, and it should sit beside them rather than below them.
+The usual objection to a blocking row — that it nags — does not apply, because this one self-clears
+when the window rolls or the limit is raised.
+
+**Consequences.**
+- **Refusals are loud, and never posted to the pull request.** Each writes a timeline entry, sets the
+  review's note, moves the review to `refused`, and raises a `CAP_REACHED` attention row. Nothing is
+  commented at the SCM: the `/review` refusal path already established that replying confirms to a
+  prober that the command is wired, and costs an API call per probe.
+- **`CAP_REACHED` carries no acknowledgement watermark**, unlike ADR-023's two cost rows. Those
+  describe calls already made that no fix can un-make; this describes usage *right now*, so it clears
+  by itself when the charges age out of the window or the operator raises the limit — the attention
+  panel's contract that fixing the cause removes the row.
+- **A refused follow-up does not move the review.** The review may have completed, and declining one
+  reply is not a retraction of that outcome; `CapRefusal.note()` opens *"Not reviewed"*, which on a
+  reviewed PR is simply false. The conversation gate records the decision on the timeline and leaves
+  status and note alone — the one gate that deliberately does not call `refuse(...)`.
+- **This branch added a backend status and the dashboard silently mapped it to success.** A fact about
+  the seam rather than about the feature, and worth stating because the next status will meet it too:
+  `spire-ui`'s `ReviewStatus` is a **compile-time union over runtime JSON**, so `tsc` checks the literal
+  set while the value arrives unvalidated from this service. `refused` therefore could not break the UI
+  build, could not fail a test, and fell through each consumer's default branch — which for the progress
+  bar meant five green segments under *"done"*. A refusal presented as a success is worse than the
+  silence this ADR's own gates are designed to avoid, because silence at least looks like nothing
+  happened. Fixed for `refused`; tracked as a class in `techdebt/spire-ui/3-3-…`, since the same seam
+  covers every other union in `api.ts` that mirrors a backend vocabulary. Note that the two vocabularies
+  are already known to differ: `ReviewState.Status` holds the aggregate's five values, while the read
+  model writes lower-case strings and has grown `superseded`, `observed` and now `refused` on top.
+- **A failed ledger read fails open.** `SpendWindow` answers zero usage and logs at ERROR: a cap that
+  refuses every review because its own query failed is an outage that looks like policy, while a cap
+  that misses a window is a bounded overshoot. When neither limit is configured the read is skipped
+  entirely, so unset is a true no-op rather than a query that always answers "allow".
+- **The caps are deployment-wide, not per repository.** `llm_charge` carries no `provider_type`, which
+  `techdebt/spire-orchestrator/3-3-…` already records; a per-repo spend cap inherits that entry's
+  collision — one workspace name registered on two SCMs sharing a budget — and belongs with it.
+- **Spec B, the per-repo admission rate limit, is deliberately not built.** It is the only part of the
+  feature that needs new storage (a counter table, and the only thing in the design needing pruning),
+  so it splits cleanly at the state seam. The spec records what it must carry: two gate sites
+  (`IntegrationSaga.onPullRequestEvent` plus `ReviewRerunService.rerun`, which REST reaches directly),
+  the gate placed ahead of `lifecycle.handle(RequestReview)` so a refused admission does not start a
+  run anyway, a counter keyed on `(provider_type, workspace, slug)`, no re-counting when the retry
+  scheduler re-dispatches, no counting of observe-mode registrations, and a decision about a
+  first-contact PR that has no `review_status` row for a note to land on.
+
+**Rejected.** Estimating cost before the call — refusing on a *predicted* price needs a token estimate
+the system cannot validate, the fabricated-number problem ADR-023 exists to prevent; these gates refuse
+on measured history and measured input only. Queuing or deferring a refused review — a backlog would
+itself need bounding, and a refused review is refused, not held. Per-actor limits — per-repo bounds
+total volume regardless of who, and per-actor isolation is real for multi-tenant but speculative at
+three repositories. Reusing `failed` for refusals, and extending `DefaultLlm.Refusal` with the cap
+reasons: both covered above, and both amount to letting one field carry two facts.
+
+---
+
 ## ADR-024 — Deleting a review archives it; recorded LLM spend is never destroyed
 
 **Context.** `ReviewProjection.deleteReview` was a true hard delete. One transaction removed the review

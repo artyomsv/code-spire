@@ -704,6 +704,75 @@ The design is fully specified in `docs/` — **treat those files as the source o
     Show archived is a plain REST fetch (`?includeArchived=true`). **1219 Java tests across 157 suites**
     (`testFast` 505/63 + `testServices` — gateway 63/9, orchestrator 493/67, worker 158/18); **312
     `spire-ui` vitest tests across 43 files**; `tsc --noEmit` silent. Runbook: SMOKE-TEST **Mode L**.
+- **Fleet spend caps and the `refused` lifecycle (ADR-025, 2026-08-09):** the ledger ADR-023 built so a
+  cap could exist is finally read back. **Three gates, no new storage**, each where its inputs already
+  are and all speaking one refusal vocabulary (`CapRefusal` — a reason plus a timeline `detail()` and an
+  operator `note()`, modelled on `DefaultLlm` and deliberately not folded into `DefaultLlm.Refusal`,
+  which answers a credential question rather than a budget one). **Diff size** on `DiffFetched`, because
+  `changedFiles`/`sizeBytes`/`truncated` exist on that event and nowhere afterwards — and because
+  checking later would first run the context fan-out (per-issue API calls, a bounded 20s wait, an
+  encrypted blob write) only to discard it. **Pre-spend** in `ResultSaga` beside the priceability check,
+  so every reason a paid call was refused reads in one place. **Conversation** in
+  `ConversationSaga.planFollowUp` — the genuinely unbounded path, and the codebase already said so:
+  `CallRefs` states that the turn cap is per *thread* and *"an @-mention removes the cap entirely, so the
+  loss was unbounded"*, and the comment above the `isSpendable` guard records that this same path was
+  assumed safe once and was not. The gate therefore sits **after** the mention override (which must keep
+  bypassing the *turn* cap without also bypassing the *spend* cap) and after the free `NotifyTurnCap`.
+  Refusing a follow-up records only a timeline line — the review may have completed, and declining one
+  reply must not retract that, so this is the one gate that does not call `refuse(...)`.
+  **A refused review is terminal and archivable.** The refusal this copied (`skipUnspendable`) wrote a
+  note and nothing else, so the review sat in `reviewing` until `REVIEW_STUCK` fired blaming *"a webhook
+  delivery path or a worker"*, and after ADR-024 `archiveRow` refuses a `reviewing` row — it could not
+  even be cleared. `refuse(...)` mirrors `onReviewFailed`'s terminal shape (clear retry, timeline, status,
+  note, `RecordFailure(retryable=false)`; `setError` deliberately not called, since there is no
+  infrastructure fault to show). Status is **`refused`, not `failed`**, because the archive guard, the
+  attention queries and the reviews-list filters all key on status — the same split that took `pr_state`
+  out of `status`. **Both axes always**: `SUM(cost_millicents)` *and* `COUNT(DISTINCT call_ref)` over a
+  rolling window, since a money cap is inert by design on an `UNMETERED` deployment where every charge is
+  an asserted zero, and an `UNKNOWN`-priced row's NULL cost is skipped by `SUM` and caught by the count —
+  the ADR-023 hole exactly. The window rolls rather than bucketing, so the instant capacity returns is
+  computable and the `CAP_REACHED` attention row names it — via `SpendWindow.oldestChargeAt(Instant)`,
+  added beyond the planned interface and put there rather than as a third ad-hoc `llm_charge` query in
+  `AttentionQueries`, since one place reading that ledger is the point (and it carries no `archived_at`
+  filter, for the same reason `since` does not). The row is **`BLOCKING`, not `WARNING`**: severity
+  describes impact, not fault, and while the cap holds every paid call is refused, which is the same
+  "nothing will run" shape as `LLM_DEFAULT_MISSING` — the usual nagging objection does not apply because
+  it self-clears. It carries no acknowledgement watermark because it describes current state. One
+  `SpendGate` serves both enforcement sites and the attention row — two copies of a money comparison are
+  free to drift, and drift in a money gate is invisible until it fails to fire. **Every limit is optional
+  and unset means unlimited** (an unparseable stored value too — fail open); the window alone has an
+  effective default of a day. The cap is **soft**, overshoot bounded by in-flight reviews × per-review
+  cost, because charges land after a call completes — documented rather than papered over.
+  The two findings most expensive to rediscover: **the terminal status was being overwritten by an event
+  projection** — `refuse` routes through `RecordFailure` → `ReviewFailedTerminally`, which `DomainEventSink`
+  projected as `status = 'failed'` unconditionally, relabelling the refusal one Kafka round trip later
+  while the note stayed correct; the aggregate keeps one terminal-failure event on purpose, so `refused`
+  is a read-model *refinement* that `projectTerminalFailure` declines to coarsen, and no saga-level test
+  can see the break because only a read *after* the round trip observes it. And **the spend read must not
+  filter `archived_at`** while the ten ledger reads beside it must: those answer "what does this review's
+  page show", this one answers "what has already been spent", and a copied filter would make archiving a
+  way to hand budget back. A third, found while writing the runbook: **a new backend status is invisible
+  to the UI's type system.** `ReviewStatus` in `api.ts` is a compile-time union and the status arrives as
+  runtime JSON, so nothing carried `refused` across — `STATUS_LABEL` (a `Record<ReviewStatus, string>`)
+  answered `undefined` for a blank badge, `miniPipeline` fell through to the terminal branch and drew a
+  refused review as **five green segments under "done"**, and `matchesChip` put it in no chip at all.
+  `tsc` had nothing to check and every suite stayed green — and the default branch it fell into was the
+  *success* branch, which is what makes this class expensive: a refusal shown as a completed review is
+  worse than silence, because silence at least looks like nothing happened. Fixed with the union member,
+  a `Refused` label, its own `miniPipeline` branch, a `--warn` pill (not `--crit`, which would read as an
+  outage, nor `--muted`, which would read as nothing to do), and the **Needs attention** chip. Closed was
+  the first choice and was wrong: the deciding fact is that `CAP_REACHED` comes from `SpendGate.decide()`
+  and so covers the spend and call caps only — **a diff-size refusal raises no attention row at all**, so
+  under Closed it would have had no surface anywhere. The three places that say "needs attention" (chip
+  filter, chip count, summary tile) now share one `needsAttention` predicate, for the reason `SpendGate`
+  exists. The class is tracked in `techdebt/spire-ui/3-3-…`; the two vocabularies already differ, since
+  `ReviewState.Status` holds the aggregate's five values while the read model writes lower-case strings
+  and has grown `superseded`, `observed` and `refused` on top. **1256 Java tests across 166 suites**
+  (`testFast` 505/63 +
+  `testServices` — gateway 63/9, orchestrator 530/76, worker 158/18); **323 `spire-ui` vitest tests
+  across 45 files**; `tsc --noEmit` silent. Spec B — the per-repo admission rate limit — is deliberately
+  **not** built (it is the only part needing new storage); what it must carry is recorded in the design.
+  Runbook: SMOKE-TEST **Mode M**.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
