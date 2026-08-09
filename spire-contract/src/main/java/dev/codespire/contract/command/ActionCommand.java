@@ -31,7 +31,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.GenerateReview.class, name = "GenerateReview"),
         @JsonSubTypes.Type(value = ActionCommand.PostComments.class, name = "PostComments"),
         @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp"),
-        @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap")
+        @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap"),
+        @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived")
 })
 public sealed interface ActionCommand {
 
@@ -198,5 +199,16 @@ public sealed interface ActionCommand {
      */
     record NotifyTurnCap(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                          int turnCap, String scmCredential) implements ActionCommand {
+    }
+
+    /**
+     * Tell a human that this review is archived and no further reviews will run for the pull request.
+     *
+     * <p>Carries no LLM credential — the notice is fixed text, so retiring a PR costs no tokens.
+     * {@code threadRef} is null for a top-level PR comment and non-null to reply inside a thread, so
+     * the notice appears where the event that triggered it arrived.
+     */
+    record NotifyArchived(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                          String scmCredential) implements ActionCommand {
     }
 }
