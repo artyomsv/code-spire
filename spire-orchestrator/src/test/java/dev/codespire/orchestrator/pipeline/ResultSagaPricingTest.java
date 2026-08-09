@@ -307,18 +307,13 @@ class ResultSagaPricingTest {
                 return run;
             }
         };
-        // Task 6's pre-spend gate reads this on every ContextAssembled; unset here since this suite's
-        // own assertions are about pricing and charge identity, not the cap — see SpendCapGateTest for
-        // the gate itself.
-        saga.capPolicy = new dev.codespire.orchestrator.caps.CapPolicy() {
+        // Task 6's pre-spend gate runs on every ContextAssembled; uncapped here since this suite's own
+        // assertions are about pricing and charge identity, not the cap — see SpendCapGateTest for the
+        // gate itself.
+        saga.spendGate = new dev.codespire.orchestrator.caps.SpendGate() {
             @Override
-            public java.util.OptionalLong spendCapMillicents() {
-                return java.util.OptionalLong.empty();
-            }
-
-            @Override
-            public java.util.OptionalInt callCap() {
-                return java.util.OptionalInt.empty();
+            public dev.codespire.orchestrator.caps.CapRefusal decide() {
+                return dev.codespire.orchestrator.caps.CapRefusal.allow();
             }
         };
         return saga;

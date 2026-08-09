@@ -20,7 +20,6 @@ import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.caps.CapRefusal;
-import dev.codespire.orchestrator.caps.SpendWindow;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
@@ -107,10 +106,10 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.caps.CapPolicy capPolicy;
 
-    /** The spend/call cap's ledger read (Task 6) — deployment-wide usage over the policy's rolling
-     *  window. Only queried when at least one of the two limits is configured. */
+    /** The spend/call cap (Task 6), shared with {@link ConversationSaga}'s follow-up gate so the two
+     *  paid-call sites cannot drift apart on what "over the cap" means. */
     @Inject
-    dev.codespire.orchestrator.caps.SpendWindow spendWindow;
+    dev.codespire.orchestrator.caps.SpendGate spendGate;
 
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
@@ -182,7 +181,7 @@ public class ResultSaga {
                 // Task 6: the pre-spend gate, right beside priceability — both answer the same question
                 // ("may this paid call be made"), so a reader should find every reason it was refused in
                 // one place rather than half of them here and half in ConversationSaga.
-                CapRefusal spendDecision = spendDecision();
+                CapRefusal spendDecision = spendGate.decide();
                 if (spendDecision.refused()) {
                     refuse(e.reviewId(), e.commit(), "GenerateReview", ReviewProjection.STAGE_REVIEW,
                             spendDecision);
@@ -434,32 +433,6 @@ public class ResultSaga {
         OptionalLong maxBytes = capPolicy.maxDiffBytes();
         if (maxBytes.isPresent() && e.sizeBytes() > maxBytes.getAsLong()) {
             return CapRefusal.diffTooLarge(e.changedFiles(), e.sizeBytes());
-        }
-        return CapRefusal.allow();
-    }
-
-    /**
-     * Whether deployment-wide usage over the policy's rolling window exceeds either configured cap.
-     * Both axes are checked because a money-only cap is inert by design on an {@code UNMETERED}
-     * deployment — every charge there is a legitimate zero, so {@code SUM(cost_millicents)} never
-     * approaches a positive limit, and the call count is what actually bounds an unpriced fleet
-     * (ADR-023).
-     *
-     * <p>Skips the ledger read entirely when neither limit is set — unset must be a true no-op, not a
-     * query that always answers "allow".
-     */
-    private CapRefusal spendDecision() {
-        OptionalLong spendCap = capPolicy.spendCapMillicents();
-        OptionalInt callCap = capPolicy.callCap();
-        if (spendCap.isEmpty() && callCap.isEmpty()) {
-            return CapRefusal.allow();
-        }
-        SpendWindow.Usage usage = spendWindow.since(java.time.Instant.now().minus(capPolicy.window()));
-        if (spendCap.isPresent() && usage.spentMillicents() >= spendCap.getAsLong()) {
-            return CapRefusal.spendCapReached(usage.spentMillicents(), spendCap.getAsLong());
-        }
-        if (callCap.isPresent() && usage.calls() >= callCap.getAsInt()) {
-            return CapRefusal.callCapReached(usage.calls(), callCap.getAsInt());
         }
         return CapRefusal.allow();
     }

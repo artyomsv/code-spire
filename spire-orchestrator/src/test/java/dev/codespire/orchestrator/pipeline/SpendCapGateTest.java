@@ -7,6 +7,7 @@ import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.review.TokenType;
 import dev.codespire.orchestrator.caps.CapPolicy;
+import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.caps.SpendWindow;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.ChargeCall;
@@ -48,9 +49,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * hard-coded dollar figure would be true only when this suite happened to run in an empty database.
  *
  * <p>Wired the same way as {@link ResultSagaPricingTest#sagaFor} for the LLM credential and the
- * paid-command sink, but with the REAL {@link CapPolicy}/{@link SpendWindow}/{@link ReviewProjection}
+ * paid-command sink, but with the REAL {@link SpendGate}/{@link CapPolicy}/{@link ReviewProjection}
  * beans injected — the gate under test reads the real ledger and the real settings store, not a fake
- * standing in for them.
+ * standing in for them. {@link SpendWindow} is injected only to measure the baseline the assertions
+ * below are deltas against; the saga reaches the ledger through {@link SpendGate}, which
+ * {@link ConversationSaga} shares, so the two paid-call sites cannot drift apart on what "over the
+ * cap" means.
  */
 @QuarkusTest
 class SpendCapGateTest {
@@ -63,6 +67,9 @@ class SpendCapGateTest {
 
     @Inject
     SpendWindow spendWindow;
+
+    @Inject
+    SpendGate spendGate;
 
     @Inject
     AppSettingRepository settings;
@@ -196,7 +203,7 @@ class SpendCapGateTest {
             }
         };
         saga.capPolicy = capPolicy;
-        saga.spendWindow = spendWindow;
+        saga.spendGate = spendGate;
         return saga;
     }
 }

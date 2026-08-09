@@ -11,6 +11,8 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.caps.CapRefusal;
+import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
@@ -115,6 +117,20 @@ class ConversationSagaTest {
         };
     }
 
+    /**
+     * No cap configured — the posture every test in this class assumed before the spend gate existed, so
+     * they keep testing what they were written to test. Varying it is {@link ConversationSpendCapTest}'s
+     * job.
+     */
+    private static SpendGate uncappedGate() {
+        return new SpendGate() {
+            @Override
+            public CapRefusal decide() {
+                return CapRefusal.allow();
+            }
+        };
+    }
+
     private static ConversationLevels fixedLevel(ConversationLevel level) {
         return new ConversationLevels() {
             @Override
@@ -197,6 +213,7 @@ class ConversationSagaTest {
                 return null;
             }
         };
+        saga.spendGate = uncappedGate();
 
         Optional<ActionCommand> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
 
@@ -266,6 +283,7 @@ class ConversationSagaTest {
                 return null;
             }
         };
+        saga.spendGate = uncappedGate();
 
         AuthorReplied replyOnAnswer = new AuthorReplied(new RepoRef("acme", "web"), 412L,
                 "review::acme/web#412", new ThreadRef("answer-1"), "c-99", "and the other errors?",
@@ -473,6 +491,7 @@ class ConversationSagaTest {
             }
         };
         saga.projection = projectionWith(List.of());
+        saga.spendGate = uncappedGate();
         return saga;
     }
 
