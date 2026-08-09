@@ -1,31 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import type { ReviewStatus, ReviewSummary } from '../api';
-import { ago, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
+import type { ReviewSummary } from '../api';
+import { ago, archivedBadge, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
 import { formatCost } from '../money';
-
-type ChipFilter = 'all' | 'reviewing' | 'completed' | 'failed' | 'closed';
-
-const CHIPS: { f: ChipFilter; label: string }[] = [
-  { f: 'all', label: 'All' },
-  { f: 'reviewing', label: 'Reviewing' },
-  { f: 'completed', label: 'Completed' },
-  { f: 'failed', label: 'Needs attention' },
-  { f: 'closed', label: 'Closed' },
-];
+import ReviewsFilters, { matchesChip, type ChipFilter } from './ReviewsFilters';
 
 function isSameDay(iso: string, now: number): boolean {
   const d = new Date(Date.parse(iso));
   const n = new Date(now);
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
-}
-
-function matchesChip(status: ReviewStatus, f: ChipFilter): boolean {
-  if (f === 'all') return true;
-  if (f === 'reviewing') return status === 'reviewing';
-  if (f === 'completed') return status === 'completed';
-  if (f === 'failed') return status === 'failed';
-  return status === 'cancelled' || status === 'superseded';
 }
 
 /** The Cost cell's text + tooltip, computed once per row (it's read twice in the row markup). */
@@ -57,9 +40,16 @@ interface Props {
   reviews: ReviewSummary[];
   loading: boolean;
   error: string | null;
+  showArchived: boolean;
+  /**
+   * Reported upward rather than handled here: this list never fetches — it renders the rows it is
+   * given — and including archived rows is a different request, not a different filter over the
+   * same ones. The state belongs where the fetch is.
+   */
+  onShowArchivedChange: (show: boolean) => void;
 }
 
-export default function ReviewsList({ reviews, loading, error }: Props) {
+export default function ReviewsList({ reviews, loading, error, showArchived, onShowArchivedChange }: Props) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<ChipFilter>('all');
   const [query, setQuery] = useState('');
@@ -132,34 +122,15 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
         </div>
       </div>
 
-      <div className="filters">
-        <div className="search">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.4" />
-            <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.4" />
-          </svg>
-          <input
-            placeholder="repo, PR #, author, sha…"
-            aria-label="Filter reviews"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-        <div className="chips" id="chips">
-          {CHIPS.map((c) => (
-            <button
-              key={c.f}
-              type="button"
-              className={`chip ${filter === c.f ? 'on' : ''}`}
-              data-f={c.f}
-              aria-pressed={filter === c.f}
-              onClick={() => setFilter(c.f)}
-            >
-              {c.label} <span className="n">{chipCounts[c.f]}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+      <ReviewsFilters
+        query={query}
+        onQueryChange={setQuery}
+        filter={filter}
+        onFilterChange={setFilter}
+        counts={chipCounts}
+        showArchived={showArchived}
+        onShowArchivedChange={onShowArchivedChange}
+      />
 
       <div className="tablewrap">
         <div className="thead">
@@ -187,7 +158,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
               return (
                 <div
                   key={r.id}
-                  className={`row ${r.status === 'superseded' ? 'faded' : ''}`}
+                  className={`row ${r.status === 'superseded' || r.archivedAt ? 'faded' : ''}`}
                   data-id={r.id}
                   tabIndex={0}
                   role="button"
@@ -209,6 +180,7 @@ export default function ReviewsList({ reviews, loading, error }: Props) {
                     <div className="repo">
                       {r.repo}
                       <span className="pr">#{r.pr}</span>
+                      {archivedBadge(r.archivedAt)}
                     </div>
                     <div className="sub">
                       <CopyableValue text={r.branch} copyTitle="Copy branch" />

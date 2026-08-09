@@ -288,6 +288,13 @@
   .chip.on { background: var(--iris-soft); border-color: color-mix(in srgb, var(--iris) 35%, transparent); color: var(--iris-ink); }
   .chip .n { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
   .chip.on .n { color: var(--iris-ink); }
+  /* Not a chip: the chips narrow the rows on screen, this one changes which rows are requested. */
+  .toggle-archived {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 12.5px; font-weight: 550; color: var(--text-2); user-select: none;
+  }
+  .toggle-archived:hover { color: var(--text); }
+  .toggle-archived input { accent-color: var(--iris); cursor: pointer; margin: 0; }
 
   /* ---------- table ---------- */
   .tablewrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow-x: auto; }
@@ -437,6 +444,16 @@
   .pr-state.pr-open { --pr: var(--good); --pr-soft: var(--good-soft); }
   .pr-state.pr-merged { --pr: var(--iris); --pr-soft: var(--iris-soft); }
   .pr-state.pr-closed { --pr: var(--crit); --pr-soft: var(--crit-soft); }
+
+  /* Archived marker — a third dimension beside the review status and the PR state, so it is
+     deliberately quieter than either: retained work, not an outcome and not a warning. */
+  .archived-tag {
+    display: inline-flex; align-items: center; gap: 4px; flex: none;
+    font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 2px 6px; border-radius: 6px; white-space: nowrap;
+    background: var(--panel-2); color: var(--text-3); border: 1px solid var(--border);
+  }
+  .archived-tag svg { flex: none; }
 
   /* mini pipeline in row */
   .mini { display: flex; align-items: center; gap: 4px; }

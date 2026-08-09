@@ -61,9 +61,10 @@ function renderDetail() {
 }
 
 /**
- * Re-run and delete are admin: one spends money on a fresh model call, the other is irreversible.
- * The API refuses them either way — this is about not offering a viewer a control that can only
- * fail, which reads as the app being broken rather than as a permission they lack.
+ * Re-run and archive are admin: one spends money on a fresh model call, the other retires the pull
+ * request so no future push spends any. The API refuses them either way — this is about not offering
+ * a viewer a control that can only fail, which reads as the app being broken rather than as a
+ * permission they lack.
  */
 describe('ReviewDetail — role-aware actions', () => {
   beforeEach(() => {
@@ -75,12 +76,12 @@ describe('ReviewDetail — role-aware actions', () => {
     vi.unstubAllGlobals();
   });
 
-  it('offers re-run and delete to an admin', async () => {
+  it('offers re-run and archive to an admin', async () => {
     vi.spyOn(auth, 'fetchMe').mockResolvedValue(me(['spire-viewer', 'spire-admin']));
     renderDetail();
 
     expect(await screen.findByRole('button', { name: /re-run review/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /delete review/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /archive review/i })).toBeInTheDocument();
   });
 
   it('offers neither to a viewer', async () => {
@@ -89,7 +90,7 @@ describe('ReviewDetail — role-aware actions', () => {
 
     await screen.findByText('TEST fixture pull request');
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /delete review/i })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('button', { name: /archive review/i })).not.toBeInTheDocument(),
     );
     expect(screen.queryByRole('button', { name: /re-run review/i })).not.toBeInTheDocument();
   });
@@ -104,6 +105,6 @@ describe('ReviewDetail — role-aware actions', () => {
     });
     renderDetail();
 
-    expect(await screen.findByRole('button', { name: /delete review/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /archive review/i })).toBeInTheDocument();
   });
 });

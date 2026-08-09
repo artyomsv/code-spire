@@ -29,7 +29,7 @@ function toggleTheme() {
 }
 
 export default function App() {
-  const { reviews, loading, error } = useLiveReviews();
+  const { reviews, loading, error, showArchived, setShowArchived } = useLiveReviews();
   const location = useLocation();
   const navigate = useNavigate();
   const onGeneral = location.pathname.startsWith('/settings/general');
@@ -296,7 +296,18 @@ export default function App() {
         </header>
 
         <Routes>
-          <Route path="/" element={<ReviewsList reviews={reviews} loading={loading} error={error} />} />
+          <Route
+            path="/"
+            element={
+              <ReviewsList
+                reviews={reviews}
+                loading={loading}
+                error={error}
+                showArchived={showArchived}
+                onShowArchivedChange={setShowArchived}
+              />
+            }
+          />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
           <Route path="/settings/providers" element={configure(<SettingsProviders />)} />
