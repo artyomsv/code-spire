@@ -18,8 +18,8 @@ import java.util.Optional;
  * ledger over a rolling window.
  *
  * <p>The window is rolling rather than a fixed bucket because a fixed bucket's only advantage is
- * predictability and it is a false one — with charge timestamps available the exact instant capacity
- * returns is computable, while the bucket keeps its boundary-gaming weakness (twice the limit across
+ * predictability and it is a false one — with charge timestamps available the earliest instant capacity
+ * can return is computable, while the bucket keeps its boundary-gaming weakness (twice the limit across
  * two adjacent buckets) and buys nothing.
  */
 @ApplicationScoped
@@ -33,7 +33,7 @@ public class SpendWindow {
      */
     public record Usage(long spentMillicents, int calls) {
 
-        /** What a window with no charges — or an unreadable ledger — reports. */
+        /** What a window with no charges reports. Deliberately NOT what a failed read reports. */
         static Usage none() {
             return new Usage(0L, 0);
         }
@@ -62,33 +62,44 @@ public class SpendWindow {
     DataSource dataSource;
 
     /**
-     * Deployment-wide usage since {@code from}.
+     * Deployment-wide usage since {@code from}, or EMPTY when the ledger could not be read.
      *
-     * <p>A read failure answers {@link Usage#none()} and logs at ERROR — fail open. A cap that refuses
-     * every review because its own query failed is worse than a cap that misses a window: the first is
-     * an outage that looks like policy, the second is a bounded overshoot. The fault is not swallowed
-     * either — it is logged here, and the ledger write path shares this connection pool, so an outage
-     * this read hits is already being reported by the writer.
+     * <p>The caller still fails open — a cap that refuses every review because its own query failed is
+     * worse than a cap that misses a window: the first is an outage that looks like policy, the second
+     * is a bounded overshoot. What must not happen is failing open <em>silently</em>. Answering
+     * {@code Usage(0, 0)} on a failure made "the ledger is unreadable" indistinguishable from "nothing
+     * has been spent", so the attention panel — whose whole contract is that every row is a condition
+     * true right now — reported health while the cap was enforcing nothing. The realistic trigger is not
+     * a total outage (nothing works then anyway) but connection-pool exhaustion under load, i.e. the
+     * exact burst the cap exists to bound.
+     *
+     * <p>The fault is logged here as well, and the ledger write path shares this connection pool, so an
+     * outage this read hits is already being reported by the writer.
      */
-    public Usage since(Instant from) {
+    public Optional<Usage> since(Instant from) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(USAGE_SINCE)) {
             ps.setTimestamp(1, Timestamp.from(from));
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? new Usage(rs.getLong("spent"), rs.getInt("calls")) : Usage.none();
+                return Optional.of(rs.next()
+                        ? new Usage(rs.getLong("spent"), rs.getInt("calls")) : Usage.none());
             }
         } catch (SQLException e) {
             LOG.errorf(e, "Could not read spend since %s — allowing the review rather than refusing it",
                     from);
-            return Usage.none();
+            return Optional.empty();
         }
     }
 
     /**
      * The earliest charge counted since {@code from}, or empty when the window holds nothing (or the
-     * read failed). This is the concrete advantage a rolling window has over a fixed bucket: the exact
-     * instant capacity returns is computable as {@code oldestChargeAt + window length}, since that
+     * read failed). This is the concrete advantage a rolling window has over a fixed bucket:
+     * {@code oldestChargeAt + window length} is the earliest instant ANY capacity can return, since that
      * charge is the next one to age out and usage cannot drop until it does.
+     *
+     * <p>A lower bound, not the instant the cap clears — ageing one charge out restores enough capacity
+     * only when usage exceeds the cap by no more than that charge's own contribution. Callers must word
+     * it as a bound; {@code AttentionQueries.recoveryClause} carries the reasoning.
      *
      * <p>No {@code archived_at} filter, for the same reason {@link #since} has none — a purged review's
      * money still occupied the window while it was live, and the instant capacity returns does not

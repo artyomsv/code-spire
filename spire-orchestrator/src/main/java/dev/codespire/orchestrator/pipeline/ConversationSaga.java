@@ -124,9 +124,9 @@ public class ConversationSaga {
         // The turn cap bounds one thread; nothing bounded the deployment. Threads are free to open and the
         // mention override above removes the turn cap by design, so this is the only thing making the
         // conversation path finite — hence AFTER that override, and after the free NotifyTurnCap above.
-        CapRefusal capped = spendGate.decide();
+        dev.codespire.orchestrator.caps.SpendGate.Decision capped = spendGate.decide();
         if (capped.refused()) {
-            refuseFollowUp(e, capped);
+            refuseFollowUp(e, target.thread(), capped.refusal());
             return Optional.empty();
         }
         LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
@@ -179,10 +179,17 @@ public class ConversationSaga {
      * timeline carries the per-review fact; that a cap is being enforced at all is deployment-wide, and
      * the attention panel is where that belongs.
      */
-    private void refuseFollowUp(AuthorReplied e, CapRefusal refusal) {
+    private void refuseFollowUp(AuthorReplied e, ThreadRef thread, CapRefusal refusal) {
         timeline.record("integration", "refused:AnswerFollowUp", e.reviewId(), refusal.detail());
+        // AND a persisted event, filed under the conversation root so it sits with the thread that went
+        // unanswered. The timeline alone is an in-memory list capped at 500 entries DEPLOYMENT-WIDE and
+        // lost on restart, so the only durable trace of a refusal would have been the deployment-wide
+        // CAP_REACHED row — which never says which thread. Not setNote: CapRefusal.note() opens "Not
+        // reviewed", false on a PR that was reviewed, and the review's own outcome is not being retracted.
+        projection.appendEvent(e.reviewId(), "integration", "FollowUpRefused", refusal.detail(),
+                thread.value());
         LOG.warnf("Follow-up refused for %s — %s (workspace '%s')",
-                e.reviewId(), refusal.detail(), e.repo().workspace());
+                e.reviewId(), refusal.logDetail(), e.repo().workspace());
     }
 
     /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */

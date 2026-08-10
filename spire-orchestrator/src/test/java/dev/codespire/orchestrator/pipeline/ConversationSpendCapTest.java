@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,6 +54,8 @@ class ConversationSpendCapTest {
 
     private final List<String> timelineTypes = new ArrayList<>();
     private final List<String> timelineDetails = new ArrayList<>();
+    private final List<String> appendedTypes = new ArrayList<>();
+    private final List<String> appendedThreadRefs = new ArrayList<>();
 
     @Test
     void aFollowUpIsRefusedWhenTheCapIsReached() {
@@ -65,6 +68,27 @@ class ConversationSpendCapTest {
                         + timelineTypes);
         assertTrue(timelineDetails.stream().anyMatch(detail -> detail.contains("call cap")),
                 "and it must name the cap that fired, not merely report a skip: " + timelineDetails);
+    }
+
+    /**
+     * The timeline is not a record. It is an in-memory list capped at 500 entries DEPLOYMENT-WIDE and
+     * lost on restart, and this suite's other assertions pin it as the contract — so the gap could not
+     * be caught by test drift either. Without a persisted event the only durable trace of an unanswered
+     * reply is the deployment-wide {@code CAP_REACHED} row, which never says which thread went quiet.
+     *
+     * <p>Filed under the conversation root, so it sits with the thread it belongs to rather than
+     * spilling into General discussion.
+     */
+    @Test
+    void aRefusedFollowUpLeavesADurableRecordOnTheReview() {
+        ConversationSaga saga = sagaWith(0, refusingGate());
+
+        assertTrue(saga.planFollowUp(inlineReply(List.of())).isEmpty());
+
+        assertTrue(appendedTypes.contains("FollowUpRefused"),
+                "the timeline is ephemeral; the review's own event log is not: " + appendedTypes);
+        assertEquals(List.of("finding-1"), appendedThreadRefs,
+                "and it belongs to the thread that went unanswered");
     }
 
     /**
@@ -126,6 +150,13 @@ class ConversationSpendCapTest {
                 throw new AssertionError("the note is the REVIEW's verdict, and CapRefusal.note() opens "
                         + "\"Not reviewed\" — false on a review that was reviewed: " + note);
             }
+
+            // Appending to the review's event log is exactly what the refusal SHOULD do — it records
+            // the fact without restating the review's outcome, which is what the two throws above forbid.
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail,
+                                    String threadRef) {
+            }
         };
 
         assertTrue(saga.planFollowUp(inlineReply(List.of())).isEmpty());
@@ -147,8 +178,8 @@ class ConversationSpendCapTest {
     private static SpendGate refusingGate() {
         return new SpendGate() {
             @Override
-            public CapRefusal decide() {
-                return CapRefusal.callCapReached(5, 1);
+            public Decision decide() {
+                return Decision.of(CapRefusal.callCapReached(5, 1));
             }
         };
     }
@@ -156,8 +187,8 @@ class ConversationSpendCapTest {
     private static SpendGate allowingGate() {
         return new SpendGate() {
             @Override
-            public CapRefusal decide() {
-                return CapRefusal.allow();
+            public Decision decide() {
+                return Decision.of(CapRefusal.allow());
             }
         };
     }
@@ -198,6 +229,13 @@ class ConversationSpendCapTest {
             @Override
             public Optional<PriorRun> priorRunFor(String reviewId) {
                 return Optional.empty();
+            }
+
+            @Override
+            public void appendEvent(String reviewId, String lane, String type, String detail,
+                                    String threadRef) {
+                appendedTypes.add(type);
+                appendedThreadRefs.add(threadRef);
             }
         };
         saga.spendGate = gate;

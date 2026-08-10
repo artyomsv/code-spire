@@ -3,7 +3,6 @@ package dev.codespire.orchestrator.attention;
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
 import dev.codespire.orchestrator.caps.CapPolicy;
-import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.caps.SpendWindow;
 import dev.codespire.orchestrator.dlq.DlqRepository;
@@ -368,24 +367,42 @@ public class AttentionQueries {
      * charges that tripped it age out of the window or the operator raises the limit — never stored,
      * never dismissed, exactly this panel's contract.
      */
-    private void capRows(List<AttentionView> rows) {
-        CapRefusal decision = spendGate.decide();
+    // Package-private so the degraded-ledger row can be driven without a DataSource: collect() opens a
+    // connection before it ever reaches here, which would make the test assert on the wrong failure.
+    void capRows(List<AttentionView> rows) {
+        SpendGate.Decision decision = spendGate.decide();
+        if (decision.ledgerUnreadable()) {
+            rows.add(new AttentionView("CAP_UNENFORCEABLE", Severity.WARNING, null,
+                    "A spend cap is configured but its usage ledger could not be read, so no paid call "
+                            + "is being refused right now. See the orchestrator log for the database "
+                            + "error.", "/settings/general"));
+            return;
+        }
         if (decision.allowed()) {
             return;
         }
         rows.add(new AttentionView("CAP_REACHED", Severity.BLOCKING, null,
-                capitalize(decision.detail()) + "." + recoveryClause(), "/settings/general"));
+                capitalize(decision.refusal().detail()) + "." + recoveryClause(), "/settings/general"));
     }
 
     /**
-     * Names the instant the oldest in-window charge ages out — the concrete advantage a rolling window
-     * has over a fixed bucket, where the best available answer is "at the top of the hour". Empty when
-     * the ledger read failed, which leaves the row's own detail as the only wording rather than a
-     * fabricated instant.
+     * The earliest instant any capacity can return — the oldest in-window charge ageing out — stated as
+     * the lower bound it is.
+     *
+     * <p>NOT the instant the cap clears, which is what an earlier wording ("Capacity returns at …")
+     * claimed. Ageing one charge out restores capacity only when usage exceeds the cap by no more than
+     * that charge's own contribution: with a call cap of 100 and 300 calls in the window, the named
+     * instant takes usage to 299 and changes nothing. Computing the true instant means walking charges
+     * oldest-first until the remainder falls under the cap; the honest lower bound costs nothing and this
+     * project's own ADR argues that a number documented as exact and then observed to be wrong destroys
+     * trust in it.
+     *
+     * <p>Empty when the ledger read failed, which leaves the row's own detail as the only wording rather
+     * than a fabricated instant.
      */
     private String recoveryClause() {
         return spendWindow.oldestChargeAt(Instant.now().minus(capPolicy.window()))
-                .map(oldest -> " Capacity returns at "
+                .map(oldest -> " No capacity returns before "
                         + oldest.plus(capPolicy.window()).truncatedTo(ChronoUnit.SECONDS) + ".")
                 .orElse("");
     }

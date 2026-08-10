@@ -134,23 +134,25 @@ class SpendWindowIT {
     }
 
     /**
-     * A read failure reports no usage instead of propagating. A cap that refuses every review because
-     * its own query failed is worse than a cap that misses a window, and the failure is not silent — it
-     * logs at ERROR, and the ledger write path shares this connection pool, so it reports the outage too.
+     * A read failure is reported as a failed read, not as an empty window. The gate still fails open —
+     * a cap that refuses every review because its own query failed is an outage that looks like policy —
+     * but {@code Usage(0, 0)} made "unreadable" and "nothing spent" the same answer, so the attention
+     * panel reported health while the cap was refusing nothing.
      */
     @Test
-    void aReadFailureFailsOpenRatherThanRefusingEveryReview() {
+    void aReadFailureIsDistinguishableFromAnEmptyWindow() {
         SpendWindow broken = new SpendWindow();
         broken.dataSource = unreachableDataSource();
 
-        SpendWindow.Usage usage = broken.since(Instant.now().minus(LAST_HOUR));
-
-        assertEquals(0L, usage.spentMillicents(), "an unreadable ledger reports no spend, not a refusal");
-        assertEquals(0, usage.calls());
+        assertTrue(broken.since(Instant.now().minus(LAST_HOUR)).isEmpty(),
+                "an unreadable ledger must not answer the same as a window with no charges");
+        assertTrue(lastHour().spentMillicents() >= 0L,
+                "and a readable one still answers, so the empty above is the failure and not the shape");
     }
 
     private SpendWindow.Usage lastHour() {
-        return window.since(Instant.now().minus(LAST_HOUR));
+        return window.since(Instant.now().minus(LAST_HOUR)).orElseThrow(
+                () -> new AssertionError("the ledger must be readable in this suite"));
     }
 
     /**

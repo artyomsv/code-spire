@@ -338,8 +338,8 @@ class ResultSagaPricingTest {
         // gate itself.
         saga.spendGate = new dev.codespire.orchestrator.caps.SpendGate() {
             @Override
-            public dev.codespire.orchestrator.caps.CapRefusal decide() {
-                return dev.codespire.orchestrator.caps.CapRefusal.allow();
+            public Decision decide() {
+                return Decision.of(dev.codespire.orchestrator.caps.CapRefusal.allow());
             }
         };
         return saga;

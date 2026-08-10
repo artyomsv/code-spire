@@ -181,10 +181,10 @@ public class ResultSaga {
                 // Task 6: the pre-spend gate, right beside priceability — both answer the same question
                 // ("may this paid call be made"), so a reader should find every reason it was refused in
                 // one place rather than half of them here and half in ConversationSaga.
-                CapRefusal spendDecision = spendGate.decide();
+                dev.codespire.orchestrator.caps.SpendGate.Decision spendDecision = spendGate.decide();
                 if (spendDecision.refused()) {
                     refuse(e.reviewId(), e.commit(), "GenerateReview", ReviewProjection.STAGE_REVIEW,
-                            spendDecision);
+                            spendDecision.refusal());
                     return;
                 }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
@@ -425,7 +425,9 @@ public class ResultSaga {
         timeline.record("result", "refused:" + phase, reviewId, refusal.detail());
         projection.updateStatus(reviewId, "refused", stage);
         projection.setNote(reviewId, refusal.note());
-        LOG.warnf("Refused %s for %s — %s", phase, reviewId, refusal.detail());
+        // logDetail, not detail: the log is the one surface no viewer reads, so it is where the
+        // configured limit belongs beside the measured figure.
+        LOG.warnf("Refused %s for %s — %s", phase, reviewId, refusal.logDetail());
         // retryable=false, so the decider yields a terminal state and the run leaves REVIEWING.
         lifecycle.handle(reviewId, new RecordCommand.RecordFailure(commit, phase, false));
     }

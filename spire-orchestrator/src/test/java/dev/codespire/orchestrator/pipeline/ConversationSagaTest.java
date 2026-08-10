@@ -125,8 +125,8 @@ class ConversationSagaTest {
     private static SpendGate uncappedGate() {
         return new SpendGate() {
             @Override
-            public CapRefusal decide() {
-                return CapRefusal.allow();
+            public Decision decide() {
+                return Decision.of(CapRefusal.allow());
             }
         };
     }

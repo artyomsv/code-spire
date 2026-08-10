@@ -111,10 +111,23 @@ to overshoot destroys trust in the number, whereas a cap documented as soft with
 is simply true.
 
 **Rolling window, not a fixed bucket.** A fixed bucket's only advantage is predictability, and it is a
-false one. With charge timestamps in the ledger, the exact instant capacity returns is computable —
-oldest in-window charge plus the window length — so the attention row can name it (*"Capacity returns
-at …"*), which is strictly more precise than *"resets at the top of the hour"*. The bucket keeps its
-boundary-gaming weakness (twice the limit across two adjacent buckets) and buys nothing in exchange.
+false one. With charge timestamps in the ledger, the earliest instant capacity *can* return is
+computable — oldest in-window charge plus the window length — so the attention row can name it
+(*"No capacity returns before …"*), which is strictly more precise than *"resets at the top of the
+hour"*. The bucket keeps its boundary-gaming weakness (twice the limit across two adjacent buckets) and
+buys nothing in exchange.
+
+**That instant is a lower bound, and the row must word it as one.** An earlier draft of this ADR
+claimed the *exact* instant capacity returns was computable, and the row said *"Capacity returns at
+…"*. It does not follow. Ageing the oldest charge out restores enough capacity only when usage exceeds
+the cap by no more than that one charge's contribution: with a call cap of 100 and 300 calls in the
+window, the named instant takes usage to 299 and changes nothing; on the money axis a $10 cap with $50
+spent and an oldest charge of $0.004 names an instant that recovers 0.04% of the overshoot. The exact
+version needs a walk over charges oldest-first, accumulating until the remainder falls under the cap.
+The honest wording costs nothing and this ADR already argues the principle two paragraphs above — a cap
+documented as exact and then observed to overshoot destroys trust in the number. Neither the test nor
+the runbook could catch it: both were written with a cap of 1 and one call in the window, the single
+configuration in which the exact claim is true.
 
 Naming that instant needs a second read, so `SpendWindow` gained `oldestChargeAt(Instant)` beyond the
 two figures `Usage` carries. It belongs there rather than as a third ad-hoc `llm_charge` query inside
@@ -143,8 +156,26 @@ when the window rolls or the limit is raised.
   panel's contract that fixing the cause removes the row.
 - **A refused follow-up does not move the review.** The review may have completed, and declining one
   reply is not a retraction of that outcome; `CapRefusal.note()` opens *"Not reviewed"*, which on a
-  reviewed PR is simply false. The conversation gate records the decision on the timeline and leaves
-  status and note alone — the one gate that deliberately does not call `refuse(...)`.
+  reviewed PR is simply false. The conversation gate records the decision on the timeline **and on the
+  review's own event log** (`FollowUpRefused`, filed under the conversation root) and leaves status and
+  note alone — the one gate that deliberately does not call `refuse(...)`. The persisted event is not
+  optional decoration: the timeline is an in-memory list capped at 500 entries *deployment-wide* and
+  lost on restart, so without it the only durable trace of an unanswered reply is the deployment-wide
+  `CAP_REACHED` row, which never says which thread went quiet.
+- **Refusal text names the measurement, never the configured cap.** `detail()` and `note()` reach three
+  surfaces a `spire-viewer` can read — the timeline, the review's note and the attention row — and
+  ADR-022's third rule makes configuration admin-only *including its reads*. The measured figure is this
+  review's own context and stays; the limit is rendered only by `logDetail()`, for the log, and by
+  `GET /api/settings/caps`, which is admin. The precedent is in this repository: ADR-023's review round
+  dropped per-token rates from `ReviewDetail` for exactly this reason.
+- **Failing open is silent unless it says so.** `SpendWindow.since` answers "allow" when its own ledger
+  read fails, which is right — a cap that refuses every review because its query failed is an outage
+  that looks like policy. It originally answered `Usage(0, 0)`, making an unreadable ledger
+  indistinguishable from an empty one, so the attention panel reported health while nothing was being
+  enforced; the plausible trigger is connection-pool exhaustion under load, i.e. the exact burst the cap
+  exists to bound. The read now answers `Optional.empty()`, `SpendGate.Decision` carries
+  `ledgerUnreadable` beside the verdict, and a `CAP_UNENFORCEABLE` row (WARNING — reviews still run)
+  states the condition where the panel promises it will.
 - **This branch added a backend status and the dashboard silently mapped it to success.** A fact about
   the seam rather than about the feature, and worth stating because the next status will meet it too:
   `spire-ui`'s `ReviewStatus` is a **compile-time union over runtime JSON**, so `tsc` checks the literal

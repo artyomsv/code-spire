@@ -128,7 +128,9 @@ class SpendCapGateTest {
     }
 
     private SpendWindow.Usage usage() {
-        return spendWindow.since(Instant.now().minus(capPolicy.window()));
+        return spendWindow.since(Instant.now().minus(capPolicy.window())).orElseThrow(
+                () -> new AssertionError("the baseline every assertion here is a delta against could "
+                        + "not be measured — the ledger read failed"));
     }
 
     /**
