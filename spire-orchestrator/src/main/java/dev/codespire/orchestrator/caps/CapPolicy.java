@@ -37,6 +37,18 @@ public class CapPolicy {
     /** A day: long enough to see a spend pattern, short enough that a raised cap takes effect same-day. */
     static final long DEFAULT_WINDOW_MINUTES = 1440L;
 
+    /**
+     * A year. Not a policy judgement — a window is never usefully longer than this — but a bound on
+     * arithmetic: {@code Instant.now().minus(window)} throws {@code DateTimeException} beyond the
+     * instant range and {@code ArithmeticException} near {@code Long.MAX_VALUE}, and it throws from
+     * inside {@code AttentionQueries.collect} (outside its SQLException catch, so the WHOLE panel goes
+     * dark), from the pre-spend gate and from the conversation gate (both dead-lettering to cs.dlq).
+     * Rejected at the REST boundary too; enforced here as well because a value stored before that
+     * validation existed, or by any future writer, would otherwise leave the operator unable to clear it
+     * through the product — {@code GET /api/settings/caps} constructs the Duration and 500s.
+     */
+    public static final long MAX_WINDOW_MINUTES = 525_600L;
+
     @Inject
     AppSettingRepository settings;
 
@@ -56,9 +68,11 @@ public class CapPolicy {
         return toOptionalInt(readInt(KEY_CALLS));
     }
 
-    /** The rolling window length, defaulting to a day when unset or unparseable. */
+    /** The rolling window length, defaulting to a day when unset, unparseable or out of range. */
     public Duration window() {
-        return Duration.ofMinutes(readLong(KEY_WINDOW_MINUTES).orElse(DEFAULT_WINDOW_MINUTES));
+        return Duration.ofMinutes(readLong(KEY_WINDOW_MINUTES)
+                .filter(minutes -> minutes <= MAX_WINDOW_MINUTES)
+                .orElse(DEFAULT_WINDOW_MINUTES));
     }
 
     private Optional<Integer> readInt(String key) {
@@ -77,17 +91,35 @@ public class CapPolicy {
         return parsed.map(OptionalLong::of).orElseGet(OptionalLong::empty);
     }
 
+    /**
+     * A stored value that is not a POSITIVE number reads as unset. Every one of these keys is a positive
+     * quantity, so zero and negatives are as meaningless as "not-a-number" — and the difference between
+     * treating them alike matters: a stored {@code "0"} spend cap makes
+     * {@code usage.spentMillicents() >= 0} true for every review, forever, on every gate. One row, and
+     * the deployment stops reviewing.
+     *
+     * <p>{@code CapSettingsResource} already rejects a zero, and it stays there so an operator gets a
+     * 400 rather than a silent no-op. It is not enough on its own: it is the only writer <em>today</em>,
+     * and this exact "safe by construction" reasoning was falsified in this repository by V30, which
+     * created rateless models directly in SQL without passing through the registry that forbids them
+     * (the comment recording it sits in {@code ConversationSaga}). A migration or a support UPDATE is
+     * the same shape. A guard at the correct boundary is only a fix once the callers can no longer
+     * produce the bad value.
+     */
     private static Optional<Integer> parseInt(String raw) {
         try {
-            return Optional.of(Integer.parseInt(raw.trim()));
+            int parsed = Integer.parseInt(raw.trim());
+            return parsed > 0 ? Optional.of(parsed) : Optional.empty();
         } catch (NumberFormatException notANumber) {
             return Optional.empty();
         }
     }
 
+    /** @see #parseInt(String) — same rule, and the window's own default covers it from here. */
     private static Optional<Long> parseLong(String raw) {
         try {
-            return Optional.of(Long.parseLong(raw.trim()));
+            long parsed = Long.parseLong(raw.trim());
+            return parsed > 0 ? Optional.of(parsed) : Optional.empty();
         } catch (NumberFormatException notANumber) {
             return Optional.empty();
         }

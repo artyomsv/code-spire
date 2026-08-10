@@ -75,6 +75,37 @@ class CapPolicyTest {
                 + "the field is wrong in Settings");
     }
 
+    /**
+     * A stored {@code "0"} must read as unset, not as a cap of zero — after which
+     * {@code usage.spentMillicents() >= 0} is true for every review, forever, on every gate: one row and
+     * the deployment stops reviewing.
+     *
+     * <p>{@code CapSettingsResource} rejects a zero, so this is unreachable through the application
+     * <em>today</em> — which is the entire argument this repository has already had and lost. ADR-023
+     * held the conversation path safe by construction because the registry guard forbids an unpriceable
+     * model; V30 then created rateless models directly in SQL. A migration or a support UPDATE is the
+     * same shape, and the read side is where the value is believed.
+     */
+    @Test
+    void aStoredZeroIsUnsetRatherThanACapOfZero() {
+        settings.set(CapPolicy.KEY_SPEND_CAP, "0");
+        settings.set(CapPolicy.KEY_CALLS, "0");
+        settings.set(CapPolicy.KEY_MAX_CHANGED_FILES, "0");
+        settings.set(CapPolicy.KEY_MAX_DIFF_BYTES, "0");
+
+        assertTrue(policy.spendCapMillicents().isEmpty(), "a zero spend cap would refuse every review");
+        assertTrue(policy.callCap().isEmpty(), "and a zero call cap would too");
+        assertTrue(policy.maxChangedFiles().isEmpty(), "a zero file limit would refuse every diff");
+        assertTrue(policy.maxDiffBytes().isEmpty(), "and a zero byte limit would too");
+    }
+
+    /** Negatives share the reason: every one of these keys is a positive quantity. */
+    @Test
+    void aStoredNegativeIsUnsetToo() {
+        settings.set(CapPolicy.KEY_CALLS, "-1");
+        assertTrue(policy.callCap().isEmpty());
+    }
+
     @Test
     void theWindowDefaultsToADayWhenUnset() {
         assertEquals(Duration.ofMinutes(1440), policy.window(),
@@ -91,5 +122,24 @@ class CapPolicyTest {
     void anUnparseableWindowFallsBackToTheDefault() {
         settings.set(CapPolicy.KEY_WINDOW_MINUTES, "not-a-number");
         assertEquals(Duration.ofMinutes(1440), policy.window());
+    }
+
+    /**
+     * An out-of-range window is arithmetic, not policy: {@code Instant.now().minus(window)} throws
+     * beyond the instant range, and it throws inside the attention sweep (taking the whole panel down
+     * rather than one row) and inside both spend gates (dead-lettering the review). The REST layer
+     * rejects it, and this is the second defence — without it a value stored before that validation
+     * existed leaves the operator unable to clear it through the product, because
+     * {@code GET /api/settings/caps} constructs the same Duration and 500s.
+     */
+    @Test
+    void anOutOfRangeWindowFallsBackToTheDefaultRatherThanThrowing() {
+        settings.set(CapPolicy.KEY_WINDOW_MINUTES, String.valueOf(Long.MAX_VALUE));
+        assertEquals(Duration.ofMinutes(1440), policy.window(),
+                "a stored window nothing can subtract from must not take the panel and both gates down");
+
+        settings.set(CapPolicy.KEY_WINDOW_MINUTES, String.valueOf(CapPolicy.MAX_WINDOW_MINUTES));
+        assertEquals(Duration.ofMinutes(CapPolicy.MAX_WINDOW_MINUTES), policy.window(),
+                "the bound itself is usable — a year is a long window, not an invalid one");
     }
 }

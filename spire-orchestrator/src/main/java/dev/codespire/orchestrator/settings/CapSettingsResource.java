@@ -55,6 +55,7 @@ public class CapSettingsResource {
         requirePositiveOrNull(body.spendCapMillicents(), "spendCapMillicents");
         requirePositiveOrNull(body.callCap(), "callCap");
         requirePositiveOrNull(body.windowMinutes(), "windowMinutes");
+        requireAtMost(body.windowMinutes(), CapPolicy.MAX_WINDOW_MINUTES, "windowMinutes");
 
         store(CapPolicy.KEY_MAX_CHANGED_FILES, body.maxChangedFiles());
         store(CapPolicy.KEY_MAX_DIFF_BYTES, body.maxDiffBytes());
@@ -82,6 +83,21 @@ public class CapSettingsResource {
     private static void requirePositiveOrNull(Number value, String field) {
         if (value != null && value.longValue() <= 0) {
             throw badRequest(field + " must be positive, or omitted/null for unlimited");
+        }
+    }
+
+    /**
+     * Only the window is bounded above, because only the window is arithmetic. The four caps are
+     * compared, never added to an instant, so an implausibly large one is merely an unreachable limit;
+     * {@code Duration.ofMinutes(huge)} fed to {@code Instant.now().minus(...)} throws, and it throws
+     * inside the attention sweep (taking the whole panel down), inside the pre-spend gate and inside the
+     * conversation gate (both dead-lettering). Accepted with a 200 and then fatal on every use is the
+     * worst of the available answers.
+     */
+    private static void requireAtMost(Number value, long max, String field) {
+        if (value != null && value.longValue() > max) {
+            throw badRequest(field + " must be at most " + max + " (a year), or omitted/null for the "
+                    + "default window");
         }
     }
 

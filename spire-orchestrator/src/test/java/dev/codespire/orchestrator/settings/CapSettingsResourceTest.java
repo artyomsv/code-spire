@@ -126,6 +126,49 @@ class CapSettingsResourceTest {
                 .body(containsString("windowMinutes"));
     }
 
+    /**
+     * The window is the one field with an upper bound, because it is the one field that is arithmetic:
+     * {@code Instant.now().minus(window)} throws beyond the instant range. Accepted with a 200 and then
+     * fatal on every use was the worst available answer — it took down the whole attention panel (the
+     * throw escapes {@code collect}'s SQLException catch), dead-lettered reviews and follow-ups, and
+     * made {@code GET} itself 500, so the operator could not clear the value through the product.
+     *
+     * <p>The four caps are deliberately unbounded above: they are compared, never added to an instant,
+     * so an implausibly large one is merely an unreachable limit.
+     */
+    @Test
+    void anOutOfRangeWindowIsRejectedNamingTheField() {
+        given().contentType("application/json")
+                .body("""
+                        {"maxChangedFiles":null,"maxDiffBytes":null,
+                         "spendCapMillicents":null,"callCap":null,"windowMinutes":99999999999999999}
+                        """)
+                .when().put("/api/settings/caps")
+                .then().statusCode(400)
+                .body(containsString("windowMinutes"));
+
+        given().contentType("application/json")
+                .body("""
+                        {"maxChangedFiles":null,"maxDiffBytes":null,
+                         "spendCapMillicents":null,"callCap":null,"windowMinutes":525600}
+                        """)
+                .when().put("/api/settings/caps")
+                .then().statusCode(200)
+                .body("windowMinutes", equalTo(525_600));
+    }
+
+    /** An enormous cap is an unreachable limit, not a fault — only the window is bounded above. */
+    @Test
+    void aVeryLargeSpendCapIsStillAccepted() {
+        given().contentType("application/json")
+                .body("""
+                        {"maxChangedFiles":null,"maxDiffBytes":null,
+                         "spendCapMillicents":9000000000000000000,"callCap":null,"windowMinutes":null}
+                        """)
+                .when().put("/api/settings/caps")
+                .then().statusCode(200);
+    }
+
     @Test
     void aMissingBodyIsRejected() {
         given().contentType("application/json")
