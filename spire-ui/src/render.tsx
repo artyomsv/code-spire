@@ -221,6 +221,7 @@ export const STATUS_LABEL: Record<ReviewStatus, string> = {
   failed: 'Attention',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
+  refused: 'Refused',
   observed: 'Observed',
 };
 
@@ -320,6 +321,17 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
       </div>
     );
   }
+  // Before this branch existed, a refused review fell through to the terminal "done" below and
+  // rendered as five green segments — a review the deployment declined to spend on, shown as a
+  // successful one. Stage segments are omitted entirely: a cap refuses at the diff or the review
+  // stage, so drawing progress would only invite reading how far it got as how far it should have.
+  if (status === 'refused') {
+    return (
+      <div className="mini">
+        <span className="lbl">refused</span>
+      </div>
+    );
+  }
   if (status === 'observed') {
     return (
       <div className="mini">
@@ -351,7 +363,10 @@ export function findCell(status: ReviewStatus, findings: number, carriedOver = 0
   // While a review is still running the running tally is noise (and "0 so far"
   // reads as a result). Show a neutral placeholder until the review completes.
   if (status === 'reviewing') return <span className="time">—</span>;
-  if (status === 'failed' || status === 'cancelled') return <span className="time">—</span>;
+  // `refused` belongs here for a stronger reason than the other two: a cap declined to run the
+  // review at all, so a `0` would be a findings count for a diff no model ever saw.
+  if (status === 'failed' || status === 'cancelled' || status === 'refused')
+    return <span className="time">—</span>;
   if (findings === 0) return <span className="findcount zero tnum">0</span>;
   if (carriedOver <= 0) return <span className="findcount some tnum">{findings}</span>;
   return (
@@ -525,6 +540,34 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
   );
 }
 
+/** How a status that has no findings to list explains itself instead. */
+interface StatusExplanation {
+  heading: string;
+  /** Severity class behind the card's stripe: an operator has something to do, or hasn't. */
+  tone: 'warning' | 'nit';
+}
+
+/**
+ * The statuses whose card says what happened rather than listing findings — a lookup, so a status
+ * missing from it is the *absence* of an explanation card rather than a silent fall-through into
+ * the branches below.
+ *
+ * <p>`refused` is here because it is the case that fall-through got wrong: a cap declined to spend
+ * on the diff, and with no findings and no reconciliation the card told the operator it was clean.
+ * Its own heading, because nothing stalled and nothing stopped — the review never ran. This is also
+ * the only place in the UI that renders `r.note`, which for a refusal is the actionable half (raise
+ * the cap, or split the pull request).
+ */
+const STATUS_EXPLANATIONS: Partial<Record<ReviewStatus, StatusExplanation>> = {
+  failed: { heading: 'Why it stalled', tone: 'warning' },
+  cancelled: { heading: 'Why it stopped', tone: 'nit' },
+  refused: { heading: 'Why it was refused', tone: 'warning' },
+};
+
+/** Shown when a status that owes an explanation carries no note — an empty card reads as
+ *  "nothing to see here", which is the reassurance these branches exist to withhold. */
+const NO_NOTE_RECORDED = 'No explanation was recorded.';
+
 /**
  * The unified findings list: this round's new findings plus the prior round's reconciliation
  * verdicts, as one list. Open items (new / still open / unchanged) render first; closed verdicts
@@ -532,18 +575,19 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
  * bottom so a multi-round review reads as one place to look, not two near-empty cards.
  */
 export function findingsCard(r: ReviewDetail) {
-  if (r.status === 'failed' || r.status === 'cancelled') {
+  const explanation = STATUS_EXPLANATIONS[r.status];
+  if (explanation) {
     return (
       <div className="card">
         <div className="head">
           <span className="k">//</span>
-          <h3>{r.status === 'failed' ? 'Why it stalled' : 'Why it stopped'}</h3>
+          <h3>{explanation.heading}</h3>
         </div>
         <div className="body">
-          <div className={`finding ${r.status === 'failed' ? 'warning' : 'nit'}`}>
+          <div className={`finding ${explanation.tone}`}>
             <div className="stripe"></div>
             <div className="fbody">
-              <div className="msg" style={{ marginTop: 0 }}>{r.note ?? ''}</div>
+              <div className="msg" style={{ marginTop: 0 }}>{r.note?.trim() ? r.note : NO_NOTE_RECORDED}</div>
             </div>
           </div>
           {r.errorDetail && (

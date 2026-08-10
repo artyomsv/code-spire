@@ -467,7 +467,7 @@ Open, by nature of the work rather than by section:
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
 | **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
-| — | Fleet cost/abuse caps | M | Explicitly deferred from v1 and a **known operator-facing gap**: no per-repo rate limit, no daily spend cap, no hard giant-PR skip. |
+| — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
 **Closed since this table was last written:** the **contract-compat CI gate** (round-trip + snapshot
 tests on `spire-contract`, failing a breaking change without an `eventVersion` bump + upcaster,
@@ -551,21 +551,25 @@ than how well it runs. Operator decides.
   the licence split it documents makes the grant a hard requirement, not a nicety.
 
 ## Explicitly deferred (NOT in v1)
-- **Fleet-level cost/abuse caps** — per-repo/workspace rate limit, daily LLM spend cap, giant-PR
-  guard, bot-authored-PR skip. v1 has only per-review token budgeting. (Draft/WIP-PR skip
-  is **no longer deferred at all** — shipped on all three SCMs by 2026-07-23, item 13.)
-  Tracked as FR-later (PRD) + SECURITY.md; a known gap an operator must be aware of. NOTE: a giant PR
-  is not silently mis-reviewed — the diff is clipped to the token budget and the partial review is now
-  MARKED (dashboard note + a line on the posted summary comment). A hard giant-PR skip is still future.
-  **Still deferred, but no longer blocked on trustworthy data**: ADR-023 (2026-08-07) replaced the
-  accounting a spend cap would have had to read, which used to record `$0.00` for any call it could not
-  price — a cap built on it would have installed cleanly and never fired for exactly the calls that
-  needed it. The ledger (`llm_charge`) now distinguishes priced, unpriced-but-billable and genuinely-free
-  calls, so this item is implementation work rather than a data-trust problem. Carry the one consequence
-  forward when it is built: **a money-denominated cap is inert by design on an `UNMETERED` (self-hosted)
-  deployment** — the operator has asserted zero cost, so there is nothing in dollars to cap, while every
-  other abuse scenario (a hammered inference GPU, for instance) still applies. The cap needs a token- or
-  call-count axis that holds regardless of pricing mode, not a money axis alone.
+- **Fleet-level cost/abuse caps** — **mostly shipped**, one part still deferred.
+  **Delivered (ADR-025, 2026-08-09):** a deployment-wide spend cap and call cap over a rolling window,
+  plus a hard giant-PR skip (changed-file and diff-byte limits refused on `DiffFetched`, before the
+  context fan-out runs). Every limit is optional and unset means unlimited, so an existing deployment
+  is unchanged until an operator sets one. Both axes are always checked, which is the consequence
+  ADR-023 told this item to carry forward: **a money-denominated cap is inert by design on an
+  `UNMETERED` (self-hosted) deployment**, since the operator has asserted zero cost and there is nothing
+  in dollars to cap, while every other abuse scenario (a hammered inference GPU, for instance) still
+  applies — so the cap carries a call-count axis that holds regardless of pricing mode. A refused review
+  reaches a terminal `refused` status and can be archived, rather than sitting in `reviewing` until the
+  stuck-review row blames a webhook.
+  (Draft/WIP-PR skip is **no longer deferred at all** — shipped on all three SCMs by 2026-07-23,
+  item 13.)
+  **Still deferred:** the per-repo/workspace **admission rate limit** (Spec B of the caps design — the
+  only part needing new storage, a pruned counter table keyed on `(provider_type, workspace, slug)`),
+  a per-repo *spend* cap (blocked on `llm_charge` carrying no `provider_type`, which
+  `techdebt/spire-orchestrator/3-3-…` owns), and bot-authored-PR skip. Note that a giant PR was never
+  silently mis-reviewed even before the skip existed — the diff is clipped to the token budget and the
+  partial review is MARKED (dashboard note + a line on the posted summary comment).
 - Whole-repo RAG (P3), learned memory + per-author analytics (P4).
   (**"non-Bitbucket SCMs" is no longer deferred** — GitHub and GitLab both shipped and are live-verified
   to full parity with Bitbucket as of 2026-07-26.)

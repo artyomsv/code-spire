@@ -1189,3 +1189,137 @@ Unarchive anything you archived only for this pass, or leave it archived — not
 either way. Delete the bot's notice comments from the PR if you are reusing it for another mode; the
 claim is keyed in the worker's `comment_idempotency`, not to the comment existing, so deleting the
 comment does **not** re-arm the notice. Unarchive and re-archive if you need it armed again.
+
+## Mode M — spend caps and the refused review (ADR-025)
+
+Three gates refuse before a paid call: diff size on `DiffFetched`, the spend/call cap before the review
+call, and the same cap on the conversation path. This mode drives the call cap, because it is the axis
+that fires on any deployment — including an `UNMETERED` one, where the money cap cannot fire at all by
+design. Sign in as `dev-admin` (or run with auth off): the limits are admin-only, as every registry is.
+
+### Setup
+
+A working review loop on a real PR from any earlier mode (B/C/D/E/F/G all work — this mode does not
+care which SCM), with the webhook live so `/review` reaches the gateway.
+
+Open **Settings → General**, find the **Limits** group, and set **Window (minutes)** to `60`. Leave the
+four limits above it blank — blank is unlimited, and that is the shipped default. Then open the
+attention bell and confirm there is **no `CAP_REACHED` row**, which is how you know the window is
+currently empty. If a review has already run in the last hour its calls are already counted, so either
+wait for the hour to roll or add that number to the cap you set in M-1; the cap counts *calls in the
+window*, not calls since you set it.
+
+### M-1 — the first review runs, the second is refused
+
+Set **Call cap** to `1` and save. Comment `/review` on the PR and let it finish.
+
+**Expected:** it reviews normally — the cap counts usage *already in the window*, and at the moment the
+gate ran there was none. Its review call is now the one call in the window.
+
+Comment `/review` again.
+
+**Expected:** **no review runs.** The reviews list shows the review as **Refused** (an amber pill, not
+the red Attention pill a failure gets, and — the regression to watch for — not a green "done" with a
+full progress bar). It appears under the **Needs attention** chip and is counted both there and in the
+"Needs attention" summary tile: a refusal always leaves the operator a decision, and the diff gate in
+M-5 raises no attention row at all, so this chip is the only place that kind of refusal can be found.
+Open the detail page:
+
+- The **note** is actionable and names both figures: *"Not reviewed: call cap reached — 1 of 1 calls
+  used. Capacity returns as older usage ages out, or raise the cap in Settings -> General."*
+- The **timeline** carries a `refused:GenerateReview` entry with the same sentence.
+- There is **no error** on the page. A cap refusal is a policy decision, so `setError` is deliberately
+  never called — an infrastructure error here would send the operator looking for an outage.
+- The **cost card is unchanged**: nothing was spent, which is the point.
+- **Nothing is posted to the pull request.** No comment, no reply. Replying would confirm to anyone
+  probing that the command is wired, and would cost an API call per probe.
+
+Wait past the stuck-review threshold and re-check the attention bell.
+
+**Expected:** **no `REVIEW_STUCK` row for this review.** `refused` is terminal, so the stuck query
+excludes it. Before this status existed the review sat in `reviewing` and eventually produced a row
+blaming *"a webhook delivery path or a worker"* — a lie about a deliberate decision.
+
+### M-2 — a refused review can be cleared
+
+On the refused review's detail page, press **Archive review** and confirm.
+
+**Expected:** 204, and the row leaves the live list exactly as in Mode L. This is the half that used to
+be impossible: the archive guard refuses any row still `reviewing`, so a refusal that never reached a
+terminal status could not be archived at all. Tick **Show archived** to confirm the row is intact.
+
+Unarchive it again so the rest of this mode has a live review to work with.
+
+### M-3 — the attention row appears, names when capacity returns, and clears itself
+
+Open the attention bell while still over the cap.
+
+**Expected:** a `CAP_REACHED` row reading *"Call cap reached — 1 of 1 calls used. Capacity returns at
+2026-08-10T01:23:45Z."* — a whole-second UTC instant, not a relative phrase — linking to
+Settings → General. Check that instant against the review you ran in M-1: it is that call's
+`llm_charge.priced_at` plus the 60-minute window, because that charge is the next one to age out. A
+fixed bucket could only ever have said "at the top of the hour".
+
+It sits with the **blocking** rows, beside things like a missing default LLM provider — not below them
+as a warning. A cap doing what it was told is not a fault, but severity here describes impact: while it
+holds, nothing will run. Confirm it is not filed as a lesser row.
+
+There is **no dismiss control**, unlike the two cost rows. Confirm it clears both ways:
+
+- **Raise the limit.** Set Call cap to a larger number, save, reopen the bell — the row is gone
+  with no acknowledgement anywhere.
+- **Or let it age out.** Set the limit back to `1` and wait for the window to roll past the M-1 call.
+  The row disappears on its own.
+
+Either way the row went away because the *condition* went away, which is the attention panel's whole
+contract — nothing is stored and nothing is dismissed.
+
+### M-4 — an @-mention does not buy a way around the cap
+
+Set Call cap back to `1` while a call is still in the window, so the cap is tripped. On the PR,
+reply in a bot-created finding thread and **@-mention the bot** explicitly.
+
+**Expected:** **no answer.** The review's timeline records `refused:AnswerFollowUp`, and the orchestrator
+logs the refusal. This is the case the whole feature exists for: threads cost nothing to open, the turn
+cap is per *thread*, and an @-mention removes that turn cap by design — so the spend cap is the only
+thing making the conversation path finite. The gate sits deliberately *after* the mention override.
+
+Now confirm the refusal did not rewrite the conversation's own review:
+
+**Expected:** the review's **status and note are unchanged** — still `completed` (or whatever it was),
+not `refused`. Declining to answer one reply is not a retraction of a review that already ran, and the
+note would otherwise open *"Not reviewed"* on a PR that visibly was.
+
+### M-5 — a giant diff is refused before any context is gathered
+
+Clear Call cap (blank = unlimited) and set **Max changed files** to `1`. Comment `/review` on a PR
+touching more than one file.
+
+**Expected:** refused at the **diff** stage — the note reads *"Not reviewed: diff too large to review
+(N files / M bytes). Raise the diff limit in Settings -> General, or split the pull request."*, and the
+timeline entry is `refused:FetchDiff`, not `refused:GenerateReview`. Confirm the **Context card shows
+nothing was assembled**: this gate sits before `GatherContext` precisely so a diff nobody will review
+does not first spend per-issue API calls, a bounded 20-second wait and an encrypted blob write.
+
+### M-6 — clearing every limit restores today's behaviour exactly
+
+Blank all four limits in the Limits group and save. Reload the page.
+
+**Expected:** all four come back **blank**, not `0`, each showing its `unlimited` placeholder. A blank
+field that round-tripped as `0` would turn "no cap" into "a cap of zero" and refuse every review — the
+same shape as the unknown-became-zero defect ADR-023 exists to prevent. Try entering `0` in any of
+them: the form refuses before the request leaves the browser — *"Call cap must be a positive whole
+number, or left blank for unlimited."* (**Window (minutes)** is the one field that does not come back
+blank — it has an effective default, so a blank window reloads as `1440`. A rolling window with no
+length is not a weaker cap, it is a meaningless one.)
+
+Comment `/review` on the PR that was refused in M-5.
+
+**Expected:** a review runs normally and posts as usual. Unset means unlimited, so a deployment that
+configures nothing behaves exactly as it did before this feature existed — which is the property that
+makes the upgrade safe.
+
+### Cleanup
+
+Leave the limits blank unless you actually want caps on this deployment. Archive or unarchive the
+refused reviews as you prefer — nothing was spent on them, and nothing was destroyed.

@@ -6,6 +6,10 @@ export type ReviewStatus =
   | 'failed'
   | 'cancelled'
   | 'superseded'
+  // A spend or diff-size cap declined to run this review (ADR-025). Distinct from 'failed' on
+  // purpose: a policy decision is not an outage, and every consumer of this union that treats the
+  // two alike undoes the split. It is terminal and archivable.
+  | 'refused'
   | 'observed';
 
 export type StageState = 'done' | 'active' | 'pending' | 'failed';
@@ -554,6 +558,36 @@ export async function setReviewSettings(settings: ReviewSettings): Promise<Revie
     body: JSON.stringify(settings),
   });
   if (!res.ok) return throwResponse(res, 'Failed to update review settings');
+  return res.json();
+}
+
+// ---- spend caps (fleet-wide diff-size, spend and call limits) ----
+
+/** Every field optional: `null` means unlimited for the four caps, or "use the default window"
+ *  for the window itself. A `null` on write clears a previously stored limit back to that state —
+ *  never a `0`, which is precisely how ADR-023's "unknown became zero" bug entered, and here would
+ *  turn "no cap" into "cap of zero", refusing every review. */
+export interface CapSettings {
+  maxChangedFiles: number | null;
+  maxDiffBytes: number | null;
+  spendCapMillicents: number | null;
+  callCap: number | null;
+  windowMinutes: number | null;
+}
+
+export async function getCapSettings(): Promise<CapSettings> {
+  const res = await apiFetch('/api/settings/caps');
+  if (!res.ok) return throwResponse(res, 'Failed to load spend limits');
+  return res.json();
+}
+
+export async function setCapSettings(settings: CapSettings): Promise<CapSettings> {
+  const res = await apiFetch('/api/settings/caps', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to update spend limits');
   return res.json();
 }
 

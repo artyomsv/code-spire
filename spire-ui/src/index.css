@@ -411,6 +411,10 @@
   .pill.failed { --st: var(--crit); --st-soft: var(--crit-soft); }
   .pill.cancelled { --st: var(--muted); --st-soft: var(--muted-soft); }
   .pill.superseded { --st: var(--muted); --st-soft: var(--muted-soft); }
+  /* Warn, not crit and not muted: a cap refusal is a decision the operator can reverse, so it must
+     not read as an outage (crit, like failed) nor as nothing-to-do (muted, like cancelled). Same
+     token as .rate-unset, which marks the other "someone has to choose something" state. */
+  .pill.refused { --st: var(--warn); --st-soft: var(--warn-soft); }
 
   /* "responding…" indicator: subtle and static (never an unbounded spinner) — `answering`
      is best-effort and can rarely stay true past a terminal failure, so it must not read

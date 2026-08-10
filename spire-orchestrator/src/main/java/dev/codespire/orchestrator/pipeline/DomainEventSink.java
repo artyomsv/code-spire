@@ -50,7 +50,9 @@ public class DomainEventSink {
         switch (envelope.payload()) {
             case DomainEvent.ReviewCompleted ignored ->
                     projection.updateStatus(reviewId, "completed", ReviewProjection.STAGE_DONE);
-            case DomainEvent.ReviewFailedTerminally ignored -> projection.updateStatus(reviewId, "failed");
+            // Not updateStatus: a cap refusal is terminal through this same event, and 'refused' is a
+            // read-model refinement of it that must not be coarsened back (see projectTerminalFailure).
+            case DomainEvent.ReviewFailedTerminally ignored -> projection.projectTerminalFailure(reviewId);
             case DomainEvent.ReviewCancelled ignored -> projection.updateStatus(reviewId, "cancelled");
             case DomainEvent.ReviewSuperseded ignored -> projection.updateStatus(reviewId, "superseded");
             default -> { /* non-terminal: event already appended above */ }

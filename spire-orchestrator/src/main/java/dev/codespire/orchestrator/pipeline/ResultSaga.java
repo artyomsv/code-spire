@@ -19,6 +19,7 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
@@ -37,6 +38,8 @@ import org.jboss.logging.MDC;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /**
@@ -98,6 +101,16 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.policy.ReviewPolicy reviewPolicy;
 
+    /** The diff-size cap (Task 5) — read fresh from Settings on every DiffFetched, same posture as
+     *  {@code reviewPolicy}, so a changed limit takes effect without a restart. Unset means unlimited. */
+    @Inject
+    dev.codespire.orchestrator.caps.CapPolicy capPolicy;
+
+    /** The spend/call cap (Task 6), shared with {@link ConversationSaga}'s follow-up gate so the two
+     *  paid-call sites cannot drift apart on what "over the cap" means. */
+    @Inject
+    dev.codespire.orchestrator.caps.SpendGate spendGate;
+
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
     }
@@ -124,6 +137,15 @@ public class ResultSaga {
             // repo/prId are derived from the reviewId itself — no in-memory
             // registry, nothing lost on restart or scale-out (finding H2).
             case DiffFetched e -> ifCurrentRun(e.reviewId(), e.commit(), "DiffFetched", () -> {
+                // Task 5: refuse before the context fan-out ever runs — per-issue API calls, a bounded
+                // 20s wait and an encrypted blob write, all otherwise spent on a diff we will not review.
+                // The diff statistics live only on THIS event (ContextAssembled carries none of them),
+                // which is why the gate has to sit here rather than at the pre-spend check.
+                CapRefusal diffSize = diffSizeDecision(e);
+                if (diffSize.refused()) {
+                    refuse(e.reviewId(), e.commit(), "FetchDiff", ReviewProjection.STAGE_DIFF, diffSize);
+                    return;
+                }
                 projection.appendEvent(e.reviewId(), "result", "DiffFetched", e.changedFiles() + " files");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_CONTEXT);
                 // Pack every enabled context credential (Jira + Confluence) — null when none is configured,
@@ -156,6 +178,15 @@ public class ResultSaga {
                     skipUnspendable(e.reviewId(), "GenerateReview", llm);
                     return;
                 }
+                // Task 6: the pre-spend gate, right beside priceability — both answer the same question
+                // ("may this paid call be made"), so a reader should find every reason it was refused in
+                // one place rather than half of them here and half in ConversationSaga.
+                dev.codespire.orchestrator.caps.SpendGate.Decision spendDecision = spendGate.decide();
+                if (spendDecision.refused()) {
+                    refuse(e.reviewId(), e.commit(), "GenerateReview", ReviewProjection.STAGE_REVIEW,
+                            spendDecision.refusal());
+                    return;
+                }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
                 dev.codespire.contract.llm.PromptTemplate reviewPrompt =
                         promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW);
@@ -165,36 +196,19 @@ public class ResultSaga {
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
                         e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
-            case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
-                projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
-                        e.result().findings().size() + " findings");
-                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+            case ReviewGenerated e -> {
+                // OUTSIDE the staleness guard, and first — the same shape FollowUpGenerated has always
+                // had. The worker's PR-head re-check runs BEFORE the paid call, so a commit pushed (or
+                // the PR closed) while that call is in flight cannot un-spend it; charging inside
+                // ifCurrentRun discarded a real charge, which stopped being an under-reported cost card
+                // the moment the ledger became an enforcement input — push-then-push in a loop then buys
+                // uncounted paid calls without bound. Safe against redelivery with no new mechanism:
+                // recordCharges is INSERT ... ON CONFLICT (call_ref, token_type) DO NOTHING, and a
+                // superseded run's call_ref differs from the new run's because CallRefs.reviewSlot keys
+                // on the commit. Everything AFTER this still belongs to the current run only.
                 chargeGeneratedCalls(e);
-                java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
-                String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
-                if (!e.verdicts().isEmpty()) {
-                    projection.recordReconciliation(e.reviewId(), e.verdicts(),
-                            prior.map(PriorRun::findings).orElse(List.of()));
-                }
-                // Carry-forward baseline for the NEXT follow-up (ADR-019 refinement): unconditional,
-                // even with empty verdicts — a first review then stores just its own findings,
-                // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
-                // posted_findings_json semantics unchanged since the two columns hold the same
-                // findings in that case).
-                projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
-                        prior.map(PriorRun::findings).orElse(List.of()));
-                if (e.result().truncated()) {
-                    projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
-                            + "(changes beyond the token limit were not reviewed).");
-                }
-                lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
-                        e.commit(), e.result().findings().size(),
-                        Integer.toHexString(e.result().summary().hashCode())));
-                String finalPriorSummaryRef = priorSummaryRef;
-                emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
-                        e.verdicts(), finalPriorSummaryRef));
-            });
+                ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> onReviewGenerated(e));
+            }
             case CommentsPosted e -> {
                 projection.appendEvent(e.reviewId(), "result", "CommentsPosted", e.inline().size() + " inline comments");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_POSTING);
@@ -297,6 +311,41 @@ public class ResultSaga {
     }
 
     /**
+     * Everything a {@code ReviewGenerated} does that belongs to the CURRENT run: project the outcome,
+     * reconcile against the prior run, and post. The charge is deliberately not here — it is written
+     * before this runs, because spend is a fact about a call that already happened rather than a step
+     * in the run's progress.
+     */
+    private void onReviewGenerated(ReviewGenerated e) {
+        projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
+                e.result().findings().size() + " findings");
+        projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+        java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
+        String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
+        if (!e.verdicts().isEmpty()) {
+            projection.recordReconciliation(e.reviewId(), e.verdicts(),
+                    prior.map(PriorRun::findings).orElse(List.of()));
+        }
+        // Carry-forward baseline for the NEXT follow-up (ADR-019 refinement): unconditional,
+        // even with empty verdicts — a first review then stores just its own findings,
+        // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
+        // posted_findings_json semantics unchanged since the two columns hold the same
+        // findings in that case).
+        projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
+                prior.map(PriorRun::findings).orElse(List.of()));
+        if (e.result().truncated()) {
+            projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
+                    + "(changes beyond the token limit were not reviewed).");
+        }
+        lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
+                e.commit(), e.result().findings().size(),
+                Integer.toHexString(e.result().summary().hashCode())));
+        emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
+                e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
+                e.verdicts(), priorSummaryRef));
+    }
+
+    /**
      * Bounded auto-retry (C8). A retryable failure with budget left restarts the
      * pipeline from FetchDiff (same as a manual re-push, but automatic and
      * capped) — the LLM/comment idempotency stores make the re-run safe. When the
@@ -343,10 +392,11 @@ public class ResultSaga {
         String note = terminalNote(e, attempt, budget);
         LOG.errorf("Review %s failed terminally at %s (attempt %d/%d, retryable=%s, error: %s) — %s",
                 e.reviewId(), e.phase(), attempt, budget, e.retryable(), e.error(), note);
-        projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
-        projection.setNote(e.reviewId(), note);
-        // Persist the actual provider/worker error so the UI can show why it failed (not just the log).
-        projection.setError(e.reviewId(), e.error());
+        // Status, stage, note and the provider/worker error the UI shows, in one status-guarded write:
+        // a refusal is a read-model refinement of the same terminal state, and this saga is the second
+        // writer of it (DomainEventSink is the first). Writing unguarded relabelled a policy decision as
+        // an infrastructure failure on any replay of this event.
+        projection.projectTerminalFailure(e.reviewId(), phaseStage(e.phase()), note, e.error());
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
         // Recording the credential fact runs last, so a persistence failure here cannot swallow the
@@ -354,6 +404,66 @@ public class ResultSaga {
         if (e.credentialRejected()) {
             markCredentialRejected(e.reviewId());
         }
+    }
+
+    /**
+     * End a review because policy refused to spend on it. Mirrors {@link #onReviewFailed}'s terminal
+     * shape so the aggregate leaves REVIEWING — without that the review sits there until REVIEW_STUCK
+     * fires, blaming a webhook or a worker for what was a deliberate decision, and ADR-024's archive
+     * guard refuses to clear anything still 'reviewing'.
+     *
+     * <p>Status is 'refused', not 'failed': the archive guard, the attention queries and the reviews
+     * list all key on status, so filing a policy decision as an infrastructure failure would put it in
+     * the same bucket as a genuine outage. This project split pr_state out of status for the same
+     * reason — two different facts cannot share one badge.
+     *
+     * <p>{@code setError} is deliberately NOT called. There is no provider or worker error here, and
+     * populating it would make the detail page show an infrastructure error for a policy decision.
+     */
+    private void refuse(String reviewId, String commit, String phase, int stage, CapRefusal refusal) {
+        projection.clearScheduledRetry(reviewId);
+        timeline.record("result", "refused:" + phase, reviewId, refusal.detail());
+        projection.updateStatus(reviewId, "refused", stage);
+        projection.setNote(reviewId, refusal.note());
+        // logDetail, not detail: the log is the one surface no viewer reads, so it is where the
+        // configured limit belongs beside the measured figure.
+        LOG.warnf("Refused %s for %s — %s", phase, reviewId, refusal.logDetail());
+        // retryable=false, so the decider yields a terminal state and the run leaves REVIEWING.
+        lifecycle.handle(reviewId, new RecordCommand.RecordFailure(commit, phase, false));
+    }
+
+    /** Package-private passthrough: the gates that call {@link #refuse} arrive in later tasks, and
+     *  widening the method itself would make a saga-internal transition part of the bean's API. */
+    void refuseForTest(String reviewId, String commit, String phase, int stage, CapRefusal refusal) {
+        refuse(reviewId, commit, phase, stage, refusal);
+    }
+
+    /**
+     * Whether this diff exceeds either configured limit. Both figures are always named together
+     * ({@link CapRefusal#diffTooLarge}), independent of which one tripped it, so the operator reads one
+     * sentence rather than guessing which axis was the actual cause.
+     *
+     * <p>An unset limit never compares — {@code OptionalInt}/{@code OptionalLong} being empty is
+     * itself the "unlimited" case, not a zero to compare against.
+     *
+     * <p><b>Refuses on {@code >}, where the spend gate refuses on {@code >=}, deliberately.</b> A size
+     * limit is a ceiling a diff may reach: a 100-file limit says a 100-file diff is reviewable. A budget
+     * is exhausted once it has been consumed, so reaching a 100-call cap means the 101st call must not
+     * happen. Stated on both sides because {@code SpendGate} exists precisely because two money
+     * comparisons are free to drift, and an undocumented difference between the gates is
+     * indistinguishable from exactly that drift. Both boundaries are asserted ({@code DiffSizeGateTest},
+     * {@code SpendGateTest}).
+     */
+    private CapRefusal diffSizeDecision(DiffFetched e) {
+        OptionalInt maxFiles = capPolicy.maxChangedFiles();
+        if (maxFiles.isPresent() && e.changedFiles() > maxFiles.getAsInt()) {
+            return CapRefusal.diffTooLarge(e.changedFiles(), e.sizeBytes());
+        }
+        OptionalLong maxBytes = capPolicy.maxDiffBytes();
+        if (maxBytes.isPresent() && e.sizeBytes() > maxBytes.getAsLong()) {
+            return CapRefusal.diffTooLarge(e.changedFiles(), e.sizeBytes());
+        }
+        return CapRefusal.allow();
     }
 
     /**

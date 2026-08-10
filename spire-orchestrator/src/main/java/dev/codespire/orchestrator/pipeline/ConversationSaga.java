@@ -6,6 +6,8 @@ import dev.codespire.contract.review.ConversationLevel;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.caps.CapRefusal;
+import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
 import dev.codespire.orchestrator.provider.ConversationLevels;
@@ -22,7 +24,6 @@ import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 /**
  * Conversational-reply policy (spec §4): decides whether an {@code AuthorReplied} warrants a bot answer
@@ -55,6 +56,10 @@ public class ConversationSaga {
 
     @Inject
     ReviewProjection projection;
+
+    /** The deployment-wide spend cap — {@link ResultSaga}'s pre-spend decision, on the path that had none. */
+    @Inject
+    SpendGate spendGate;
 
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
@@ -116,6 +121,14 @@ public class ConversationSaga {
             skipUnspendable(e, llm);
             return Optional.empty();
         }
+        // The turn cap bounds one thread; nothing bounded the deployment. Threads are free to open and the
+        // mention override above removes the turn cap by design, so this is the only thing making the
+        // conversation path finite — hence AFTER that override, and after the free NotifyTurnCap above.
+        dev.codespire.orchestrator.caps.SpendGate.Decision capped = spendGate.decide();
+        if (capped.refused()) {
+            refuseFollowUp(e, target.thread(), capped.refusal());
+            return Optional.empty();
+        }
         LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
@@ -156,6 +169,27 @@ public class ConversationSaga {
         projection.setNote(e.reviewId(), llm.note());
         LOG.infof("Follow-up skipped for %s — %s (workspace '%s')",
                 e.reviewId(), llm.detail(), e.repo().workspace());
+    }
+
+    /**
+     * A reply left unanswered because the deployment is over its cap. Unlike the two review gates this
+     * touches neither the review's status nor its note: the review may have completed, and refusing one
+     * reply is not a retraction of that outcome — a status move would rewrite a finished run's verdict,
+     * and {@code CapRefusal.note()} opens "Not reviewed", which on a reviewed PR is simply false. The
+     * timeline carries the per-review fact; that a cap is being enforced at all is deployment-wide, and
+     * the attention panel is where that belongs.
+     */
+    private void refuseFollowUp(AuthorReplied e, ThreadRef thread, CapRefusal refusal) {
+        timeline.record("integration", "refused:AnswerFollowUp", e.reviewId(), refusal.detail());
+        // AND a persisted event, filed under the conversation root so it sits with the thread that went
+        // unanswered. The timeline alone is an in-memory list capped at 500 entries DEPLOYMENT-WIDE and
+        // lost on restart, so the only durable trace of a refusal would have been the deployment-wide
+        // CAP_REACHED row — which never says which thread. Not setNote: CapRefusal.note() opens "Not
+        // reviewed", false on a PR that was reviewed, and the review's own outcome is not being retracted.
+        projection.appendEvent(e.reviewId(), "integration", "FollowUpRefused", refusal.detail(),
+                thread.value());
+        LOG.warnf("Follow-up refused for %s — %s (workspace '%s')",
+                e.reviewId(), refusal.logDetail(), e.repo().workspace());
     }
 
     /** The self-loop guard can't recognize the bot's own comments without a resolved id — fail closed. */
