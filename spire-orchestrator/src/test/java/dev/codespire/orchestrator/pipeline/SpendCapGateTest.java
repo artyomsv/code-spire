@@ -101,6 +101,9 @@ class SpendCapGateTest {
         ResultSaga saga = sagaFor(pr);
         saga.on(contextAssembled(pr));
 
+        assertTrue(emitted.isEmpty(),
+                "the most expensive of the three gates must REFUSE, not merely annotate: a regression "
+                        + "that writes the status, posts the note and spends anyway passed this suite");
         ReviewDetail detail = projection.loadDetail(WS, REPO, pr).orElseThrow();
         assertEquals("refused", detail.status());
         assertTrue(detail.note().contains("call cap"),

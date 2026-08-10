@@ -445,6 +445,14 @@ public class ResultSaga {
      *
      * <p>An unset limit never compares — {@code OptionalInt}/{@code OptionalLong} being empty is
      * itself the "unlimited" case, not a zero to compare against.
+     *
+     * <p><b>Refuses on {@code >}, where the spend gate refuses on {@code >=}, deliberately.</b> A size
+     * limit is a ceiling a diff may reach: a 100-file limit says a 100-file diff is reviewable. A budget
+     * is exhausted once it has been consumed, so reaching a 100-call cap means the 101st call must not
+     * happen. Stated on both sides because {@code SpendGate} exists precisely because two money
+     * comparisons are free to drift, and an undocumented difference between the gates is
+     * indistinguishable from exactly that drift. Both boundaries are asserted ({@code DiffSizeGateTest},
+     * {@code SpendGateTest}).
      */
     private CapRefusal diffSizeDecision(DiffFetched e) {
         OptionalInt maxFiles = capPolicy.maxChangedFiles();

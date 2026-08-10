@@ -82,6 +82,50 @@ class DiffSizeGateTest {
         assertInstanceOf(ActionCommand.GatherContext.class, emitted.get(0));
     }
 
+    /**
+     * The second axis, which no test reached: both fake policies returned {@code OptionalLong.empty()}
+     * for {@code maxDiffBytes} and every case drove {@code maxChangedFiles}, so a copy-paste in that
+     * branch — comparing the file count against the byte limit, say — would have shipped green.
+     *
+     * <p>The file count is deliberately tiny, so only the byte axis can produce this refusal.
+     */
+    @Test
+    void anOversizedDiffIsRefusedOnBytesEvenWithFewFiles() {
+        List<ActionCommand> emitted = new ArrayList<>();
+        List<String> statuses = new ArrayList<>();
+        ResultSaga saga = sagaWith(emitted, statuses, policyWithMaxDiffBytes(1_000L));
+
+        saga.on(diffFetched(2, 900_000L));
+
+        assertTrue(emitted.isEmpty(), "GatherContext must not run for a diff we will not review");
+        assertEquals(List.of("refused"), statuses);
+    }
+
+    /**
+     * The boundary, on both axes. The diff gate refuses on {@code >} while the spend gate refuses on
+     * {@code >=}, and both readings are defensible — a size <em>limit</em> is a ceiling a diff may
+     * reach, a budget is exhausted once consumed. Nothing pinned either, so the difference between the
+     * two gates was indistinguishable from the drift {@code SpendGate}'s javadoc names as the hazard
+     * that bean exists to prevent. Both are now stated there and asserted here.
+     */
+    @Test
+    void aDiffExactlyAtTheLimitIsReviewedAndOneOverIsNot() {
+        assertEquals(List.of(), refusalStatusesFor(policyWithMaxChangedFiles(100), 100, 900L),
+                "a 100-file limit says a 100-file diff is reviewable");
+        assertEquals(List.of("refused"), refusalStatusesFor(policyWithMaxChangedFiles(100), 101, 900L));
+
+        assertEquals(List.of(), refusalStatusesFor(policyWithMaxDiffBytes(1_000L), 2, 1_000L),
+                "and the byte axis reads its limit the same way");
+        assertEquals(List.of("refused"), refusalStatusesFor(policyWithMaxDiffBytes(1_000L), 2, 1_001L));
+    }
+
+    /** The statuses one DiffFetched writes under {@code policy} — empty when it was reviewed. */
+    private static List<String> refusalStatusesFor(CapPolicy policy, int changedFiles, long sizeBytes) {
+        List<String> statuses = new ArrayList<>();
+        sagaWith(new ArrayList<>(), statuses, policy).on(diffFetched(changedFiles, sizeBytes));
+        return statuses;
+    }
+
     private static DiffFetched diffFetched(int changedFiles, long sizeBytes) {
         return new DiffFetched(REVIEW_ID, 1L, COMMIT, changedFiles, List.of("java"), sizeBytes, false,
                 Set.of(), null);
@@ -111,6 +155,21 @@ class DiffSizeGateTest {
             @Override
             public OptionalLong maxDiffBytes() {
                 return OptionalLong.empty();
+            }
+        };
+    }
+
+    /** The file axis is left unset, so a refusal under this policy can only have come from bytes. */
+    private static CapPolicy policyWithMaxDiffBytes(long limit) {
+        return new CapPolicy() {
+            @Override
+            public OptionalInt maxChangedFiles() {
+                return OptionalInt.empty();
+            }
+
+            @Override
+            public OptionalLong maxDiffBytes() {
+                return OptionalLong.of(limit);
             }
         };
     }
