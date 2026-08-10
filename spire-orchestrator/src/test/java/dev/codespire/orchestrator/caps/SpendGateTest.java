@@ -55,6 +55,36 @@ class SpendGateTest {
     }
 
     /**
+     * Which axis is reported when both are over. Either would refuse the same call, so this decides
+     * only what the operator is told — and money is the axis they configured in the unit they care
+     * about, while the call count is the proxy that still bounds an UNMETERED fleet. Sending them to
+     * raise the call limit when it is the money that ran out is the wrong instruction.
+     *
+     * <p>Pinned rather than left implicit: the behaviour is entirely the order of two {@code if}s, so
+     * without a test it is not a decision, it is whichever one someone typed first — the same argument
+     * that put the {@code >} versus {@code >=} asymmetry in the javadoc.
+     */
+    @Test
+    void whenBothAxesAreOverTheMoneyOneIsReported() {
+        SpendGate gate = gateReporting(new SpendWindow.Usage(SPEND_CAP, CALL_CAP),
+                OptionalLong.of(SPEND_CAP), OptionalInt.of(CALL_CAP));
+
+        CapRefusal refusal = gate.decide().refusal();
+
+        assertEquals(CapRefusal.Reason.SPEND_CAP_REACHED, refusal.reason(),
+                "both tripped; the operator needs the figure they set, not the proxy for it");
+    }
+
+    /** And the call axis is still reported when it is the only one over — order, not precedence. */
+    @Test
+    void theCallAxisIsReportedWhenMoneyIsStillUnderItsCap() {
+        SpendGate gate = gateReporting(new SpendWindow.Usage(SPEND_CAP - 1, CALL_CAP),
+                OptionalLong.of(SPEND_CAP), OptionalInt.of(CALL_CAP));
+
+        assertEquals(CapRefusal.Reason.CALL_CAP_REACHED, gate.decide().refusal().reason());
+    }
+
+    /**
      * Fail open, and say so. Answering {@code Usage(0, 0)} on a failed read made an unreadable ledger
      * indistinguishable from an empty one, so the attention row saw "allowed" and reported health while
      * the cap was refusing nothing. The allow decision is deliberately unchanged — a cap that refuses

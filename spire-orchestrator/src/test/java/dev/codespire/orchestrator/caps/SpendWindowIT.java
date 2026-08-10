@@ -18,13 +18,15 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The cap's view of the ledger. Three properties this pins, each of which fails silently if broken.
+ * The cap's view of the ledger — both what it reports and when it says capacity can return. Every
+ * property here fails silently if broken.
  *
  * <p>Every assertion is a DELTA against a baseline measured moments earlier, never an absolute figure.
  * This read is deployment-wide by design and the module shares one database across test classes, so
@@ -150,6 +152,52 @@ class SpendWindowIT {
                 "and a readable one still answers, so the empty above is the failure and not the shape");
     }
 
+    /**
+     * {@code oldestChargeAt} had no direct test at all — {@code CapAttentionTest} only asserted that the
+     * attention row's message CONTAINED the recovery wording, never that the instant in it was right. So
+     * the query that names when capacity can return could have returned any timestamp in the table.
+     *
+     * <p>Deterministic despite the shared database, without a delta: the window starts EXACTLY at the
+     * older charge's own timestamp. Every ambient row is then either older than the anchor (excluded by
+     * the {@code from} bound) or newer than it (so it cannot be smaller), which makes the anchor the
+     * minimum by construction rather than by hoping no other suite wrote first.
+     *
+     * <p><b>A SECOND, newer charge is seeded on purpose.</b> Without it the fixture leaves one distinct
+     * timestamp in scope, where {@code MIN} and {@code MAX} return the same row — and this test passed
+     * under a {@code MIN} → {@code MAX} mutation when it happened to run first in the class. The
+     * newer row is what makes "earliest" mean something.
+     */
+    @Test
+    void theOldestChargeIsTheEarliestOneInsideTheWindow() {
+        // Milliseconds: the column is TIMESTAMPTZ (microseconds) and Instant carries nanos, so an
+        // untruncated anchor would compare a value against a rounded copy of itself.
+        Instant anchor = Instant.now().minus(Duration.ofMinutes(30)).truncatedTo(ChronoUnit.MILLIS);
+        seedChargesAt(anchor);
+        seedChargesNow();
+
+        assertEquals(java.util.Optional.of(anchor), window.oldestChargeAt(anchor),
+                "the earliest charge at or after the window start is the one capacity waits on, and a "
+                        + "newer charge is in scope too — so this cannot be satisfied by any aggregate");
+    }
+
+    /**
+     * The other half, and the one that catches a query ignoring its {@code from} bound: move the window
+     * start one millisecond past the anchor and that charge must stop being the answer. The newer charge
+     * is still in scope, so there IS a valid later answer — a broken bound would return the anchor.
+     */
+    @Test
+    void aChargeBeforeTheWindowStartIsNotTheOldestInIt() {
+        Instant anchor = Instant.now().minus(Duration.ofMinutes(30)).truncatedTo(ChronoUnit.MILLIS);
+        seedChargesAt(anchor);
+        seedChargesNow();
+        assertEquals(java.util.Optional.of(anchor), window.oldestChargeAt(anchor),
+                "the charge must be inside the window first, or excluding it proves nothing");
+
+        assertTrue(window.oldestChargeAt(anchor.plusMillis(1)).map(anchor::isBefore).orElse(false),
+                "a charge older than the window start cannot be what capacity waits on, and the newer "
+                        + "charge means an empty answer would be wrong too");
+    }
+
     private SpendWindow.Usage lastHour() {
         return window.since(Instant.now().minus(LAST_HOUR)).orElseThrow(
                 () -> new AssertionError("the ledger must be readable in this suite"));
@@ -178,6 +226,30 @@ class SpendWindowIT {
                     }
                     throw new SQLException("TEST-DB-UNREACHABLE");
                 });
+    }
+
+    /** A review whose charges all sit at one exact instant, so the window can start exactly on them. */
+    private void seedChargesAt(Instant priced) {
+        long pr = ReviewFixtures.newPr();
+        ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+        backdateChargesTo(ReviewFixtures.reviewIdFor(pr), priced);
+    }
+
+    /** A second review's charges, left where the production writer put them: now. */
+    private void seedChargesNow() {
+        ReviewFixtures.seedCompletedReviewWithCharges(projection, ReviewFixtures.newPr());
+    }
+
+    /** Every charge line of one review moved to one exact instant — the window anchor. */
+    private void backdateChargesTo(String reviewId, Instant priced) {
+        String sql = "UPDATE llm_charge SET priced_at = ? WHERE review_id = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setTimestamp(1, java.sql.Timestamp.from(priced));
+            ps.setString(2, reviewId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("setup failed: " + sql, e);
+        }
     }
 
     private void update(String sql, String bind) {

@@ -72,6 +72,14 @@ public class SpendGate {
      * <p>Skips the ledger read entirely when neither limit is set — unset must be a true no-op, not a
      * query that always answers "allow".
      *
+     * <p><b>When both axes are over, the MONEY one is reported.</b> Either would refuse the same call,
+     * so this decides only what the operator is told — and money is the axis they configured in the
+     * unit they care about, while the call count exists as the axis that still bounds an
+     * {@code UNMETERED} fleet where every charge is a legitimate zero (ADR-023). Reporting the proxy
+     * when the real figure is available would send an operator to raise the wrong limit. Ordering,
+     * being the whole of the behaviour here, is pinned by a test rather than left to the order the two
+     * {@code if}s happen to be written in.
+     *
      * <p><b>Both axes refuse on {@code >=}, and the diff gate refuses on {@code >}, deliberately.</b> A
      * budget is exhausted when it has been consumed: reaching a 100-call cap means 100 calls have been
      * paid for, so the 101st must not happen. A size <em>limit</em> is a ceiling a diff may reach — a
