@@ -196,36 +196,19 @@ public class ResultSaga {
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
                         e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
-            case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> {
-                projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
-                        e.result().findings().size() + " findings");
-                projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+            case ReviewGenerated e -> {
+                // OUTSIDE the staleness guard, and first — the same shape FollowUpGenerated has always
+                // had. The worker's PR-head re-check runs BEFORE the paid call, so a commit pushed (or
+                // the PR closed) while that call is in flight cannot un-spend it; charging inside
+                // ifCurrentRun discarded a real charge, which stopped being an under-reported cost card
+                // the moment the ledger became an enforcement input — push-then-push in a loop then buys
+                // uncounted paid calls without bound. Safe against redelivery with no new mechanism:
+                // recordCharges is INSERT ... ON CONFLICT (call_ref, token_type) DO NOTHING, and a
+                // superseded run's call_ref differs from the new run's because CallRefs.reviewSlot keys
+                // on the commit. Everything AFTER this still belongs to the current run only.
                 chargeGeneratedCalls(e);
-                java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
-                String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
-                if (!e.verdicts().isEmpty()) {
-                    projection.recordReconciliation(e.reviewId(), e.verdicts(),
-                            prior.map(PriorRun::findings).orElse(List.of()));
-                }
-                // Carry-forward baseline for the NEXT follow-up (ADR-019 refinement): unconditional,
-                // even with empty verdicts — a first review then stores just its own findings,
-                // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
-                // posted_findings_json semantics unchanged since the two columns hold the same
-                // findings in that case).
-                projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
-                        prior.map(PriorRun::findings).orElse(List.of()));
-                if (e.result().truncated()) {
-                    projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
-                            + "(changes beyond the token limit were not reviewed).");
-                }
-                lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
-                        e.commit(), e.result().findings().size(),
-                        Integer.toHexString(e.result().summary().hashCode())));
-                String finalPriorSummaryRef = priorSummaryRef;
-                emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
-                        e.verdicts(), finalPriorSummaryRef));
-            });
+                ifCurrentRun(e.reviewId(), e.commit(), "ReviewGenerated", () -> onReviewGenerated(e));
+            }
             case CommentsPosted e -> {
                 projection.appendEvent(e.reviewId(), "result", "CommentsPosted", e.inline().size() + " inline comments");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_POSTING);
@@ -325,6 +308,41 @@ public class ResultSaga {
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Everything a {@code ReviewGenerated} does that belongs to the CURRENT run: project the outcome,
+     * reconcile against the prior run, and post. The charge is deliberately not here — it is written
+     * before this runs, because spend is a fact about a call that already happened rather than a step
+     * in the run's progress.
+     */
+    private void onReviewGenerated(ReviewGenerated e) {
+        projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
+                e.result().findings().size() + " findings");
+        projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+        java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
+        String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
+        if (!e.verdicts().isEmpty()) {
+            projection.recordReconciliation(e.reviewId(), e.verdicts(),
+                    prior.map(PriorRun::findings).orElse(List.of()));
+        }
+        // Carry-forward baseline for the NEXT follow-up (ADR-019 refinement): unconditional,
+        // even with empty verdicts — a first review then stores just its own findings,
+        // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
+        // posted_findings_json semantics unchanged since the two columns hold the same
+        // findings in that case).
+        projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
+                prior.map(PriorRun::findings).orElse(List.of()));
+        if (e.result().truncated()) {
+            projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
+                    + "(changes beyond the token limit were not reviewed).");
+        }
+        lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
+                e.commit(), e.result().findings().size(),
+                Integer.toHexString(e.result().summary().hashCode())));
+        emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
+                e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
+                e.verdicts(), priorSummaryRef));
     }
 
     /**

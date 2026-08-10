@@ -155,6 +155,32 @@ class ResultSagaPricingTest {
                 "a re-emitted persisted result is the same paid call and must charge once");
     }
 
+    /**
+     * A superseded run's paid call still enters the ledger, even though nothing else about it does.
+     *
+     * <p>The money was spent before this event existed: the worker's PR-head re-check runs BEFORE the
+     * call, so a commit pushed while the call is in flight cannot un-spend it. Dropping the whole
+     * handler therefore discarded a real charge — which stopped being an under-reported cost card the
+     * moment the ledger became an enforcement input, since push-then-push in a loop then buys uncounted
+     * paid calls without bound.
+     *
+     * <p>The second assertion is the half that keeps this from being a licence to act on a stale run:
+     * everything downstream of the charge must still be dropped.
+     */
+    @Test
+    void aSupersededRunsPaidCallIsStillCharged() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+
+        saga.on(reviewGenerated(REVIEW_ID, "TESTSHA-SUPERSEDED",
+                ModelUsage.of("TEST-MODEL", 1_000_000, 500_000)));
+
+        assertEquals(1, projection.recordedCalls().size(),
+                "a superseded run's charge is real spend and must be counted, or the cap is evadable "
+                        + "by pushing again mid-call");
+        assertTrue(emitted.isEmpty(),
+                "and the stale run must still not drive the pipeline forward");
+    }
+
     /** The reconcile call is its own charge, under its own ref, so it cannot collide with the review. */
     @Test
     void aReconcileCallIsChargedSeparatelyFromTheReviewCall() {
