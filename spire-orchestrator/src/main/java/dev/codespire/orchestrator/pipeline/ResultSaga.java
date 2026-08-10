@@ -392,10 +392,11 @@ public class ResultSaga {
         String note = terminalNote(e, attempt, budget);
         LOG.errorf("Review %s failed terminally at %s (attempt %d/%d, retryable=%s, error: %s) — %s",
                 e.reviewId(), e.phase(), attempt, budget, e.retryable(), e.error(), note);
-        projection.updateStatus(e.reviewId(), "failed", phaseStage(e.phase()));
-        projection.setNote(e.reviewId(), note);
-        // Persist the actual provider/worker error so the UI can show why it failed (not just the log).
-        projection.setError(e.reviewId(), e.error());
+        // Status, stage, note and the provider/worker error the UI shows, in one status-guarded write:
+        // a refusal is a read-model refinement of the same terminal state, and this saga is the second
+        // writer of it (DomainEventSink is the first). Writing unguarded relabelled a policy decision as
+        // an infrastructure failure on any replay of this event.
+        projection.projectTerminalFailure(e.reviewId(), phaseStage(e.phase()), note, e.error());
         // Force non-retryable so the decider yields ReviewFailedTerminally and the run leaves REVIEWING.
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordFailure(e.commit(), e.phase(), false));
         // Recording the credential fact runs last, so a persistence failure here cannot swallow the

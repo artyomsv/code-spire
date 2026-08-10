@@ -199,6 +199,10 @@ class ResultSagaCredentialTest {
             }
 
             @Override
+            public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
+            }
+
+            @Override
             public void setError(String reviewId, String error) {
             }
         };

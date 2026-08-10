@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.pipeline;
 
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.command.RecordCommand;
+import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.orchestrator.attention.AttentionQueries;
 import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
@@ -23,6 +24,7 @@ import static dev.codespire.orchestrator.readmodel.ReviewFixtures.REPO;
 import static dev.codespire.orchestrator.readmodel.ReviewFixtures.WS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -122,6 +124,66 @@ class RefusedReviewLifecycleTest {
                 ReviewProjection.STAGE_REVIEW, CapRefusal.callCapReached(120, 100));
 
         assertStaysRefusedOnceProjected(pr);
+    }
+
+    /**
+     * The OTHER writer of a terminal failure status. {@code aRefusalSurvives...} covers
+     * {@code DomainEventSink}, which routes through {@code projectTerminalFailure} and its guard;
+     * {@code onReviewFailed} wrote {@code failed} straight through {@code updateStatus} with no status
+     * precondition, and {@code ReviewFailed} is the one case in {@code handle()} that {@code ifCurrentRun}
+     * does not wrap — so the aggregate already being terminal did not stop it either.
+     *
+     * <p>All three writes matter, not just the badge: the note is the operator's only explanation of the
+     * refusal, and {@code error_detail} is the field ADR-025 says is deliberately left unset for a policy
+     * decision, because populating it makes the detail page show an infrastructure fault.
+     *
+     * <p>Reachable through {@code cs.results} being at-least-once: an offset replay after a rebalance or
+     * a crash, or a deliberate DLQ replay.
+     */
+    @Test
+    void aReviewFailedArrivingAfterARefusalLeavesTheReviewRefused() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        ReviewFixtures.seedReviewingReview(projection, pr);
+        saga.refuseForTest(reviewId, commitFor(pr), PHASE,
+                ReviewProjection.STAGE_REVIEW, CapRefusal.callCapReached(120, 100));
+        String refusalNote = projection.loadDetail(WS, REPO, pr).orElseThrow().note();
+
+        saga.on(new IntegrationEvent.ReviewFailed(reviewId, commitFor(pr), PHASE,
+                "TEST-PROVIDER-ERROR", false, 1));
+
+        ReviewDetail detail = projection.loadDetail(WS, REPO, pr).orElseThrow();
+        assertEquals("refused", detail.status(),
+                "a replayed terminal failure relabelled a policy refusal as an infrastructure one");
+        assertEquals(refusalNote, detail.note(), "and it overwrote the only explanation the operator has");
+        assertNull(detail.errorDetail(),
+                "ADR-025: setError is deliberately not called for a refusal — there is no provider error");
+    }
+
+    /**
+     * The same replay, retryable — the branch that does not merely mislabel but RESURRECTS.
+     * {@code scheduleRetry} wrote {@code status = 'reviewing'} and a fresh due time unconditionally, so
+     * the sweeper would re-run the pipeline and spend again on a review policy already refused.
+     * {@code refuse} clears {@code retry_at} for exactly that reason; the guard on the write is the
+     * second defence, and the one that survives the row being written again.
+     *
+     * <p>Driven at the projection rather than through {@code saga.on(ReviewFailed)}: reaching the retry
+     * branch needs a resolvable SCM credential for the workspace, which this module's shared database
+     * does not have, so the saga would take the terminal branch instead and the test would silently
+     * cover the case above twice.
+     */
+    @Test
+    void aScheduledRetryCannotResurrectARefusedReview() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        ReviewFixtures.seedReviewingReview(projection, pr);
+        saga.refuseForTest(reviewId, commitFor(pr), PHASE,
+                ReviewProjection.STAGE_REVIEW, CapRefusal.callCapReached(120, 100));
+
+        projection.scheduleRetry(reviewId, 2, "TEST-RETRY-NOTE", java.time.Instant.now());
+
+        assertEquals("refused", projection.loadDetail(WS, REPO, pr).orElseThrow().status(),
+                "a refused review must not be dragged back to 'reviewing' with a retry scheduled");
     }
 
     /**
