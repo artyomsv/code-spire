@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Archive, ArchiveRestore, ExternalLink, RotateCw } from 'lucide-react';
-import { archiveReview, rerunReview, unarchiveReview, type ReviewDetail } from '../api';
+import { archiveReview, rerunReview, unarchiveReview, type ReviewDetail, type ReviewStatus } from '../api';
 import { openInLabel, safeHttpUrl } from '../render';
 import { canAdminister } from '../auth';
 import { useMe } from '../hooks/useMe';
@@ -12,6 +12,31 @@ interface Props {
   /** Reload the detail after an action changes it — the buttons below then reflect the new state. */
   onChanged: () => void;
 }
+
+/**
+ * Which statuses offer Re-run, as a total map rather than a boolean expression.
+ *
+ * <p>`ReviewRerunService.rerun()` gates on nothing but `archived`, so every answer here is a UI
+ * judgement about spending money, not a mirror of what the API permits. `refused` was missing, and
+ * that omission worked against the operator: a cap refusal's recovery path is *raise the limit, then
+ * re-run*, which is what the refusal note on the same page tells them to do — so the only way to act
+ * on the advice was to push a commit to a pull request that may be perfectly finished.
+ *
+ * <p>A `Record` over the declared union does nothing about a status the backend has and `api.ts`
+ * does not (`techdebt/spire-ui/3-3-…`); an unknown one reads as `undefined` and hides the button,
+ * which is the conservative direction given that pressing it spends money. What it does buy is a
+ * build failure the moment the union grows, so the next status added is a decision rather than
+ * whichever way a `||` chain happened to fall.
+ */
+const OFFERS_RERUN: Record<ReviewStatus, boolean> = {
+  reviewing: false, // a run is already in flight; re-running drops its claims and pays for a second
+  completed: true,
+  failed: true,
+  refused: true, // the cap was raised or the window rolled — this IS the retry
+  cancelled: false, // the pull request is closed, so fresh comments land where nobody is reading
+  superseded: false, // a newer commit took over, and that run is the one an operator wants
+  observed: false, // observe mode posts nothing, so a re-run buys the same silence twice
+};
 
 /**
  * The detail page's action bar.
@@ -29,7 +54,9 @@ export default function ReviewActions({ review, onChanged }: Props) {
 
   const prUrl = safeHttpUrl(review.htmlUrl);
   const archived = review.archivedAt !== null && review.archivedAt !== undefined;
-  const rerunnable = review.status === 'completed' || review.status === 'failed';
+  // `?? false` is unreachable by the types and deliberate at runtime: the status is JSON, so it can
+  // be a value the union above has never heard of.
+  const rerunnable = OFFERS_RERUN[review.status] ?? false;
 
   return (
     <>
@@ -77,6 +104,17 @@ export default function ReviewActions({ review, onChanged }: Props) {
                 </span>{' '}
                 at the same commit and posts fresh comments.
               </p>
+              {/* A refusal made no model call, so there is no previous result to replace — what the
+                  operator needs instead is that pressing this before raising the limit changes
+                  nothing. Added rather than substituted: an earlier round may well have posted
+                  comments before a later one was refused, so the line below stays true either way. */}
+              {review.status === 'refused' && (
+                <p>
+                  This run was refused by a cap, so nothing was sent to the model. Unless the limit
+                  has been raised under <em>Settings → General</em>, or enough usage has aged out of
+                  the window, it will be refused again.
+                </p>
+              )}
               <p>Previously posted comments on the pull request are not removed.</p>
             </>
           }
