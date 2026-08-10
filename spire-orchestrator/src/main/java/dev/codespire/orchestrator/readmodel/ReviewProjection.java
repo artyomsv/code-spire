@@ -1762,7 +1762,12 @@ public class ReviewProjection {
                 }
                 s[f] = "failed";
             }
-            case "cancelled", "superseded" -> {
+            // "refused" belongs with these and NOT with "failed": the steps that ran really did run
+            // (a pre-spend refusal has already fetched its diff and assembled its context), and no step
+            // failed, because nothing failed. Falling through to default drew all six grey, telling the
+            // operator neither had happened -- the same "a refusal is not a failure" split ADR-025 makes
+            // for the status itself.
+            case "cancelled", "superseded", "refused" -> {
                 int done = Math.min(Math.max(stage, 0), s.length);
                 for (int i = 0; i < done; i++) {
                     s[i] = "done";
