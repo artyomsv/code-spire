@@ -9,6 +9,8 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.port.RawWebhook;
+import dev.codespire.contract.scm.ThreadLocation;
+import dev.codespire.contract.scm.ThreadRef;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.Mac;
@@ -35,7 +37,7 @@ class BitbucketCloudIngressTest {
             "https://api.example.invalid/2.0", "test-bot", "test-app-password", SECRET);
 
     private final BitbucketCloudIngress ingress = new BitbucketCloudIngress(
-            CONFIG, new ObjectMapper(), Set.of("review"));
+            CONFIG, new ObjectMapper(), Set.of("review", "finding"));
 
     // --- signature ---
 
@@ -133,6 +135,20 @@ class BitbucketCloudIngressTest {
                         Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
         assertEquals("review", e.command());
         assertEquals("please", e.args());
+    }
+
+    @Test
+    void slashCommandOnAnInlineCommentKeepsItsParentAndInlineAnchor() {
+        List<IntegrationEvent> events = ingress.translate(webhook(
+                commentReplyOnLine("/finding major shadows the field", 901, 900, "src/Foo.java", 44),
+                Map.of("X-Event-Key", "pullrequest:comment_created")));
+        assertEquals(1, events.size());
+        ManualCommandReceived e = assertInstanceOf(ManualCommandReceived.class, events.getFirst());
+        assertEquals("finding", e.command());
+        assertEquals("major shadows the field", e.args());
+        assertEquals(new ThreadRef("900"), e.threadRef());
+        assertEquals(new ThreadLocation("src/Foo.java", 44), e.location());
+        assertEquals("901", e.commentId());
     }
 
     @Test
@@ -262,6 +278,19 @@ class BitbucketCloudIngressTest {
                   "comment": { "id": 900, "content": { "raw": "%s" },
                     "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" }%s%s }
                 }""").formatted(body, parent, inline).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** An inline comment with both a parent thread and its own diff anchor, for slash-command tests. */
+    private static byte[] commentReplyOnLine(String text, long commentId, long parentId, String path, int line) {
+        return ("""
+                {
+                  "repository": { "full_name": "sandbox/demo-repo" },
+                  "pullrequest": { "id": 7 },
+                  "comment": { "id": %d, "parent": { "id": %d },
+                    "inline": { "path": "%s", "to": %d },
+                    "content": { "raw": "%s" },
+                    "user": { "account_id": "HUM-9", "nickname": "jdoe", "display_name": "Jane" } }
+                }""").formatted(commentId, parentId, path, line, text).getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
