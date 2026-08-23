@@ -70,9 +70,28 @@ public sealed interface IntegrationEvent {
     record PullRequestClosed(RepoRef repo, long prId, CloseReason reason) implements IntegrationEvent {
     }
 
-    /** Parsed from a "/command" PR comment; saga maps "review" -> RequestReview{force=true}. */
+    /**
+     * A {@code /command} typed on a pull request.
+     *
+     * <p>{@code threadRef} and {@code location} are the thread the command was typed in, when it was
+     * typed in one — null for a top-level comment, which is every command that existed before
+     * {@code /finding}. They are carried because a command that acts on a thread cannot find its
+     * thread otherwise: two of the three ingresses used to check for {@code /} before computing
+     * either, and discarded the context the command needed.
+     *
+     * <p>{@code commentId} is the id of the comment that carried the command — the idempotency key
+     * for commands that act more than once on one thread.
+     */
     record ManualCommandReceived(RepoRef repo, long prId, String command, String args,
-                                 Author author) implements IntegrationEvent {
+                                 Author author, ThreadRef threadRef, ThreadLocation location,
+                                 String commentId) implements IntegrationEvent {
+
+        // Without thread context — a top-level command. Kept so every existing call site and every
+        // record already on the wire keeps working (the same additive treatment AuthorReplied took
+        // when it grew mentions, then location).
+        public ManualCommandReceived(RepoRef repo, long prId, String command, String args, Author author) {
+            this(repo, prId, command, args, author, null, null, null);
+        }
     }
 
     /**
