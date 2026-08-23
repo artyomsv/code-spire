@@ -173,9 +173,10 @@ public class GitHubIngress implements ScmIngress {
      * A top-level PR comment. issue_comment fires for issues too; the {@code
      * issue.pull_request} node is present only on PRs. A "/command" body becomes
      * ManualCommandReceived when registered (the saga maps "review" -> force
-     * review), dropped when unregistered — unchanged from before. Any other body
-     * becomes {@code AuthorReplied(topLevel = true)}: a plain PR comment, answered
-     * in the review's summary comment as its conversation "thread" (CONTRACT §4).
+     * review); an unregistered "/word" is not a command, so it falls through and
+     * engages the bot normally, same as any other body: {@code AuthorReplied(topLevel
+     * = true)}, answered in the review's summary comment as its conversation
+     * "thread" (CONTRACT §4).
      */
     private List<IntegrationEvent> issueComment(JsonNode payload) {
         if (!"created".equals(payload.path("action").asText(""))
@@ -186,19 +187,15 @@ public class GitHubIngress implements ScmIngress {
         String text = comment.path("body").asText("").trim();
         RepoRef repo = repo(payload);
         long issueNumber = issueNumber(payload);
-        if (!text.startsWith("/")) {
-            String commentId = comment.path("id").asText();
-            return List.of(new AuthorReplied(repo, issueNumber, ReviewIds.reviewId(repo, issueNumber),
-                    new ThreadRef(commentId), commentId, text, author(comment.path("user")), true,
-                    mentions(text)));
+        ParsedCommand parsed = parseCommand(text);
+        if (parsed != null) {
+            return List.of(new ManualCommandReceived(repo, issueNumber, parsed.command(), parsed.args(),
+                    author(comment.path("user")), null, null, comment.path("id").asText()));
         }
-        String[] parts = text.substring(1).split("\\s+", 2);
-        String command = parts[0].toLowerCase(Locale.ROOT);
-        if (!commands.contains(command)) {
-            return List.of();
-        }
-        return List.of(new ManualCommandReceived(repo, issueNumber,
-                command, parts.length > 1 ? parts[1] : "", author(comment.path("user"))));
+        String commentId = comment.path("id").asText();
+        return List.of(new AuthorReplied(repo, issueNumber, ReviewIds.reviewId(repo, issueNumber),
+                new ThreadRef(commentId), commentId, text, author(comment.path("user")), true,
+                mentions(text)));
     }
 
     /**
@@ -220,10 +217,35 @@ public class GitHubIngress implements ScmIngress {
                 ? comment.path("id").asText()
                 : replyTo.asText();
         String body = comment.path("body").asText("").trim();
+        ParsedCommand parsed = parseCommand(body);
+        if (parsed != null) {
+            return List.of(new ManualCommandReceived(repo, prId, parsed.command(), parsed.args(),
+                    author(comment.path("user")), new ThreadRef(threadRoot), location(comment),
+                    comment.path("id").asText()));
+        }
         return List.of(new AuthorReplied(
                 repo, prId, ReviewIds.reviewId(repo, prId),
                 new ThreadRef(threadRoot), comment.path("id").asText(),
                 body, author(comment.path("user")), false, mentions(body), location(comment)));
+    }
+
+    /**
+     * The command a comment carries, or null when it is not one. A body that starts with "/" but
+     * whose first word is not a recognised command is NOT a command — it is a comment that happens
+     * to begin with a slash (a path, a fraction), and it goes on to engage the bot normally.
+     */
+    private ParsedCommand parseCommand(String text) {
+        if (!text.startsWith("/")) {
+            return null;
+        }
+        String[] parts = text.substring(1).split("\\s+", 2);
+        String command = parts[0].toLowerCase(Locale.ROOT);
+        return commands.contains(command)
+                ? new ParsedCommand(command, parts.length > 1 ? parts[1] : "")
+                : null;
+    }
+
+    private record ParsedCommand(String command, String args) {
     }
 
     /**
