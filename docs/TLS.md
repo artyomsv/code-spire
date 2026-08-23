@@ -96,13 +96,20 @@ Three things have to be true:
    non-localhost deployment must re-point it.
 2. **The IdP is itself behind TLS.** It carries operator passwords. Re-pointing `KC_HOSTNAME` at a
    LAN or VPS address without TLS puts those passwords in plaintext — the exact threat this document
-   opens with.
+   opens with. Putting the bundled Keycloak behind your terminator is the same job as the dashboard,
+   with one addition to check: Keycloak ignores forwarded headers unless told to trust them
+   (`KC_PROXY_HEADERS=xforwarded`). The full-URL `KC_HOSTNAME` pin may cover your case without it,
+   so verify a login rather than assuming either way.
 3. **Your `https` origin's callbacks are registered.** The shipped realm
    (`deploy/keycloak/realm-spire.json`) registers **only `http://localhost:*`** redirect URIs, for
    all three clients. A deployment at `https://spire.example.com` must register
-   `https://spire.example.com/api/auth/callback`, `…/gw/auth/callback` and `…/wk/auth/callback`, plus
-   the matching post-logout URIs — or Keycloak rejects the login with all four other requirements
-   correctly satisfied.
+   `https://spire.example.com/api/auth/callback`, `…/gw/auth/callback` and `…/wk/auth/callback`, or
+   Keycloak rejects the login with all four other requirements correctly satisfied.
+
+   Also update the **post-logout** redirect URI on the `spire-orchestrator` client. It is the only
+   one that configures logout, and its registered value is localhost-only, so sign-out breaks on a
+   moved origin even after sign-in works. Web origins need no entry: these are confidential clients
+   doing full-page redirects, so no browser request reaches Keycloak directly and CORS never applies.
 
 If you use an existing corporate IdP rather than the bundled one, only point 3 is yours to do.
 
@@ -120,12 +127,14 @@ This works without TLS, and it is worth knowing *why*, because the reason does n
 Browsers treat `http://localhost`, `http://127.0.0.1` and `http://[::1]` as **potentially trustworthy
 origins** (W3C Secure Contexts), and accept a `Secure` cookie there over plain HTTP. Since every
 packaged run is `%prod`, which sets `cookie-force-secure: true`, each session cookie carries `Secure`
-— and localhost is the one place that does not matter. Verified in current Chrome and Firefox; if you
-see the trap below on localhost, check your browser's handling before assuming a deployment fault.
+— and localhost is the one place that does not matter. Chrome and Firefox implement that part of the
+spec; Safari's handling of `Secure` cookies on plain-HTTP localhost has historically differed, so if
+you see the trap below *on localhost*, check your browser before assuming a deployment fault.
 
 This also relies on the browser resolving `host.docker.internal` to reach Keycloak, which Docker
 Desktop arranges and native Linux Docker does not. On Linux, re-point `KC_HOSTNAME` at
-`http://localhost:34767` and register the matching realm URIs.
+`http://localhost:34767`. No realm change is needed — the registered callbacks are on the
+*dashboard's* origin, which has not moved.
 
 > ### The trap
 >
@@ -176,11 +185,18 @@ invisible until a login quietly fails.
 On Kubernetes the chart's `spire-ui` Service is `ClusterIP`, which an external terminator cannot
 reach. Two changes are needed for this topology:
 
-- **Expose the Service.** Patch it to `NodePort` (or `LoadBalancer`), or run the terminator inside
-  the cluster. The chart has no values knob for this today; a kustomize patch or
-  `kubectl patch svc spire-ui -p '{"spec":{"type":"NodePort"}}'` is the direct route.
+- **Expose the Service**, or run the terminator inside the cluster. The chart has no values knob for
+  this today, and the rendered manifest declares `type: ClusterIP`, so
+  `kubectl patch svc spire-ui -p '{"spec":{"type":"NodePort"}}'` works but **is reverted by the next
+  `helm upgrade`** — the terminator then silently loses its route, which is the shape of failure this
+  document exists to prevent. Use a kustomize patch (`deploy/kustomize/`) so the change survives an
+  upgrade, or keep the terminator in-cluster and leave the Service alone.
 - **Turn the Ingress off** — `ingress.enabled: false`. It defaults to `true`, and with no ingress
   controller installed it renders an object nothing acts on.
+
+A NodePort re-opens requirement 3: it publishes the dashboard in plaintext on every node interface,
+reachable around the terminator. Firewall it to the terminator's address. An in-cluster terminator
+avoids the problem rather than mitigating it, and is the better answer where it is available.
 
 Then set `trustedProxies` to the **pod CIDR** (requirement 4), not a Docker range.
 
@@ -297,9 +313,14 @@ requirement 5 — the callback is not registered.
 **and** `/gw/ws/webhook-attention` should show status 101 over `wss://`. Check the gateway one
 specifically: it is the one that catches a `/gw` route that is broken while `/api` works.
 
-**4. All three prefixes reach their service.** A bare `/api`, `/gw` or `/wk` must return something
-from the service — an auth redirect or a 401 — not the dashboard's `index.html`. Getting HTML back
-means the request fell through to the SPA fallback and that prefix is not routed.
+**4. All three prefixes reach their service.** The test is that the response comes from the service
+rather than from the SPA fallback — HTML back means that prefix is not routed.
+
+A bare `/api`, `/gw` or `/wk` typically answers **404 from the service**, which is itself a pass: the
+permission paths are `/api/*`, `/gw/*` and `/wk/*`, and a bare prefix matches none of them, so it
+reaches JAX-RS and finds no resource. Do not read that 404 as a routing failure. For an unambiguous
+check use a real path: `/api/me` is public and returns JSON, and any real path under `/gw` or `/wk`
+returns an auth redirect or a 401.
 
 ## Troubleshooting
 
