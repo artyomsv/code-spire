@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import type { ReviewSummary } from '../api';
 import { ago, archivedBadge, CopyableValue, findCell, llmIcon, miniPipeline, prStateBadge, providerBadge, shortSha, statusCell } from '../render';
 import { formatCost } from '../money';
-import ReviewsFilters, { matchesChip, type ChipFilter } from './ReviewsFilters';
+import ReviewsFilters, { matchesChip, needsAttention as wantsAttention, type ChipFilter } from './ReviewsFilters';
 
 function isSameDay(iso: string, now: number): boolean {
   const d = new Date(Date.parse(iso));
@@ -66,7 +66,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
   const summary = useMemo(() => {
     const inFlight = reviews.filter((r) => r.status === 'reviewing').length;
     const completedToday = reviews.filter((r) => r.status === 'completed' && isSameDay(r.updatedAt, now)).length;
-    const needsAttention = reviews.filter((r) => r.status === 'failed').length;
+    const needsAttention = reviews.filter((r) => wantsAttention(r.status)).length;
     return { inFlight, completedToday, needsAttention };
   }, [reviews, now]);
 
@@ -75,7 +75,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
       all: reviews.length,
       reviewing: reviews.filter((r) => r.status === 'reviewing').length,
       completed: reviews.filter((r) => r.status === 'completed').length,
-      failed: reviews.filter((r) => r.status === 'failed').length,
+      failed: reviews.filter((r) => wantsAttention(r.status)).length,
       closed: reviews.filter((r) => r.status === 'cancelled' || r.status === 'superseded').length,
     }),
     [reviews],

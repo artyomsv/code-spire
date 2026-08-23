@@ -32,4 +32,22 @@ class ComputeStagesTest {
         assertEquals(List.of("done", "done", "done", "failed", "pending", "pending"),
                 ReviewProjection.computeStages("failed", ReviewProjection.STAGE_REVIEW));
     }
+
+    /**
+     * A refusal is not a failure and not a blank page. Falling to {@code default} drew all six nodes
+     * grey, so a review refused at the pre-spend gate — which HAD fetched its diff and assembled its
+     * context — told the operator that neither had happened.
+     *
+     * <p>Shaped like {@code cancelled}/{@code superseded} rather than {@code failed}: the work that did
+     * happen is done, and no step is marked failed, because nothing failed. That is the same reason
+     * ADR-025 gives for the status being {@code refused} rather than {@code failed} in the first place.
+     */
+    @Test
+    void refusedMarksTheStepsThatDidRunWithoutMarkingAnyFailed() {
+        assertEquals(List.of("done", "done", "done", "pending", "pending", "pending"),
+                ReviewProjection.computeStages("refused", ReviewProjection.STAGE_REVIEW));
+        assertEquals(List.of("done", "pending", "pending", "pending", "pending", "pending"),
+                ReviewProjection.computeStages("refused", ReviewProjection.STAGE_DIFF),
+                "the diff-size gate refuses one step earlier, and the stepper must say so");
+    }
 }

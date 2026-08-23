@@ -14,6 +14,9 @@ describe('SettingsGeneral', () => {
     vi.spyOn(api, 'getConversationSettings').mockResolvedValue({
       level: 'REPORT_ONLY', turnCap: 4, maxAttempts: 5, backoffBaseMs: 2000, backoffFactor: 2,
     });
+    vi.spyOn(api, 'getCapSettings').mockResolvedValue({
+      maxChangedFiles: null, maxDiffBytes: null, spendCapMillicents: null, callCap: null, windowMinutes: 1440,
+    });
   });
 
   it('shows a single Save for both groups', async () => {

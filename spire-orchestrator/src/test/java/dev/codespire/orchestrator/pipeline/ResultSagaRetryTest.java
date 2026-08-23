@@ -124,6 +124,14 @@ class ResultSagaRetryTest {
             public void setNote(String reviewId, String note) {
             }
 
+            // The terminal write is one status-guarded statement, so status and error are captured
+            // together here rather than from updateStatus/setError.
+            @Override
+            public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
+                terminalStatuses.add("failed");
+                terminalErrors.add(error);
+            }
+
             @Override
             public void setError(String reviewId, String error) {
                 terminalErrors.add(error);

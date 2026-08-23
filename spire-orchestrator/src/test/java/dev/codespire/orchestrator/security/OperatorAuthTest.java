@@ -50,6 +50,7 @@ class OperatorAuthTest {
             "/api/settings/review",
             "/api/settings/conversation",
             "/api/settings/conversation-level",
+            "/api/settings/caps",
     };
 
     @Test

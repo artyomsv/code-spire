@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
+  getCapSettings,
   getConversationSettings,
   getReviewSettings,
+  setCapSettings,
   setConversationSettings,
   setReviewSettings,
   type ConversationSettings as ConversationSettingsShape,
   type ReviewSettings as ReviewSettingsShape,
 } from '../api';
+import CapFields, { capFieldsPayload, initialCapFields, validateCapFields, type CapFieldValues } from './CapSettings';
 import ConversationFields from './ConversationSettings';
 import ReviewFields from './ReviewSettings';
 
@@ -22,21 +25,24 @@ import ReviewFields from './ReviewSettings';
 export default function SettingsGeneral() {
   const [review, setReview] = useState<ReviewSettingsShape | null>(null);
   const [conversation, setConversation] = useState<ConversationSettingsShape | null>(null);
-  const [loaded, setLoaded] = useState<{ review: ReviewSettingsShape; conversation: ConversationSettingsShape } | null>(
-    null,
-  );
+  const [caps, setCaps] = useState<CapFieldValues | null>(null);
+  const [loaded, setLoaded] = useState<
+    { review: ReviewSettingsShape; conversation: ConversationSettingsShape; caps: CapFieldValues } | null
+  >(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    Promise.all([getReviewSettings(), getConversationSettings()])
-      .then(([r, c]) => {
+    Promise.all([getReviewSettings(), getConversationSettings(), getCapSettings()])
+      .then(([r, c, capsWire]) => {
         if (!alive) return;
+        const capFields = initialCapFields(capsWire);
         setReview(r);
         setConversation(c);
-        setLoaded({ review: r, conversation: c });
+        setCaps(capFields);
+        setLoaded({ review: r, conversation: c, caps: capFields });
       })
       .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)));
     return () => {
@@ -45,22 +51,33 @@ export default function SettingsGeneral() {
   }, []);
 
   async function save() {
-    if (!review || !conversation || !loaded || busy) return;
+    if (!review || !conversation || !caps || !loaded || busy) return;
+    setSaved(false);
+    // Validated before anything is sent: a typed 0 must be rejected outright, not just skipped, and
+    // rejecting it here means the OTHER two groups don't get saved either on the same click — this
+    // is one Save for the whole page, not three independent ones.
+    const capsError = validateCapFields(caps);
+    if (capsError) {
+      setError(capsError);
+      return;
+    }
     setBusy(true);
     setError(null);
-    setSaved(false);
     try {
       // Write only what moved: an untouched group should not be rewritten just because its sibling was.
       const reviewChanged = review.maxAttempts !== loaded.review.maxAttempts;
       const conversationChanged = JSON.stringify(conversation) !== JSON.stringify(loaded.conversation);
-      const [nextReview, nextConversation] = await Promise.all([
+      const capsChanged = JSON.stringify(caps) !== JSON.stringify(loaded.caps);
+      const [nextReview, nextConversation, nextCaps] = await Promise.all([
         reviewChanged ? setReviewSettings(review) : Promise.resolve(loaded.review),
         conversationChanged ? setConversationSettings(conversation) : Promise.resolve(loaded.conversation),
+        capsChanged ? setCapSettings(capFieldsPayload(caps)).then(initialCapFields) : Promise.resolve(loaded.caps),
       ]);
       // The server clamps out-of-range values, so show what was actually stored.
       setReview(nextReview);
       setConversation(nextConversation);
-      setLoaded({ review: nextReview, conversation: nextConversation });
+      setCaps(nextCaps);
+      setLoaded({ review: nextReview, conversation: nextConversation, caps: nextCaps });
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -76,7 +93,7 @@ export default function SettingsGeneral() {
           <h2 className="prov-title">General</h2>
         </div>
         <div style={{ padding: '4px 18px 18px' }}>
-          {!review || !conversation ? (
+          {!review || !conversation || !caps ? (
             error ? <p className="prov-error">{error}</p> : <p className="prov-sub">Loading…</p>
           ) : (
             <>
@@ -96,6 +113,16 @@ export default function SettingsGeneral() {
                 disabled={busy}
                 onChange={(v) => {
                   setConversation(v);
+                  setSaved(false);
+                }}
+              />
+
+              <h3 className="settings-group">Limits</h3>
+              <CapFields
+                value={caps}
+                disabled={busy}
+                onChange={(v) => {
+                  setCaps(v);
                   setSaved(false);
                 }}
               />

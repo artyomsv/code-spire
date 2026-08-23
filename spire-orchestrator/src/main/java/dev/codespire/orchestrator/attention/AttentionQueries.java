@@ -2,6 +2,9 @@ package dev.codespire.orchestrator.attention;
 
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
+import dev.codespire.orchestrator.caps.CapPolicy;
+import dev.codespire.orchestrator.caps.SpendGate;
+import dev.codespire.orchestrator.caps.SpendWindow;
 import dev.codespire.orchestrator.dlq.DlqRepository;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -15,6 +18,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -52,6 +56,15 @@ public class AttentionQueries {
     @Inject
     CostAttentionAcks acks;
 
+    @Inject
+    SpendGate spendGate;
+
+    @Inject
+    CapPolicy capPolicy;
+
+    @Inject
+    SpendWindow spendWindow;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -68,6 +81,7 @@ public class AttentionQueries {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
         deadLetterRows(rows);
+        capRows(rows);
         rows.sort(Comparator.comparing((AttentionView v) -> v.severity().ordinal())
                 .thenComparing(AttentionView::code)
                 .thenComparing(v -> v.subject() == null ? "" : v.subject()));
@@ -168,7 +182,9 @@ public class AttentionQueries {
      * {@code ReviewState.Status}'s uppercase enum names. Comparing against the enum spelling made
      * every completed review on an open PR read as stuck and made a genuinely failed review
      * invisible, so both predicates fold case and the terminal set names all four terminal values.
-     * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled.
+     * {@code superseded} is terminal: a run replaced by a newer commit is finished, not stalled, and
+     * so is {@code refused} — a review a spend cap declined to run has reached its end state, and
+     * reporting it here would blame a delivery path for a deliberate policy decision.
      *
      * <p>BOTH queries exclude archived reviews, not just the stuck one. Nothing an operator does makes
      * a failed review un-fail, so archiving it IS the resolution — and a {@code REVIEW_FAILED} row
@@ -178,7 +194,7 @@ public class AttentionQueries {
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         rows.addAll(perReviewRows(c, """
                 SELECT workspace, slug, pr_id FROM review_status
-                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded')
+                 WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded', 'refused')
                    AND pr_state = 'OPEN'
                    AND archived_at IS NULL
                    AND updated_at < now() - make_interval(mins => ?)
@@ -337,6 +353,62 @@ public class AttentionQueries {
     /** Acknowledge a ledger-wide cost condition: calls already priced stop being counted. */
     void acknowledge(CostAttentionRow row) {
         acks.acknowledge(row);
+    }
+
+    /**
+     * Whether deployment-wide usage over the configured window exceeds either cap right now, asking
+     * the exact question {@link SpendGate#decide()} asks before every paid call. Sharing the decision,
+     * rather than re-comparing usage against the caps here, is what keeps this row and the two
+     * enforcement sites (the pre-spend gate, the conversation gate) from drifting on what "over the
+     * cap" means — a drift in a money gate is invisible until it fails to fire.
+     *
+     * <p>Carries no acknowledgement, unlike {@link CostAttentionRow}: those describe calls already made
+     * that no fix can un-make, while this describes usage right now, so it clears on its own once the
+     * charges that tripped it age out of the window or the operator raises the limit — never stored,
+     * never dismissed, exactly this panel's contract.
+     */
+    // Package-private so the degraded-ledger row can be driven without a DataSource: collect() opens a
+    // connection before it ever reaches here, which would make the test assert on the wrong failure.
+    void capRows(List<AttentionView> rows) {
+        SpendGate.Decision decision = spendGate.decide();
+        if (decision.ledgerUnreadable()) {
+            rows.add(new AttentionView("CAP_UNENFORCEABLE", Severity.WARNING, null,
+                    "A spend cap is configured but its usage ledger could not be read, so no paid call "
+                            + "is being refused right now. See the orchestrator log for the database "
+                            + "error.", "/settings/general"));
+            return;
+        }
+        if (decision.allowed()) {
+            return;
+        }
+        rows.add(new AttentionView("CAP_REACHED", Severity.BLOCKING, null,
+                capitalize(decision.refusal().detail()) + "." + recoveryClause(), "/settings/general"));
+    }
+
+    /**
+     * The earliest instant any capacity can return — the oldest in-window charge ageing out — stated as
+     * the lower bound it is.
+     *
+     * <p>NOT the instant the cap clears, which is what an earlier wording ("Capacity returns at …")
+     * claimed. Ageing one charge out restores capacity only when usage exceeds the cap by no more than
+     * that charge's own contribution: with a call cap of 100 and 300 calls in the window, the named
+     * instant takes usage to 299 and changes nothing. Computing the true instant means walking charges
+     * oldest-first until the remainder falls under the cap; the honest lower bound costs nothing and this
+     * project's own ADR argues that a number documented as exact and then observed to be wrong destroys
+     * trust in it.
+     *
+     * <p>Empty when the ledger read failed, which leaves the row's own detail as the only wording rather
+     * than a fabricated instant.
+     */
+    private String recoveryClause() {
+        return spendWindow.oldestChargeAt(Instant.now().minus(capPolicy.window()))
+                .map(oldest -> " No capacity returns before "
+                        + oldest.plus(capPolicy.window()).truncatedTo(ChronoUnit.SECONDS) + ".")
+                .orElse("");
+    }
+
+    private static String capitalize(String text) {
+        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
     private void deadLetterRows(List<AttentionView> rows) {

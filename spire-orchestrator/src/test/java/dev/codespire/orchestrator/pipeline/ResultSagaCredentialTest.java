@@ -144,6 +144,19 @@ class ResultSagaCredentialTest {
                 return resolved;
             }
         };
+        // Task 5's diff-size gate reads this on every DiffFetched; unset here since this fixture's own
+        // assertions are about scmType, not the cap — see DiffSizeGateTest for the gate itself.
+        saga.capPolicy = new dev.codespire.orchestrator.caps.CapPolicy() {
+            @Override
+            public java.util.OptionalInt maxChangedFiles() {
+                return java.util.OptionalInt.empty();
+            }
+
+            @Override
+            public java.util.OptionalLong maxDiffBytes() {
+                return java.util.OptionalLong.empty();
+            }
+        };
         return saga;
     }
 
@@ -183,6 +196,10 @@ class ResultSagaCredentialTest {
 
             @Override
             public void setNote(String reviewId, String note) {
+            }
+
+            @Override
+            public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
             }
 
             @Override

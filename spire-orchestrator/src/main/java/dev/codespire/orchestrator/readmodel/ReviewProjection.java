@@ -159,6 +159,56 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
+    /**
+     * The aggregate's terminal failure, projected without coarsening a status the saga already made
+     * more specific.
+     *
+     * <p>A spend cap's refusal reaches its end state through the same {@code RecordFailure} every
+     * other terminal failure uses: the aggregate has ONE terminal-failure event, and a second one
+     * would change the wire contract for a distinction only the read model draws. So {@code refused}
+     * is a refinement of {@code ReviewFailedTerminally}, and projecting that event unconditionally
+     * relabelled the refusal {@code failed} one Kafka round trip after {@code ResultSaga.refuse}
+     * wrote it — invisibly, since the note stayed right while the badge, the reviews list and the
+     * REVIEW_FAILED attention row all read the status.
+     */
+    public void projectTerminalFailure(String reviewId) {
+        update("""
+                UPDATE review_status SET status = 'failed', updated_at = now()
+                 WHERE review_id = ? AND lower(status) <> 'refused'
+                """, ps -> ps.setString(1, reviewId));
+        broadcast(reviewId);
+    }
+
+    /**
+     * The saga's terminal failure, under the same guard — status, stage, note and the provider/worker
+     * error in ONE statement.
+     *
+     * <p>{@code ResultSaga.onReviewFailed} is the OTHER writer of a terminal status, and it wrote
+     * straight through {@code updateStatus} with no precondition. {@code ReviewFailed} is also the one
+     * result the saga does not wrap in its stale-run guard, so the aggregate already being terminal did
+     * not stop it either: a replayed failure (cs.results is at-least-once, and DLQ replay is deliberate)
+     * relabelled a refusal, overwrote the note that explains it, and populated {@code error_detail} —
+     * the field ADR-025 leaves unset for a policy decision precisely so the detail page does not show an
+     * infrastructure fault.
+     *
+     * <p>One statement rather than three, so the guard cannot hold for the badge while the note and the
+     * error are overwritten regardless, and so the broadcast carries a row that agrees with itself.
+     */
+    public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
+        String storedError = encryptedError(error, reviewId);
+        update("""
+                UPDATE review_status
+                   SET status = 'failed', stage = ?, note = ?, error_detail = ?, updated_at = now()
+                 WHERE review_id = ? AND lower(status) <> 'refused'
+                """, ps -> {
+            ps.setInt(1, stage);
+            ps.setString(2, note);
+            ps.setString(3, storedError);
+            ps.setString(4, reviewId);
+        });
+        broadcast(reviewId);
+    }
+
     public void updateStatus(String reviewId, String status, int stage) {
         update("UPDATE review_status SET status = ?, stage = ?, updated_at = now() WHERE review_id = ?", ps -> {
             ps.setString(1, status);
@@ -242,13 +292,20 @@ public class ReviewProjection {
      * — a provider error can be a large blob and may echo fragments of the diff.
      */
     public void setError(String reviewId, String error) {
-        String stored = (error == null || error.isBlank())
-                ? null
-                : encryption.encryptString(error.strip().substring(0, Math.min(error.strip().length(), 4000)), reviewId);
+        String stored = encryptedError(error, reviewId);
         update("UPDATE review_status SET error_detail = ?, updated_at = now() WHERE review_id = ?", ps -> {
             ps.setString(1, stored);
             ps.setString(2, reviewId);
         });
+    }
+
+    /** Encrypt-at-rest with the review as AAD, truncated to the column; blank and null store as NULL. */
+    private String encryptedError(String error, String reviewId) {
+        if (error == null || error.isBlank()) {
+            return null;
+        }
+        String stripped = error.strip();
+        return encryption.encryptString(stripped.substring(0, Math.min(stripped.length(), 4000)), reviewId);
     }
 
     /** The current attempt (pipeline run) count for a review; 1 when unknown (C8 retry budget). */
@@ -284,10 +341,14 @@ public class ReviewProjection {
      * in {@code reviewing} (the run IS still in flight, just waiting) and records when it comes due.
      */
     public void scheduleRetry(String reviewId, int attempt, String note, Instant dueAt) {
+        // Guarded like projectTerminalFailure, and for the worse half of the same defect: a replayed
+        // RETRYABLE failure would drag a refused review back to 'reviewing' with a fresh due time, and
+        // the sweeper would then re-run the pipeline and spend again on a review policy already refused.
+        // refuse() clears retry_at for exactly that reason; this is the second defence, on the write.
         update("""
                 UPDATE review_status
                    SET attempt = ?, status = 'reviewing', stage = ?, note = ?, retry_at = ?, updated_at = now()
-                 WHERE review_id = ?
+                 WHERE review_id = ? AND lower(status) <> 'refused'
                 """, ps -> {
             ps.setInt(1, attempt);
             ps.setInt(2, STAGE_DIFF);
@@ -1701,7 +1762,12 @@ public class ReviewProjection {
                 }
                 s[f] = "failed";
             }
-            case "cancelled", "superseded" -> {
+            // "refused" belongs with these and NOT with "failed": the steps that ran really did run
+            // (a pre-spend refusal has already fetched its diff and assembled its context), and no step
+            // failed, because nothing failed. Falling through to default drew all six grey, telling the
+            // operator neither had happened -- the same "a refusal is not a failure" split ADR-025 makes
+            // for the status itself.
+            case "cancelled", "superseded", "refused" -> {
                 int done = Math.min(Math.max(stage, 0), s.length);
                 for (int i = 0; i < done; i++) {
                     s[i] = "done";

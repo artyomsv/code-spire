@@ -180,16 +180,24 @@ opens/updates a PR triggers a paid LLM call.
   spent and cannot refuse anything. A call that still cannot be priced (a lookup fault, an unmapped
   vendor field) is recorded `UNKNOWN` and raised to the attention panel — never silently `$0.00`, which
   would be indistinguishable from a deployment that is genuinely free to run.
-- **Fleet-level caps remain deferred**, and this ledger is what makes building one honest: a spend cap
-  reading the old accounting would have read "free" for every call it could not price and never fired.
-  It still needs its own axis, though — **a money-denominated cap is inert on an `UNMETERED`
-  (self-hosted) deployment by design**, since the operator has asserted zero cost and there is nothing in
-  dollars to cap. Every other abuse scenario still applies to self-hosted inference hardware (a hammered
-  GPU costs real money even when the LLM call line reads zero), so the cap will need a token- or
-  call-count axis that holds regardless of pricing mode, not a money axis alone.
-- **Deferred (FR-later):** per-repo/workspace rate limit, daily LLM spend cap, giant-PR guard,
-  draft/WIP-PR skip, bot-authored-PR skip. An operator running v1 must know there is no built-in
-  ceiling on spend yet.
+- **Fleet-level spend caps shipped (ADR-025).** Three gates refuse before the money is spent: diff size
+  on `DiffFetched` (before the context fan-out runs), the spend/call cap before `GenerateReview`, and
+  the same cap in `ConversationSaga` — the last of which was the only genuinely unbounded path, since
+  the turn cap is per *thread* and an @-mention removes it. Every cap checks **two axes**,
+  `SUM(cost_millicents)` and `COUNT(DISTINCT call_ref)` over a rolling window, because **a
+  money-denominated cap is inert on an `UNMETERED` (self-hosted) deployment by design** — the operator
+  has asserted zero cost, so there is nothing in dollars to cap, while every other abuse scenario still
+  applies to self-hosted inference hardware (a hammered GPU costs real money even when the LLM call line
+  reads zero). The ledger ADR-023 built is what makes the money axis honest at all: the old accounting
+  read "free" for every call it could not price, so a cap over it would never have fired.
+  Two properties an operator must know: **every limit is optional and unset means unlimited**, so a
+  deployment that configures nothing has no ceiling and behaves exactly as before; and the cap is
+  **soft**, since charges are recorded after a call completes, with overshoot bounded by in-flight
+  reviews × per-review cost.
+- **Deferred (FR-later):** per-repo/workspace **admission rate limit** (Spec B — the only part of the
+  caps work needing new storage), per-repo *spend* caps (blocked on `llm_charge` carrying no
+  `provider_type`), and bot-authored-PR skip. Draft/WIP-PR skip and the giant-PR guard are no longer
+  deferred — both shipped.
 
 ## Not reused (clean-room note)
 
