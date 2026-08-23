@@ -230,8 +230,10 @@ down is the original design-time roadmap (kept for reference).
   routine five-minute expiry while reporting it as a gateway outage. Dev runs unauthenticated by
   default and refuses to start that way anywhere else. Preceded by a spike that overturned two of the
   plan's own predictions and three adversarial reviews that each falsified a design; the record is in
-  [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md), the live check is SMOKE-TEST.md **Mode J**. **Open by design:**
-  TLS arrives with the production edge — until then this stops casual access, not an on-path attacker.
+  [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md), the live check is SMOKE-TEST.md **Mode J**.
+  **TLS is the operator's edge, by design** (2026-08-23) — Code Spire terminates none, and `docs/TLS.md`
+  states the five requirements a terminator must satisfy. Until one is in front, this stops casual
+  access, not an on-path attacker.
 
 - **CI/CD + packaging delivered (2026-08-05):** nine GitHub Actions workflows, four images on GHCR, and
   a `deploy/` tree covering Compose, Helm and kustomize from one source of truth (chart → kustomize
@@ -519,7 +521,6 @@ Open, by nature of the work rather than by section:
 
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
-| **TLS** | TLS at the production edge | S–M | **In progress (2026-08-23).** The one thing between the current state and a deployment that is not a single trusted machine. ADR-022 shipped auth with TLS explicitly left to the production edge; everything it was waiting on (D10, CI/CD, packaging) is delivered. |
 | **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
 | **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
@@ -527,10 +528,17 @@ Open, by nature of the work rather than by section:
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
-**Closed since this table was last written:** the **contract-compat CI gate** (round-trip + snapshot
-tests on `spire-contract`, failing a breaking change without an `eventVersion` bump + upcaster,
-ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it iterated event types and
-skipped an empty list, so zero types read as zero failures.
+**Closed since this table was last written:** **TLS at the production edge** (2026-08-23) — closed as a
+*decision* rather than a build. Code Spire terminates no TLS and will not: termination is the most
+environment-specific part of a deployment, every operator already has a way to do it, and a bundled
+terminator would be a component each of them works around. What ships instead is the contract in
+[TLS.md](TLS.md) — five requirements a terminator must satisfy (the identity-provider leg included), three worked topologies (localhost,
+an external proxy, a Kubernetes Ingress with cert-manager), and a symptom table, since each of those
+requirements fails silently when missed. Kubernetes Ingress TLS already rendered and needs **no chart
+change** for cert-manager; the gap was that nothing said so. Also the **contract-compat CI gate**
+(round-trip + snapshot tests on `spire-contract`, failing a breaking change without an `eventVersion`
+bump + upcaster, ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it
+iterated event types and skipped an empty list, so zero types read as zero failures.
 
 Also open and tracked outside this file: **17 techdebt items** in `techdebt/` — 7 medium, 10 low,
 nothing high or critical. Count them rather than trusting this line: `ls techdebt/*/3-*.md` and
@@ -550,11 +558,13 @@ retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for 
 the same reasoning held one level down), and model pricing is delivered and deliberately
 operator-entered (ADR-018) rather than a hardcoded cost table that would silently drift.
 
-**Suggested order:** D10 and the CI/CD work it was gating are both delivered, so "someone else can run
-this" is answered except for **TLS at the production edge**, which is the one remaining thing between the
-current state and a deployment that is not a single trusted machine — **started 2026-08-23**. After
-that, **E16** remains the cheapest user-visible gain and **P3 (RAG)** is the one item that changes what
-the product *is* rather than how well it runs. Operator decides.
+**Suggested order:** D10, the CI/CD work it was gating, and TLS are all resolved, so "someone else can
+run this" is answered — TLS as a documented contract rather than a shipped terminator, which is the
+honest form for a decision every environment makes differently. What remains is product work:
+**E16** is the cheapest user-visible gain and **P3 (RAG)** is the one item that changes what the
+product *is* rather than how well it runs. The nearest infrastructure item is extending `e2e.sh` to
+exercise an `https` origin — this codebase's own recorded trap is that things which break *only*
+behind TLS pass clean in plaintext, and that check does not exist yet. Operator decides.
 
 ---
 
