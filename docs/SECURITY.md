@@ -69,10 +69,16 @@ Trust boundaries, authn/authz, encryption, and secrets.
 
 ### Residual risks, stated plainly
 
-- **No TLS yet.** Until the production edge lands (see `CICD-AND-PACKAGING.md`), session cookies
-  travel in plaintext on a LAN and are sniffable and replayable. **This stops casual and unauthorised
-  access; it does not stop an on-path attacker.** TLS is a deployment requirement, not an optional
-  hardening step.
+- **TLS is the operator's edge, by design.** Code Spire terminates no TLS and will not: termination is
+  the most environment-specific part of a deployment, and every operator already has a way to do it —
+  an ingress controller, a standalone proxy, a cloud load balancer. What the application guarantees is
+  that it is *correct* behind any of them, which is a contract of four requirements written out in
+  `docs/TLS.md`. Until one is in front, session cookies travel in plaintext on a LAN and are sniffable
+  and replayable. **This stops casual and unauthorised access; it does not stop an on-path attacker.**
+  TLS is a deployment requirement, not an optional hardening step. Note that a plaintext deployment
+  does not merely lack encryption — it does not work at all beyond `localhost`, because `%prod` forces
+  `Secure` on the session cookie and a browser discards that cookie on any origin it does not consider
+  trustworthy. `docs/TLS.md` records the symptom, which is silent in every component.
 - **Same-origin residual.** Path scoping stops a compromised service *receiving* another's cookie. It
   does not stop one that achieves script execution in the shared browser origin from *using* it —
   `HttpOnly` prevents reading a cookie, not using it.

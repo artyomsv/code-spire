@@ -1,10 +1,16 @@
 # Deploying Code Spire
 
-> ## Do not expose this without TLS
+> ## Put TLS in front of this
 >
-> Nothing here terminates TLS. Operator sessions are cookies, and in plaintext they are sniffable and
-> **replayable** — authentication stops casual and unauthorised access, it does not stop an on-path
-> attacker. Bind the dashboard to `localhost`, or put a TLS terminator in front of it.
+> Code Spire terminates no TLS, by design — see [`docs/TLS.md`](../docs/TLS.md) for the four
+> requirements a terminator must satisfy and three worked topologies (localhost, an external proxy
+> such as nginx proxy manager or Caddy, and a Kubernetes Ingress with cert-manager).
+>
+> Operator sessions are cookies, and in plaintext they are sniffable and **replayable** —
+> authentication stops casual and unauthorised access, it does not stop an on-path attacker. It is
+> also not merely an encryption question: beyond `localhost` a plaintext deployment **does not work
+> at all**, because the session cookie is marked `Secure` and the browser discards it. Login then
+> fails silently, with no error in the browser, the service or the identity provider.
 >
 > This is a deployment requirement, not an optional hardening step.
 
