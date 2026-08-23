@@ -4,8 +4,8 @@
 # `docker compose watch` streams src changes in. Node's inspector is exposed for
 # debugging the dev server (NODE_OPTIONS=--inspect is set in docker-compose.dev.yml).
 #
-# Node 22 satisfies Vite 7's engine floor (>= 20.19 / >= 22.12).
-FROM node:26-alpine
+# Node 24 is the active LTS line (Krypton) and satisfies Vite 8's engine floor.
+FROM node:24-alpine
 
 WORKDIR /app
 
