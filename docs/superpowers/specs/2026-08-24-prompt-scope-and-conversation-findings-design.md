@@ -230,8 +230,17 @@ The domain event carries **anchor and severity only** — non-sensitive, replay-
 message may quote source code, so it goes to the encrypted read model like every other finding
 message (DATA-MODEL §5).
 
-`ReviewState` gains **no new field**. The count lives in the read model, which is where the Findings
-card, the blocker count and the reviews-list columns already read it from.
+`ReviewState` gains **no findings field** — the count lives in the read model, which is where the
+Findings card, the blocker count and the reviews-list columns already read it from.
+
+It does gain **one idempotency field**, `Set<String> raisedFindingComments`. `ManualCommandReceived`
+arrives at-least-once over Kafka, so without a key held by the single writer a redelivered webhook
+appends the finding twice — the worker's claim guards the *SCM post*, not the aggregate append.
+`ReviewState`'s own javadoc says it holds "decision-relevant state (**idempotency** + completion)"
+and `reviewedCommits` is the precedent: a set of ids consulted by `decide` to return an empty event
+list. `decide(RaiseConversationFinding)` returns `List.of()` when
+`raisedFindingComments.contains(triggeringCommentId)`, exactly as `decideRequestReview` does for an
+already-reviewed commit.
 
 The event does **not** overwrite `ReviewOutcomeRecorded`'s `findingsCount`. That number answers "how
 many findings did the review of this commit produce", and a conversation finding did not come from
