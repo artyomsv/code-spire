@@ -827,7 +827,7 @@ docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d      # fr
   (ADR-014), not app-layer crypto.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
-- Java 25 / Quarkus 3.38.1 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
+- Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
   build-enforced for `spire-contract` and `spire-diff` by `PureModulesAreFrameworkFreeTest`
   (`spire-arch`), which permits only the JDK, those modules themselves, and one documented
   exception: **`jackson-annotations`** (annotations only, no databind) on the sealed
