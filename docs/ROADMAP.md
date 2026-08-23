@@ -232,7 +232,7 @@ down is the original design-time roadmap (kept for reference).
   plan's own predictions and three adversarial reviews that each falsified a design; the record is in
   [D10-AUTH-PLAN.md](D10-AUTH-PLAN.md), the live check is SMOKE-TEST.md **Mode J**.
   **TLS is the operator's edge, by design** (2026-08-23) — Code Spire terminates none, and `docs/TLS.md`
-  states the four requirements a terminator must satisfy. Until one is in front, this stops casual
+  states the five requirements a terminator must satisfy. Until one is in front, this stops casual
   access, not an on-path attacker.
 
 - **CI/CD + packaging delivered (2026-08-05):** nine GitHub Actions workflows, four images on GHCR, and
@@ -532,7 +532,7 @@ Open, by nature of the work rather than by section:
 *decision* rather than a build. Code Spire terminates no TLS and will not: termination is the most
 environment-specific part of a deployment, every operator already has a way to do it, and a bundled
 terminator would be a component each of them works around. What ships instead is the contract in
-[TLS.md](TLS.md) — four requirements a terminator must satisfy, three worked topologies (localhost,
+[TLS.md](TLS.md) — five requirements a terminator must satisfy (the identity-provider leg included), three worked topologies (localhost,
 an external proxy, a Kubernetes Ingress with cert-manager), and a symptom table, since each of those
 requirements fails silently when missed. Kubernetes Ingress TLS already rendered and needs **no chart
 change** for cert-manager; the gap was that nothing said so. Also the **contract-compat CI gate**

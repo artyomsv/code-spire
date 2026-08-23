@@ -2,15 +2,20 @@
 
 > ## Put TLS in front of this
 >
-> Code Spire terminates no TLS, by design — see [`docs/TLS.md`](../docs/TLS.md) for the four
+> Code Spire terminates no TLS, by design — see [`docs/TLS.md`](../docs/TLS.md) for the five
 > requirements a terminator must satisfy and three worked topologies (localhost, an external proxy
 > such as nginx proxy manager or Caddy, and a Kubernetes Ingress with cert-manager).
 >
 > Operator sessions are cookies, and in plaintext they are sniffable and **replayable** —
 > authentication stops casual and unauthorised access, it does not stop an on-path attacker. It is
-> also not merely an encryption question: beyond `localhost` a plaintext deployment **does not work
-> at all**, because the session cookie is marked `Secure` and the browser discards it. Login then
-> fails silently, with no error in the browser, the service or the identity provider.
+> also not only an encryption question: beyond a loopback origin, **no operator can sign in to a
+> plaintext deployment at all**, because the session cookie is marked `Secure` and the browser
+> discards it. Login then fails silently, with no error in the browser, the service or the identity
+> provider. Webhook ingestion and bearer-token API access are unaffected, so a deployment can be
+> running reviews that nobody can log in to see.
+>
+> The identity provider needs the same treatment, and the bundled Keycloak is published in plaintext
+> on its own port and registers only `localhost` callbacks — `docs/TLS.md` requirement 5.
 >
 > This is a deployment requirement, not an optional hardening step.
 
