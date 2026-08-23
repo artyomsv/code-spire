@@ -112,6 +112,9 @@ class GitHubIngressTest {
         assertEquals("please", e.args());
         assertEquals(7, e.prId());
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+        assertEquals("555", e.commentId());  // the comment's own id -- the idempotency key for /finding
+        assertNull(e.threadRef(), "a top-level command has no thread of its own");
+        assertNull(e.location());
     }
 
     @Test

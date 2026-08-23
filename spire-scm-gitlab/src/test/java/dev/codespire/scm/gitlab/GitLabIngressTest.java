@@ -160,6 +160,9 @@ class GitLabIngressTest {
         assertEquals("please", e.args());
         assertEquals(7, e.prId()); // merge_request.iid
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+        assertEquals("910", e.commentId());  // the note's own id -- the idempotency key for /finding
+        assertNull(e.threadRef(), "a top-level command has no thread of its own");
+        assertNull(e.location());
     }
 
     @Test
@@ -172,7 +175,7 @@ class GitLabIngressTest {
     void unregisteredCommandOnAMergeRequestNoteBecomesAComment() {
         // An unregistered command is not forwarded as a command -- it falls through and engages
         // the bot as an ordinary note, same as any other body.
-        var events = ingress.translate(webhook(note("/deploy now", MR_NOTEABLE), Map.of()));
+        List<IntegrationEvent> events = ingress.translate(webhook(note("/deploy now", MR_NOTEABLE), Map.of()));
         assertEquals(1, events.size());
         assertInstanceOf(IntegrationEvent.AuthorReplied.class, events.getFirst());
     }
@@ -197,7 +200,7 @@ class GitLabIngressTest {
         List<IntegrationEvent> events = ingress.translate(webhook(noteWithPosition(
                 "/usr/lib is the wrong path here", "disc-900", 901, "src/Foo.java", 44)));
         assertEquals(1, events.size());
-        var e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        IntegrationEvent.AuthorReplied e = (IntegrationEvent.AuthorReplied) events.getFirst();
         assertEquals("901", e.commentId());
     }
 
@@ -382,6 +385,7 @@ class GitLabIngressTest {
                   "user": { "id": %s, "username": "octocat", "name": "Octo Cat" },
                   "project": { "path_with_namespace": "acme/team/spire-test" },
                   "object_attributes": {
+                    "id": 910,
                     "note": "%s",
                     "noteable_type": "%s"
                   },

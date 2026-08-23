@@ -135,6 +135,9 @@ class BitbucketCloudIngressTest {
                         Map.of("X-Event-Key", "pullrequest:comment_created"))).getFirst());
         assertEquals("review", e.command());
         assertEquals("please", e.args());
+        assertEquals("991", e.commentId());  // the comment's own id -- the idempotency key for /finding
+        assertNull(e.threadRef(), "a top-level command has no thread of its own");
+        assertNull(e.location());
     }
 
     @Test
