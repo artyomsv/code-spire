@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-06)
+## Current status & next-up backlog (updated 2026-08-23)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -314,6 +314,63 @@ down is the original design-time roadmap (kept for reference).
   ADR-013 contract-compat gate did **not** catch the `ModelUsage` wire reshape (a documented blind spot,
   not a passed check) and why the break is safe anyway. **1138 Java tests / 142 suites; 290 vitest / 40
   files; `tsc --noEmit` silent.**
+- **Deleting a review archives it (ADR-024, 2026-08-09):** the hard delete destroyed the review's charge
+  ledger, so real paid usage vanished with a row removed for being clutter — the history ADR-023
+  snapshotted rates to protect from a *price edit* stayed erasable by a button whose whole purpose is
+  tidying a list. `review_status.archived_at` (**V32**, `NULL` = live) marks the review and **nothing is
+  deleted**: not the timeline, not `event_log`, not the worker's claims or context blob, and above all
+  not `llm_charge`. `DELETE /api/reviews/…` became `POST …/archive` + `…/unarchive`, because a `DELETE`
+  verb that destroys nothing misdescribes the operation to every future reader. This **reverses the
+  `llm_charge` deletion ADR-023's own review round added**, and safely: that deletion closed a real
+  defect (a re-registered PR inheriting an orphaned run's money and colliding with its `call_ref`), but
+  every step of that hazard needs the review row *gone* so the PR can be registered afresh — archiving
+  retires the PR instead, so no second review exists to inherit anything. Archival is a **third
+  dimension** beside `status` and `pr_state`, never a value in either: overwriting `status` would destroy
+  whether the run completed or failed, which is the statistic the data is retained for. Six paths enforce
+  retirement because no single choke point sees them all (four `IntegrationSaga` events plus
+  `ReviewRerunService` and `ManualRegisterResource`, which are REST and never reach the saga). A
+  once-per-review `NotifyArchived` notice fires on three of the four events — a PR *close* gates without
+  spending it, since a close is not a human asking a question and the notice fires once ever.
+  **1219 Java tests / 157 suites; 312 vitest / 43 files.** Runbook: SMOKE-TEST **Mode L**.
+- **Fleet spend caps and the `refused` lifecycle (ADR-025, 2026-08-09):** the ledger ADR-023 built so a
+  cap could exist is finally read back. **Three gates, no new storage**, each where its inputs already
+  are and all speaking one refusal vocabulary (`CapRefusal`): **diff size** on `DiffFetched` (where
+  `changedFiles`/`sizeBytes` exist and nowhere later, and early enough to skip the context fan-out),
+  **pre-spend** in `ResultSaga` beside the priceability check, and **conversation** in
+  `ConversationSaga.planFollowUp` — the genuinely unbounded path, which the codebase already said was
+  unbounded and had already been wrongly assumed safe once. One `SpendGate` serves both enforcement
+  sites and the attention row, because two copies of a money comparison drift and drift in a money gate
+  is invisible until it fails to fire. **Both axes always** — `SUM(cost_millicents)` *and*
+  `COUNT(DISTINCT call_ref)` over a rolling window — since a money cap is inert by design on an
+  `UNMETERED` deployment and an `UNKNOWN`-priced row's NULL cost is skipped by `SUM` and caught by the
+  count. A refused review reaches a terminal **`refused`** status (not `failed`: the archive guard,
+  attention queries and list filters all key on status, and a policy decision is not an outage), which
+  a read-model projection was silently relabelling one Kafka round trip later until
+  `projectTerminalFailure` was taught to decline the coarsening. The spend read deliberately carries
+  **no `archived_at` filter** while the ten ledger reads beside it must: those answer "what does this
+  review's page show", this one answers "what has already been spent", and a copied filter would make
+  archiving a way to hand budget back. Every limit is optional, unset means unlimited, and an
+  unparseable stored value fails open. The cap is **soft** — overshoot bounded by in-flight reviews ×
+  per-review cost, because charges land after a call completes. **1256 Java tests / 166 suites; 323
+  vitest / 45 files.** Spec B (the per-repo admission rate limit) deliberately not built. Runbook:
+  SMOKE-TEST **Mode M**.
+- **Dependency and code-scanning maintenance (2026-08-23):** an eleven-PR dependabot backlog cleared and
+  the single open code-scanning alert closed. Two findings worth carrying forward. **Dependabot split
+  one change into three PRs that cannot land separately** — `codeql-action`'s `init`, `analyze` and
+  `upload-sarif` are three entry points of one repository on one release tag, and bumping any one alone
+  fails with *"Not all workflow steps that use `github/codeql-action` actions use the same version"*,
+  ending as a configuration error that uploads a SARIF marked unsuccessful. They were recombined into
+  one PR (#56). **And no pull-request check builds a `Dockerfile`** — `docker.yml` triggers only on push
+  to `master`, so #50 collected fourteen green checks, none of which read either file it changed; the
+  Node bump it carried then left `ci.yml` validating one runtime while the image built on another, which
+  #58 corrected by aligning both on Node 24 (the active LTS line — 26 reports `lts=false`). Recorded as
+  `techdebt/global/3-2-dockerfile-changes-are-unverified-by-any-pull-request-check.md`. Alert **#274**
+  (`CVE-2026-59903`, netty `CorsHandler` `Vary`-header overwrite) closed by taking the platform —
+  Quarkus 3.38.1 → 3.38.3 ships netty 4.1.137.Final — rather than adding a force, which is the rule the
+  root build's `advisoryOverrides` comment already states; the three existing forces were each checked
+  against the new platform and all still pin *up*, so none could be removed. Repository auto-merge was
+  enabled, which is what had stalled the queue: `dependabot-auto-merge.yml` was correct but every run
+  died on `enablePullRequestAutoMerge`.
 
 ### Next-up backlog — pick by number (S/M/L = rough effort; ⚑ = needs a decision/credential from the operator)
 
@@ -462,6 +519,7 @@ Open, by nature of the work rather than by section:
 
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
+| **TLS** | TLS at the production edge | S–M | **In progress (2026-08-23).** The one thing between the current state and a deployment that is not a single trusted machine. ADR-022 shipped auth with TLS explicitly left to the production edge; everything it was waiting on (D10, CI/CD, packaging) is delivered. |
 | **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
 | **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
@@ -474,12 +532,19 @@ tests on `spire-contract`, failing a breaking change without an `eventVersion` b
 ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it iterated event types and
 skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **8 techdebt items** in `techdebt/` — 1 medium, 7 low,
-nothing high or critical. The medium one is D10's: the authorization guard is copied into all three
-services, and the drift check that was chosen instead of extracting a shared module has not been
-written yet. (Another option, tracking waived nits durably so a set-aside issue cannot return as its
-own finding, was considered and deliberately not built: it needs a store, a wire field and a prompt
-slot, which makes it a feature rather than debt. It sits closest to **E17**.) **No P1 scope remains pending**: the
+Also open and tracked outside this file: **17 techdebt items** in `techdebt/` — 7 medium, 10 low,
+nothing high or critical. Count them rather than trusting this line: `ls techdebt/*/3-*.md` and
+`ls techdebt/*/4-*.md`. The previous version of this paragraph said 8 (1 medium, 7 low) and was wrong
+by more than double, because a transcribed count is stale the moment the next entry lands — the same
+failure a live view exists to prevent, recorded again at item D10 below. The medium seven, by theme:
+D10's authorization guard copied into all three services (the drift check chosen instead of extracting
+a shared module is still unwritten); the charge ledger keyed on an id two SCMs can share; the
+contract-compat snapshot not recursing into nested wire types; a new backend status being invisible to
+the UI's compile-time union; rejection messages never reaching the client; three orchestrator classes
+past the size guideline; and no pull-request check building a `Dockerfile`. (Tracking waived nits
+durably, so a set-aside issue cannot return as its own finding, was considered and deliberately not
+built: it needs a store, a wire field and a prompt slot, which makes it a feature rather than debt. It
+sits closest to **E17**.) **No P1 scope remains pending**: the
 call-level resilience once framed as "SmallRye Fault Tolerance retry budgets" shipped as a hand-rolled
 retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for the review budget, and
 the same reasoning held one level down), and model pricing is delivered and deliberately
@@ -487,9 +552,9 @@ operator-entered (ADR-018) rather than a hardcoded cost table that would silentl
 
 **Suggested order:** D10 and the CI/CD work it was gating are both delivered, so "someone else can run
 this" is answered except for **TLS at the production edge**, which is the one remaining thing between the
-current state and a deployment that is not a single trusted machine. After that, **E16** remains the
-cheapest user-visible gain and **P3 (RAG)** is the one item that changes what the product *is* rather
-than how well it runs. Operator decides.
+current state and a deployment that is not a single trusted machine — **started 2026-08-23**. After
+that, **E16** remains the cheapest user-visible gain and **P3 (RAG)** is the one item that changes what
+the product *is* rather than how well it runs. Operator decides.
 
 ---
 
@@ -552,7 +617,7 @@ than how well it runs. Operator decides.
 
 ## Explicitly deferred (NOT in v1)
 - **Fleet-level cost/abuse caps** — **mostly shipped**, one part still deferred.
-  **Delivered (ADR-025, 2026-08-09):** a deployment-wide spend cap and call cap over a rolling window,
+  **Delivered (ADR-025, 2026-08-09 — see the Delivered entry above):** a deployment-wide spend cap and call cap over a rolling window,
   plus a hard giant-PR skip (changed-file and diff-byte limits refused on `DiffFetched`, before the
   context fan-out runs). Every limit is optional and unset means unlimited, so an existing deployment
   is unchanged until an operator sets one. Both axes are always checked, which is the consequence
