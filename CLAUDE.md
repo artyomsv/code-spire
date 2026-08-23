@@ -453,7 +453,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Preceded by a spike that overturned two of the plan's own predictions — `tenant-enabled=false` does
   not suffice (build-time `enabled=false` does), and `roles.source=accesstoken` is mandatory or login
   succeeds with **zero** roles and denies every operator. **1066 Java tests; 243 vitest.** Runbook:
-  SMOKE-TEST **Mode J**. Open by design: TLS ships with the production edge.
+  SMOKE-TEST **Mode J**. TLS is the operator's edge by design (2026-08-23) — Code Spire terminates none; `docs/TLS.md` states the four requirements a terminator must satisfy.
 - **CI/CD + packaging delivered (2026-08-05):** nine GitHub Actions workflows, four production images on
   GHCR, and a `deploy/` tree covering Compose, Helm and kustomize from one source of truth (chart →
   kustomize inflation → rendered YAML in `deploy/k8s/`, drift-checked by `render-manifests.sh --check`).
