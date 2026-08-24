@@ -833,12 +833,21 @@ public class ReviewProjection {
         return encryptFindings(reviewId, dedupeByAnchor(merged));
     }
 
+    /**
+     * A {@code List<FindingView>} of strings cannot realistically fail to serialize — this catch is
+     * defensive, not a path a real input reaches. It matters most on the {@code /finding} path:
+     * {@link #mergeColumnOrSkip} returns whatever this returns, and {@code IntegrationSaga} still
+     * tells the human "Filed as **MAJOR** at ..." because {@code fileConversationFinding} confirms
+     * once the aggregate accepts the command, with no way to see that the read-model write beneath it
+     * came back null. A silently dropped finding paired with an honest-looking confirmation is worse
+     * than an error nobody sees, hence ERROR rather than WARN.
+     */
     private String encryptFindings(String reviewId, List<ReviewDetail.FindingView> findings) {
         try {
             String json = mapper.writeValueAsString(findings);
             return encryption.encryptString(json, reviewId);
         } catch (JsonProcessingException e) {
-            LOG.warn("Failed to serialize open findings", e);
+            LOG.errorf(e, "Failed to serialize findings for %s — nothing was written", reviewId);
             return null;
         }
     }
@@ -2048,6 +2057,15 @@ public class ReviewProjection {
                 : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
             if (isOpenVerdict(r.status()) && r.loc() != null && !r.loc().isBlank()) {
                 locs.add(r.loc());
+            }
+        }
+        // open_findings_json is the carry-forward baseline (recordOpenFindings) -- the ONLY column a
+        // conversation finding (/finding, addConversationFinding) is ever written to. Without this, a
+        // human who filed a finding in a thread they started got silence on every later reply at that
+        // line, because ConversationSaga's onFlaggedLine check reads this method.
+        for (ReviewDetail.FindingView f : parseFindings(row.openFindingsJson(), row.id())) {
+            if (f.loc() != null && !f.loc().isBlank()) {
+                locs.add(f.loc());
             }
         }
         return locs;

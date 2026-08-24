@@ -418,6 +418,26 @@ class ReviewProjectionConversationFindingTest {
     }
 
     /**
+     * {@code hasOpenFindingAt} used to read {@code findings_json} and {@code reconciliation_json}
+     * only — never {@code open_findings_json}, the ONLY column {@link ReviewProjection#addConversationFinding}
+     * ever writes to. So a human who filed a finding in a thread they started got silence on every
+     * later reply at that very line: {@code ConversationSaga}'s "a thread on a flagged line still
+     * engages" check reads this method to decide.
+     */
+    @Test
+    void hasOpenFindingAtSeesAFindingFiledFromAConversation() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+        assertFalse(projection.hasOpenFindingAt(reviewId, "src/Foo.java:44"),
+                "setup check: nothing is open at this loc yet");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        assertTrue(projection.hasOpenFindingAt(reviewId, "src/Foo.java:44"),
+                "a finding a human filed from a discussion must still read as open");
+    }
+
+    /**
      * Round N+1: the finding is no longer a fresh baseline entry but a reconciliation verdict, and
      * {@code ReconciliationView} had no origin field at all — so the card's provenance badge was
      * unreachable from the round after the one that filed it, which is the longer-lived half of the
