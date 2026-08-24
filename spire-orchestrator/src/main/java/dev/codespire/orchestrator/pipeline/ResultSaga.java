@@ -340,6 +340,11 @@ public class ResultSaga {
                     // conversation.
                     threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
                 }
+                // Same reason as FindingConfirmed's touch: a /finding refusal is exactly as much a
+                // dashboard-visible action as a confirmation, and appendEvent alone never bumps
+                // updated_at -- leaving this out would reproduce the same "two symmetric outcomes,
+                // only one wired up" shape M1 was about in the first place.
+                projection.touch(e.reviewId());
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());

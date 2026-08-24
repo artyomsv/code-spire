@@ -150,6 +150,23 @@ class ConversationFindingNoticeResultTest {
                 "a confirmation must bump updated_at so a live client's refresh effect actually fires");
     }
 
+    /** Same hazard and same guard as the confirmation above: a refusal is exactly as much a
+     *  dashboard-visible action, and appendEvent alone never bumps updated_at either. */
+    @Test
+    void aRefusalBumpsTheLiveSummarySoTheTimelineLineIsSeen() throws InterruptedException {
+        long pr = seedReview();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        ThreadRef root = new ThreadRef("TEST-ROOT");
+        Instant before = projection.loadDetail(WS, REPO, pr).orElseThrow().updatedAt();
+
+        Thread.sleep(5);
+        saga().on(new IntegrationEvent.FindingRefused(reviewId, root, "TEST-REFUSE-COMMENT"));
+
+        Instant after = projection.loadDetail(WS, REPO, pr).orElseThrow().updatedAt();
+        assertTrue(after.isAfter(before),
+                "a refusal must bump updated_at so a live client's refresh effect actually fires");
+    }
+
     private long seedReview() {
         long pr = ReviewFixtures.newPr();
         ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
