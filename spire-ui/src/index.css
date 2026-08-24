@@ -1212,6 +1212,9 @@
   .diff-line.diff-same { color: var(--text-3); }
   .prompt-drift-actions { display: flex; gap: 8px; }
 
+  /* Preview-against-a-real-review picker, below the editor's Save/Reset row. */
+  .prompt-sample-picker { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); }
+
   /* Attention bell. The count badge is the only always-visible signal, so it must read at a
      glance without relying on colour alone -- the panel repeats the severity as an icon. */
   .attention {
