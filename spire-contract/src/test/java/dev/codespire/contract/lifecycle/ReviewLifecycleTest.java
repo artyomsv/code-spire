@@ -207,6 +207,28 @@ class ReviewLifecycleTest {
         assertEquals("c1", after.currentCommit());
     }
 
+    /**
+     * {@code raisedFindingComments()} is an immutable {@code Set}, whose {@code contains(null)}
+     * throws rather than answering false — and {@code Set.copyOf} throws on a null element too, so
+     * both {@code decide} and {@code evolve} need their own guard. Not reachable through the normal
+     * ingress today, but a hand-crafted command (or a future caller) must not crash the decider on
+     * a null triggering comment id.
+     */
+    @Test
+    void aNullTriggeringCommentIdDoesNotCrashTheDecider() {
+        var state = given(new ReviewRequested("c1", "OPENED"));
+        var cmd = new RaiseConversationFinding(new ThreadRef("t-900"), "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field", null);
+
+        var events = when(state, cmd);
+
+        assertEquals(List.of(new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR, null)), events);
+        var after = decider.evolve(state, events.getFirst());
+        assertTrue(after.raisedFindingComments().isEmpty(),
+                "a null comment id cannot serve as an idempotency key -- nothing to add");
+    }
+
     @Test
     void raisingAConversationFindingPreservesTheRestOfState() {
         // withRaisedFinding must copy reviewedCommits, threads, and summaryCommentId through

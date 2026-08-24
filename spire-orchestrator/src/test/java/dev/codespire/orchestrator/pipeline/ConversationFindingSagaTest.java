@@ -110,19 +110,68 @@ class ConversationFindingSagaTest {
     }
 
     /**
-     * A command with nowhere to anchor is told how to use it. This project has twice shipped a
-     * silence that read as a lost webhook; a command that does nothing and says nothing is the same
-     * failure.
+     * {@code raisedFindingComments().contains(e.commentId())} is an immutable-set {@code contains}
+     * call, which throws on {@code null} rather than answering false. The convenience
+     * {@code ManualCommandReceived(repo, prId, command, args, author)} constructor makes a null
+     * {@code commentId} constructible (it nulls threadRef/location too, so that path never actually
+     * reaches this check) — this test drives the full constructor directly, with a real anchor, to
+     * exercise the guard itself rather than rely on the convenience constructor's happy accident.
      */
     @Test
-    void findingOnASummaryCommentSaysWhyInsteadOfFilingNothingSilently() {
+    void aNullCommentIdDoesNotCrashTheRedeliveryCheck() {
+        long pr = liveReview();
+        String reviewId = reviewIdFor(pr);
+        ManualCommandReceived command = new ManualCommandReceived(REPO_REF, pr, CommentCommands.FINDING,
+                "major shadows the field", HUMAN, new ThreadRef(rootRefOf(pr)),
+                new ThreadLocation(PATH, LINE), null);
+
+        sagaAllowingEveryone().on(command);
+
+        assertEquals("shadows the field", findingAt(reviewId, LOC).msg());
+        assertNull(onlyConfirmation().triggeringCommentId());
+    }
+
+    /**
+     * A plain top-level PR comment carries {@code threadRef = null} on every provider — GitHub sends
+     * exactly the same {@code null} for a reply to the bot's own summary comment, since its {@code
+     * issue_comment} webhook has no thread concept at all. So this is the case that used to leave a
+     * GitHub {@code /finding} misuse silent, typed either way: a command with nowhere to anchor was
+     * told nothing, which this project has twice shipped and learned to stop shipping.
+     *
+     * <p>Routes exactly like a top-level follow-up reply ({@code ConversationSaga#resolveThread}) —
+     * into the review's posted summary thread, when one has been posted.
+     */
+    @Test
+    void findingOnATopLevelCommentIsRefusedInTheSummaryThread() {
+        long pr = liveReview();
+        String reviewId = reviewIdFor(pr);
+        String summaryRef = "TEST-SUMMARY-" + pr;
+        projection.recordPosted(reviewId, "TESTSHA" + pr, summaryRef);
+
+        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, null, null, commentIdOf(pr)));
+
+        assertTrue(projection.openFindingsFor(reviewId).isEmpty(), "nothing to anchor, nothing filed");
+        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("needs to be on a specific line")),
+                "the refusal must say how to use the command; timeline was " + timelineDetails);
+        ActionCommand.RefuseFinding refusal = onlyRefusal();
+        assertEquals(summaryRef, refusal.threadRef().value(),
+                "posted where a top-level follow-up answer would have gone, not left silent");
+    }
+
+    /**
+     * The genuine floor: a top-level comment on a review that has never posted a summary has nowhere
+     * to reply into at all (same as {@link ConversationSaga#resolveThread}'s own empty case), so this
+     * stays timeline-only rather than inventing somewhere to post.
+     */
+    @Test
+    void findingOnATopLevelCommentWithNoPostedSummaryStaysTimelineOnly() {
         long pr = liveReview();
         String reviewId = reviewIdFor(pr);
 
         sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, null, null, commentIdOf(pr)));
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty(), "nothing to anchor, nothing filed");
-        assertTrue(emitted.isEmpty(), "and nothing dispatched");
+        assertTrue(emitted.isEmpty(), "nowhere posted yet -- nothing to reply into");
         assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("needs to be on a specific line")),
                 "the refusal must say how to use the command; timeline was " + timelineDetails);
     }

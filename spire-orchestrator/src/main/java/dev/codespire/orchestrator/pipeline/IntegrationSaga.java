@@ -311,11 +311,15 @@ public class IntegrationSaga {
     /**
      * Always timeline-only; SPEAKS in the thread too when there is one to speak into.
      *
-     * <p>{@code root} is null exactly when the event itself carried no thread — nowhere to reply, so
-     * the timeline is the only record, same as an unauthorized author's silent refusal. A thread that
-     * exists but has no anchor (a {@code /finding} typed in a summary thread) does have somewhere to
-     * post, and staying silent there is the failure this project has shipped twice before: a human
-     * sees nothing and cannot tell a refusal from a lost webhook.
+     * <p>{@code root} is null exactly when the event itself carried no thread — a plain top-level PR
+     * comment, on every provider. GitHub routes BOTH a genuinely top-level comment and a reply to the
+     * bot's own summary comment through this same {@code null} (its {@code issue_comment} webhook
+     * carries no thread concept), so without a fallback {@code /finding} typed either way on GitHub
+     * produced no reply at all — the exact silence this project has twice shipped and learned to stop
+     * shipping. {@link ConversationSaga#resolveThread} already routes a top-level reply to the
+     * review's posted summary thread for this reason; this mirrors it, so the refusal lands wherever
+     * a follow-up answer would have. Only when nothing has been posted yet is there truly nowhere to
+     * reply, and the timeline stays the only record.
      */
     private void refuseConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
                                            ConversationFindings.Refused refusal) {
@@ -323,7 +327,8 @@ public class IntegrationSaga {
                 refusal.replyText());
         LOG.infof("Refused /%s on %s — no line to anchor to (thread=%s)", CommentCommands.FINDING,
                 reviewId, e.threadRef() == null ? "none" : e.threadRef().value());
-        if (root == null) {
+        ThreadRef target = root != null ? root : summaryThreadOf(reviewId).orElse(null);
+        if (target == null) {
             return;
         }
         Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
@@ -332,8 +337,14 @@ public class IntegrationSaga {
                     + "credential to post with", CommentCommands.FINDING, reviewId);
             return;
         }
-        commands.emit(new ActionCommand.RefuseFinding(reviewId, e.repo(), e.prId(), root,
+        commands.emit(new ActionCommand.RefuseFinding(reviewId, e.repo(), e.prId(), target,
                 workerCredentials.pack(provider.get())));
+    }
+
+    /** The review's posted summary comment, as a {@link ThreadRef} — the same fallback target
+     *  {@link ConversationSaga#resolveThread} uses for a top-level reply. */
+    private Optional<ThreadRef> summaryThreadOf(String reviewId) {
+        return projection.summaryRefOf(reviewId).map(ThreadRef::new);
     }
 
     /**
@@ -402,7 +413,10 @@ public class IntegrationSaga {
                     CommentCommands.FINDING, reviewId);
             return false;
         }
-        if (lifecycle.currentState(reviewId).raisedFindingComments().contains(e.commentId())) {
+        // Null-guarded: raisedFindingComments() is an immutable Set, whose contains(null) throws
+        // rather than answering false. Unreachable from a real ingress today, but the 5-arg
+        // ManualCommandReceived convenience constructor leaves commentId constructible as null.
+        if (e.commentId() != null && lifecycle.currentState(reviewId).raisedFindingComments().contains(e.commentId())) {
             LOG.infof("Ignoring redelivered /%s on %s — its comment already raised a finding",
                     CommentCommands.FINDING, reviewId);
             return false;

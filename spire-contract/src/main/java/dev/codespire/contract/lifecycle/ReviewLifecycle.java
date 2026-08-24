@@ -69,7 +69,12 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
                     : List.of();
             case OpenThread c -> List.of(new ThreadOpened(c.threadRef(), c.parentCommentId()));
             case RecordFollowUp c -> List.of(new FollowUpRecorded(c.threadRef(), c.commentId()));
-            case RaiseConversationFinding c -> state.raisedFindingComments().contains(c.triggeringCommentId())
+            // Null-guarded: raisedFindingComments() is an immutable Set, whose contains(null) throws
+            // rather than answering false. A null triggeringCommentId cannot be a redelivery of an
+            // already-raised comment (there is nothing to have been raised under), so it always
+            // proceeds — mirrors the guard on the caller side (IntegrationSaga.canFileConversationFinding).
+            case RaiseConversationFinding c -> c.triggeringCommentId() != null
+                    && state.raisedFindingComments().contains(c.triggeringCommentId())
                     ? List.of()   // redelivered webhook — idempotent no-op, like an already-reviewed commit
                     : List.of(new ConversationFindingRaised(c.threadRef(), c.path(), c.line(),
                             c.severity(), c.triggeringCommentId()));
@@ -135,7 +140,13 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
                 Map.copyOf(threads));
     }
 
+    /** Null-guarded: {@code Set.copyOf} itself throws on a null element, and a null comment id
+     *  cannot serve as an idempotency key anyway (see the matching guard in {@code decide}) — there
+     *  is nothing to add. */
     private static ReviewState withRaisedFinding(ReviewState s, String commentId) {
+        if (commentId == null) {
+            return s;
+        }
         Set<String> raised = new HashSet<>(s.raisedFindingComments());
         raised.add(commentId);
         return new ReviewState(s.reviewId(), s.repo(), s.prId(), s.status(), s.currentCommit(),
