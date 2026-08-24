@@ -71,6 +71,41 @@ class PromptResourceDriftTest {
                 .then().statusCode(403);
     }
 
+    @Test
+    void aLegacyRowWithNoRecordedAncestorReportsUnknownThroughTheApi() {
+        // A row as V23 alone would have written it -- no ancestor column populated. Unlike
+        // PromptRegistryDriftTest's equivalent, this goes through the real HTTP GET so a wiring
+        // mistake in effective() (e.g. a hardcoded baseKnown=true) cannot pass silently: nothing
+        // else in this class ever asserts baseKnown=false through the API.
+        insertLegacyRowWithoutBase(PromptKind.REVIEW, "Old persona", "Diff:\n{{diff}}");
+
+        given().when().get("/api/prompts/review")
+                .then().statusCode(200)
+                .body("baseKnown", is(false))
+                .body("defaultDrifted", is(false)); // unknowable, so not asserted either way
+    }
+
+    private void insertLegacyRowWithoutBase(PromptKind kind, String system, String body) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT INTO prompt_template (kind, system_text, body_text, updated_at)
+                     VALUES (?, ?, ?, now())
+                     ON CONFLICT (kind) DO UPDATE
+                         SET system_text       = EXCLUDED.system_text,
+                             body_text         = EXCLUDED.body_text,
+                             base_system_text  = NULL,
+                             base_body_text    = NULL,
+                             updated_at        = now()
+                     """)) {
+            ps.setString(1, kind.slug());
+            ps.setString(2, system);
+            ps.setString(3, body);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to insert legacy row for " + kind.slug(), e);
+        }
+    }
+
     private void insertRowWithBase(PromptKind kind, String system, String body,
             String baseSystem, String baseBody) {
         try (Connection c = dataSource.getConnection();
