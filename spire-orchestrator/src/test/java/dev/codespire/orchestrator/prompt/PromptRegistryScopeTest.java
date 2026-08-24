@@ -129,6 +129,16 @@ class PromptRegistryScopeTest {
     }
 
     /**
+     * Not one of the brief's seven. Mirrors {@code aScopeWithLeadingPunctuationIsRejected}: contains
+     * a slash and no {@code ..}, and passes the leading-character rule, so only the segment
+     * pattern's trailing-alphanumeric requirement can reject it.
+     */
+    @Test
+    void aScopeWithTrailingPunctuationIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> PromptScope.parse("acme/widgets-"));
+    }
+
+    /**
      * Not one of the brief's seven -- added per Ruling 1. {@code drift}/{@code acceptCurrentDefault}
      * now take a scope, and the bug they exist to prevent is a {@code WHERE kind = ?} query silently
      * reading whichever of the two rows Postgres happens to return first. Global is saved undrifted,
