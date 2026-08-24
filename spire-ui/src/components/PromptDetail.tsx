@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { AlertTriangle, ArrowLeft, FileText, GitBranch, Globe, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
 import { acceptPromptDefault, fetchPrompt, GLOBAL_SCOPE, resetPrompt, savePrompt, type PromptView } from '../api';
 import AutoTextarea from './AutoTextarea';
 import PromptDriftBanner, { type PromptDrift } from './PromptDriftBanner';
+import ProvenanceLine from './PromptProvenance';
 import PromptSamplePicker from './PromptSamplePicker';
-import { KIND_LABELS, provenanceLabel } from './promptKinds';
+import { KIND_LABELS } from './promptKinds';
 
 function driftOf(v: PromptView): PromptDrift {
   return {
@@ -73,25 +74,6 @@ export default function PromptDetail() {
       )}
       {view && <PromptEditor key={`${view.kind}:${view.scope}`} initial={view} />}
     </section>
-  );
-}
-
-/** Icon per provenance level -- reinforces the text line rather than replacing it. */
-function ProvenanceIcon({ inheritedFrom }: { inheritedFrom: PromptView['inheritedFrom'] }) {
-  if (inheritedFrom === 'repo') return <GitBranch size={13} aria-hidden="true" />;
-  if (inheritedFrom === 'global') return <Globe size={13} aria-hidden="true" />;
-  return <FileText size={13} aria-hidden="true" />;
-}
-
-/** Unmissable by design: a repo scope showing global's (or the default's) text looks identical to
- *  one with its own override unless this line says otherwise. */
-function ProvenanceLine({ scope, inheritedFrom }: { scope: string; inheritedFrom: PromptView['inheritedFrom'] }) {
-  return (
-    <div className={`prompt-provenance is-${inheritedFrom}`}>
-      <ProvenanceIcon inheritedFrom={inheritedFrom} />
-      <span>{provenanceLabel(scope, inheritedFrom)}</span>
-      {scope !== GLOBAL_SCOPE && <span className="prompt-provenance-scope">{scope}</span>}
-    </div>
   );
 }
 
