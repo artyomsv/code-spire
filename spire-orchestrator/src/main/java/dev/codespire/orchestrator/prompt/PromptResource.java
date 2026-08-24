@@ -34,8 +34,19 @@ public class PromptResource {
     @Inject
     PromptRegistry registry;
 
-    /** Preview response: the assembled system + annotated user, and any validation errors. */
-    public record PreviewResult(String system, String user, List<String> errors) {
+    @Inject
+    PromptSampleRenderer sampleRenderer;
+
+    /**
+     * Preview response: the assembled system + user, and any validation errors.
+     *
+     * @param sampleReviewId the review the sample was rendered against, or {@code null} when no
+     *                       {@code reviewId} was given or the sample could not be assembled
+     * @param unavailableReason set only when a {@code reviewId} was given but its sample could not
+     *                          be assembled — why the response fell back to the annotated preview
+     */
+    public record PreviewResult(String system, String user, List<String> errors,
+                                String sampleReviewId, String unavailableReason) {
     }
 
     @GET
@@ -72,15 +83,30 @@ public class PromptResource {
     }
 
     @POST
-    // Viewer: renders a candidate template and reports validation errors. It writes nothing and
-    // calls nothing external — the POST is only because the body carries the draft.
+    // Admin-only via the class annotation, and that matters more now: with a reviewId this renders a
+    // real pull request's source code into the response. It writes nothing and calls no LLM — the
+    // POST is only because the body carries the draft.
     @Path("/{kind}/preview")
     public PreviewResult preview(@PathParam("kind") String kind, PromptInput in) {
         PromptKind promptKind = parse(kind);
         requireBody(in);
         List<String> errors = PromptValidation.validate(promptKind, in.system(), in.body());
-        PromptValidation.PromptPreview p = PromptValidation.preview(promptKind, in.system(), in.body());
-        return new PreviewResult(p.system(), p.user(), errors);
+        if (in.reviewId() == null || in.reviewId().isBlank()) {
+            PromptValidation.PromptPreview p =
+                    PromptValidation.preview(promptKind, in.system(), in.body());
+            return new PreviewResult(p.system(), p.user(), errors, null, null);
+        }
+        try {
+            PromptValidation.PromptPreview p =
+                    sampleRenderer.render(promptKind, in.system(), in.body(), in.reviewId());
+            return new PreviewResult(p.system(), p.user(), errors, in.reviewId(), null);
+        } catch (PromptSampleRenderer.PromptSampleUnavailable unavailable) {
+            // Fall back to the annotated preview WITH the reason. An empty panel reads as a broken
+            // feature; the reason tells the operator to pick a different review.
+            PromptValidation.PromptPreview p =
+                    PromptValidation.preview(promptKind, in.system(), in.body());
+            return new PreviewResult(p.system(), p.user(), errors, null, unavailable.getMessage());
+        }
     }
 
     private static void requireBody(PromptInput in) {
