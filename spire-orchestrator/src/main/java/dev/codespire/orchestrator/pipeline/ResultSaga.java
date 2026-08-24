@@ -309,22 +309,37 @@ public class ResultSaga {
                 // No bumpTurn: a notice that answers nothing must not consume one of the thread's turns.
             }
             case FindingConfirmed e -> {
-                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                // e.threadRef() is null only from a hand-built record (e.g. a DLQ replay) -- both
+                // emitters guarantee non-null today. rootOf binds it into a statement, so a null
+                // would throw an NPE inside a try whose catch (SQLException) cannot see it, the same
+                // hazard the ArchivedNotified handler above is already guarded for.
+                ThreadRef root = e.threadRef() == null ? null : threads.rootOf(e.reviewId(), e.threadRef());
                 projection.appendEvent(e.reviewId(), "result", "FindingConfirmed",
-                        "confirmed a finding filed from this conversation", root.value());
-                // No bumpTurn: filing a finding is not the bot taking a turn in the conversation,
-                // exactly as TurnCapNotified is not. Link the posted confirmation to the root anyway,
-                // so a human's reply to IT — on an SCM that threads by immediate parent — is
-                // recognized as this conversation rather than treated as a fresh thread.
-                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                        "confirmed a finding filed from this conversation", root == null ? null : root.value());
+                if (root != null) {
+                    // No bumpTurn: filing a finding is not the bot taking a turn in the conversation,
+                    // exactly as TurnCapNotified is not. Link the posted confirmation to the root
+                    // anyway, so a human's reply to IT — on an SCM that threads by immediate parent —
+                    // is recognized as this conversation rather than treated as a fresh thread.
+                    threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                }
+                // appendEvent only writes review_event, which the detail page's live refresh does not
+                // watch — it refetches on a summary updated_at bump (same reason FollowUpGenerated
+                // touches below). Without this the confirmation's timeline line sat unseen until some
+                // unrelated write happened to push a fresh summary.
+                projection.touch(e.reviewId());
             }
             case FindingRefused e -> {
-                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                // Same null-guard as FindingConfirmed, and for the same reason.
+                ThreadRef root = e.threadRef() == null ? null : threads.rootOf(e.reviewId(), e.threadRef());
                 projection.appendEvent(e.reviewId(), "result", "FindingRefused",
-                        "refused a /finding — no line to anchor to", root.value());
-                // Same reasoning as FindingConfirmed: no turn consumed, but the reply is still linked
-                // back to the root so a follow-up reply to it is recognized as this conversation.
-                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                        "refused a /finding — no line to anchor to", root == null ? null : root.value());
+                if (root != null) {
+                    // Same reasoning as FindingConfirmed: no turn consumed, but the reply is still
+                    // linked back to the root so a follow-up reply to it is recognized as this
+                    // conversation.
+                    threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                }
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
