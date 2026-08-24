@@ -209,7 +209,8 @@ class ConversationSagaTest {
         saga.projection = projectionWith(List.of());
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
-            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, RepoRef repo) {
                 return null;
             }
         };
@@ -279,7 +280,8 @@ class ConversationSagaTest {
         saga.projection = projectionWith(List.of());
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
-            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, RepoRef repo) {
                 return null;
             }
         };
@@ -486,7 +488,8 @@ class ConversationSagaTest {
         };
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
-            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, RepoRef repo) {
                 return null;
             }
         };

@@ -188,12 +188,13 @@ public class ResultSaga {
                     return;
                 }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
+                dev.codespire.contract.scm.RepoRef repo = ReviewIds.parse(e.reviewId()).repo();
                 dev.codespire.contract.llm.PromptTemplate reviewPrompt =
-                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW);
+                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW, repo);
                 dev.codespire.contract.llm.PromptTemplate reconcilePrompt =
-                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE);
+                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE, repo);
                 emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
-                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
+                        e.reviewId(), repo, e.prId(), e.commit(),
                         e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
             case ReviewGenerated e -> {

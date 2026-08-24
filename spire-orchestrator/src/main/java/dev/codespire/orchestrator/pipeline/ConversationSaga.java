@@ -134,7 +134,7 @@ public class ConversationSaga {
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(provider), llm.packed(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
-                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP),
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()),
                 findingsOwnedByOtherThreads(e.reviewId(), target.thread())));
     }
 

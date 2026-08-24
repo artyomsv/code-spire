@@ -267,7 +267,8 @@ class SpendCapGateTest {
         };
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
-            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, dev.codespire.contract.scm.RepoRef repo) {
                 return null;
             }
         };
