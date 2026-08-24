@@ -1,12 +1,14 @@
 package dev.codespire.orchestrator.readmodel;
 
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
+import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.encryption.EncryptionService;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
@@ -42,6 +44,9 @@ class ReviewProjectionConversationFindingTest {
 
     @Inject
     EncryptionService encryption;
+
+    @Inject
+    ReviewThreadView threads;
 
     @Test
     void aConversationFindingJoinsTheCarryForwardBaseline() {
@@ -244,13 +249,14 @@ class ReviewProjectionConversationFindingTest {
 
     /**
      * A conversation finding filed BEFORE a round's {@code PriorRun} snapshot is taken is, by that
-     * round, a plain {@code PriorFinding} — {@code PriorFinding} carries no {@code origin} field, so
-     * if that round's verdicts never judge it, it is carried forward by BOTH
-     * {@code stillOpenPriorFindings} (as a null-origin entry — the null-status "unmatched" branch)
-     * AND {@code unmatchedConversationFindings} (still tagged {@code "conversation"} in the CURRENT
+     * round, a plain {@code PriorFinding} — {@code PriorFinding} carries its own {@code origin},
+     * copied from the posted snapshot's {@code FindingView} at {@code toPriorFinding}. If that
+     * round's verdicts never judge it, it is carried forward by BOTH {@code stillOpenPriorFindings}
+     * (via {@code PriorFinding#origin()} — the null-status "unmatched" branch) AND
+     * {@code unmatchedConversationFindings} (still tagged {@code "conversation"} in the CURRENT
      * {@code open_findings_json}). Two same-anchor entries collapse to one at
-     * {@code dedupeByAnchor}, and whichever one happens to merge first must not decide the answer —
-     * the tag must survive regardless.
+     * {@code dedupeByAnchor}; both already carry the tag, so it survives regardless of which one
+     * the merge keeps.
      */
     @Test
     void aConversationFindingCarriedAsAPriorFindingKeepsItsOriginAcrossAReconciliationRound() {
@@ -274,6 +280,86 @@ class ReviewProjectionConversationFindingTest {
                 .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow();
         assertEquals("conversation", survivor.origin(),
                 "origin must not silently flip to review-derived across a reconciliation round");
+    }
+
+    /**
+     * A conversation finding's loc is not permanently "conversation territory": once its own verdict
+     * resolves it, that anchor is vacated, and a fresh review-derived finding that lands there next
+     * round is a genuinely NEW, unrelated concern. An origin re-tag that decided by loc/threadRef
+     * membership against the PRE-round baseline could not tell the two apart — the vacated loc was
+     * still in its "conversation locs" set, so the new finding inherited the tag it had no right to.
+     * Origin sourced per-entry (from the finding's own history) does not have this failure mode: a
+     * brand-new {@code toView} finding is null-origin by construction, independent of what any other
+     * entry at that loc used to be.
+     */
+    @Test
+    void aNewFindingOnAVacatedConversationLocIsNotMislabelledAsConversation() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+
+        // Round 2: the human's concern is judged RESOLVED (excluded from the carry-forward baseline),
+        // and the fresh review reports an unrelated new defect that happens to land on the very same
+        // anchor the resolved conversation finding just vacated.
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict("t-900", "src/Foo.java", 44, FindingVerdict.Status.RESOLVED, "fixed"));
+        ReviewResult result2 = new ReviewResult(
+                List.of(new Finding("src/Foo.java", new LineRange(44, 44), Severity.MAJOR,
+                        "an unrelated new defect", null)),
+                "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+
+        projection.recordOpenFindings(reviewId, result2, verdicts, priorFindings);
+
+        ReviewDetail.FindingView survivor = projection.openFindingsFor(reviewId).stream()
+                .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow();
+        assertEquals("an unrelated new defect", survivor.msg());
+        assertNull(survivor.origin(),
+                "a brand-new, model-reported finding must not inherit a resolved conversation finding's "
+                        + "origin just because it landed on the same now-vacated anchor");
+    }
+
+    /**
+     * A finding re-posted at one loc across rounds ({@code review_thread}'s "newest row wins" rule,
+     * exercised directly in {@code ReviewProjectionPriorRunIT}) makes {@code toPriorFinding} hand back
+     * a DIFFERENT threadRef than the conversation finding's own — and combined with a rename, its loc
+     * moves too. An origin re-tag keyed on the pre-round baseline's loc/threadRef could not follow
+     * either move and silently dropped the tag. Sourcing origin from {@link PriorFinding#origin()}
+     * itself is immune: it was copied at construction, before any of that substitution happened.
+     */
+    @Test
+    void aCarriedConversationFindingKeepsItsOriginDespiteASupersededThreadAndARename() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        // A later post at the SAME loc (e.g. a re-review's own finding landing there) leaves a newer
+        // review_thread row for src/Foo.java:44 -- "newest row wins" now points away from t-900.
+        threads.markFindingThread(reviewId, new ThreadRef("newer-thread"), "src/Foo.java", 44);
+
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+        PriorFinding conversationFinding = priorFindings.stream()
+                .filter(pf -> "src/Foo.java".equals(pf.path()) && pf.line() == 44).findFirst().orElseThrow();
+        assertEquals("newer-thread", conversationFinding.threadRef(),
+                "setup check: the newer thread must have superseded the finding's own t-900");
+        assertEquals("conversation", conversationFinding.origin(),
+                "setup check: origin must survive the thread substitution onto the PriorFinding itself");
+
+        // Round 2: a verdict matches via the SUPERSEDED thread and reports a rename -- both the loc
+        // AND the threadRef this finding is carried forward under now differ from its ORIGINAL anchor.
+        List<FindingVerdict> verdicts = List.of(
+                new FindingVerdict("newer-thread", "src/Foo2.java", 50,
+                        FindingVerdict.Status.STILL_OPEN, "still there"));
+        ReviewResult result2 = new ReviewResult(List.of(), "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+
+        projection.recordOpenFindings(reviewId, result2, verdicts, priorFindings);
+
+        ReviewDetail.FindingView survivor = projection.openFindingsFor(reviewId).stream()
+                .filter(f -> "src/Foo2.java:50".equals(f.loc())).findFirst().orElseThrow();
+        assertEquals("conversation", survivor.origin(),
+                "origin must survive even though neither loc nor threadRef matches the finding's "
+                        + "original anchor");
     }
 
     private void writeRawOpenFindings(String reviewId, String plaintextJson) throws SQLException {

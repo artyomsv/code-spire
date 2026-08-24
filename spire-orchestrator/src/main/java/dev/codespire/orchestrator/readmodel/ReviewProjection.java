@@ -518,7 +518,7 @@ public class ReviewProjection {
         int line = Integer.parseInt(f.loc().substring(splitAt + 1));
         String current = index.threadByLoc().get(f.loc());
         String threadRef = current != null ? current : f.threadRef();
-        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), threadRef);
+        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), threadRef, f.origin());
     }
 
     /** Reverse of {@link #severitySlug} — lossy for NIT/INFO (both slug to "nit");
@@ -683,17 +683,18 @@ public class ReviewProjection {
      * its loc. Written to {@code open_findings_json}, encrypted (AAD = reviewId); lenient on
      * serialization failure (WARN + skip), like {@link #recordReconciliation}.
      *
-     * <p><b>Origin re-tagging.</b> {@link PriorFinding} carries no {@code origin} field, so a
-     * conversation finding that {@link #stillOpenPriorFindings} carries forward (because it predates
-     * this round's {@code PriorRun} snapshot and is now a plain {@code PriorFinding}) comes back with
-     * {@code origin = null} — the tag would silently flip to review-derived on the very next round.
-     * This method derives the CURRENT set of conversation locs/threadRefs from {@code open_findings_json}
-     * once, up front, and re-applies the {@code "conversation"} tag to whatever matches AFTER
-     * {@link #dedupeByAnchor} — rather than relying on which of possibly two same-anchor entries
-     * (one from {@code stillOpenPriorFindings}, one from {@link #unmatchedConversationFindings})
-     * happens to dedupe first. threadRef is included alongside loc because a matched prior finding's
-     * loc is deliberately the VERDICT's fresher (rename-remapped) one, not the original — the tag
-     * must not depend on the anchor staying textually identical across a rename.
+     * <p><b>Origin is carried per entry, not re-derived.</b> {@link #stillOpenPriorFindings} sources
+     * each carried finding's {@code origin} straight from its {@link PriorFinding#origin()}, and
+     * {@link #unmatchedConversationFindings} passes its {@code FindingView} through unchanged — so a
+     * conversation finding keeps its tag across a rename or a thread superseded in the
+     * {@code review_thread} index, neither of which a loc/threadRef membership test survives (both
+     * used to defeat an earlier re-tag-after-dedupe pass, in one direction silently mislabelling an
+     * unrelated NEW finding that happened to land on a just-vacated conversation anchor, and in the
+     * other silently dropping the tag when the carried entry's own loc or threadRef moved). Two
+     * same-anchor entries — one from {@link #stillOpenPriorFindings}, one from
+     * {@link #unmatchedConversationFindings} — still collapse to one row at {@link #dedupeByAnchor},
+     * but that overlap is harmless now: both copies already agree on {@code origin}, so it no longer
+     * matters which duplicate the merge keeps.
      *
      * <p>Runs inside one locked read-modify-write ({@code SELECT ... FOR UPDATE}, {@code @Transactional}):
      * {@code ManualCommandReceived} (a {@code /finding}) and {@code ReviewGenerated} (this method) are
@@ -708,18 +709,13 @@ public class ReviewProjection {
             LockedRow row = lockRowForUpdate(c, reviewId);
             List<ReviewDetail.FindingView> currentOpen =
                     row == null ? List.of() : parseFindings(row.openJson(), reviewId);
-            Set<String> conversationLocs = conversationOrigins(currentOpen, ReviewDetail.FindingView::loc);
-            Set<String> conversationThreadRefs =
-                    conversationOrigins(currentOpen, ReviewDetail.FindingView::threadRef);
 
             List<ReviewDetail.FindingView> open = new ArrayList<>();
             result.findings().forEach(f -> open.add(toView(f)));
             open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
             open.addAll(unmatchedConversationFindings(currentOpen, verdicts));
 
-            List<ReviewDetail.FindingView> deduped = retagConversationOrigin(
-                    dedupeByAnchor(open), conversationLocs, conversationThreadRefs);
-            String encrypted = encryptFindings(reviewId, deduped);
+            String encrypted = encryptFindings(reviewId, dedupeByAnchor(open));
             if (encrypted != null) {
                 writeOpenOnly(c, reviewId, encrypted);
             }
@@ -913,35 +909,6 @@ public class ReviewProjection {
         }
     }
 
-    /** The locs (or threadRefs, depending on {@code key}) of every currently conversation-origin
-     *  finding — the "derive once, up front" half of {@link #recordOpenFindings}'s origin re-tag. */
-    private static Set<String> conversationOrigins(List<ReviewDetail.FindingView> findings,
-                                                    Function<ReviewDetail.FindingView, String> key) {
-        Set<String> keys = new HashSet<>();
-        for (ReviewDetail.FindingView f : findings) {
-            if ("conversation".equals(f.origin()) && key.apply(f) != null) {
-                keys.add(key.apply(f));
-            }
-        }
-        return keys;
-    }
-
-    /** Re-apply the {@code "conversation"} tag, by loc or threadRef, AFTER {@link #dedupeByAnchor} —
-     *  see {@link #recordOpenFindings} for why this runs as a separate pass rather than trusting
-     *  dedupe's first-entry-wins to preserve it. A no-op for every entry that isn't a match. */
-    private static List<ReviewDetail.FindingView> retagConversationOrigin(List<ReviewDetail.FindingView> findings,
-            Set<String> conversationLocs, Set<String> conversationThreadRefs) {
-        List<ReviewDetail.FindingView> retagged = new ArrayList<>(findings.size());
-        for (ReviewDetail.FindingView f : findings) {
-            boolean isConversation = conversationLocs.contains(f.loc())
-                    || (f.threadRef() != null && conversationThreadRefs.contains(f.threadRef()));
-            retagged.add(isConversation
-                    ? new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), f.threadRef(), "conversation")
-                    : f);
-        }
-        return retagged;
-    }
-
     /**
      * One anchor ({@code path:line}) = one tracked concern. Two findings sharing an anchor collapse
      * onto the same SCM thread at posting time (the second's inline post folds into the first's
@@ -1007,8 +974,8 @@ public class ReviewProjection {
      * (no corresponding verdict — treated as still open, safer than dropping it silently). A
      * MATCHED entry's loc comes from the VERDICT, not the prior finding — the verdict's path/line
      * is fresher (already remapped through any incremental-diff rename the worker followed, ADR-019
-     * rename fix), while severity/message/threadRef still come from the prior finding, which the
-     * verdict does not carry. An unmatched prior finding keeps its own loc, as before.
+     * rename fix), while severity/message/threadRef/origin still come from the prior finding, which
+     * the verdict does not carry. An unmatched prior finding keeps its own loc, as before.
      */
     private List<ReviewDetail.FindingView> stillOpenPriorFindings(List<FindingVerdict> verdicts,
                                                                    List<PriorFinding> priorFindings) {
@@ -1020,7 +987,7 @@ public class ReviewProjection {
                     || status == FindingVerdict.Status.UNCHANGED) {
                 String loc = matched.map(v -> v.path() + ":" + v.line()).orElse(pf.path() + ":" + pf.line());
                 carried.add(new ReviewDetail.FindingView(severitySlug(pf.severity()),
-                        loc, pf.message(), pf.threadRef()));
+                        loc, pf.message(), pf.threadRef(), pf.origin()));
             }
         }
         return carried;
@@ -1050,8 +1017,9 @@ public class ReviewProjection {
      * already a {@link PriorFinding} by then and is ALSO carried by {@link #stillOpenPriorFindings}
      * when unmatched — matched here the same way that method matches one, by threadRef, else by loc,
      * but that overlap is not filtered out here; it is a harmless duplicate at dedupe time
-     * ({@link #dedupeByAnchor} collapses it to one row) that {@code recordOpenFindings}'s separate
-     * origin re-tag pass corrects regardless of which duplicate the merge happened to keep.
+     * ({@link #dedupeByAnchor} collapses it to one row) — harmless because both copies now carry the
+     * same origin ({@link PriorFinding#origin()} on one, the CURRENT open_findings_json row unchanged
+     * on the other), so it no longer matters which duplicate the merge keeps.
      */
     private List<ReviewDetail.FindingView> unmatchedConversationFindings(
             List<ReviewDetail.FindingView> currentOpen, List<FindingVerdict> verdicts) {
