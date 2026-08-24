@@ -720,8 +720,22 @@ public class ReviewProjection {
                                    List<PriorFinding> priorFindings) {
         try (Connection c = dataSource.getConnection()) {
             LockedRow row = lockRowForUpdate(c, reviewId);
-            List<ReviewDetail.FindingView> currentOpen =
-                    row == null ? List.of() : parseFindings(row.openJson(), reviewId);
+            // tryParseFindings, not parseFindings: this method REPLACES open_findings_json wholesale,
+            // and unmatchedConversationFindings depends entirely on reading it. parseFindings'
+            // ordinary degrade-to-empty-list posture is correct everywhere else in this file, but
+            // here it would let a decrypt/parse failure silently destroy every human-filed finding on
+            // the round -- the exact outcome the project-then-append reordering in
+            // IntegrationSaga#fileConversationFinding exists to prevent, and the same hazard
+            // mergeColumnOrSkip guards against on the /finding write path itself.
+            Optional<List<ReviewDetail.FindingView>> currentOpenResult =
+                    row == null ? Optional.of(List.of()) : tryParseFindings(row.openJson(), reviewId);
+            if (currentOpenResult.isEmpty()) {
+                LOG.warnf("recordOpenFindings: open_findings_json for %s failed to decrypt/parse; "
+                        + "skipping the write rather than silently dropping any human-filed finding "
+                        + "it cannot see", reviewId);
+                return;
+            }
+            List<ReviewDetail.FindingView> currentOpen = currentOpenResult.get();
 
             List<ReviewDetail.FindingView> open = new ArrayList<>();
             result.findings().forEach(f -> open.add(toView(f)));
