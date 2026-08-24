@@ -76,7 +76,11 @@ export default function PromptsSettings() {
                     <div className="prompt-row-title">
                       {KIND_LABELS[p.kind] ?? p.kind}
                       <span className={`prompt-tag ${tag.className}`}>{tag.text}</span>
-                      {p.defaultDrifted && (
+                      {/* Same ownership gate as PromptDetail's banner (`ownScope`): a repo scope with
+                          no override of its own reports the INHERITED global row's drift, and there is
+                          nothing at this scope to act on -- the row's own "Update available" link led
+                          nowhere. */}
+                      {p.defaultDrifted && (p.inheritedFrom === 'repo' || scope === GLOBAL_SCOPE) && (
                         <span
                           className="prompt-tag is-drifted"
                           title="The built-in default has changed since this was customized"

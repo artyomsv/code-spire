@@ -71,6 +71,30 @@ describe('PromptsSettings (list)', () => {
     expect(screen.getAllByText(/update available/i)).toHaveLength(1);
   });
 
+  /**
+   * L1: the list showed the drift badge on `p.defaultDrifted` alone, with no ownership gate, while
+   * `PromptDetail`'s banner is gated on `ownScope`. At a repo scope inheriting a drifted global row,
+   * the list showed "Inherited · global" AND "Update available" -- but clicking through offered
+   * nothing to act on, since neither of the banner's two actions match a row at that scope.
+   */
+  it('badges only a drifted row this scope actually owns', async () => {
+    vi.spyOn(api, 'fetchPrompts').mockResolvedValue([
+      { ...reviewView, scope: 'acme/widgets', inheritedFrom: 'global', defaultDrifted: true },
+      { ...reconcileView, scope: 'acme/widgets', inheritedFrom: 'repo', defaultDrifted: true },
+      followupView,
+    ]);
+    render(
+      <MemoryRouter initialEntries={['/settings/prompts?scope=acme/widgets']}>
+        <PromptsSettings />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/update available/i)).toBeInTheDocument());
+    // Only the repo-owned drifted row shows the badge -- the row inheriting global's drift has
+    // nothing at this scope to act on.
+    expect(screen.getAllByText(/update available/i)).toHaveLength(1);
+  });
+
   it('distinguishes a repo override from an inherited global at a repository scope', async () => {
     // The exact ambiguity this task exists to remove: at a repo scope, "Custom" alone cannot say
     // whether THIS repo was customized or the row is falling back to the global override.
