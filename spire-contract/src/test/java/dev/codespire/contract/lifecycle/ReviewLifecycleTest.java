@@ -7,6 +7,7 @@ import dev.codespire.contract.event.DomainEvent.ReviewCompleted;
 import dev.codespire.contract.event.DomainEvent.ReviewFailedTerminally;
 import dev.codespire.contract.event.DomainEvent.ReviewRequested;
 import dev.codespire.contract.event.DomainEvent.ReviewSuperseded;
+import dev.codespire.contract.event.DomainEvent.ThreadOpened;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.command.RecordCommand.CancelReview;
 import dev.codespire.contract.command.RecordCommand.RaiseConversationFinding;
@@ -189,11 +190,13 @@ class ReviewLifecycleTest {
         var second = new RaiseConversationFinding(new ThreadRef("t-900"), "src/Foo.java", 51,
                 Severity.MAJOR, "and this leaks", "c-902");
 
-        assertEquals(1, when(after, second).size());
+        assertEquals(List.of(new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 51, Severity.MAJOR, "c-902")),
+                when(after, second));
     }
 
     @Test
-    void aConversationFindingDoesNotDisturbTheReviewsOwnFindingCount() {
+    void aConversationFindingLeavesTheRunUntouched() {
         // ReviewOutcomeRecorded answers "how many findings did the review of this commit
         // produce". A conversation finding did not come from that call and must not rewrite it.
         var state = given(new ReviewRequested("c1", "OPENED"));
@@ -202,5 +205,23 @@ class ReviewLifecycleTest {
 
         assertEquals(Status.REVIEWING, after.status());
         assertEquals("c1", after.currentCommit());
+    }
+
+    @Test
+    void raisingAConversationFindingPreservesTheRestOfState() {
+        // withRaisedFinding must copy reviewedCommits, threads, and summaryCommentId through
+        // unchanged, not just build a fresh state around the new comment id. A dropped
+        // reviewedCommits or summaryCommentId would leave every test above green, since none of
+        // them evolve a ConversationFindingRaised from a state that already carries one.
+        var state = given(new ReviewRequested("c1", "OPENED"),
+                new ThreadOpened(new ThreadRef("t-1"), "c-1"),
+                new ReviewCompleted("c1", "s-1"));
+
+        var after = decider.evolve(state, new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR, "c-901"));
+
+        assertTrue(after.reviewedCommits().contains("c1"));
+        assertEquals("s-1", after.summaryCommentId());
+        assertTrue(after.threads().containsKey("t-1"));
     }
 }

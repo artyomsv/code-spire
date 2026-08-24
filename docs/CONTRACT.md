@@ -86,6 +86,7 @@ Every event (integration or domain) is wrapped:
 | `ReviewCancelled` | the PR was closed/merged/declined mid-run (or an operator cancelled); run abandoned |
 | `ThreadOpened` | a conversational thread was started |
 | `FollowUpRecorded` | a follow-up answer was posted in a thread |
+| `ConversationFindingRaised` | a human ran `/finding` in a thread; anchor + severity only — no `message` (may quote source, stays out of the replayable log, DATA-MODEL §5) |
 
 ## 5. Command catalog
 
@@ -110,6 +111,7 @@ Every event (integration or domain) is wrapped:
 | `RecordFailure{commit,phase,retryable}` | commit==current AND !retryable → `ReviewFailedTerminally` (stale failure from a superseded run → no-op) |
 | `OpenThread{threadRef,parentCommentId}` | → `ThreadOpened` |
 | `RecordFollowUp{threadRef,commentId}` | → `FollowUpRecorded` |
+| `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` → `ConversationFindingRaised` (redelivered comment id → no-op) |
 
 Sagas translate integration result events → the next Action command *and* the matching Record command
 (e.g. on `CommentsPosted` → `RecordCommentsPosted`; on `PullRequestClosed` → `CancelReview`; on
@@ -127,6 +129,7 @@ currentCommit: sha | null
 reviewedCommits: Set<sha>          // idempotency across redeliveries
 summaryCommentId: string | null
 threads: Map<threadRef, {status, lastCommentId}>
+raisedFindingComments: Set<commentId>  // idempotency for /finding, same shape as reviewedCommits
 ```
 
 **decide(command, state) → events**
@@ -144,6 +147,7 @@ threads: Map<threadRef, {status, lastCommentId}>
 | `REVIEWING` | `CancelReview{reason}` | — | `ReviewCancelled{reason}` | CANCELLED |
 | `IDLE/COMPLETED/FAILED/CANCELLED` | `CancelReview` | — | `[]` (nothing in flight — no-op) | — |
 | any | `OpenThread` / `RecordFollowUp` | — | `ThreadOpened` / `FollowUpRecorded` | threads updated |
+| any | `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` | `ConversationFindingRaised` (redelivered comment id → `[]`, idempotent no-op) | +raisedFindingComments |
 
 **Invariants**
 - One active run per PR; a newer commit supersedes an in-flight run (latest-commit-wins).
