@@ -675,16 +675,19 @@ public class ReviewProjection {
      * this round's brand-new findings (from {@code result}, threadRef unset — resolved at read time
      * via the thread-index join like a fresh {@code findings_json} row) UNION every prior finding
      * still open after this round's verdicts (STILL_OPEN/UNCHANGED, or no matching verdict at all —
-     * carrying an unmatched prior finding is the safer default over silently dropping it). A carried
-     * finding keeps its ORIGINAL threadRef/severity/message so it survives even when no
-     * {@code review_thread} row exists for its loc. Written to {@code open_findings_json}, encrypted
-     * (AAD = reviewId); lenient on serialization failure (WARN + skip), like {@link #recordReconciliation}.
+     * carrying an unmatched prior finding is the safer default over silently dropping it) UNION any
+     * conversation finding ({@link #addConversationFinding}) this round's verdicts never judged (see
+     * {@link #unmatchedConversationFindings}). A carried finding keeps its ORIGINAL
+     * threadRef/severity/message so it survives even when no {@code review_thread} row exists for
+     * its loc. Written to {@code open_findings_json}, encrypted (AAD = reviewId); lenient on
+     * serialization failure (WARN + skip), like {@link #recordReconciliation}.
      */
     public void recordOpenFindings(String reviewId, ReviewResult result, List<FindingVerdict> verdicts,
                                    List<PriorFinding> priorFindings) {
         List<ReviewDetail.FindingView> open = new ArrayList<>();
         result.findings().forEach(f -> open.add(toView(f)));
         open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
+        open.addAll(unmatchedConversationFindings(reviewId, verdicts));
         List<ReviewDetail.FindingView> deduped = dedupeByAnchor(open);
         String json;
         try {
@@ -857,6 +860,33 @@ public class ReviewProjection {
                 .or(() -> verdicts.stream()
                         .filter(v -> v.path().equals(pf.path()) && v.line() == pf.line())
                         .findFirst());
+    }
+
+    /**
+     * Conversation findings ({@link #addConversationFinding}) currently open on this review that
+     * this round's verdicts never judged — the case a {@code /finding} filed between a round's
+     * {@code PriorRun} snapshot (taken when its command was dispatched) and that round's completion
+     * produces. {@link #recordOpenFindings} REPLACES {@code open_findings_json} wholesale from
+     * {@code result} and {@code priorFindings} alone; a finding the command never carried is in
+     * neither, so without this it would be silently destroyed rather than merely delayed a round.
+     *
+     * <p>A conversation finding the command DID carry (filed before the snapshot was taken) is
+     * already a {@link PriorFinding} by then and is handled by {@link #stillOpenPriorFindings}
+     * instead — matched here the same way that method matches one, by threadRef, else by loc, so a
+     * verdict that already judged it (it was actually caught by this round's reconciliation) is not
+     * duplicated.
+     */
+    private List<ReviewDetail.FindingView> unmatchedConversationFindings(String reviewId,
+                                                                          List<FindingVerdict> verdicts) {
+        List<ReviewDetail.FindingView> preserved = new ArrayList<>();
+        for (ReviewDetail.FindingView f : openFindingsFor(reviewId)) {
+            if ("conversation".equals(f.origin()) && verdicts.stream().noneMatch(v ->
+                    (f.threadRef() != null && f.threadRef().equals(v.threadRef()))
+                            || (v.path() + ":" + v.line()).equals(f.loc()))) {
+                preserved.add(f);
+            }
+        }
+        return preserved;
     }
 
     /**

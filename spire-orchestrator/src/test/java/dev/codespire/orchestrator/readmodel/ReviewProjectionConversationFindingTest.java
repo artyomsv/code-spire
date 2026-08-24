@@ -83,6 +83,31 @@ class ReviewProjectionConversationFindingTest {
     }
 
     /**
+     * A round in flight carries the PriorRun snapshot taken when its command was dispatched. A
+     * {@code /finding} filed after that snapshot but before the round completes is in neither the
+     * round's own result nor its verdicts/priorFindings — so {@code recordOpenFindings}, which
+     * REPLACES {@code open_findings_json} wholesale from exactly those two inputs, must not silently
+     * drop it just because this round's command never carried it.
+     */
+    @Test
+    void aConversationFindingFiledMidRoundSurvivesTheRoundsCompletion() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        // The round completes with a result/verdicts that never mention the finding just filed —
+        // exactly what a command dispatched before it existed would carry.
+        ReviewResult result2 = new ReviewResult(List.of(), "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOpenFindings(reviewId, result2, List.of(), List.of());
+
+        ReviewDetail.FindingView survivor = projection.openFindingsFor(reviewId).stream()
+                .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow(
+                        () -> new AssertionError("conversation finding filed mid-round was dropped"));
+        assertEquals("conversation", survivor.origin());
+    }
+
+    /**
      * Register a review with one open finding already tracked at {@code loc}, posted so
      * {@link ReviewProjection#priorRunFor} has a baseline to reconcile against — built on the
      * projection's own write API (register -> recordOutcome -> recordOpenFindings -> recordPosted),
