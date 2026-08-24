@@ -11,12 +11,15 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
 import static dev.codespire.orchestrator.readmodel.ReviewFixtures.REPO;
 import static dev.codespire.orchestrator.readmodel.ReviewFixtures.WS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The result half of a {@code /finding} confirmation or refusal, mirroring
@@ -89,6 +92,62 @@ class ConversationFindingNoticeResultTest {
 
         assertEquals(1, threads.turnCount(reviewId, root),
                 "a refusal is not the bot taking a turn in the conversation");
+    }
+
+    /**
+     * L4: {@code rootOf} binds {@code threadRef} into a statement, so a null would throw an NPE
+     * inside a {@code try} whose {@code catch (SQLException)} cannot see it — the same hazard
+     * {@code ArchivedNoticeResultTest} already guards for. Both emitters guarantee non-null today; a
+     * DLQ replay of a hand-built record does not.
+     */
+    @Test
+    void aConfirmationWithNoThreadIsRecordedWithoutDereferencingItsNullThread() {
+        long pr = seedReview();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+
+        saga().on(new IntegrationEvent.FindingConfirmed(reviewId, null, "TEST-CONFIRM-COMMENT"));
+
+        ReviewDetail.EventView entry = eventIn(pr, "FindingConfirmed").orElseThrow(
+                () -> new AssertionError("the confirmation is missing from the review's history"));
+        assertNull(entry.threadRef(), "a threadless confirmation belongs to no thread");
+    }
+
+    /** Same hazard and same guard as the confirmation above, for the refusal. */
+    @Test
+    void aRefusalWithNoThreadIsRecordedWithoutDereferencingItsNullThread() {
+        long pr = seedReview();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+
+        saga().on(new IntegrationEvent.FindingRefused(reviewId, null, "TEST-REFUSE-COMMENT"));
+
+        ReviewDetail.EventView entry = eventIn(pr, "FindingRefused").orElseThrow(
+                () -> new AssertionError("the refusal is missing from the review's history"));
+        assertNull(entry.threadRef(), "a threadless refusal belongs to no thread");
+    }
+
+    /**
+     * M1: {@code appendEvent} alone writes only {@code review_event}, which {@code ReviewDetail}'s
+     * live refresh does not watch — it refetches on a summary {@code updated_at} bump. Without a
+     * {@link ReviewProjection#touch}, the confirmation's timeline line landed in the database but
+     * sat unseen until some unrelated write happened to push a fresh summary. Asserted the same way
+     * {@code ReviewProjectionPriorRunIT#touchBumpsUpdatedAtAndBroadcasts} asserts it for {@code touch}
+     * itself — reading {@code updated_at} back through {@code loadDetail} rather than the private
+     * broadcast mechanism, because {@code updated_at} is exactly the field a live client's refresh
+     * effect keys on.
+     */
+    @Test
+    void aConfirmationBumpsTheLiveSummarySoTheTimelineLineIsSeen() throws InterruptedException {
+        long pr = seedReview();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        ThreadRef root = new ThreadRef("TEST-ROOT");
+        Instant before = projection.loadDetail(WS, REPO, pr).orElseThrow().updatedAt();
+
+        Thread.sleep(5);
+        saga().on(new IntegrationEvent.FindingConfirmed(reviewId, root, "TEST-CONFIRM-COMMENT"));
+
+        Instant after = projection.loadDetail(WS, REPO, pr).orElseThrow().updatedAt();
+        assertTrue(after.isAfter(before),
+                "a confirmation must bump updated_at so a live client's refresh effect actually fires");
     }
 
     private long seedReview() {
