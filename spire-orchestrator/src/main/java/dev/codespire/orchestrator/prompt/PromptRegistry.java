@@ -55,21 +55,73 @@ public class PromptRegistry {
 
     @Transactional
     public void save(PromptKind kind, String system, String body) {
+        PromptTemplate base = PromptCatalog.defaultTemplate(kind);
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
-                     INSERT INTO prompt_template (kind, system_text, body_text, updated_at)
-                     VALUES (?, ?, ?, now())
+                     INSERT INTO prompt_template
+                         (kind, system_text, body_text, base_system_text, base_body_text, updated_at)
+                     VALUES (?, ?, ?, ?, ?, now())
                      ON CONFLICT (kind) DO UPDATE
-                         SET system_text = EXCLUDED.system_text,
-                             body_text   = EXCLUDED.body_text,
-                             updated_at  = now()
+                         SET system_text      = EXCLUDED.system_text,
+                             body_text        = EXCLUDED.body_text,
+                             base_system_text = EXCLUDED.base_system_text,
+                             base_body_text   = EXCLUDED.base_body_text,
+                             updated_at       = now()
                      """)) {
             ps.setString(1, kind.slug());
             ps.setString(2, system);
             ps.setString(3, body);
+            ps.setString(4, base.system());
+            ps.setString(5, base.body());
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to save prompt template " + kind.slug(), e);
+        }
+    }
+
+    /** Whether the built-in default has moved since this kind was customized. */
+    public record Drift(boolean baseKnown, boolean defaultDrifted, String baseSystem, String baseBody) {
+    }
+
+    /**
+     * Compares the stored ancestor (the default as it stood when the operator last saved) against
+     * the default shipping now. An uncustomized kind has nothing to fork from, so it is reported as
+     * known and undrifted; a row written before V33 has no recorded ancestor and drift is unknowable,
+     * not "up to date".
+     */
+    public Drift drift(PromptKind kind) {
+        Optional<Row> stored = row(kind);
+        if (stored.isEmpty()) {
+            return new Drift(true, false, null, null);   // not customized: nothing to drift from
+        }
+        Row r = stored.get();
+        if (r.baseSystem() == null && r.baseBody() == null) {
+            return new Drift(false, false, null, null);  // predates V33 -- unknown, not up to date
+        }
+        PromptTemplate current = PromptCatalog.defaultTemplate(kind);
+        boolean drifted = !current.system().equals(r.baseSystem())
+                || !current.body().equals(r.baseBody());
+        return new Drift(true, drifted, r.baseSystem(), r.baseBody());
+    }
+
+    /** Keep the customization, stop reporting drift: re-stamp the ancestor to what ships now. */
+    @Transactional
+    public void acceptCurrentDefault(PromptKind kind) {
+        PromptTemplate current = PromptCatalog.defaultTemplate(kind);
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE prompt_template
+                        SET base_system_text = ?,
+                            base_body_text   = ?,
+                            updated_at       = now()
+                      WHERE kind = ?
+                     """)) {
+            ps.setString(1, current.system());
+            ps.setString(2, current.body());
+            ps.setString(3, kind.slug());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to accept current default for " + kind.slug(), e);
         }
     }
 
@@ -86,8 +138,10 @@ public class PromptRegistry {
 
     private Optional<Row> row(PromptKind kind) {
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT system_text, body_text, updated_at FROM prompt_template WHERE kind = ?")) {
+             PreparedStatement ps = c.prepareStatement("""
+                     SELECT system_text, body_text, base_system_text, base_body_text, updated_at
+                       FROM prompt_template WHERE kind = ?
+                     """)) {
             ps.setString(1, kind.slug());
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -95,6 +149,7 @@ public class PromptRegistry {
                 }
                 Timestamp ts = rs.getTimestamp("updated_at");
                 return Optional.of(new Row(rs.getString("system_text"), rs.getString("body_text"),
+                        rs.getString("base_system_text"), rs.getString("base_body_text"),
                         ts == null ? null : ts.toInstant()));
             }
         } catch (SQLException e) {
@@ -102,6 +157,6 @@ public class PromptRegistry {
         }
     }
 
-    private record Row(String system, String body, Instant updatedAt) {
+    private record Row(String system, String body, String baseSystem, String baseBody, Instant updatedAt) {
     }
 }
