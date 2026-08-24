@@ -86,6 +86,8 @@ class PromptRegistryDriftTest {
 
     @Test
     void anUncustomizedKindNeverReportsDrift() {
+        registry.reset(PromptKind.RECONCILE);
+
         assertFalse(registry.drift(PromptKind.RECONCILE).defaultDrifted());
         assertTrue(registry.drift(PromptKind.RECONCILE).baseKnown());
     }

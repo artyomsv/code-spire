@@ -44,8 +44,11 @@ public class PromptRegistry {
         String system = row.map(Row::system).orElse(def.system());
         String body = row.map(Row::body).orElse(def.body());
         Instant updatedAt = row.map(Row::updatedAt).orElse(null);
+        Drift drift = drift(kind);
         return new PromptView(kind.slug(), row.isPresent(), system, body, updatedAt,
-                PromptCatalog.palette(kind), PromptCatalog.lockedSystemSuffix(kind));
+                PromptCatalog.palette(kind), PromptCatalog.lockedSystemSuffix(kind),
+                drift.baseKnown(), drift.defaultDrifted(), def.system(), def.body(),
+                drift.baseSystem(), drift.baseBody());
     }
 
     /** The stored override as a {@link PromptTemplate}, or empty when the kind uses the default. */

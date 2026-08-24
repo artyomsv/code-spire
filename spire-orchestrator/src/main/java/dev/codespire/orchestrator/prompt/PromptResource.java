@@ -82,6 +82,19 @@ public class PromptResource {
         return Response.noContent().build();
     }
 
+    /**
+     * Keep the customization, stop reporting drift: re-stamp the ancestor to what ships now.
+     * Deliberately not a reset variant -- reset discards the customization, this preserves it.
+     */
+    @POST
+    @RolesAllowed("spire-admin")
+    @Path("/{kind}/accept-default")
+    @Consumes(MediaType.WILDCARD) // no request body
+    public Response acceptDefault(@PathParam("kind") String kind) {
+        registry.acceptCurrentDefault(parse(kind));
+        return Response.noContent().build();
+    }
+
     @POST
     // Admin-only via the class annotation, and that matters more now: with a reviewId this renders a
     // real pull request's source code into the response. It writes nothing and calls no LLM — the
