@@ -2105,10 +2105,14 @@ public class ReviewProjection {
                 locs.add(r.loc());
             }
         }
-        // open_findings_json is the carry-forward baseline (recordOpenFindings) -- the ONLY column a
-        // conversation finding (/finding, addConversationFinding) is ever written to. Without this, a
+        // open_findings_json is the carry-forward baseline (recordOpenFindings), so this adds EVERY
+        // entry in it -- not just conversation-origin ones, since the column also carries prior
+        // review-derived findings still open and findings a round could not post. All of them are
+        // genuinely open, so counting them as flagged lines is defensible; it is broader than "a
+        // human filed this", which is the one case that motivated adding this loop: without it, a
         // human who filed a finding in a thread they started got silence on every later reply at that
-        // line, because ConversationSaga's onFlaggedLine check reads this method.
+        // line, because ConversationSaga's onFlaggedLine check (deciding when the bot speaks
+        // unprompted) reads this method.
         for (ReviewDetail.FindingView f : parseFindings(row.openFindingsJson(), row.id())) {
             if (f.loc() != null && !f.loc().isBlank()) {
                 locs.add(f.loc());

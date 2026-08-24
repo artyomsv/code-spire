@@ -55,6 +55,13 @@ public class ReviewThreadView {
      * the thread it belongs to, so turn counting, event attribution and the reply target all key off
      * one stable id per conversation (as GitHub's {@code in_reply_to_id} already gives us). An unknown
      * ref, or a row with no {@code root_ref}, IS its own root.
+     *
+     * <p>Only a comment the BOT posted (or otherwise marked) ever gets a {@code review_thread} row —
+     * a human's own comments never do. So on a parent-threaded SCM, a {@code /finding} typed as a
+     * reply to another human's reply (not to anything the bot said) resolves to no row at all and
+     * this returns that reply's own id as its root, not the thread's true root several replies up.
+     * Harmless for the anchor (the same conversation still ends up with one thread ref), but worth
+     * knowing before assuming this always finds the topmost comment.
      */
     public ThreadRef rootOf(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();

@@ -253,6 +253,12 @@ public class GitHubIngress implements ScmIngress {
      * {@code original_line} instead once the comment has gone outdated (the diff moved under it), so
      * fall back to that rather than reporting no location at all. {@code path} is always present on
      * this webhook.
+     *
+     * <p>{@code original_line} is in the ORIGINAL commit's numbering, not the current diff's — it is
+     * usable here only because thread matching tolerates that drift. But this location is also the
+     * fallback anchor {@code ConversationFindings#resolve} files a {@code /finding} at when the event
+     * itself carries no location, so on an outdated thread it can now determine a tracked finding's
+     * stored {@code path:line}, not just which thread a comment belongs to.
      */
     private static ThreadLocation location(JsonNode comment) {
         return ThreadLocation.of(comment.path("path").asText(null),
