@@ -1195,6 +1195,9 @@
     padding: 12px 14px; border-radius: 8px;
     border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); background: var(--warn-soft);
   }
+  /* The "customized before tracking began" case: nothing to compare against, so there is nothing to
+     warn about -- neutral, not the amber .prompt-drift base it overrides. */
+  .prompt-drift-unknown { border-color: var(--border); background: var(--panel-2); }
   .prompt-drift-banner { display: flex; align-items: center; gap: 8px; color: var(--warn); font-size: 13px; font-weight: 600; }
   .prompt-drift-muted { margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
   .prompt-drift-diff { border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); overflow: hidden; }
