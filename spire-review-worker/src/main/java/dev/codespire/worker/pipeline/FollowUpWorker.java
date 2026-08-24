@@ -3,6 +3,7 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ArchivedNotice;
+import dev.codespire.contract.command.ConversationFindingRefusal;
 import dev.codespire.worker.adapters.LlmFailures;
 import dev.codespire.worker.adapters.ProviderCircuits;
 import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
@@ -237,6 +238,33 @@ public class FollowUpWorker {
     static String confirmText(Severity severity, String path, int line) {
         return "Filed as **" + severity + "** at `" + path + ":" + line + "`. It will be tracked "
                 + "with the review's other findings and reconciled on the next push.";
+    }
+
+    /**
+     * Reply that a {@code /finding} could not be filed, when there was a thread to reply into.
+     *
+     * <p>Fixed text ({@link ConversationFindingRefusal}) and no LLM call, like the confirmation
+     * above. The claim slot is the THREAD, not the triggering comment: unlike a confirmation, this
+     * text never varies, so a second misuse in the same thread finds the slot already taken rather
+     * than collecting a second identical reply — the same reasoning that makes the turn-cap notice
+     * once per thread rather than once per comment.
+     *
+     * <p>Emits no result event: the orchestrator already recorded the refusal on the timeline before
+     * dispatching this command, so there is nothing further for the worker to report back.
+     */
+    public void refuseFinding(ActionCommand.RefuseFinding command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        String thread = command.threadRef().value();
+        if (idempotency.claim(command.reviewId(), thread, ConversationFindingRefusal.KEY)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            LOG.infof("Finding refusal already posted for %s thread %s — staying quiet",
+                    command.reviewId(), thread);
+            return;
+        }
+        CommentRef ref = clients.comments().replyInThread(command.repo(), command.prId(),
+                command.threadRef(), ConversationFindingRefusal.NO_ANCHOR_REPLY);
+        idempotency.markPosted(command.reviewId(), thread, ConversationFindingRefusal.KEY, ref.commentId());
+        LOG.infof("Posted /finding refusal for %s thread %s", command.reviewId(), thread);
     }
 
     /**

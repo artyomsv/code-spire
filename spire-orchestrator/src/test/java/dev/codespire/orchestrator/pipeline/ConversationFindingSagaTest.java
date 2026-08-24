@@ -158,6 +158,9 @@ class ConversationFindingSagaTest {
      * NOT cover: a thread exists, so a reply could be posted into it, and there is still no line
      * anywhere — neither on the event nor on the thread's stored row. Reached by a {@code /finding}
      * typed in the review's summary thread.
+     *
+     * <p>Unlike the no-thread-at-all case, silence here is the failure this project has shipped
+     * twice before: there IS somewhere to post, so the human must be told, not just the timeline.
      */
     @Test
     void findingInAThreadWithNoAnchorAnywhereIsRefusedToo() {
@@ -172,9 +175,13 @@ class ConversationFindingSagaTest {
                 commentIdOf(pr)));
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty());
-        assertTrue(emitted.isEmpty());
         assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("needs to be on a specific line")),
                 "the refusal must say how to use the command; timeline was " + timelineDetails);
+        ActionCommand.RefuseFinding refusal = onlyRefusal();
+        assertEquals(summary, refusal.threadRef(), "the reply lands in the thread the command came from");
+        assertEquals(REPO_REF, refusal.repo());
+        assertEquals(pr, refusal.prId());
+        assertEquals("TEST-PACKED-CREDENTIAL", refusal.scmCredential());
     }
 
     /**
@@ -474,6 +481,17 @@ class ConversationFindingSagaTest {
         List<ActionCommand.ConfirmFinding> confirms = confirmations();
         assertEquals(1, confirms.size(), () -> "expected one confirmation, got " + emitted);
         return confirms.getFirst();
+    }
+
+    private List<ActionCommand.RefuseFinding> refusals() {
+        return emitted.stream().filter(ActionCommand.RefuseFinding.class::isInstance)
+                .map(ActionCommand.RefuseFinding.class::cast).toList();
+    }
+
+    private ActionCommand.RefuseFinding onlyRefusal() {
+        List<ActionCommand.RefuseFinding> refused = refusals();
+        assertEquals(1, refused.size(), () -> "expected one refusal, got " + emitted);
+        return refused.getFirst();
     }
 
     private long raisedEventsIn(String reviewId) {

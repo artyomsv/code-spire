@@ -303,18 +303,37 @@ public class IntegrationSaga {
         // one on every comment surface.
         ThreadLocation stored = root == null ? null : threads.locationOf(reviewId, root);
         switch (ConversationFindings.resolve(e, stored)) {
-            case ConversationFindings.Refused r -> refuseConversationFinding(reviewId, e, r);
+            case ConversationFindings.Refused r -> refuseConversationFinding(reviewId, e, root, r);
             case ConversationFindings.Filed f -> fileConversationFinding(reviewId, e, root, f);
         }
     }
 
-    /** Timeline-only: the refusal text names what to do instead, and carries no finding text. */
-    private void refuseConversationFinding(String reviewId, ManualCommandReceived e,
+    /**
+     * Always timeline-only; SPEAKS in the thread too when there is one to speak into.
+     *
+     * <p>{@code root} is null exactly when the event itself carried no thread — nowhere to reply, so
+     * the timeline is the only record, same as an unauthorized author's silent refusal. A thread that
+     * exists but has no anchor (a {@code /finding} typed in a summary thread) does have somewhere to
+     * post, and staying silent there is the failure this project has shipped twice before: a human
+     * sees nothing and cannot tell a refusal from a lost webhook.
+     */
+    private void refuseConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
                                            ConversationFindings.Refused refusal) {
         timeline.record("integration", "refused:/" + CommentCommands.FINDING, reviewId,
                 refusal.replyText());
         LOG.infof("Refused /%s on %s — no line to anchor to (thread=%s)", CommentCommands.FINDING,
                 reviewId, e.threadRef() == null ? "none" : e.threadRef().value());
+        if (root == null) {
+            return;
+        }
+        Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
+        if (provider.isEmpty()) {
+            LOG.infof("Refused /%s on %s but posted no reply — no provider resolves, so there is no "
+                    + "credential to post with", CommentCommands.FINDING, reviewId);
+            return;
+        }
+        commands.emit(new ActionCommand.RefuseFinding(reviewId, e.repo(), e.prId(), root,
+                workerCredentials.pack(provider.get())));
     }
 
     /**

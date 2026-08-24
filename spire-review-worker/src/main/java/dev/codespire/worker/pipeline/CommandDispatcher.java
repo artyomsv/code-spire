@@ -9,6 +9,7 @@ import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.NotifyArchived;
 import dev.codespire.contract.command.ActionCommand.NotifyTurnCap;
 import dev.codespire.contract.command.ActionCommand.PostComments;
+import dev.codespire.contract.command.ActionCommand.RefuseFinding;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -62,6 +63,7 @@ public class CommandDispatcher {
                 case NotifyTurnCap c -> followUpWorker.notifyTurnCap(c);
                 case NotifyArchived c -> followUpWorker.notifyArchived(c);
                 case ConfirmFinding c -> followUpWorker.confirmFinding(c);
+                case RefuseFinding c -> followUpWorker.refuseFinding(c);
                 default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
             }
         } finally {

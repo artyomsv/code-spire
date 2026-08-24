@@ -36,3 +36,4 @@ GenerateReview(reviewId: java.lang.String, repo: dev.codespire.contract.scm.Repo
 NotifyArchived(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, threadRef: dev.codespire.contract.scm.ThreadRef, scmCredential: java.lang.String)
 NotifyTurnCap(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, threadRef: dev.codespire.contract.scm.ThreadRef, turnCap: int, scmCredential: java.lang.String)
 PostComments(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, commit: java.lang.String, findings: dev.codespire.contract.review.ReviewResult, scmCredential: java.lang.String, verdicts: java.util.List<dev.codespire.contract.review.FindingVerdict>, priorSummaryRef: java.lang.String)
+RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, threadRef: dev.codespire.contract.scm.ThreadRef, scmCredential: java.lang.String)

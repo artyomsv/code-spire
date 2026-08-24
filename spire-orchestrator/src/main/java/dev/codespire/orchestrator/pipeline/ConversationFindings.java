@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.pipeline;
 
+import dev.codespire.contract.command.ConversationFindingRefusal;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.ThreadLocation;
@@ -14,12 +15,6 @@ import java.util.Locale;
  * only part that needs a database.
  */
 public final class ConversationFindings {
-
-    /** Said to an authorized author who used the command in a place it cannot work. Deliberately
-     *  different from an authorization refusal, which stays silent so a prober learns nothing. */
-    static final String NO_ANCHOR_REPLY =
-            "`/finding` needs to be on a specific line. Open an inline comment on the line in "
-            + "question and run it there.";
 
     private ConversationFindings() {
     }
@@ -78,7 +73,7 @@ public final class ConversationFindings {
     public static Outcome resolve(ManualCommandReceived event, ThreadLocation storedLocation) {
         ThreadLocation anchor = event.location() != null ? event.location() : storedLocation;
         if (event.threadRef() == null || anchor == null) {
-            return new Refused(NO_ANCHOR_REPLY);
+            return new Refused(ConversationFindingRefusal.NO_ANCHOR_REPLY);
         }
         ParsedFinding parsed = parse(event.args());
         return new Filed(event.threadRef(), anchor.path(), anchor.line(),
