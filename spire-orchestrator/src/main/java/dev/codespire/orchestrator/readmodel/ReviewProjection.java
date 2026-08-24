@@ -1162,6 +1162,36 @@ public class ReviewProjection {
     }
 
     /** Whether this review has been archived — the gate every resurrection path consults. */
+    /**
+     * Whether this PR has a registered review at all — a row in {@code review_status}.
+     *
+     * <p>Asked by paths that would otherwise write a finding, a note or a status into nothing: the
+     * read-model writers degrade to a WARN on a missing row (the right posture for a projector racing
+     * a registration), which leaves a caller unable to tell "written" from "dropped".
+     *
+     * <p>Deliberately its own query rather than {@code commitOf(...).isPresent()}. Those accessors
+     * answer {@code Optional.empty()} both for a missing row AND for a NULL column, so a caller using
+     * one to mean "registered" is right only for as long as every registration keeps writing that
+     * column.
+     *
+     * <p>Also deliberately NOT fail-open like {@link #archived}: there the fallback is what the code
+     * did before archival existed, and failing closed would silence a live review. Here a read fault
+     * has no safe answer, so it propagates — the caller's message dead-letters with the aggregate
+     * untouched, and a replay files the finding for real.
+     */
+    public boolean registered(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT 1 FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read registration state for " + reviewId, e);
+        }
+    }
+
     public boolean archived(String reviewId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(

@@ -202,8 +202,12 @@ public class ReviewThreadView {
      * location: not every provider reports one on every comment surface. Pass the conversation ROOT
      * — a reply's own ref is the branch, and only the root carries the anchor.
      *
-     * <p>{@link ThreadLocation#of} is what stops a half-written row (a path with no line) becoming a
-     * nonsense anchor: it answers null unless both parts are present.
+     * <p>{@link ThreadLocation#of} is what rejects a half-written row: it answers null unless both
+     * parts are present, and its {@code line <= 0} test already covers a NULL line, which
+     * {@code getInt} reports as 0. The explicit {@code wasNull} read is not what makes that work —
+     * it is there so the SQL boundary says NULL where it means NULL rather than leaning on that
+     * coincidence. It must be read immediately after its own {@code getInt}: arguments evaluate
+     * left to right, so reading it after a {@code getString} would report on the STRING's column.
      */
     public ThreadLocation locationOf(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();
@@ -216,7 +220,8 @@ public class ReviewThreadView {
                     return null;
                 }
                 int line = rs.getInt("line");
-                return ThreadLocation.of(rs.getString("path"), rs.wasNull() ? null : line);
+                boolean lineIsNull = rs.wasNull();
+                return ThreadLocation.of(rs.getString("path"), lineIsNull ? null : line);
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read thread location", e);

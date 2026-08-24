@@ -40,7 +40,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * {@code /finding} end to end through the saga: the aggregate append, the encrypted read-model write
@@ -148,6 +151,62 @@ class ConversationFindingSagaTest {
     }
 
     /**
+     * The refusal case the design cares about most, and the one the summary-comment test above does
+     * NOT cover: a thread exists, so a reply could be posted into it, and there is still no line
+     * anywhere — neither on the event nor on the thread's stored row. Reached by a {@code /finding}
+     * typed in the review's summary thread.
+     */
+    @Test
+    void findingInAThreadWithNoAnchorAnywhereIsRefusedToo() {
+        long pr = liveReview();
+        String reviewId = reviewIdFor(pr);
+        ThreadRef summary = new ThreadRef(rootRefOf(pr));
+        threads.markSummaryThread(reviewId, summary);
+        assertNull(threads.locationOf(reviewId, summary),
+                "a row that exists without a location must read back as no location, not as ':0'");
+
+        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, summary, null,
+                commentIdOf(pr)));
+
+        assertTrue(projection.openFindingsFor(reviewId).isEmpty());
+        assertTrue(emitted.isEmpty());
+        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("needs to be on a specific line")),
+                "the refusal must say how to use the command; timeline was " + timelineDetails);
+    }
+
+    /**
+     * Nothing else stops a {@code /finding} on a PR that was never registered: {@code archived}
+     * answers false for a row that does not exist, and the provider resolves by workspace when the
+     * review has no stored type, so the command clears both gates ahead of it.
+     *
+     * <p>Both halves matter. The read model drops the finding with a WARN, so a confirmation would
+     * announce a finding that exists nowhere — and the aggregate would keep the comment id, making
+     * a later registration plus redelivery an idempotent no-op. That finding could never be filed.
+     */
+    @Test
+    void findingOnAnUnregisteredPrFilesNothingAndConfirmsNothing() {
+        long pr = ReviewFixtures.newPr();   // deliberately NOT seeded — no review_status row
+        String reviewId = reviewIdFor(pr);
+
+        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+
+        assertTrue(emitted.isEmpty(), "confirming a finding stored nowhere tells the human a lie");
+        assertTrue(lifecycle.currentState(reviewId).raisedFindingComments().isEmpty(),
+                "and burning the comment id would make the finding unfileable forever");
+        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("no registered review")),
+                "refused in /review's own idiom; timeline was " + timelineDetails);
+
+        // The other half: register the PR, redeliver the same comment, and it files for real.
+        ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
+        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+
+        assertEquals("shadows the field", findingAt(reviewId, LOC).msg());
+        assertEquals(1, confirmations().size());
+    }
+
+    /**
      * Proof that {@code /finding} inherits the gate {@code onManualCommand} puts ahead of the command
      * switch — the comment there says it sits high "so a future command cannot be added below it and
      * arrive ungated", and this is that future command.
@@ -233,7 +292,104 @@ class ConversationFindingSagaTest {
                 "and the aggregate appended the finding exactly once");
     }
 
+    /**
+     * The ordering test. {@code addConversationFinding} throws on {@code SQLException} and nothing in
+     * this saga catches it, so the message dead-letters — and the read model is this finding's ONLY
+     * home, because {@code ConversationFindingRaised} deliberately carries no message (it may quote
+     * source code, DATA-MODEL §5).
+     *
+     * <p>So the aggregate must not have consumed the triggering comment. Appending first did: the
+     * replay then found the aggregate saying "already raised", returned early, and the human's
+     * finding was gone permanently — from one transient database blip between two adjacent
+     * statements. Projecting first makes the worst case a missing confirmation instead.
+     *
+     * <p>The second half is the half that matters: the replay files it for real.
+     */
+    @Test
+    void aFailedProjectionLeavesTheFindingFileableInsteadOfDestroyingIt() {
+        long pr = liveReview();
+        String reviewId = reviewIdFor(pr);
+        IntegrationSaga saga = sagaAllowingEveryone();
+        saga.projection = projectionFailingOnTheFindingWrite();
+
+        assertThrows(IllegalStateException.class, () -> saga.on(finding(pr, "major shadows the field",
+                HUMAN, new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr))),
+                "the write fails and the message dead-letters — that part is expected");
+
+        assertTrue(lifecycle.currentState(reviewId).raisedFindingComments().isEmpty(),
+                "the comment id must not be consumed by a write that never landed: nothing could "
+                        + "rebuild the finding, so a replay is its only chance");
+
+        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+
+        assertEquals("shadows the field", findingAt(reviewId, LOC).msg(),
+                "the replay must file it for real");
+        assertEquals(1, confirmations().size());
+    }
+
+    /**
+     * The event reaches the review's own history through {@code DomainEventSink}, which describes it
+     * for the timeline. Without a {@code describe} arm the switch's {@code default -> ""} leaves the
+     * row a bare type name with no detail, which is invisible to every saga-level assertion because
+     * the sink is a different consumer on a different topic — hence the round trip.
+     *
+     * <p>Anchor and severity only: the message may quote source code and the event does not carry it.
+     */
+    @Test
+    void theRaisedEventReachesTheReviewHistoryWithItsAnchorAndSeverity() throws InterruptedException {
+        long pr = liveReview();
+
+        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+
+        ReviewDetail.EventView row = awaitHistoryRow(pr, "ConversationFindingRaised");
+        assertEquals("MAJOR at " + LOC, row.det());
+        assertFalse(row.det().contains("shadows the field"),
+                "the finding's message may quote source code and must not reach the replayable log");
+    }
+
     // ---- fixtures ----------------------------------------------------------
+
+    /**
+     * A live review whose finding write fails the way a transient database fault does. Only the three
+     * methods this path touches are overridden; a real {@link ReviewProjection} cannot be used because
+     * the failure has to be in the write and nowhere else.
+     */
+    private static ReviewProjection projectionFailingOnTheFindingWrite() {
+        return new ReviewProjection() {
+            @Override
+            public boolean archived(String reviewId) {
+                return false;
+            }
+
+            @Override
+            public boolean registered(String reviewId) {
+                return true;
+            }
+
+            @Override
+            public void addConversationFinding(String reviewId, String threadRef, String path,
+                                               int line, Severity severity, String message) {
+                throw new IllegalStateException("review_status write failed");
+            }
+        };
+    }
+
+    /** Polls the review's history for one projected domain event — cs.events is a real round trip. */
+    private ReviewDetail.EventView awaitHistoryRow(long pr, String type) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (System.currentTimeMillis() < deadline) {
+            Optional<ReviewDetail.EventView> row = projection.loadDetail(WS, REPO, pr).orElseThrow()
+                    .events().stream().filter(e -> type.equals(e.type())).findFirst();
+            if (row.isPresent()) {
+                return row.get();
+            }
+            Thread.sleep(100);
+        }
+        return fail(type + " was never projected — the sink never saw it, so this test proves nothing");
+    }
+
 
     /** A completed review nobody has archived — the state a human is discussing a finding in. */
     private long liveReview() {

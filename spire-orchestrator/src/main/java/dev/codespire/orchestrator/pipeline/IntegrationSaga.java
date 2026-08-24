@@ -318,15 +318,34 @@ public class IntegrationSaga {
     }
 
     /**
-     * Append to the aggregate, then project — the order every write in this saga takes.
+     * Project, THEN append — the reverse of every other write in this saga, and the reversal is the
+     * point.
      *
-     * <p>The aggregate is the single writer and holds the idempotency key, so an empty event list
-     * means this triggering comment has already raised its finding. A redelivered webhook must stop
-     * there: projecting anyway re-merges the message, and confirming anyway posts a second reply into
-     * a human's thread.
+     * <p>This is the only path here where the read model is the finding's SOLE home: the domain event
+     * deliberately carries anchor and severity but not the message, which may quote source code
+     * (DATA-MODEL §5), so nothing can rebuild the finding from the log. Appending first meant a
+     * transient fault on the projection write dead-lettered the message with the triggering comment
+     * already in {@code raisedFindingComments} — the replay then found the aggregate saying "already
+     * raised", returned here, and the human's finding was gone for good. Reordering makes the worst
+     * case "no confirmation posted" instead of "finding destroyed", and costs nothing, because the
+     * projection write is idempotent by construction ({@code dedupeByAnchor} collapses the anchor and
+     * {@code mergeMessages} deduplicates constituents).
+     *
+     * <p>Which is why the aggregate is CONSULTED before the projection write and commanded after. A
+     * completed round drops a resolved conversation finding from the baseline, so a late replay —
+     * a DLQ replay is an operator action and can arrive hours later — would otherwise resurrect it.
+     * The pre-check is safe to read-then-act on because everything is keyed by reviewId and dispatch
+     * is per-partition ordered, so one consumer owns this review; {@code handle}'s own empty answer
+     * stays as the authoritative guard on the confirmation.
      */
     private void fileConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
                                          ConversationFindings.Filed f) {
+        if (!canFileConversationFinding(reviewId, e)) {
+            return;
+        }
+        // The message goes to the encrypted read model and is never logged (DATA-MODEL §5).
+        projection.addConversationFinding(reviewId, root.value(), f.path(), f.line(), f.severity(),
+                f.message());
         List<DomainEvent> appended = lifecycle.handle(reviewId,
                 new RecordCommand.RaiseConversationFinding(root, f.path(), f.line(), f.severity(),
                         f.message(), e.commentId()));
@@ -335,11 +354,35 @@ public class IntegrationSaga {
                     CommentCommands.FINDING, reviewId);
             return;
         }
-        // The message may quote source code, so it goes to the encrypted read model and is never
-        // logged (DATA-MODEL §5); the domain event above carries anchor + severity only.
-        projection.addConversationFinding(reviewId, root.value(), f.path(), f.line(), f.severity(),
-                f.message());
         confirmFinding(reviewId, e, root, f);
+    }
+
+    /**
+     * The two refusals that must happen before anything is written, both silent to the thread and
+     * both visible on the timeline.
+     *
+     * <p>An unregistered PR is the dangerous one. Nothing else stops it: {@code archived} answers
+     * false for a row that does not exist, and the provider resolves by workspace when the review has
+     * no stored type, so the command sails through the archival gate and the allowlist. The read
+     * model then drops the finding with a WARN while the aggregate keeps the comment id — so the bot
+     * would confirm a finding that exists nowhere, and re-registering the PR could never file it,
+     * because the redelivery is an idempotent no-op. Refused in {@code /review}'s own idiom, and
+     * without advancing the aggregate, so registering the PR and re-running the command still works.
+     */
+    private boolean canFileConversationFinding(String reviewId, ManualCommandReceived e) {
+        if (!projection.registered(reviewId)) {
+            timeline.record("integration", "skipped:/" + CommentCommands.FINDING, reviewId,
+                    "no registered review for this PR — open/update it first");
+            LOG.infof("Skipping /%s on %s — no registered review for this PR",
+                    CommentCommands.FINDING, reviewId);
+            return false;
+        }
+        if (lifecycle.currentState(reviewId).raisedFindingComments().contains(e.commentId())) {
+            LOG.infof("Ignoring redelivered /%s on %s — its comment already raised a finding",
+                    CommentCommands.FINDING, reviewId);
+            return false;
+        }
+        return true;
     }
 
     /**

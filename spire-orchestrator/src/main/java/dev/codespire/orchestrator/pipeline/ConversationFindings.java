@@ -30,6 +30,14 @@ public final class ConversationFindings {
     public sealed interface Outcome {
     }
 
+    /**
+     * @param threadRef the ref exactly as the event carried it — <b>un-normalized, and not what a
+     * caller should act on</b>. On an SCM that threads by immediate parent, a command typed in a
+     * reply carries THAT reply's id, so keying a finding, a confirmation or a turn count off this
+     * splits one conversation across two refs (the defect V24's {@code root_ref} exists to fix).
+     * This class is pure and has no database, so it cannot normalize; the caller resolves the
+     * conversation root and uses that. Kept only because it says which ref was resolved against.
+     */
     public record Filed(ThreadRef threadRef, String path, int line, Severity severity, String message)
             implements Outcome {
     }
