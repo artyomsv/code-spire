@@ -776,6 +776,19 @@ dashboard (`reconciliation_json`) is likewise now a **merge-upsert**, not a whol
 round's verdicts overwrite only the matching earlier entry (keyed by `threadRef`, else `loc`), so a
 finding resolved in round 1 stays visible (as "resolved") in round 2's view instead of disappearing.
 
+`recordPosted` is no longer `posted_findings_json`'s sole writer. A finding raised via `/finding`
+(`addConversationFinding`) amends it too, adding just that one finding to whatever is currently
+posted rather than overwriting the column, and only when `last_posted_commit IS NOT NULL` — writing
+one for a review that has never been posted would invent a snapshot nothing ever actually posted.
+The finding already lives on a real SCM thread the moment it is filed, so it is already "posted" in
+every sense that column exists to capture; amending in place (rather than copying
+`open_findings_json` over it) keeps `recordPosted`'s own `WHERE commit_sha = ?` guard meaningful —
+that guard exists precisely so a superseded run's newer, still-unposted baseline can never get paired
+with the previous run's `last_posted_commit`, and a blind copy would have defeated it. Both writers
+run inside one locked read-modify-write (`SELECT ... FOR UPDATE`) so a `/finding` and a completing
+review round for the same reviewId — handled by different sagas off different Kafka topics — cannot
+race and silently drop one writer's update.
+
 ---
 
 ## ADR-018 — LLM provider registry: in-app, encrypted, brokered per command

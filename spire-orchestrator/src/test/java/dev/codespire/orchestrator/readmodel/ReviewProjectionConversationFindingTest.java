@@ -3,14 +3,20 @@ package dev.codespire.orchestrator.readmodel;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
+import dev.codespire.encryption.EncryptionService;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,6 +35,12 @@ class ReviewProjectionConversationFindingTest {
 
     @Inject
     ReviewProjection projection;
+
+    @Inject
+    DataSource dataSource;
+
+    @Inject
+    EncryptionService encryption;
 
     @Test
     void aConversationFindingJoinsTheCarryForwardBaseline() {
@@ -56,13 +68,25 @@ class ReviewProjectionConversationFindingTest {
                 .filter(f -> "src/Foo.java:44".equals(f.loc())).toList();
         assertEquals(1, atAnchor.size(), "one anchor must stay one tracked concern");
         assertTrue(atAnchor.getFirst().msg().contains("also shadows the field"));
+        assertNull(atAnchor.getFirst().origin(),
+                "the concern was already tracked (review-derived) before the human spoke; a later "
+                        + "conversation reply on the same anchor must not relabel it human-filed");
     }
 
     @Test
-    void aStoredRowWrittenBeforeOriginExistedReadsBackAsReviewDerived() {
-        // open_findings_json rows already in the database have no origin field. Jackson leaves it
-        // null, which must mean "the review reported this", not an unreadable row.
-        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+    void aStoredRowWrittenBeforeOriginExistedReadsBackAsReviewDerived() throws SQLException {
+        // A genuine pre-migration row: hand-written JSON with only the four legacy FindingView keys
+        // and no "origin" key at all -- distinct from anything the current code would ever write,
+        // which always serializes "origin":null explicitly. Jackson must still read this back as
+        // review-derived (null), not fail to parse it.
+        long pr = ReviewFixtures.newPr();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        projection.registerHeader(reviewId, ReviewFixtures.REPO_REF, pr, "TEST-TITLE", "TEST-AUTHOR",
+                "TEST-AUTHOR-ID", "TEST-SOURCE", "TEST-TARGET", "TESTSHA" + pr,
+                "http://example.invalid/pr/" + pr, "github", "reviewing", 0);
+        String legacyJson = "[{\"sev\":\"warning\",\"loc\":\"src/Bar.java:10\",\"msg\":\"seed finding\","
+                + "\"threadRef\":null}]";
+        writeRawOpenFindings(reviewId, legacyJson);
 
         List<ReviewDetail.FindingView> open = projection.openFindingsFor(reviewId);
 
@@ -105,6 +129,107 @@ class ReviewProjectionConversationFindingTest {
                 .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow(
                         () -> new AssertionError("conversation finding filed mid-round was dropped"));
         assertEquals("conversation", survivor.origin());
+    }
+
+    /**
+     * {@code addConversationFinding} must never write nothing to {@code posted_findings_json} for a
+     * review that has never been posted — {@link ReviewProjection#priorRunFor} returns
+     * {@code Optional.empty()} while {@code last_posted_commit IS NULL}, so nothing reads that column
+     * yet and writing one would invent a snapshot that was never actually posted.
+     */
+    @Test
+    void addConversationFindingSkipsThePostedSnapshotWhenNeverPosted() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = ReviewFixtures.reviewIdFor(pr);
+        projection.registerHeader(reviewId, ReviewFixtures.REPO_REF, pr, "TEST-TITLE", "TEST-AUTHOR",
+                "TEST-AUTHOR-ID", "TEST-SOURCE", "TEST-TARGET", "TESTSHA" + pr,
+                "http://example.invalid/pr/" + pr, "github", "reviewing", 0);
+        // No recordPosted -- last_posted_commit stays NULL.
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        assertTrue(projection.priorRunFor(reviewId).isEmpty(),
+                "posted_findings_json must not be invented for a review that has never been posted");
+    }
+
+    /**
+     * {@code recordPosted} guards its write with {@code WHERE commit_sha = ?} so a superseded round
+     * can never pair the PREVIOUS round's {@code last_posted_commit} with newer findings.
+     * {@code addConversationFinding} must not bypass that guard by copying {@code open_findings_json}
+     * straight over {@code posted_findings_json} — here, round 2's {@code recordOpenFindings} has run
+     * (so {@code open_findings_json} already reflects round 2's own, still-unposted baseline) but
+     * round 2's {@code recordPosted} has NOT, so {@code posted_findings_json} must still be round 1's.
+     * A conversation finding filed in that window must amend round 1's posted snapshot in place, not
+     * promote round 2's unposted one.
+     */
+    @Test
+    void addConversationFindingAmendsThePostedSnapshotWithoutPromotingAnUnpostedBaseline() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+
+        // Round 2's recordOpenFindings runs but its recordPosted deliberately does not -- the exact
+        // window Important 1 protects. priorFindings=List.of() means round 2 does not carry round
+        // 1's Bar.java:10 forward, so open_findings_json now visibly diverges from posted_findings_json.
+        ReviewResult result2 = new ReviewResult(
+                List.of(new Finding("src/Baz.java", new LineRange(1, 1), Severity.MAJOR, "new issue", null)),
+                "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOpenFindings(reviewId, result2, List.of(), List.of());
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        List<PriorFinding> posted = projection.priorRunFor(reviewId).orElseThrow().findings();
+        assertTrue(posted.stream().anyMatch(pf -> "src/Bar.java".equals(pf.path()) && pf.line() == 10),
+                "the posted snapshot must keep round 1's ACTUALLY POSTED finding");
+        assertTrue(posted.stream().anyMatch(pf -> "src/Foo.java".equals(pf.path()) && pf.line() == 44),
+                "the conversation finding must be amended into the posted snapshot");
+        assertFalse(posted.stream().anyMatch(pf -> "src/Baz.java".equals(pf.path())),
+                "round 2's new but UNPOSTED finding must not be promoted into the posted snapshot");
+    }
+
+    /**
+     * A conversation finding filed BEFORE a round's {@code PriorRun} snapshot is taken is, by that
+     * round, a plain {@code PriorFinding} — {@code PriorFinding} carries no {@code origin} field, so
+     * if that round's verdicts never judge it, it is carried forward by BOTH
+     * {@code stillOpenPriorFindings} (as a null-origin entry — the null-status "unmatched" branch)
+     * AND {@code unmatchedConversationFindings} (still tagged {@code "conversation"} in the CURRENT
+     * {@code open_findings_json}). Two same-anchor entries collapse to one at
+     * {@code dedupeByAnchor}, and whichever one happens to merge first must not decide the answer —
+     * the tag must survive regardless.
+     */
+    @Test
+    void aConversationFindingCarriedAsAPriorFindingKeepsItsOriginAcrossAReconciliationRound() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+
+        // Filed before round 2's snapshot: last_posted_commit is already set (round 1's
+        // recordPosted), so this also lands in posted_findings_json and becomes a real
+        // PriorFinding for round 2.
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+        assertTrue(priorFindings.stream().anyMatch(pf -> "src/Foo.java".equals(pf.path()) && pf.line() == 44),
+                "setup check: the conversation finding must have promoted into the prior run");
+
+        // Round 2 completes with no verdict at all for src/Foo.java:44 -- unmatched, so both
+        // stillOpenPriorFindings and unmatchedConversationFindings carry it forward.
+        ReviewResult result2 = new ReviewResult(List.of(), "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOpenFindings(reviewId, result2, List.of(), priorFindings);
+
+        ReviewDetail.FindingView survivor = projection.openFindingsFor(reviewId).stream()
+                .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow();
+        assertEquals("conversation", survivor.origin(),
+                "origin must not silently flip to review-derived across a reconciliation round");
+    }
+
+    private void writeRawOpenFindings(String reviewId, String plaintextJson) throws SQLException {
+        String encrypted = encryption.encryptString(plaintextJson, reviewId);
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE review_status SET open_findings_json = ? WHERE review_id = ?")) {
+            ps.setString(1, encrypted);
+            ps.setString(2, reviewId);
+            ps.executeUpdate();
+        }
     }
 
     /**

@@ -18,6 +18,7 @@ import dev.codespire.orchestrator.llm.ChargeLine;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import org.jboss.logging.Logger;
 
 import javax.sql.DataSource;
@@ -681,26 +682,50 @@ public class ReviewProjection {
      * threadRef/severity/message so it survives even when no {@code review_thread} row exists for
      * its loc. Written to {@code open_findings_json}, encrypted (AAD = reviewId); lenient on
      * serialization failure (WARN + skip), like {@link #recordReconciliation}.
+     *
+     * <p><b>Origin re-tagging.</b> {@link PriorFinding} carries no {@code origin} field, so a
+     * conversation finding that {@link #stillOpenPriorFindings} carries forward (because it predates
+     * this round's {@code PriorRun} snapshot and is now a plain {@code PriorFinding}) comes back with
+     * {@code origin = null} — the tag would silently flip to review-derived on the very next round.
+     * This method derives the CURRENT set of conversation locs/threadRefs from {@code open_findings_json}
+     * once, up front, and re-applies the {@code "conversation"} tag to whatever matches AFTER
+     * {@link #dedupeByAnchor} — rather than relying on which of possibly two same-anchor entries
+     * (one from {@code stillOpenPriorFindings}, one from {@link #unmatchedConversationFindings})
+     * happens to dedupe first. threadRef is included alongside loc because a matched prior finding's
+     * loc is deliberately the VERDICT's fresher (rename-remapped) one, not the original — the tag
+     * must not depend on the anchor staying textually identical across a rename.
+     *
+     * <p>Runs inside one locked read-modify-write ({@code SELECT ... FOR UPDATE}, {@code @Transactional}):
+     * {@code ManualCommandReceived} (a {@code /finding}) and {@code ReviewGenerated} (this method) are
+     * handled by different sagas off different Kafka topics for the same reviewId, so an unlocked
+     * read here could race a concurrent {@link #addConversationFinding} and have one writer's baseline
+     * silently overwrite the other's.
      */
+    @Transactional
     public void recordOpenFindings(String reviewId, ReviewResult result, List<FindingVerdict> verdicts,
                                    List<PriorFinding> priorFindings) {
-        List<ReviewDetail.FindingView> open = new ArrayList<>();
-        result.findings().forEach(f -> open.add(toView(f)));
-        open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
-        open.addAll(unmatchedConversationFindings(reviewId, verdicts));
-        List<ReviewDetail.FindingView> deduped = dedupeByAnchor(open);
-        String json;
-        try {
-            json = mapper.writeValueAsString(deduped);
-        } catch (JsonProcessingException e) {
-            LOG.warn("Failed to serialize open findings", e);
-            return;
+        try (Connection c = dataSource.getConnection()) {
+            LockedRow row = lockRowForUpdate(c, reviewId);
+            List<ReviewDetail.FindingView> currentOpen =
+                    row == null ? List.of() : parseFindings(row.openJson(), reviewId);
+            Set<String> conversationLocs = conversationOrigins(currentOpen, ReviewDetail.FindingView::loc);
+            Set<String> conversationThreadRefs =
+                    conversationOrigins(currentOpen, ReviewDetail.FindingView::threadRef);
+
+            List<ReviewDetail.FindingView> open = new ArrayList<>();
+            result.findings().forEach(f -> open.add(toView(f)));
+            open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
+            open.addAll(unmatchedConversationFindings(currentOpen, verdicts));
+
+            List<ReviewDetail.FindingView> deduped = retagConversationOrigin(
+                    dedupeByAnchor(open), conversationLocs, conversationThreadRefs);
+            String encrypted = encryptFindings(reviewId, deduped);
+            if (encrypted != null) {
+                writeOpenOnly(c, reviewId, encrypted);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("review_status write failed", e);
         }
-        String encrypted = encryption.encryptString(json, reviewId);
-        update("UPDATE review_status SET open_findings_json = ?, updated_at = now() WHERE review_id = ?", ps -> {
-            ps.setString(1, encrypted);
-            ps.setString(2, reviewId);
-        });
     }
 
     /**
@@ -713,43 +738,130 @@ public class ReviewProjection {
      * carry-forward baseline, which is exactly what this is: something now open that the next round
      * must reconcile against and exclude from re-reporting.
      *
-     * <p>Also written straight through to {@code posted_findings_json}, with the SAME merged value —
-     * not derived, not a fresh snapshot. {@link #priorRunFor} (what a follow-up's reconciliation
-     * reads to build its exclusion list) is keyed off THAT column, and nothing besides
-     * {@link #recordPosted} otherwise refreshes it — which only happens on the review's NEXT round.
-     * A {@code /finding} already lives on a real SCM thread (its {@code threadRef} names it), so it
-     * is already "posted" in every sense {@code posted_findings_json} cares about; leaving this
-     * column stale until some future round would mean an author who filed a finding, then pushed a
-     * fix before any new review ran, gets no reconciliation credit for it.
+     * <p><b>{@code posted_findings_json} is amended, never overwritten.</b> {@link #priorRunFor}
+     * (what a follow-up's reconciliation reads to build its exclusion list) is keyed off that
+     * column, and nothing besides {@link #recordPosted} otherwise refreshes it — which only happens
+     * on the review's NEXT round. A {@code /finding} already lives on a real SCM thread (its
+     * {@code threadRef} names it), so it is already "posted" in every sense that column cares about;
+     * leaving it stale until some future round would mean an author who filed a finding, then pushed
+     * a fix before any new review ran, gets no reconciliation credit for it. But {@code recordPosted}
+     * deliberately guards its write with {@code WHERE commit_sha = ?} so a superseded run can never
+     * pair the PREVIOUS run's {@code last_posted_commit} with newer findings — copying the whole
+     * baseline over {@code posted_findings_json} here would bypass that guard and, on supersession or
+     * a terminal post failure, promote an unposted baseline into the posted snapshot while
+     * {@code last_posted_commit} still names the older run. Reading the CURRENT posted snapshot,
+     * adding just this one finding, deduping, and writing back keeps the two columns' meanings
+     * independent, the way {@code recordOpenFindings} and {@code recordPosted} already are. Skipped
+     * entirely when {@code last_posted_commit IS NULL}: {@link #priorRunFor} returns
+     * {@code Optional.empty()} in that state, so nothing reads {@code posted_findings_json} yet and
+     * writing one would invent a snapshot that was never actually posted.
      *
      * <p>Runs the same {@link #dedupeByAnchor} the baseline is always written through, so a
      * {@code /finding} on a line that already has an open finding merges into it rather than
      * doubling the count.
+     *
+     * <p>Runs inside one locked read-modify-write, for the same concurrent-writer reason documented
+     * on {@link #recordOpenFindings}.
      */
+    @Transactional
     public void addConversationFinding(String reviewId, String threadRef, String path, int line,
                                        Severity severity, String message) {
-        List<ReviewDetail.FindingView> open = new ArrayList<>(openFindingsFor(reviewId));
-        open.add(new ReviewDetail.FindingView(severitySlug(severity), path + ":" + line, message,
-                threadRef, "conversation"));
-        List<ReviewDetail.FindingView> deduped = dedupeByAnchor(open);
-        String json;
-        try {
-            json = mapper.writeValueAsString(deduped);
-        } catch (JsonProcessingException e) {
-            LOG.warn("Failed to serialize open findings after a conversation finding", e);
-            return;
+        ReviewDetail.FindingView finding = new ReviewDetail.FindingView(severitySlug(severity),
+                path + ":" + line, message, threadRef, "conversation");
+        try (Connection c = dataSource.getConnection()) {
+            LockedRow row = lockRowForUpdate(c, reviewId);
+            if (row == null) {
+                LOG.warnf("addConversationFinding: no review_status row for %s", reviewId);
+                return;
+            }
+
+            String encryptedOpen = encryptFindings(reviewId, mergedWith(row.openJson(), reviewId, finding));
+            if (encryptedOpen == null) {
+                return;
+            }
+
+            if (row.lastPostedCommit() == null) {
+                writeOpenOnly(c, reviewId, encryptedOpen);
+                return;
+            }
+
+            String encryptedPosted = encryptFindings(reviewId, mergedWith(row.postedJson(), reviewId, finding));
+            if (encryptedPosted == null) {
+                return;
+            }
+            writeOpenAndPosted(c, reviewId, encryptedOpen, encryptedPosted);
+        } catch (SQLException e) {
+            throw new IllegalStateException("review_status write failed", e);
         }
-        String encrypted = encryption.encryptString(json, reviewId);
-        update("UPDATE review_status SET open_findings_json = ?, posted_findings_json = ?, "
-                + "updated_at = now() WHERE review_id = ?", ps -> {
-            ps.setString(1, encrypted);
-            ps.setString(2, encrypted);
+    }
+
+    private List<ReviewDetail.FindingView> mergedWith(String currentJson, String reviewId,
+                                                       ReviewDetail.FindingView finding) {
+        List<ReviewDetail.FindingView> merged = new ArrayList<>(parseFindings(currentJson, reviewId));
+        merged.add(finding);
+        return dedupeByAnchor(merged);
+    }
+
+    private String encryptFindings(String reviewId, List<ReviewDetail.FindingView> findings) {
+        try {
+            String json = mapper.writeValueAsString(findings);
+            return encryption.encryptString(json, reviewId);
+        } catch (JsonProcessingException e) {
+            LOG.warn("Failed to serialize open findings", e);
+            return null;
+        }
+    }
+
+    private void writeOpenOnly(Connection c, String reviewId, String encryptedOpen) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE review_status SET open_findings_json = ?, updated_at = now() WHERE review_id = ?")) {
+            ps.setString(1, encryptedOpen);
+            ps.setString(2, reviewId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void writeOpenAndPosted(Connection c, String reviewId, String encryptedOpen, String encryptedPosted)
+            throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE review_status SET open_findings_json = ?, posted_findings_json = ?, "
+                        + "updated_at = now() WHERE review_id = ?")) {
+            ps.setString(1, encryptedOpen);
+            ps.setString(2, encryptedPosted);
             ps.setString(3, reviewId);
-        });
+            ps.executeUpdate();
+        }
+    }
+
+    /** {@code open_findings_json}/{@code posted_findings_json}/{@code last_posted_commit} read
+     *  together under one {@code SELECT ... FOR UPDATE} — the locked counterpart to
+     *  {@link #openFindingsFor} for the mutating paths ({@link #recordOpenFindings},
+     *  {@link #addConversationFinding}). Caller MUST be {@code @Transactional} and pass its own
+     *  connection so the lock is held for the whole read-modify-write, not just this query; null
+     *  when the review has no row yet (never throws for a missing row, same posture as every other
+     *  read in this file). */
+    private LockedRow lockRowForUpdate(Connection c, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT open_findings_json, posted_findings_json, last_posted_commit "
+                        + "FROM review_status WHERE review_id = ? FOR UPDATE")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new LockedRow(rs.getString("open_findings_json"),
+                        rs.getString("posted_findings_json"), rs.getString("last_posted_commit"));
+            }
+        }
+    }
+
+    private record LockedRow(String openJson, String postedJson, String lastPostedCommit) {
     }
 
     /** The review's current carry-forward baseline, decrypted — empty (never throws) on a missing
-     *  row, a decrypt failure, or a parse failure, same posture as {@link #priorRunFor}. */
+     *  row, a decrypt failure, or a parse failure, same posture as {@link #priorRunFor}. Unlocked: a
+     *  plain read for callers that just want to look. The mutating paths take their own locked read
+     *  via {@link #lockRowForUpdate} instead, so a read here is never part of a read-modify-write. */
     public List<ReviewDetail.FindingView> openFindingsFor(String reviewId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
@@ -765,6 +877,35 @@ public class ReviewProjection {
             LOG.warnf(e, "openFindingsFor read failed for %s", reviewId);
             return List.of();
         }
+    }
+
+    /** The locs (or threadRefs, depending on {@code key}) of every currently conversation-origin
+     *  finding — the "derive once, up front" half of {@link #recordOpenFindings}'s origin re-tag. */
+    private static Set<String> conversationOrigins(List<ReviewDetail.FindingView> findings,
+                                                    Function<ReviewDetail.FindingView, String> key) {
+        Set<String> keys = new HashSet<>();
+        for (ReviewDetail.FindingView f : findings) {
+            if ("conversation".equals(f.origin()) && key.apply(f) != null) {
+                keys.add(key.apply(f));
+            }
+        }
+        return keys;
+    }
+
+    /** Re-apply the {@code "conversation"} tag, by loc or threadRef, AFTER {@link #dedupeByAnchor} —
+     *  see {@link #recordOpenFindings} for why this runs as a separate pass rather than trusting
+     *  dedupe's first-entry-wins to preserve it. A no-op for every entry that isn't a match. */
+    private static List<ReviewDetail.FindingView> retagConversationOrigin(List<ReviewDetail.FindingView> findings,
+            Set<String> conversationLocs, Set<String> conversationThreadRefs) {
+        List<ReviewDetail.FindingView> retagged = new ArrayList<>(findings.size());
+        for (ReviewDetail.FindingView f : findings) {
+            boolean isConversation = conversationLocs.contains(f.loc())
+                    || (f.threadRef() != null && conversationThreadRefs.contains(f.threadRef()));
+            retagged.add(isConversation
+                    ? new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), f.threadRef(), "conversation")
+                    : f);
+        }
+        return retagged;
     }
 
     /**
@@ -863,23 +1004,25 @@ public class ReviewProjection {
     }
 
     /**
-     * Conversation findings ({@link #addConversationFinding}) currently open on this review that
-     * this round's verdicts never judged — the case a {@code /finding} filed between a round's
-     * {@code PriorRun} snapshot (taken when its command was dispatched) and that round's completion
-     * produces. {@link #recordOpenFindings} REPLACES {@code open_findings_json} wholesale from
-     * {@code result} and {@code priorFindings} alone; a finding the command never carried is in
-     * neither, so without this it would be silently destroyed rather than merely delayed a round.
+     * Conversation findings ({@link #addConversationFinding}) — from the CURRENT
+     * {@code open_findings_json}, already read once by the caller's locked row — that this round's
+     * verdicts never judged: the case a {@code /finding} filed between a round's {@code PriorRun}
+     * snapshot (taken when its command was dispatched) and that round's completion produces.
+     * {@link #recordOpenFindings} REPLACES {@code open_findings_json} wholesale from {@code result}
+     * and {@code priorFindings} alone; a finding the command never carried is in neither, so without
+     * this it would be silently destroyed rather than merely delayed a round.
      *
      * <p>A conversation finding the command DID carry (filed before the snapshot was taken) is
-     * already a {@link PriorFinding} by then and is handled by {@link #stillOpenPriorFindings}
-     * instead — matched here the same way that method matches one, by threadRef, else by loc, so a
-     * verdict that already judged it (it was actually caught by this round's reconciliation) is not
-     * duplicated.
+     * already a {@link PriorFinding} by then and is ALSO carried by {@link #stillOpenPriorFindings}
+     * when unmatched — matched here the same way that method matches one, by threadRef, else by loc,
+     * but that overlap is not filtered out here; it is a harmless duplicate at dedupe time
+     * ({@link #dedupeByAnchor} collapses it to one row) that {@code recordOpenFindings}'s separate
+     * origin re-tag pass corrects regardless of which duplicate the merge happened to keep.
      */
-    private List<ReviewDetail.FindingView> unmatchedConversationFindings(String reviewId,
-                                                                          List<FindingVerdict> verdicts) {
+    private List<ReviewDetail.FindingView> unmatchedConversationFindings(
+            List<ReviewDetail.FindingView> currentOpen, List<FindingVerdict> verdicts) {
         List<ReviewDetail.FindingView> preserved = new ArrayList<>();
-        for (ReviewDetail.FindingView f : openFindingsFor(reviewId)) {
+        for (ReviewDetail.FindingView f : currentOpen) {
             if ("conversation".equals(f.origin()) && verdicts.stream().noneMatch(v ->
                     (f.threadRef() != null && f.threadRef().equals(v.threadRef()))
                             || (v.path() + ":" + v.line()).equals(f.loc()))) {
@@ -1330,9 +1473,9 @@ public class ReviewProjection {
             String ref = threadIndex.threadByLoc().get(f.loc());
             if (ref != null && claimedRefs.add(ref)) {
                 findingRefs.add(ref);
-                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref));
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref, f.origin()));
             } else {
-                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), null));
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), null, f.origin()));
             }
         }
         return new FindingsWithThreads(findings, findingRefs);
