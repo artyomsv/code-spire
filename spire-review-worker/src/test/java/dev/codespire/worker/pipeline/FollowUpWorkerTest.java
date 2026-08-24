@@ -298,4 +298,12 @@ class FollowUpWorkerTest {
         assertTrue(text.contains("@-mention"),
                 "ConversationPolicy lets a mention override the cap — the notice must offer that way back");
     }
+
+    @Test
+    void theTurnCapNoticePointsAtTheCommandThatOutlivesIt() {
+        // A capped thread is exactly where a human has been discussing something worth filing, and the
+        // notice is the last thing the bot says there.
+        String text = FollowUpWorker.capNoticeText(4);
+        assertTrue(text.contains("/finding"), "the notice must point at the command that files a finding");
+    }
 }

@@ -150,7 +150,10 @@ public class FollowUpWorker {
      * one hand-off, not a repeated "I'm done" on each new comment.
      *
      * <p>The notice invites an @-mention because {@code ConversationPolicy} lets a mention override the
-     * cap; if that policy ever changes, this text has to change with it.
+     * cap; if that policy ever changes, this text has to change with it. It also points at
+     * {@code /finding}: a capped thread is exactly where a human has been discussing something at
+     * length, and the notice is the last thing the bot says there — the best place to hand off the one
+     * command that outlives the conversation.
      */
     public void notifyTurnCap(ActionCommand.NotifyTurnCap command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
@@ -175,7 +178,8 @@ public class FollowUpWorker {
 
     static String capNoticeText(int turnCap) {
         return "I've replied " + turnCap + " times in this thread, so I'll hand it back to the team "
-                + "rather than keep going. @-mention me if you still need something here.";
+                + "rather than keep going. @-mention me if you still need something here, or run "
+                + "`/finding` to file what we discussed as a tracked finding.";
     }
 
     /**
