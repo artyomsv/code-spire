@@ -424,7 +424,8 @@ interface FindingRow {
   threadRef?: string;
   resolvedThread?: boolean;
   // 'conversation' when a human filed this finding with /finding; absent for a review-derived one.
-  // Reconciliation rows never carry this — the wire has no origin for a carried-forward verdict yet.
+  // Carried by BOTH row kinds: a filed finding becomes a reconciliation verdict the round after it
+  // is filed, so a badge only the fresh-finding row could show would last exactly one round.
   origin?: 'conversation';
 }
 
@@ -481,6 +482,7 @@ function reconciliationRows(reconciliation: ReconciliationItem[], ownedThreads: 
       closed: RECON_CLOSED_STATUSES.has(i.status),
       threadRef: i.threadRef,
       resolvedThread: i.resolvedThread,
+      origin: i.origin,
     }));
 }
 
@@ -511,7 +513,7 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
         <div className="frow">
           <span className="sev">{row.sev}</span>
           {row.origin === 'conversation' && (
-            <span className="pill muted" title="Filed by a person with /finding in a review thread">
+            <span className="pill provenance" title="Filed by a person with /finding in a review thread">
               <MessageSquare size={11} aria-hidden="true" /> from discussion
             </span>
           )}

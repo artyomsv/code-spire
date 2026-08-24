@@ -79,9 +79,15 @@ public record ReviewDetail(
     /** One reconciliation verdict (ADR-019) as the UI renders it: the prior finding's severity/
      *  location/message, the verdict {@code status} ("still open" | "resolved" | "acknowledged" |
      *  "superseded"), the LLM's {@code note}, the owning SCM thread ({@code threadRef}, null when the
-     *  prior finding was never posted), and whether that thread is now resolved on the SCM side. */
+     *  prior finding was never posted), and whether that thread is now resolved on the SCM side.
+     *
+     *  <p>{@code origin} carries {@link FindingView#origin()} forward from the prior finding this
+     *  verdict judges. A conversation finding stops being a fresh entry the round after it is filed
+     *  and becomes one of these, so without it the provenance badge would exist only for one round
+     *  and vanish for the rest of the PR's life. Null for a review-derived finding, an unmatched
+     *  verdict, and every row stored before the field existed. */
     public record ReconciliationView(String sev, String loc, String msg, String status, String note,
-                                     String threadRef, boolean resolvedThread) {
+                                     String threadRef, boolean resolvedThread, String origin) {
     }
 
     /**

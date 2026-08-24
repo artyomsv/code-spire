@@ -1,15 +1,16 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { findingsCard } from './render';
-import type { Finding, ReviewDetail } from './api';
+import type { Finding, ReconciliationItem, ReviewDetail } from './api';
 
-/** Minimal ReviewDetail stub — findingsCard only reads the fields it needs. */
-function detail(findingsList: Finding[]): ReviewDetail {
+/** Minimal ReviewDetail stub — findingsCard only reads the fields it needs. The two list
+ *  parameters are typed, so an `origin` a caller invents is still a compile error. */
+function detail(findingsList: Finding[], reconciliation: ReconciliationItem[] = []): ReviewDetail {
   return {
     status: 'completed',
     findings: findingsList.length,
     findingsList,
-    reconciliation: [],
+    reconciliation,
     events: [],
     workspace: 'acme',
     slug: 'web',
@@ -24,6 +25,9 @@ describe('findingsCard — finding origin', () => {
     ]))}</>);
 
     expect(html).toMatch(/from discussion/i);
+    // The modifier names the state, like every other .pill.* — and it must match the one index.css
+    // defines, or the badge silently loses its styling with every test still green.
+    expect(html).toContain('pill provenance');
   });
 
   it('leaves a review-derived finding unmarked', () => {
@@ -39,6 +43,34 @@ describe('findingsCard — finding origin', () => {
     // those as "from discussion" would attribute the model's findings to people.
     const html = renderToStaticMarkup(<>{findingsCard(detail([
       { sev: 'warning', loc: 'src/Bar.java:10', msg: 'leaks a handle', origin: undefined },
+    ]))}</>);
+
+    expect(html).not.toMatch(/from discussion/i);
+  });
+
+  /**
+   * The round after it is filed, a conversation finding is no longer a `findingsList` entry — it is
+   * a reconciliation verdict. A badge only the fresh-finding row can render therefore lasts exactly
+   * one round, which is most of the life of the defect this closes.
+   */
+  it('keeps the mark on a filed finding once it is a reconciliation verdict', () => {
+    const html = renderToStaticMarkup(<>{findingsCard(detail([], [
+      {
+        sev: 'suggestion',
+        loc: 'src/Foo.java:44',
+        msg: 'shadows the field',
+        status: 'still open',
+        threadRef: 't-900',
+        origin: 'conversation',
+      },
+    ]))}</>);
+
+    expect(html).toMatch(/from discussion/i);
+  });
+
+  it('leaves a verdict on a review-derived finding unmarked', () => {
+    const html = renderToStaticMarkup(<>{findingsCard(detail([], [
+      { sev: 'warning', loc: 'src/Bar.java:10', msg: 'leaks a handle', status: 'still open', threadRef: 't-1' },
     ]))}</>);
 
     expect(html).not.toMatch(/from discussion/i);

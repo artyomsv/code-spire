@@ -417,8 +417,9 @@
   .pill.refused { --st: var(--warn); --st-soft: var(--warn-soft); }
   /* Provenance, not a problem: a finding a person filed with /finding is context for the reader,
      not something that needs attention — muted so it never reads as more alarming than a
-     model-reported finding beside it. */
-  .pill.muted { --st: var(--muted); --st-soft: var(--muted-soft); }
+     model-reported finding beside it. Named for the state it marks (where the finding came from),
+     like every other .pill modifier, rather than for the grey it happens to be. */
+  .pill.provenance { --st: var(--muted); --st-soft: var(--muted-soft); }
 
   /* "responding…" indicator: subtle and static (never an unbounded spinner) — `answering`
      is best-effort and can rarely stay true past a terminal failure, so it must not read

@@ -81,6 +81,11 @@ export interface ReconciliationItem {
   note?: string;
   threadRef?: string;
   resolvedThread?: boolean;
+  // Carried forward from the prior finding this verdict judges — 'conversation' when a human filed
+  // it with /finding, absent for a review-derived one and for every row stored before this existed.
+  // A filed finding is a fresh `Finding` for one round and one of these for every round after, so
+  // the provenance has to live on both shapes or it survives a single round.
+  origin?: 'conversation';
 }
 
 /** One message in a re-fetched SCM thread (full text, not the persisted preview). */

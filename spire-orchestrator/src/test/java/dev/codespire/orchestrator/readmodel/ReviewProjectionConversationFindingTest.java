@@ -31,6 +31,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * A finding raised from a conversation ({@code /finding}) joins the carry-forward baseline
  * ({@code open_findings_json}) rather than a fresh {@code findings_json} row — see
  * {@link ReviewProjection#addConversationFinding} for why.
+ *
+ * <p>Which is why the dashboard's findings card is a UNION of two columns
+ * ({@link ReviewProjection#loadDetail}): storing the finding somewhere the card never read is what
+ * made it invisible in every round. The second half of this suite is that union — the card itself,
+ * the open/blocker counts, the origin surviving onto a reconciliation row, and the one anchor both
+ * columns can name at once.
  */
 @QuarkusTest
 @TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
@@ -362,6 +368,142 @@ class ReviewProjectionConversationFindingTest {
                         + "original anchor");
     }
 
+    // ---- the findings card's union of findings_json + open_findings_json --------------------
+
+    /**
+     * The defect this union closes: {@code loadDetail} built its findings list from
+     * {@code findings_json} alone, whose one writer ({@code recordOutcome}) serializes a 4-arg
+     * {@code FindingView} and so can never produce an origin at all. A {@code /finding} therefore
+     * reached the dashboard nowhere — not the card, not the counts — while every other consumer of
+     * the baseline had it.
+     */
+    @Test
+    void aConversationFindingIsVisibleOnTheFindingsCard() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        ReviewDetail.FindingView filed = detail.findingsList().stream()
+                .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow(
+                        () -> new AssertionError("the findings card never showed the filed finding"));
+        assertEquals("conversation", filed.origin());
+        assertEquals("t-900", filed.threadRef(),
+                "the card must keep the thread the human filed it in — that thread is not a "
+                        + "review_thread finding row, so a loc lookup would null it and unhook the "
+                        + "conversation from the row");
+    }
+
+    /**
+     * The counts move on the same union basis as the card. Both figures are asserted from ONE
+     * severity: a blocker filed from a discussion is the case where a card that shows it and a
+     * badge that says "passed" contradict each other on the same page.
+     */
+    @Test
+    void aConversationFindingCountsTowardTheOpenAndBlockerCounts() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+        ReviewDetail before = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertEquals(1, before.openFindings(), "setup check: only the seeded review finding is open");
+        assertEquals(0, before.openBlockers(), "setup check: the seeded finding is not a blocker");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.BLOCKER, "TEST-BLOCKER filed from a discussion");
+
+        ReviewDetail after = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertEquals(2, after.openFindings(), "an open finding a human filed is still an open finding");
+        assertEquals(1, after.openBlockers(), "a blocker a human filed still blocks");
+    }
+
+    /**
+     * Round N+1: the finding is no longer a fresh baseline entry but a reconciliation verdict, and
+     * {@code ReconciliationView} had no origin field at all — so the card's provenance badge was
+     * unreachable from the round after the one that filed it, which is the longer-lived half of the
+     * defect.
+     */
+    @Test
+    void aReconciledConversationFindingKeepsItsOriginOnItsReconciliationRow() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+
+        List<FindingVerdict> verdicts = List.of(new FindingVerdict("t-900", "src/Foo.java", 44,
+                FindingVerdict.Status.STILL_OPEN, "still there after the follow-up commit"));
+        projection.recordReconciliation(reviewId, verdicts, priorFindings);
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        ReviewDetail.ReconciliationView row = detail.reconciliation().stream()
+                .filter(r -> "src/Foo.java:44".equals(r.loc())).findFirst().orElseThrow();
+        assertEquals("conversation", row.origin(),
+                "a verdict on a human-filed finding must still say who filed it");
+    }
+
+    /**
+     * The union takes the conversation-origin entries of {@code open_findings_json} and nothing else,
+     * which is what keeps it a union rather than a repoint.
+     *
+     * <p>That column is the NEXT round's baseline: it also holds prior findings carried forward
+     * because they are still open. Those belong to the reconciliation card, which says what happened
+     * to them; re-listing them here would make the findings card silently claim this run raised them,
+     * and would count them a second time beside their own verdict. Only the human-filed entries have
+     * no other home.
+     */
+    @Test
+    void aCarriedPriorFindingInTheBaselineStaysOffTheFindingsCard() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+
+        // A later round reports nothing, so findings_json no longer names Bar.java:10 — but the
+        // baseline still carries it, because nothing has judged it resolved.
+        ReviewResult quiet = new ReviewResult(List.of(), "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOutcome(reviewId, quiet, ReviewProjection.STAGE_COMMENTS);
+        assertTrue(projection.openFindingsFor(reviewId).stream()
+                        .anyMatch(f -> "src/Bar.java:10".equals(f.loc())),
+                "setup check: the baseline must still carry the review-derived finding");
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertTrue(detail.findingsList().stream().noneMatch(f -> "src/Bar.java:10".equals(f.loc())),
+                "a carried review-derived finding belongs to the reconciliation card, not this one");
+        assertEquals(0, detail.openFindings(),
+                "and it must not be counted from the baseline either — its verdict is what counts it");
+    }
+
+    /**
+     * The union's own hazard, and the reason it dedupes by anchor rather than concatenating.
+     *
+     * <p>{@code recordOutcome} and {@code recordOpenFindings} are two separate writes, and the first
+     * of them broadcasts — so there is a real window in which {@code findings_json} already names the
+     * anchor this round while {@code open_findings_json} still holds the human's own entry for it.
+     * A page loaded in that window must show one concern, not the same line twice with two different
+     * messages, and must count it once.
+     */
+    @Test
+    void anAnchorNamedByBothColumnsAppearsOnceOnTheCardAndCountsOnce() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        // The next round's model reports the very same anchor. recordOutcome lands first; nothing has
+        // merged the two columns yet.
+        ReviewResult next = new ReviewResult(
+                List.of(new Finding("src/Foo.java", new LineRange(44, 44), Severity.MAJOR,
+                        "the model found it too", null)),
+                "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOutcome(reviewId, next, ReviewProjection.STAGE_COMMENTS);
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertEquals(1, detail.findingsList().stream()
+                        .filter(f -> "src/Foo.java:44".equals(f.loc())).count(),
+                "one anchor is one tracked concern on the card, whichever column named it");
+        assertEquals(1, detail.openFindings(),
+                "and it is counted once — a union that double-counts is worse than one that omits");
+    }
+
     private void writeRawOpenFindings(String reviewId, String plaintextJson) throws SQLException {
         String encrypted = encryption.encryptString(plaintextJson, reviewId);
         try (Connection c = dataSource.getConnection();
@@ -380,7 +522,12 @@ class ReviewProjectionConversationFindingTest {
      * the same sequence {@code ResultSaga} runs for a real round.
      */
     private String registerReviewWithOpenFindings(String loc, String sevSlug) {
-        long pr = ReviewFixtures.newPr();
+        return registerReviewWithOpenFindings(ReviewFixtures.newPr(), loc, sevSlug);
+    }
+
+    /** The same seed for a test that also needs the PR number: {@link ReviewProjection#loadDetail}
+     *  is addressed by workspace/slug/pr, not by reviewId. */
+    private String registerReviewWithOpenFindings(long pr, String loc, String sevSlug) {
         String reviewId = ReviewFixtures.reviewIdFor(pr);
         String commit = "TESTSHA" + pr;
         projection.registerHeader(reviewId, ReviewFixtures.REPO_REF, pr, "TEST-TITLE", "TEST-AUTHOR",

@@ -15,7 +15,7 @@ package dev.codespire.contract.review;
  * which used to defeat a membership test that started from the finding's ORIGINAL anchor.
  */
 public record PriorFinding(String path, int line, Severity severity, String message, String threadRef,
-                            String origin) {
+                           String origin) {
 
     /** A review-derived prior finding: the common case, and every call site untouched by
      *  conversation findings. */
