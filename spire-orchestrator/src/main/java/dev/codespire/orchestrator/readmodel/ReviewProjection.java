@@ -701,14 +701,78 @@ public class ReviewProjection {
     }
 
     /**
+     * Add a finding raised in a conversation ({@code /finding}) to the carry-forward baseline.
+     *
+     * <p>Deliberately {@code open_findings_json} and NOT {@code findings_json}: the latter is what
+     * the review of a commit produced — a truthful record of one model call, copied to
+     * {@code posted_findings_json} as the run snapshot by {@link #recordPosted}. A conversation
+     * finding did not come from that call. {@code open_findings_json} is already defined as the
+     * carry-forward baseline, which is exactly what this is: something now open that the next round
+     * must reconcile against and exclude from re-reporting.
+     *
+     * <p>Also written straight through to {@code posted_findings_json}, with the SAME merged value —
+     * not derived, not a fresh snapshot. {@link #priorRunFor} (what a follow-up's reconciliation
+     * reads to build its exclusion list) is keyed off THAT column, and nothing besides
+     * {@link #recordPosted} otherwise refreshes it — which only happens on the review's NEXT round.
+     * A {@code /finding} already lives on a real SCM thread (its {@code threadRef} names it), so it
+     * is already "posted" in every sense {@code posted_findings_json} cares about; leaving this
+     * column stale until some future round would mean an author who filed a finding, then pushed a
+     * fix before any new review ran, gets no reconciliation credit for it.
+     *
+     * <p>Runs the same {@link #dedupeByAnchor} the baseline is always written through, so a
+     * {@code /finding} on a line that already has an open finding merges into it rather than
+     * doubling the count.
+     */
+    public void addConversationFinding(String reviewId, String threadRef, String path, int line,
+                                       Severity severity, String message) {
+        List<ReviewDetail.FindingView> open = new ArrayList<>(openFindingsFor(reviewId));
+        open.add(new ReviewDetail.FindingView(severitySlug(severity), path + ":" + line, message,
+                threadRef, "conversation"));
+        List<ReviewDetail.FindingView> deduped = dedupeByAnchor(open);
+        String json;
+        try {
+            json = mapper.writeValueAsString(deduped);
+        } catch (JsonProcessingException e) {
+            LOG.warn("Failed to serialize open findings after a conversation finding", e);
+            return;
+        }
+        String encrypted = encryption.encryptString(json, reviewId);
+        update("UPDATE review_status SET open_findings_json = ?, posted_findings_json = ?, "
+                + "updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setString(1, encrypted);
+            ps.setString(2, encrypted);
+            ps.setString(3, reviewId);
+        });
+    }
+
+    /** The review's current carry-forward baseline, decrypted — empty (never throws) on a missing
+     *  row, a decrypt failure, or a parse failure, same posture as {@link #priorRunFor}. */
+    public List<ReviewDetail.FindingView> openFindingsFor(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT open_findings_json FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return List.of();
+                }
+                return parseFindings(rs.getString("open_findings_json"), reviewId);
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "openFindingsFor read failed for %s", reviewId);
+            return List.of();
+        }
+    }
+
+    /**
      * One anchor ({@code path:line}) = one tracked concern. Two findings sharing an anchor collapse
      * onto the same SCM thread at posting time (the second's inline post folds into the first's
      * anchor claim, {@link #attachThreadRefs}); carrying both forward as separate baseline entries
      * makes the NEXT round's verdict matching ambiguous (one threadRef, two prior findings — see
      * {@link #matchVerdict}). Grouping here, before the baseline is written, guarantees every
      * baseline this method produces has unique anchors (and, after the thread join, unique
-     * threadRefs) — the group keeps the FIRST entry's severity, the first non-null threadRef found
-     * in the group, and concatenates distinct messages with {@code "; also: "}.
+     * threadRefs) — the group keeps the FIRST entry's severity and origin, the first non-null
+     * threadRef found in the group, and concatenates distinct messages with {@code "; also: "}.
      */
     private static List<ReviewDetail.FindingView> dedupeByAnchor(List<ReviewDetail.FindingView> entries) {
         Map<String, List<ReviewDetail.FindingView>> byAnchor = new java.util.LinkedHashMap<>();
@@ -722,15 +786,22 @@ public class ReviewProjection {
         return merged;
     }
 
-    /** Collapse one same-anchor group into a single {@link ReviewDetail.FindingView} — see
-     *  {@link #dedupeByAnchor} for the merge rules. Message merge is idempotent: merging the same
-     *  constituents (in any order, even if already merged) always yields the same result. */
+    /**
+     * Collapse one same-anchor group into a single {@link ReviewDetail.FindingView} — see
+     * {@link #dedupeByAnchor} for the merge rules. Message merge is idempotent: merging the same
+     * constituents (in any order, even if already merged) always yields the same result.
+     *
+     * <p>{@code origin} follows the same "first entry wins" rule as severity: a lone conversation
+     * finding (no prior entry at its anchor) keeps its {@code "conversation"} origin, while a
+     * conversation finding merged into an already-tracked, review-derived concern does not retag
+     * that concern — it was already open and already tracked before the human commented on it.
+     */
     private static ReviewDetail.FindingView mergeFindingGroup(List<ReviewDetail.FindingView> group) {
         ReviewDetail.FindingView first = group.getFirst();
         String threadRef = group.stream().map(ReviewDetail.FindingView::threadRef)
                 .filter(java.util.Objects::nonNull).findFirst().orElse(null);
         String msg = mergeMessages(group.stream().map(ReviewDetail.FindingView::msg).toList());
-        return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef);
+        return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef, first.origin());
     }
 
     /** Merge a list of message strings (some may contain "; also: "-joined segments) into a single
