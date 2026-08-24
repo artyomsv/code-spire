@@ -114,7 +114,7 @@ class ResultSagaCredentialTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, REPO, 1L, ReviewState.Status.REVIEWING,
-                        "abc123", Set.of(), null, Map.of());
+                        "abc123", Set.of(), null, Map.of(), Set.of());
             }
         };
         saga.projection = new ReviewProjection() {

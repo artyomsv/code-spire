@@ -243,7 +243,7 @@ class SpendCapGateTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, ReviewFixtures.REPO_REF, pr, ReviewState.Status.REVIEWING,
-                        commitFor(pr), Set.of(), null, Map.of());
+                        commitFor(pr), Set.of(), null, Map.of(), Set.of());
             }
         };
         saga.commands = new CommandsEmitter() {

@@ -284,7 +284,7 @@ class ResultSagaPricingTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, null, 1L, ReviewState.Status.REVIEWING,
-                        COMMIT, Set.of(), null, java.util.Map.of());
+                        COMMIT, Set.of(), null, java.util.Map.of(), Set.of());
             }
         };
         saga.timeline = new TimelineBroadcaster() {

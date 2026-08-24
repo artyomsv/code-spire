@@ -17,6 +17,7 @@ ReviewGenerated(reviewId: java.lang.String, prId: long, commit: java.lang.String
 TurnCapNotified(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 
 # DomainEvent
+ConversationFindingRaised(threadRef: dev.codespire.contract.scm.ThreadRef, path: java.lang.String, line: int, severity: dev.codespire.contract.review.Severity, triggeringCommentId: java.lang.String)
 FollowUpRecorded(threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 ReviewCancelled(reason: java.lang.String)
 ReviewCompleted(commit: java.lang.String, summaryCommentId: java.lang.String)

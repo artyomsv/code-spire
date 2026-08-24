@@ -193,7 +193,7 @@ class DiffSizeGateTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, REPO, 1L, ReviewState.Status.REVIEWING,
-                        COMMIT, Set.of(), null, Map.of());
+                        COMMIT, Set.of(), null, Map.of(), Set.of());
             }
         };
         saga.projection = new ReviewProjection() {

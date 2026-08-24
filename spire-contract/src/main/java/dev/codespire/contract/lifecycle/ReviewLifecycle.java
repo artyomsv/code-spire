@@ -2,6 +2,7 @@ package dev.codespire.contract.lifecycle;
 
 import dev.codespire.contract.core.Decider;
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.DomainEvent.ConversationFindingRaised;
 import dev.codespire.contract.event.DomainEvent.FollowUpRecorded;
 import dev.codespire.contract.event.DomainEvent.ReviewCancelled;
 import dev.codespire.contract.event.DomainEvent.ReviewCompleted;
@@ -13,6 +14,7 @@ import dev.codespire.contract.event.DomainEvent.ThreadOpened;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.command.RecordCommand.CancelReview;
 import dev.codespire.contract.command.RecordCommand.OpenThread;
+import dev.codespire.contract.command.RecordCommand.RaiseConversationFinding;
 import dev.codespire.contract.command.RecordCommand.RecordCommentsPosted;
 import dev.codespire.contract.command.RecordCommand.RecordFailure;
 import dev.codespire.contract.command.RecordCommand.RecordFollowUp;
@@ -67,6 +69,10 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
                     : List.of();
             case OpenThread c -> List.of(new ThreadOpened(c.threadRef(), c.parentCommentId()));
             case RecordFollowUp c -> List.of(new FollowUpRecorded(c.threadRef(), c.commentId()));
+            case RaiseConversationFinding c -> state.raisedFindingComments().contains(c.triggeringCommentId())
+                    ? List.of()   // redelivered webhook — idempotent no-op, like an already-reviewed commit
+                    : List.of(new ConversationFindingRaised(c.threadRef(), c.path(), c.line(),
+                            c.severity(), c.triggeringCommentId()));
         };
     }
 
@@ -111,6 +117,7 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
                     state.reviewedCommits(), state.summaryCommentId(), state.threads());
             case ThreadOpened e -> withThread(state, e.threadRef().value(), new ThreadState("OPEN", e.parentCommentId()));
             case FollowUpRecorded e -> withThread(state, e.threadRef().value(), new ThreadState("OPEN", e.commentId()));
+            case ConversationFindingRaised e -> withRaisedFinding(state, e.triggeringCommentId());
         };
     }
 
@@ -118,7 +125,7 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
                                     Set<String> reviewed, String summaryCommentId,
                                     Map<String, ThreadState> threads) {
         return new ReviewState(s.reviewId(), s.repo(), s.prId(), status, currentCommit,
-                reviewed, summaryCommentId, threads);
+                reviewed, summaryCommentId, threads, s.raisedFindingComments());
     }
 
     private static ReviewState withThread(ReviewState s, String key, ThreadState thread) {
@@ -126,5 +133,12 @@ public final class ReviewLifecycle implements Decider<RecordCommand, ReviewState
         threads.put(key, thread);
         return with(s, s.status(), s.currentCommit(), s.reviewedCommits(), s.summaryCommentId(),
                 Map.copyOf(threads));
+    }
+
+    private static ReviewState withRaisedFinding(ReviewState s, String commentId) {
+        Set<String> raised = new HashSet<>(s.raisedFindingComments());
+        raised.add(commentId);
+        return new ReviewState(s.reviewId(), s.repo(), s.prId(), s.status(), s.currentCommit(),
+                s.reviewedCommits(), s.summaryCommentId(), s.threads(), Set.copyOf(raised));
     }
 }

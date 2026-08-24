@@ -324,7 +324,7 @@ class ResultSagaRetryTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, REPO, 412L, ReviewState.Status.REVIEWING,
-                        COMMIT, java.util.Set.of(), null, java.util.Map.of());
+                        COMMIT, java.util.Set.of(), null, java.util.Map.of(), java.util.Set.of());
             }
         };
         saga.commands = new CommandsEmitter() {

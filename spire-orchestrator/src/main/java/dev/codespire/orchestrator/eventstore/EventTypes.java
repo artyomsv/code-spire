@@ -22,7 +22,8 @@ public final class EventTypes {
             DomainEvent.ReviewFailedTerminally.class,
             DomainEvent.ReviewCancelled.class,
             DomainEvent.ThreadOpened.class,
-            DomainEvent.FollowUpRecorded.class
+            DomainEvent.FollowUpRecorded.class,
+            DomainEvent.ConversationFindingRaised.class
     ).collect(Collectors.toUnmodifiableMap(Class::getSimpleName, Function.identity()));
 
     private EventTypes() {
