@@ -1395,6 +1395,29 @@ public class ReviewProjection {
     // ---- reads (REST + WS) -------------------------------------------------
 
     /**
+     * Repositories this deployment has reviewed at least once, as {@code workspace/slug} —
+     * {@link dev.codespire.orchestrator.prompt.PromptScope}'s own format. Backs the prompt-overrides
+     * scope picker: a repo nobody has reviewed is also one there is nothing to preview a template
+     * against, and reading review rows we already own keeps the prompts feature from reaching across
+     * to the gateway's webhook_repo table for a settings dropdown.
+     */
+    public List<String> knownRepoScopes() {
+        List<String> out = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT DISTINCT workspace || '/' || slug FROM review_status ORDER BY 1");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                out.add(rs.getString(1));
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "knownRepoScopes read failed");
+            return List.of();
+        }
+        return out;
+    }
+
+    /**
      * The reviews list. Archived rows are excluded unless the caller asks for them: they are the
      * dashboard's default view of LIVE work, and an archived review is retired rather than in flight.
      *

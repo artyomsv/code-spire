@@ -2,11 +2,13 @@ package dev.codespire.orchestrator.prompt;
 
 import dev.codespire.contract.llm.PromptKind;
 import dev.codespire.contract.llm.PromptValidation;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
@@ -14,6 +16,7 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
@@ -37,6 +40,9 @@ public class PromptResource {
     @Inject
     PromptSampleRenderer sampleRenderer;
 
+    @Inject
+    ReviewProjection projection;
+
     /**
      * Preview response: the assembled system + user, and any validation errors.
      *
@@ -50,48 +56,70 @@ public class PromptResource {
     }
 
     @GET
-    public List<PromptView> list() {
-        return registry.list();
+    public List<PromptView> list(@QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope) {
+        return registry.list(parseScope(scope));
+    }
+
+    /**
+     * Repositories this deployment has reviewed -- the scopes an override can be written at.
+     * Read from the orchestrator's own review rows, NOT the gateway's webhook_repo: that table
+     * belongs to another service behind its own URL prefix and session (ADR-022), and a settings
+     * dropdown is not a reason to couple them. A repo nobody has reviewed is also one there is
+     * nothing to preview a template against.
+     */
+    @GET
+    @Path("/scopes")
+    public List<String> scopes() {
+        return projection.knownRepoScopes();
     }
 
     @GET
     @Path("/{kind}")
-    public PromptView get(@PathParam("kind") String kind) {
-        return registry.effective(parse(kind));
+    public PromptView get(@PathParam("kind") String kind,
+                          @QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope) {
+        return registry.effective(parse(kind), parseScope(scope));
     }
 
     @PUT
     @RolesAllowed("spire-admin")
     @Path("/{kind}")
-    public PromptView save(@PathParam("kind") String kind, PromptInput in) {
+    public PromptView save(@PathParam("kind") String kind,
+                           @QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope, PromptInput in) {
         PromptKind promptKind = parse(kind);
+        String resolvedScope = parseScope(scope);
         requireBody(in);
         List<String> errors = PromptValidation.validate(promptKind, in.system(), in.body());
         if (!errors.isEmpty()) {
             throw badRequest(errors);
         }
-        registry.save(promptKind, in.system(), in.body());
-        return registry.effective(promptKind);
+        registry.save(promptKind, resolvedScope, in.system(), in.body());
+        return registry.effective(promptKind, resolvedScope);
     }
 
     @DELETE
     @RolesAllowed("spire-admin")
     @Path("/{kind}")
-    public Response reset(@PathParam("kind") String kind) {
-        registry.reset(parse(kind));
+    public Response reset(@PathParam("kind") String kind,
+                          @QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope) {
+        registry.reset(parse(kind), parseScope(scope));
         return Response.noContent().build();
     }
 
     /**
      * Keep the customization, stop reporting drift: re-stamp the ancestor to what ships now.
      * Deliberately not a reset variant -- reset discards the customization, this preserves it.
+     *
+     * <p>Scoped like every other mutation here: drift is a property of one customization, and after
+     * the (scope, kind) re-key a customization is per scope, so an unscoped accept would clear the
+     * drift flag on a row the operator was not looking at.
      */
     @POST
     @RolesAllowed("spire-admin")
     @Path("/{kind}/accept-default")
     @Consumes(MediaType.WILDCARD) // no request body
-    public Response acceptDefault(@PathParam("kind") String kind) {
-        registry.acceptCurrentDefault(parse(kind));
+    public Response acceptDefault(@PathParam("kind") String kind,
+                                  @QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope) {
+        registry.acceptCurrentDefault(parse(kind), parseScope(scope));
         return Response.noContent().build();
     }
 
@@ -100,8 +128,13 @@ public class PromptResource {
     // real pull request's source code into the response. It writes nothing and calls no LLM — the
     // POST is only because the body carries the draft.
     @Path("/{kind}/preview")
-    public PreviewResult preview(@PathParam("kind") String kind, PromptInput in) {
+    public PreviewResult preview(@PathParam("kind") String kind,
+                                 @QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope,
+                                 PromptInput in) {
         PromptKind promptKind = parse(kind);
+        parseScope(scope); // validated for the same reason every other endpoint here validates it —
+                            // a malformed value must be a 400, not a stored key nobody can address —
+                            // even though the preview renders the draft it is given, not a stored row.
         requireBody(in);
         List<String> errors = PromptValidation.validate(promptKind, in.system(), in.body());
         if (in.reviewId() == null || in.reviewId().isBlank()) {
@@ -125,6 +158,18 @@ public class PromptResource {
     private static void requireBody(PromptInput in) {
         if (in == null || in.body() == null) {
             throw badRequest(List.of("system and body are required"));
+        }
+    }
+
+    // PromptScope.parse throws IllegalArgumentException -- unhandled that surfaces as a 500. The
+    // scope arrives from a query param and becomes a primary-key component, so a malformed value
+    // (e.g. "../../etc") must be an actionable 400 instead, the same as every other rejected input
+    // on this resource.
+    private static String parseScope(String scope) {
+        try {
+            return PromptScope.parse(scope);
+        } catch (IllegalArgumentException e) {
+            throw badRequest(List.of(e.getMessage()));
         }
     }
 

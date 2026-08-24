@@ -39,9 +39,14 @@ public class PromptRegistry {
     DataSource dataSource;
 
     public List<PromptView> list() {
+        return list(PromptScope.GLOBAL);
+    }
+
+    /** The effective view of every kind at a scope -- what Settings -> Prompts renders. */
+    public List<PromptView> list(String scope) {
         List<PromptView> out = new ArrayList<>();
         for (PromptKind kind : PromptKind.values()) {
-            out.add(effective(kind));
+            out.add(effective(kind, scope));
         }
         return out;
     }
@@ -57,14 +62,15 @@ public class PromptRegistry {
      * actually used to resolve {@code system}/{@code body}, so the view stays internally consistent.
      */
     public PromptView effective(PromptKind kind, String scope) {
-        Optional<Row> row = resolvedRow(kind, scope);
+        Resolved resolved = resolvedRow(kind, scope);
+        Optional<Row> row = resolved.row();
         PromptTemplate def = PromptCatalog.defaultTemplate(kind);
         String system = row.map(Row::system).orElse(def.system());
         String body = row.map(Row::body).orElse(def.body());
         Instant updatedAt = row.map(Row::updatedAt).orElse(null);
         Drift drift = driftOf(row, kind);
-        return new PromptView(kind.slug(), row.isPresent(), system, body, updatedAt,
-                PromptCatalog.palette(kind), PromptCatalog.lockedSystemSuffix(kind),
+        return new PromptView(kind.slug(), scope, resolved.inheritedFrom(), row.isPresent(), system, body,
+                updatedAt, PromptCatalog.palette(kind), PromptCatalog.lockedSystemSuffix(kind),
                 drift.baseKnown(), drift.defaultDrifted(), def.system(), def.body(),
                 drift.baseSystem(), drift.baseBody());
     }
@@ -202,13 +208,22 @@ public class PromptRegistry {
         }
     }
 
-    /** The repo row if present, else the global row, else empty. */
-    private Optional<Row> resolvedRow(PromptKind kind, String scope) {
-        Optional<Row> row = row(kind, scope);
-        if (row.isPresent() || PromptScope.GLOBAL.equals(scope)) {
-            return row;
+    /** A resolved row paired with which scope actually supplied it -- {@code "repo"}, {@code "global"}
+     *  or {@code "default"} -- so {@link #effective(PromptKind, String)} can tell the operator where
+     *  the text they're looking at came from, not just what it is. */
+    private record Resolved(Optional<Row> row, String inheritedFrom) {
+    }
+
+    /** The repo row if present, else the global row, else neither. */
+    private Resolved resolvedRow(PromptKind kind, String scope) {
+        if (!PromptScope.GLOBAL.equals(scope)) {
+            Optional<Row> repoRow = row(kind, scope);
+            if (repoRow.isPresent()) {
+                return new Resolved(repoRow, "repo");
+            }
         }
-        return row(kind, PromptScope.GLOBAL);
+        Optional<Row> globalRow = row(kind, PromptScope.GLOBAL);
+        return globalRow.isPresent() ? new Resolved(globalRow, "global") : new Resolved(Optional.empty(), "default");
     }
 
     /** The row at this exact scope only -- no fallback. */

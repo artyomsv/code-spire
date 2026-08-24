@@ -10,13 +10,20 @@ import java.util.List;
  * customized, the variable palette, and the read-only locked system suffix (security clause +
  * output contract) so the UI can show what always gets appended.
  *
+ * <p>{@code scope} is the scope this view was resolved at ({@link PromptScope#GLOBAL} or a
+ * {@code workspace/slug}); {@code inheritedFrom} says which row actually supplied {@code system}/
+ * {@code body} -- {@code "repo"}, {@code "global"} or {@code "default"} -- since a repo scope with
+ * no override of its own renders identically to global and the operator otherwise has no way to
+ * tell the two apart.
+ *
  * <p>{@code baseKnown} and {@code defaultDrifted} are not interchangeable: {@code baseKnown=false}
  * means the row predates ancestor tracking, so drift is unknowable rather than false. When
  * {@code baseKnown} is true, {@code baseSystem}/{@code baseBody} are the ancestor recorded at last
  * save and {@code currentDefaultSystem}/{@code currentDefaultBody} are what ships now, so the UI can
  * show both sides of the diff. See {@link PromptRegistry.Drift}.
  */
-public record PromptView(String kind, boolean customized, String system, String body,
+public record PromptView(String kind, String scope, String inheritedFrom, boolean customized,
+                         String system, String body,
                          Instant updatedAt, List<PromptVariable> palette, String lockedSuffixPreview,
                          boolean baseKnown, boolean defaultDrifted,
                          String currentDefaultSystem, String currentDefaultBody,
