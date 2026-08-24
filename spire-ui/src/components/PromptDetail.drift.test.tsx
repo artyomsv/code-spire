@@ -77,4 +77,24 @@ describe('prompt default drift', () => {
     await screen.findByText(/customized before default tracking began/i);
     expect(screen.queryByText(/the built-in prompt has changed/i)).not.toBeInTheDocument();
   });
+
+  /**
+   * A repo scope with no override of its own, inheriting a drifted GLOBAL row: `effective` resolves
+   * the global row and reports ITS drift, but `drift`/`acceptCurrentDefault`/`reset` are scope-exact.
+   * Showing the banner here would offer two actions that match zero rows at this scope — neither
+   * dismissible. The "Custom" badge has the same bug: `customized` is `row.isPresent()` on the
+   * RESOLVED row, so it would sit right above "Inherited from global".
+   */
+  it('shows no drift banner and no Custom badge for a repo scope inheriting a drifted global row', async () => {
+    vi.spyOn(api, 'fetchPrompt').mockResolvedValue({
+      ...driftedView(),
+      scope: 'acme/widgets',
+      inheritedFrom: 'global',
+    });
+    renderWithRouter('/settings/prompts/review?scope=acme%2Fwidgets');
+
+    await screen.findByText(/inherited from global/i);
+    expect(screen.queryByText(/the built-in prompt has changed/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Custom')).not.toBeInTheDocument();
+  });
 });

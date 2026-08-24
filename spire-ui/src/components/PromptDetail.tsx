@@ -115,6 +115,15 @@ function PromptEditor({ initial }: { initial: PromptView }) {
 
   const missingRequired = initial.palette.filter((v) => v.required && !referencedVariables(body).has(v.name));
 
+  // `PromptRegistry.drift`/`acceptCurrentDefault`/`reset` are scope-exact (drift is a property of
+  // ONE customization), but `effective` resolves repo -> global -> default and reports the RESOLVED
+  // row's drift/customized flags. So a repo scope with no override of its own, inheriting a drifted
+  // global row, would otherwise show a banner whose two actions match zero rows (repo has no row to
+  // delete, no row to re-stamp) and a "Custom" badge sitting above "Inherited from global". Both are
+  // gated on the scope that actually owns the row this view is reporting on: this scope's own repo
+  // override, or the global scope reporting on its own row.
+  const ownScope = inheritedFrom === 'repo' || initial.scope === GLOBAL_SCOPE;
+
   function insertVariable(name: string) {
     const token = `{{${name}}}`;
     const el = bodyRef.current;
@@ -188,7 +197,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       <div className="head">
         <FileText size={15} aria-hidden="true" />
         <h3>{KIND_LABELS[initial.kind] ?? initial.kind}</h3>
-        {customized && (
+        {customized && ownScope && (
           <span
             className="badge"
             title={initial.updatedAt ? `Last saved ${new Date(initial.updatedAt).toLocaleString()}` : undefined}
@@ -199,12 +208,14 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       </div>
       <ProvenanceLine scope={initial.scope} inheritedFrom={inheritedFrom} />
       <div className="body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <PromptDriftBanner
-          drift={drift}
-          busy={busy !== null}
-          onTakeDefault={() => void onReset()}
-          onKeepMine={() => void onAcceptDefault()}
-        />
+        {ownScope && (
+          <PromptDriftBanner
+            drift={drift}
+            busy={busy !== null}
+            onTakeDefault={() => void onReset()}
+            onKeepMine={() => void onAcceptDefault()}
+          />
+        )}
 
         <label className="field">
           <span>Instructions (system)</span>
