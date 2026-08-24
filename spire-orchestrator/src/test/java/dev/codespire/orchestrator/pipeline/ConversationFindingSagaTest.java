@@ -266,6 +266,29 @@ class ConversationFindingSagaTest {
     }
 
     /**
+     * L3: the {@code Filed} path above is gated by {@code canFileConversationFinding}'s registered()
+     * check, but the {@code Refused} path used to have none — {@code refuseConversationFinding}
+     * posted directly into any thread it could resolve. {@code review_thread} carries no FK to
+     * {@code review_status}, so a thread can exist for a PR that was never registered (marked here
+     * directly, the way a summary thread would be from a review that later got deleted and never
+     * re-registered), and the bot would reply on it regardless.
+     */
+    @Test
+    void findingRefusalOnAnUnregisteredPrPostsNothing() {
+        long pr = ReviewFixtures.newPr();   // deliberately NOT seeded — no review_status row
+        String reviewId = reviewIdFor(pr);
+        ThreadRef summary = new ThreadRef(rootRefOf(pr));
+        threads.markSummaryThread(reviewId, summary);
+
+        // No location anywhere -> a Refused outcome, with somewhere (the summary thread) to reply to.
+        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, summary, null, commentIdOf(pr)));
+
+        assertTrue(emitted.isEmpty(), "an unregistered PR must get no reply, even on the refusal path");
+        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("no registered review")),
+                "refused in /review's own idiom; timeline was " + timelineDetails);
+    }
+
+    /**
      * Proof that {@code /finding} inherits the gate {@code onManualCommand} puts ahead of the command
      * switch — the comment there says it sits high "so a future command cannot be added below it and
      * arrive ungated", and this is that future command.

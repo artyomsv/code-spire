@@ -296,8 +296,26 @@ public class IntegrationSaga {
      * <p>The refusal here SPEAKS, unlike the authorization refusal in {@link #onManualCommand}: an
      * authorized author who used the command where it cannot work is told how to use it. Silence is
      * the answer to a prober, not to a colleague.
+     *
+     * <p>Gated on {@link #registered} before either outcome is even resolved. An unregistered PR is
+     * the dangerous case for BOTH outcomes — nothing else stops it: {@code archived} answers false
+     * for a row that does not exist, and the provider resolves by workspace when the review has no
+     * stored type, so the command clears every gate ahead of it. {@code Filed} needed the check
+     * because the read model would drop the finding with a WARN while the aggregate kept the comment
+     * id, making a later registration-plus-redelivery an idempotent no-op — but {@code Refused}
+     * writes nothing to the aggregate or the read model at all, so a check placed only on the Filed
+     * path (as this used to be) left the refusal replying on a PR that was never registered, into
+     * whatever thread {@code review_thread} happened to carry (that table has no FK to
+     * {@code review_status}). Checking once, here, covers both.
      */
     private void raiseConversationFinding(String reviewId, ManualCommandReceived e) {
+        if (!projection.registered(reviewId)) {
+            timeline.record("integration", "skipped:/" + CommentCommands.FINDING, reviewId,
+                    "no registered review for this PR — open/update it first");
+            LOG.infof("Skipping /%s on %s — no registered review for this PR",
+                    CommentCommands.FINDING, reviewId);
+            return;
+        }
         ThreadRef root = e.threadRef() == null ? null : threads.rootOf(reviewId, e.threadRef());
         // Only consulted when the event carried no location of its own — not every provider reports
         // one on every comment surface.
@@ -394,25 +412,10 @@ public class IntegrationSaga {
     }
 
     /**
-     * The two refusals that must happen before anything is written, both silent to the thread and
-     * both visible on the timeline.
-     *
-     * <p>An unregistered PR is the dangerous one. Nothing else stops it: {@code archived} answers
-     * false for a row that does not exist, and the provider resolves by workspace when the review has
-     * no stored type, so the command sails through the archival gate and the allowlist. The read
-     * model then drops the finding with a WARN while the aggregate keeps the comment id — so the bot
-     * would confirm a finding that exists nowhere, and re-registering the PR could never file it,
-     * because the redelivery is an idempotent no-op. Refused in {@code /review}'s own idiom, and
-     * without advancing the aggregate, so registering the PR and re-running the command still works.
+     * The redelivery guard for the {@code Filed} outcome, run after {@link #raiseConversationFinding}
+     * has already refused an unregistered PR ahead of the Filed/Refused split.
      */
     private boolean canFileConversationFinding(String reviewId, ManualCommandReceived e) {
-        if (!projection.registered(reviewId)) {
-            timeline.record("integration", "skipped:/" + CommentCommands.FINDING, reviewId,
-                    "no registered review for this PR — open/update it first");
-            LOG.infof("Skipping /%s on %s — no registered review for this PR",
-                    CommentCommands.FINDING, reviewId);
-            return false;
-        }
         // Null-guarded: raisedFindingComments() is an immutable Set, whose contains(null) throws
         // rather than answering false. Unreachable from a real ingress today, but the 5-arg
         // ManualCommandReceived convenience constructor leaves commentId constructible as null.
