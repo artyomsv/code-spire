@@ -1161,7 +1161,6 @@ public class ReviewProjection {
         }
     }
 
-    /** Whether this review has been archived — the gate every resurrection path consults. */
     /**
      * Whether this PR has a registered review at all — a row in {@code review_status}.
      *
@@ -1192,6 +1191,14 @@ public class ReviewProjection {
         }
     }
 
+    /**
+     * Whether this review has been archived — the gate every resurrection path consults.
+     *
+     * <p>Reads almost identically to {@link #registered} above and fails the OPPOSITE way, so the
+     * two are worth reading together: a fault here answers "live" and lets the event through, while
+     * a fault there propagates. See the catch below, and {@code registered}'s javadoc, for why each
+     * posture is the safe one for its own question.
+     */
     public boolean archived(String reviewId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(

@@ -7,6 +7,9 @@ import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.port.EventStore;
+import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ThreadLocation;
@@ -290,6 +293,44 @@ class ConversationFindingSagaTest {
                 "a redelivery must not post a second confirmation into the human's thread");
         assertEquals(1, raisedEventsIn(reviewId),
                 "and the aggregate appended the finding exactly once");
+    }
+
+    /**
+     * The pre-check's own test — the guard the reorder above made necessary, and the one thing
+     * {@code aRedeliveredFindingCommandFilesOnlyOnce} cannot see. That test passes with or without
+     * the pre-check, because {@code handle} still answers empty (one event, one confirmation) and
+     * {@code dedupeByAnchor} collapses the extra write to one row at the same anchor.
+     *
+     * <p>What the pre-check actually stops is a redelivery arriving AFTER a round judged the finding
+     * and dropped it from the baseline. Projecting first would put a resolved finding back before
+     * the aggregate ever got to answer. Reachable in production: a processing failure goes to
+     * {@code cs.dlq}, and a DLQ replay is an operator action that can arrive hours later.
+     */
+    @Test
+    void aRedeliveryAfterTheFindingWasResolvedDoesNotResurrectIt() {
+        long pr = liveReview();
+        String reviewId = reviewIdFor(pr);
+        ManualCommandReceived command = finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr));
+        IntegrationSaga saga = sagaAllowingEveryone();
+        saga.on(command);
+        assertNotNull(findingAt(reviewId, LOC), "the finding has to exist before a round can resolve it");
+
+        // A later round judges it RESOLVED: neither stillOpenPriorFindings nor
+        // unmatchedConversationFindings carries a finding this round's verdicts matched, so
+        // recordOpenFindings rewrites the baseline without it.
+        projection.recordOpenFindings(reviewId,
+                new ReviewResult(List.of(), "TEST-SUMMARY", ModelUsage.of("TEST-MODEL", 1, 1)),
+                List.of(new FindingVerdict(rootRefOf(pr), PATH, LINE, FindingVerdict.Status.RESOLVED,
+                        "TEST-NOTE")),
+                List.of());
+        assertTrue(findingsAt(reviewId, LOC).isEmpty(), "the round dropped it from the baseline");
+
+        saga.on(command);
+
+        assertTrue(findingsAt(reviewId, LOC).isEmpty(),
+                "a redelivered command must not put a resolved finding back on the baseline");
+        assertEquals(1, confirmations().size(), "and must not confirm it a second time");
     }
 
     /**

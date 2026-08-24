@@ -334,9 +334,15 @@ public class IntegrationSaga {
      * <p>Which is why the aggregate is CONSULTED before the projection write and commanded after. A
      * completed round drops a resolved conversation finding from the baseline, so a late replay —
      * a DLQ replay is an operator action and can arrive hours later — would otherwise resurrect it.
-     * The pre-check is safe to read-then-act on because everything is keyed by reviewId and dispatch
-     * is per-partition ordered, so one consumer owns this review; {@code handle}'s own empty answer
-     * stays as the authoritative guard on the confirmation.
+     * The pre-check in {@link #canFileConversationFinding} is therefore the operative guard on a
+     * redelivery, and it is safe to read-then-act on because everything is keyed by reviewId and
+     * dispatch is per-partition ordered, so one consumer owns this review.
+     *
+     * <p>{@code handle}'s own empty answer is the BACKSTOP, and it is kept for the one window the
+     * pre-check cannot cover: a consumer-group rebalance, where a revoked consumer's in-flight
+     * message can overlap the new owner's replay of the same offset. Two threads can both pass the
+     * pre-check there, and only the event store's optimistic concurrency and this empty answer keep
+     * the confirmation from being posted twice.
      */
     private void fileConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
                                          ConversationFindings.Filed f) {
