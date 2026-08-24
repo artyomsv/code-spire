@@ -8,19 +8,33 @@ import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.Severity;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
+import io.quarkus.websockets.next.CloseReason;
+import io.quarkus.websockets.next.HandshakeRequest;
+import io.quarkus.websockets.next.OpenConnections;
+import io.quarkus.websockets.next.UserData;
+import io.quarkus.websockets.next.WebSocketConnection;
+import io.smallrye.mutiny.Uni;
+import io.vertx.core.buffer.Buffer;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import javax.net.ssl.SSLSession;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,6 +64,12 @@ class ReviewProjectionConversationFindingTest {
 
     @Inject
     EncryptionService encryption;
+
+    @Inject
+    ObjectMapper mapper;
+
+    @Inject
+    AttentionBroadcaster attention;
 
     @Inject
     ReviewThreadView threads;
@@ -83,6 +103,31 @@ class ReviewProjectionConversationFindingTest {
         assertNull(atAnchor.getFirst().origin(),
                 "the concern was already tracked (review-derived) before the human spoke; a later "
                         + "conversation reply on the same anchor must not relabel it human-filed");
+    }
+
+    /**
+     * S1 defense in depth: repeated {@code /finding} calls at the SAME anchor, each carrying a
+     * distinct message, must not grow the merged message without bound — the growth vector the
+     * security review flagged as reachable by any PR commenter, since {@code authorAllowed} defaults
+     * to true when a provider sets no allowlist. A single message is already capped at parse time
+     * ({@code ConversationFindings.MAX_MESSAGE_LENGTH}); this asserts the merge itself has its own
+     * ceiling, independent of that upstream cap.
+     */
+    @Test
+    void repeatedFindingsAtOneAnchorDoNotGrowTheMergedMessageWithoutBound() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+
+        for (int i = 0; i < 10; i++) {
+            String distinct = "distinct message #" + i + " " + "y".repeat(4_000);
+            projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                    Severity.MINOR, distinct);
+        }
+
+        ReviewDetail.FindingView merged = projection.openFindingsFor(reviewId).stream()
+                .filter(f -> "src/Foo.java:44".equals(f.loc())).findFirst().orElseThrow();
+        assertTrue(merged.msg().length() <= ReviewProjection.MAX_MERGED_MESSAGE_LENGTH,
+                "the merged message must stay bounded no matter how many distinct /finding calls "
+                        + "land on one anchor");
     }
 
     @Test
@@ -205,6 +250,52 @@ class ReviewProjectionConversationFindingTest {
         assertTrue(projection.openFindingsFor(reviewId).stream()
                         .anyMatch(f -> "src/Foo.java:44".equals(f.loc())),
                 "open_findings_json must still be updated even though posted_findings_json could not be");
+    }
+
+    /**
+     * L2: {@code recordOpenFindings} REPLACES {@code open_findings_json} wholesale, and
+     * {@code unmatchedConversationFindings} depends entirely on reading it — so a decrypt/parse
+     * failure there must skip the write, exactly like {@code mergeColumnOrSkip} already does on the
+     * {@code /finding} write path. Before this, {@code parseFindings}'s ordinary
+     * degrade-to-empty-list posture would silently destroy every human-filed finding on the round.
+     */
+    @Test
+    void recordOpenFindingsSkipsAnUnparseableOpenColumnRatherThanDestroyingIt() throws SQLException {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+        corruptOpenFindingsJson(reviewId);
+        String corrupted = rawOpenFindingsJson(reviewId);
+
+        ReviewResult result2 = new ReviewResult(
+                List.of(new Finding("src/Baz.java", new LineRange(1, 1), Severity.MAJOR, "new issue", null)),
+                "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOpenFindings(reviewId, result2, List.of(), List.of());
+
+        assertEquals(corrupted, rawOpenFindingsJson(reviewId),
+                "a decrypt/parse failure must skip the write, not silently replace the baseline");
+    }
+
+    private String rawOpenFindingsJson(String reviewId) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT open_findings_json FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getString("open_findings_json");
+            }
+        }
+    }
+
+    /** Writes a value that is neither valid Tink ciphertext for this reviewId nor valid legacy-plaintext
+     *  JSON into {@code open_findings_json} — simulating real corruption or a decrypt failure. */
+    private void corruptOpenFindingsJson(String reviewId) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE review_status SET open_findings_json = ? WHERE review_id = ?")) {
+            ps.setString(1, "NOT-VALID-CIPHERTEXT-OR-JSON");
+            ps.setString(2, reviewId);
+            ps.executeUpdate();
+        }
     }
 
     /** Writes a value that is neither valid Tink ciphertext for this reviewId nor valid legacy-plaintext
@@ -366,6 +457,209 @@ class ReviewProjectionConversationFindingTest {
         assertEquals("conversation", survivor.origin(),
                 "origin must survive even though neither loc nor threadRef matches the finding's "
                         + "original anchor");
+    }
+
+    /**
+     * M1: none of {@code writeOpenOnly}/{@code writeOpenAndPosted}/{@code writePostedOnly} used to
+     * broadcast, so the findings card and open count stayed stale until some unrelated write
+     * happened to push a fresh summary. {@code review_status.updated_at} is already bumped by the
+     * raw {@code UPDATE} itself regardless of whether a broadcast happens, so reading it back
+     * (through {@code loadDetail} or {@code listSummaries}) would pass even on the unfixed code and
+     * prove nothing — the only thing that discriminates this bug is whether a client actually
+     * connected to the reviews socket is pushed a message, so this fakes that socket the way a real
+     * client would see it, rather than polling the database.
+     *
+     * <p>Built as a fresh instance with the real collaborators rather than mutating the injected
+     * {@code projection}'s {@code connections} field: {@code projection} is a CDI client proxy, and a
+     * plain field assignment on it lands on the proxy object itself, not on the contextual instance
+     * every business method call actually delegates to — so the fake would silently never be seen by
+     * {@code broadcast()}.
+     */
+    @Test
+    void addConversationFindingPushesTheFindingToLiveClients() {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+        List<String> pushed = new ArrayList<>();
+        ReviewProjection withFakeSocket = new ReviewProjection();
+        withFakeSocket.dataSource = dataSource;
+        withFakeSocket.mapper = mapper;
+        withFakeSocket.encryption = encryption;
+        withFakeSocket.attention = attention;
+        withFakeSocket.connections = new OpenConnections() {
+            @Override
+            public java.util.stream.Stream<WebSocketConnection> stream() {
+                return java.util.stream.Stream.of(new FakeReviewsSocket(pushed));
+            }
+
+            @Override
+            public java.util.Iterator<WebSocketConnection> iterator() {
+                return stream().iterator();
+            }
+        };
+
+        withFakeSocket.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        assertTrue(pushed.stream().anyMatch(json -> json.contains(reviewId)),
+                "a client connected to the reviews socket must be pushed the finding, not just have "
+                        + "it written to the database");
+    }
+
+    /**
+     * Enough of {@link WebSocketConnection} to exercise {@code ReviewProjection#push}'s path filter
+     * and JSON send — every other member is unreachable from that method and throws if called.
+     */
+    private static final class FakeReviewsSocket implements WebSocketConnection {
+        private final List<String> sink;
+
+        FakeReviewsSocket(List<String> sink) {
+            this.sink = sink;
+        }
+
+        @Override
+        public HandshakeRequest handshakeRequest() {
+            return new HandshakeRequest() {
+                @Override
+                public String path() {
+                    return "/api/ws/reviews";
+                }
+
+                @Override
+                public String header(String name) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public List<String> headers(String name) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public Map<String, List<String>> headers() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public String scheme() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public String host() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public int port() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public String query() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public String localAddress() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public String remoteAddress() {
+                    throw new UnsupportedOperationException();
+                }
+            };
+        }
+
+        @Override
+        public Uni<Void> sendText(String text) {
+            sink.add(text);
+            return Uni.createFrom().nullItem();
+        }
+
+        @Override
+        public String id() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String pathParam(String name) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isSecure() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SSLSession sslSession() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isClosed() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CloseReason closeReason() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Uni<Void> close(CloseReason reason) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String subprotocol() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Instant creationTime() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public UserData userData() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <M> Uni<Void> sendText(M message) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Uni<Void> sendBinary(Buffer buffer) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Uni<Void> sendPing(Buffer data) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Uni<Void> sendPong(Buffer data) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String endpointId() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BroadcastSender broadcast() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Set<WebSocketConnection> getOpenConnections() {
+            throw new UnsupportedOperationException();
+        }
     }
 
     // ---- the findings card's union of findings_json + open_findings_json --------------------
