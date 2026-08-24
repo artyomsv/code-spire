@@ -157,8 +157,8 @@ public class PromptRegistry {
 
     /** Keep the global customization, stop reporting drift. See {@link #acceptCurrentDefault(PromptKind, String)}. */
     @Transactional
-    public void acceptCurrentDefault(PromptKind kind) {
-        acceptCurrentDefault(kind, PromptScope.GLOBAL);
+    public boolean acceptCurrentDefault(PromptKind kind) {
+        return acceptCurrentDefault(kind, PromptScope.GLOBAL);
     }
 
     /**
@@ -166,9 +166,12 @@ public class PromptRegistry {
      * what ships now. Scope-exact for the same reason {@link #drift(PromptKind, String)} is -- an
      * unscoped {@code WHERE kind = ?} would re-stamp whichever row Postgres happened to return,
      * silently touching a scope the operator was not looking at.
+     *
+     * @return whether a row existed at this scope to re-stamp -- false means there was nothing to
+     *         accept the default for, mirroring {@link #reset(PromptKind, String)}'s own boolean.
      */
     @Transactional
-    public void acceptCurrentDefault(PromptKind kind, String scope) {
+    public boolean acceptCurrentDefault(PromptKind kind, String scope) {
         PromptTemplate current = PromptCatalog.defaultTemplate(kind);
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
@@ -182,7 +185,7 @@ public class PromptRegistry {
             ps.setString(2, current.body());
             ps.setString(3, scope);
             ps.setString(4, kind.slug());
-            ps.executeUpdate();
+            return ps.executeUpdate() > 0;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to accept current default for " + kind.slug()
                     + " at scope " + scope, e);

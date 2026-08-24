@@ -124,7 +124,10 @@ public class PromptResource {
     @Consumes(MediaType.WILDCARD) // no request body
     public Response acceptDefault(@PathParam("kind") String kind,
                                   @QueryParam("scope") @DefaultValue(PromptScope.GLOBAL) String scope) {
-        registry.acceptCurrentDefault(parse(kind), parseScope(scope));
+        String resolvedScope = parseScope(scope);
+        if (!registry.acceptCurrentDefault(parse(kind), resolvedScope)) {
+            throw new NotFoundException("No customization at scope '" + resolvedScope + "' for '" + kind + "'");
+        }
         return Response.noContent().build();
     }
 

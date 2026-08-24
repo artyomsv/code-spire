@@ -71,6 +71,18 @@ class PromptResourceDriftTest {
                 .then().statusCode(403);
     }
 
+    /**
+     * L5: the endpoint discarded {@code executeUpdate()}'s count and always answered 204, so
+     * accepting the default at a scope with no customization to re-stamp was a silent success. No
+     * row was ever inserted for {@code review} in this test — {@code resetReview} deletes it, but
+     * nothing here ever created one.
+     */
+    @Test
+    void acceptDefaultOnAScopeWithNoRowAnswers404() {
+        given().when().post("/api/prompts/review/accept-default")
+                .then().statusCode(404);
+    }
+
     @Test
     void aLegacyRowWithNoRecordedAncestorReportsUnknownThroughTheApi() {
         // A row as V23 alone would have written it -- no ancestor column populated. Unlike
