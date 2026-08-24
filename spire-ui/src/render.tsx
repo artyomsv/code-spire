@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle } from 'lucide-react';
+import { Archive, Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle, MessageSquare } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -423,6 +423,9 @@ interface FindingRow {
   closed: boolean;
   threadRef?: string;
   resolvedThread?: boolean;
+  // 'conversation' when a human filed this finding with /finding; absent for a review-derived one.
+  // Reconciliation rows never carry this — the wire has no origin for a carried-forward verdict yet.
+  origin?: 'conversation';
 }
 
 /**
@@ -456,6 +459,7 @@ function newFindingRows(findingsList: Finding[]): FindingRow[] {
     status: 'new',
     closed: false,
     threadRef: f.threadRef,
+    origin: f.origin,
   }));
 }
 
@@ -506,6 +510,11 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
       <div className="fbody">
         <div className="frow">
           <span className="sev">{row.sev}</span>
+          {row.origin === 'conversation' && (
+            <span className="pill muted" title="Filed by a person with /finding in a review thread">
+              <MessageSquare size={11} aria-hidden="true" /> from discussion
+            </span>
+          )}
           <span className="loc">{row.loc}</span>
           <span className="recon-verdict">
             {row.closed && <CheckCircle2 size={13} />}

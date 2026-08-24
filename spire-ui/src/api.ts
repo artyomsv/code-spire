@@ -59,6 +59,9 @@ export interface Finding {
   loc: string;
   msg: string;
   threadRef?: string; // the SCM thread this finding owns (present when it has a conversation)
+  // Absent for a finding the review produced from the diff — which is every row stored before
+  // conversation findings existed. 'conversation' means a human filed it with /finding.
+  origin?: 'conversation';
 }
 
 /**

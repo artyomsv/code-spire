@@ -415,6 +415,10 @@
      not read as an outage (crit, like failed) nor as nothing-to-do (muted, like cancelled). Same
      token as .rate-unset, which marks the other "someone has to choose something" state. */
   .pill.refused { --st: var(--warn); --st-soft: var(--warn-soft); }
+  /* Provenance, not a problem: a finding a person filed with /finding is context for the reader,
+     not something that needs attention — muted so it never reads as more alarming than a
+     model-reported finding beside it. */
+  .pill.muted { --st: var(--muted); --st-soft: var(--muted-soft); }
 
   /* "responding…" indicator: subtle and static (never an unbounded spinner) — `answering`
      is best-effort and can rarely stay true past a terminal failure, so it must not read
