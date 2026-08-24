@@ -158,7 +158,7 @@ public class PromptSampleRenderer {
         if (findings.isEmpty()) {
             return NONE;
         }
-        String loc = findings.get(0).loc();
+        String loc = findings.getFirst().loc();
         int lastColon = loc.lastIndexOf(':');
         String path = lastColon > 0 ? loc.substring(0, lastColon) : loc;
         String line = lastColon > 0 ? loc.substring(lastColon + 1) : "?";
