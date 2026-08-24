@@ -787,6 +787,11 @@ public class ReviewProjection {
      * on {@link #recordOpenFindings}. Each column is merged (and, on failure, skipped) independently
      * by {@link #mergeColumnOrSkip} — a decrypt/parse failure on one column must not stop the other
      * from being updated, and must not silently replace either with just this one finding.
+     *
+     * <p>Broadcasts after every actual write, like every other mutation in this file — without it a
+     * finding filed from a discussion reached the findings card and open count only once some
+     * unrelated write happened to push a fresh summary. Skipped when nothing was written (no row, or
+     * both columns failed to parse): there is nothing new for a live client to learn.
      */
     @Transactional
     public void addConversationFinding(String reviewId, String threadRef, String path, int line,
@@ -805,6 +810,7 @@ public class ReviewProjection {
             if (row.lastPostedCommit() == null) {
                 if (encryptedOpen != null) {
                     writeOpenOnly(c, reviewId, encryptedOpen);
+                    broadcast(reviewId);
                 }
                 return;
             }
@@ -813,10 +819,13 @@ public class ReviewProjection {
                     mergeColumnOrSkip(reviewId, "posted_findings_json", row.postedJson(), finding);
             if (encryptedOpen != null && encryptedPosted != null) {
                 writeOpenAndPosted(c, reviewId, encryptedOpen, encryptedPosted);
+                broadcast(reviewId);
             } else if (encryptedOpen != null) {
                 writeOpenOnly(c, reviewId, encryptedOpen);
+                broadcast(reviewId);
             } else if (encryptedPosted != null) {
                 writePostedOnly(c, reviewId, encryptedPosted);
+                broadcast(reviewId);
             } // else: both columns failed to parse -- nothing safe to write; already warned twice.
         } catch (SQLException e) {
             throw new IllegalStateException("review_status write failed", e);
