@@ -9,9 +9,11 @@ import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.contract.command.CommentCommands;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
@@ -272,11 +274,92 @@ public class IntegrationSaga {
                     e.command(), reviewId, username(e.author()));
             return;
         }
-        if ("review".equals(e.command())) {
-            triggerManualReview(e);
-        } else {
-            LOG.infof("Manual /%s command received — no handler", e.command());
+        // Normalized because a switch over null throws where the old equals-test simply fell through
+        // to "no handler": a hand-crafted record must not cost a consumer a trip through cs.dlq.
+        String command = e.command() == null ? "" : e.command();
+        switch (command) {
+            case CommentCommands.REVIEW -> triggerManualReview(e);
+            case CommentCommands.FINDING -> raiseConversationFinding(reviewId, e);
+            default -> LOG.infof("Manual /%s command received — no handler", command);
         }
+    }
+
+    /**
+     * A human filed a finding from a discussion ({@code /finding}). No LLM call and no spend gate —
+     * nothing is asked of the model, because a person already decided.
+     *
+     * <p>Normalized to the conversation root first. On an SCM that threads by immediate parent, a
+     * command typed in a reply carries THAT reply's id, and keying the finding — or the confirmation
+     * — off it would split one conversation across two refs and hide the anchor, which lives on the
+     * root. Every sibling path in this saga normalizes for the same reason.
+     *
+     * <p>The refusal here SPEAKS, unlike the authorization refusal in {@link #onManualCommand}: an
+     * authorized author who used the command where it cannot work is told how to use it. Silence is
+     * the answer to a prober, not to a colleague.
+     */
+    private void raiseConversationFinding(String reviewId, ManualCommandReceived e) {
+        ThreadRef root = e.threadRef() == null ? null : threads.rootOf(reviewId, e.threadRef());
+        // Only consulted when the event carried no location of its own — not every provider reports
+        // one on every comment surface.
+        ThreadLocation stored = root == null ? null : threads.locationOf(reviewId, root);
+        switch (ConversationFindings.resolve(e, stored)) {
+            case ConversationFindings.Refused r -> refuseConversationFinding(reviewId, e, r);
+            case ConversationFindings.Filed f -> fileConversationFinding(reviewId, e, root, f);
+        }
+    }
+
+    /** Timeline-only: the refusal text names what to do instead, and carries no finding text. */
+    private void refuseConversationFinding(String reviewId, ManualCommandReceived e,
+                                           ConversationFindings.Refused refusal) {
+        timeline.record("integration", "refused:/" + CommentCommands.FINDING, reviewId,
+                refusal.replyText());
+        LOG.infof("Refused /%s on %s — no line to anchor to (thread=%s)", CommentCommands.FINDING,
+                reviewId, e.threadRef() == null ? "none" : e.threadRef().value());
+    }
+
+    /**
+     * Append to the aggregate, then project — the order every write in this saga takes.
+     *
+     * <p>The aggregate is the single writer and holds the idempotency key, so an empty event list
+     * means this triggering comment has already raised its finding. A redelivered webhook must stop
+     * there: projecting anyway re-merges the message, and confirming anyway posts a second reply into
+     * a human's thread.
+     */
+    private void fileConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
+                                         ConversationFindings.Filed f) {
+        List<DomainEvent> appended = lifecycle.handle(reviewId,
+                new RecordCommand.RaiseConversationFinding(root, f.path(), f.line(), f.severity(),
+                        f.message(), e.commentId()));
+        if (appended.isEmpty()) {
+            LOG.infof("Ignoring redelivered /%s on %s — its comment already raised a finding",
+                    CommentCommands.FINDING, reviewId);
+            return;
+        }
+        // The message may quote source code, so it goes to the encrypted read model and is never
+        // logged (DATA-MODEL §5); the domain event above carries anchor + severity only.
+        projection.addConversationFinding(reviewId, root.value(), f.path(), f.line(), f.severity(),
+                f.message());
+        confirmFinding(reviewId, e, root, f);
+    }
+
+    /**
+     * Tell the thread the finding was filed, and at what. Fixed text, so it carries no LLM credential.
+     *
+     * <p>With no resolvable provider there is nothing to broker, and a credential-less command reaches
+     * the worker's stub sink — it would consume the worker's claim while posting nothing real. The
+     * finding itself is already filed and visible on the dashboard either way.
+     */
+    private void confirmFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
+                                ConversationFindings.Filed f) {
+        Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
+        if (provider.isEmpty()) {
+            LOG.infof("Filed a /%s on %s but posted no confirmation — no provider resolves, so there "
+                    + "is no credential to post with", CommentCommands.FINDING, reviewId);
+            return;
+        }
+        commands.emit(new ActionCommand.ConfirmFinding(reviewId, e.repo(), e.prId(), root,
+                e.commentId(), f.severity(), f.path(), f.line(),
+                workerCredentials.pack(provider.get())));
     }
 
     private List<String> allowlistFor(String reviewId) {

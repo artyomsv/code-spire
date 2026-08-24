@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.readmodel;
 
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -189,6 +190,36 @@ public class ReviewThreadView {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to mark thread resolved", e);
+        }
+    }
+
+    /**
+     * Where a thread sits in the diff, as {@code markThreadLocation}/{@code markFindingThread}
+     * recorded it — null for a thread with no row, or a row with no location (a summary or top-level
+     * comment, and every row written before V17 added the columns).
+     *
+     * <p>Answers the question a {@code /finding} asks when the command's own event carried no
+     * location: not every provider reports one on every comment surface. Pass the conversation ROOT
+     * — a reply's own ref is the branch, and only the root carries the anchor.
+     *
+     * <p>{@link ThreadLocation#of} is what stops a half-written row (a path with no line) becoming a
+     * nonsense anchor: it answers null unless both parts are present.
+     */
+    public ThreadLocation locationOf(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT path, line FROM review_thread WHERE review_id = ? AND thread_ref = ?")) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                int line = rs.getInt("line");
+                return ThreadLocation.of(rs.getString("path"), rs.wasNull() ? null : line);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read thread location", e);
         }
     }
 

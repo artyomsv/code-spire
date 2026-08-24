@@ -8,6 +8,7 @@ import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 
@@ -32,7 +33,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.PostComments.class, name = "PostComments"),
         @JsonSubTypes.Type(value = ActionCommand.AnswerFollowUp.class, name = "AnswerFollowUp"),
         @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap"),
-        @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived")
+        @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived"),
+        @JsonSubTypes.Type(value = ActionCommand.ConfirmFinding.class, name = "ConfirmFinding")
 })
 public sealed interface ActionCommand {
 
@@ -209,6 +211,23 @@ public sealed interface ActionCommand {
      * the notice appears where the event that triggered it arrived.
      */
     record NotifyArchived(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                          String scmCredential) implements ActionCommand {
+    }
+
+    /**
+     * Confirm in-thread that a {@code /finding} was filed, naming the severity and anchor it was
+     * filed at.
+     *
+     * <p>Carries no LLM credential — the notice is fixed text, so filing a finding costs no tokens,
+     * exactly as the turn-cap and archived notices do.
+     *
+     * <p>{@code threadRef} is the conversation ROOT, so the confirmation lands in the discussion the
+     * human was having rather than under whichever reply happened to carry the command.
+     * {@code triggeringCommentId} is the comment that carried it: the worker's idempotency claim,
+     * so a redelivered command posts one confirmation and not two.
+     */
+    record ConfirmFinding(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                          String triggeringCommentId, Severity severity, String path, int line,
                           String scmCredential) implements ActionCommand {
     }
 }

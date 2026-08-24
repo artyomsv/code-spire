@@ -65,6 +65,11 @@ public class DomainEventSink {
             case DomainEvent.ReviewSuperseded e -> "superseded " + e.commit();
             case DomainEvent.ReviewCompleted e -> "commit " + e.commit();
             case DomainEvent.ReviewCancelled e -> e.reason();
+            // Anchor and severity only — the finding's message may quote source code, and the event
+            // does not carry it. The finding itself was written by IntegrationSaga; this is the
+            // timeline entry, so nothing is written twice.
+            case DomainEvent.ConversationFindingRaised e ->
+                    e.severity() + " at " + e.path() + ":" + e.line();
             default -> "";
         };
     }
