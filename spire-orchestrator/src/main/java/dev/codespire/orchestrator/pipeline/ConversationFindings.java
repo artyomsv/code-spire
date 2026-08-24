@@ -22,6 +22,27 @@ public final class ConversationFindings {
     public record ParsedFinding(Severity severity, String message) {
     }
 
+    /**
+     * Far more than a human filing a finding needs, and small enough that even every distinct
+     * message {@link dev.codespire.orchestrator.readmodel.ReviewProjection#mergeMessages} could ever
+     * accumulate at one anchor stays well under Kafka's 1MB default message size — the carried
+     * snapshot this becomes part of ({@code open_findings_json}/{@code posted_findings_json}) is
+     * command-carried on every later round via {@code GenerateReview.priorRun}, so a message with no
+     * cap here would grow that command without bound on repeated {@code /finding}s at the same
+     * anchor. {@code authorAllowed} defaults to true when a provider sets no allowlist, so on a
+     * default deployment this is reachable by any PR commenter, not just a trusted operator.
+     */
+    static final int MAX_MESSAGE_LENGTH = 4_000;
+
+    /** Truncate to {@link #MAX_MESSAGE_LENGTH}, leaving a visible marker rather than silently
+     *  cutting off mid-word with no sign anything was lost. */
+    private static String capMessage(String message) {
+        if (message == null || message.length() <= MAX_MESSAGE_LENGTH) {
+            return message;
+        }
+        return message.substring(0, MAX_MESSAGE_LENGTH) + "… [truncated]";
+    }
+
     public sealed interface Outcome {
     }
 
@@ -53,8 +74,8 @@ public final class ConversationFindings {
         String[] parts = trimmed.split("\\s+", 2);
         Severity severity = severityOrNull(parts[0]);
         return severity == null
-                ? new ParsedFinding(Severity.MINOR, trimmed)
-                : new ParsedFinding(severity, parts.length > 1 ? parts[1] : "");
+                ? new ParsedFinding(Severity.MINOR, capMessage(trimmed))
+                : new ParsedFinding(severity, capMessage(parts.length > 1 ? parts[1] : ""));
     }
 
     private static Severity severityOrNull(String word) {

@@ -994,9 +994,20 @@ public class ReviewProjection {
         return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef, first.origin());
     }
 
+    /**
+     * A single {@code /finding} message is already capped at parse time
+     * ({@link ConversationFindings#MAX_MESSAGE_LENGTH}), but repeated {@code /finding}s on the SAME
+     * anchor accumulate distinct constituents here without limit — this is the defense in depth for
+     * that growth, since the merged result is what {@link #dedupeByAnchor} stores back onto the
+     * carried baseline command-carried on every later round.
+     */
+    static final int MAX_MERGED_MESSAGE_LENGTH = 20_000;
+
     /** Merge a list of message strings (some may contain "; also: "-joined segments) into a single
-     *  message with deduplicated constituents, preserving first-seen order. Idempotent: re-merging
-     *  the result with its own constituents yields the same string. */
+     *  message with deduplicated constituents, preserving first-seen order, capped at
+     *  {@link #MAX_MERGED_MESSAGE_LENGTH}. Idempotent: re-merging the result with its own
+     *  constituents yields the same string, including once capped -- splitting an already-truncated
+     *  result on "; also: " reproduces exactly the constituents it kept. */
     private static String mergeMessages(List<String> messages) {
         java.util.LinkedHashSet<String> constituents = new java.util.LinkedHashSet<>();
         for (String msg : messages) {
@@ -1010,8 +1021,20 @@ public class ReviewProjection {
                 }
             }
         }
-        return constituents.isEmpty() ? "" :
-                String.join("; also: ", constituents);
+        StringBuilder merged = new StringBuilder();
+        for (String constituent : constituents) {
+            if (merged.isEmpty()) {
+                merged.append(constituent);
+                continue;
+            }
+            String candidate = merged + "; also: " + constituent;
+            if (candidate.length() > MAX_MERGED_MESSAGE_LENGTH) {
+                break; // further constituents are dropped -- the bound matters more than completeness
+            }
+            merged.setLength(0);
+            merged.append(candidate);
+        }
+        return merged.toString();
     }
 
     /**
