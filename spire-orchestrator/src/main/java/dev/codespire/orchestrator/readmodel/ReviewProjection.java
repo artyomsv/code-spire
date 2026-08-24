@@ -761,7 +761,9 @@ public class ReviewProjection {
      * doubling the count.
      *
      * <p>Runs inside one locked read-modify-write, for the same concurrent-writer reason documented
-     * on {@link #recordOpenFindings}.
+     * on {@link #recordOpenFindings}. Each column is merged (and, on failure, skipped) independently
+     * by {@link #mergeColumnOrSkip} — a decrypt/parse failure on one column must not stop the other
+     * from being updated, and must not silently replace either with just this one finding.
      */
     @Transactional
     public void addConversationFinding(String reviewId, String threadRef, String path, int line,
@@ -775,31 +777,51 @@ public class ReviewProjection {
                 return;
             }
 
-            String encryptedOpen = encryptFindings(reviewId, mergedWith(row.openJson(), reviewId, finding));
-            if (encryptedOpen == null) {
-                return;
-            }
+            String encryptedOpen = mergeColumnOrSkip(reviewId, "open_findings_json", row.openJson(), finding);
 
             if (row.lastPostedCommit() == null) {
-                writeOpenOnly(c, reviewId, encryptedOpen);
+                if (encryptedOpen != null) {
+                    writeOpenOnly(c, reviewId, encryptedOpen);
+                }
                 return;
             }
 
-            String encryptedPosted = encryptFindings(reviewId, mergedWith(row.postedJson(), reviewId, finding));
-            if (encryptedPosted == null) {
-                return;
-            }
-            writeOpenAndPosted(c, reviewId, encryptedOpen, encryptedPosted);
+            String encryptedPosted =
+                    mergeColumnOrSkip(reviewId, "posted_findings_json", row.postedJson(), finding);
+            if (encryptedOpen != null && encryptedPosted != null) {
+                writeOpenAndPosted(c, reviewId, encryptedOpen, encryptedPosted);
+            } else if (encryptedOpen != null) {
+                writeOpenOnly(c, reviewId, encryptedOpen);
+            } else if (encryptedPosted != null) {
+                writePostedOnly(c, reviewId, encryptedPosted);
+            } // else: both columns failed to parse -- nothing safe to write; already warned twice.
         } catch (SQLException e) {
             throw new IllegalStateException("review_status write failed", e);
         }
     }
 
-    private List<ReviewDetail.FindingView> mergedWith(String currentJson, String reviewId,
-                                                       ReviewDetail.FindingView finding) {
-        List<ReviewDetail.FindingView> merged = new ArrayList<>(parseFindings(currentJson, reviewId));
+    /**
+     * Merge {@code finding} into one column's CURRENT content, or null if that content is non-null
+     * but fails to decrypt/parse — a blind merge in that case ({@code parseFindings}'s ordinary
+     * degrade-to-empty-list posture, correct everywhere else in this file) would silently REPLACE the
+     * column with just this one finding, destroying whatever was actually stored there. This
+     * read-modify-write is the one new place in the file where that degrade posture would be
+     * destructive rather than merely lossy-on-read, because nothing wrote this column from scratch
+     * before this method existed. Absent/blank current content is not a failure — there was
+     * legitimately nothing to lose. Logs only the reviewId and column name on skip, never finding
+     * text.
+     */
+    private String mergeColumnOrSkip(String reviewId, String columnName, String currentJson,
+                                     ReviewDetail.FindingView finding) {
+        Optional<List<ReviewDetail.FindingView>> parsed = tryParseFindings(currentJson, reviewId);
+        if (parsed.isEmpty()) {
+            LOG.warnf("addConversationFinding: %s for %s failed to decrypt/parse; skipping its write "
+                    + "rather than silently replacing it with just this one finding", columnName, reviewId);
+            return null;
+        }
+        List<ReviewDetail.FindingView> merged = new ArrayList<>(parsed.get());
         merged.add(finding);
-        return dedupeByAnchor(merged);
+        return encryptFindings(reviewId, dedupeByAnchor(merged));
     }
 
     private String encryptFindings(String reviewId, List<ReviewDetail.FindingView> findings) {
@@ -829,6 +851,18 @@ public class ReviewProjection {
             ps.setString(1, encryptedOpen);
             ps.setString(2, encryptedPosted);
             ps.setString(3, reviewId);
+            ps.executeUpdate();
+        }
+    }
+
+    /** The rare counterpart to {@link #writeOpenOnly}: only reached when
+     *  {@link #mergeColumnOrSkip} skipped {@code open_findings_json} (a decrypt/parse failure on
+     *  it) but {@code posted_findings_json} merged fine. */
+    private void writePostedOnly(Connection c, String reviewId, String encryptedPosted) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE review_status SET posted_findings_json = ?, updated_at = now() WHERE review_id = ?")) {
+            ps.setString(1, encryptedPosted);
+            ps.setString(2, reviewId);
             ps.executeUpdate();
         }
     }
@@ -2087,6 +2121,32 @@ public class ReviewProjection {
         } catch (Exception e) {
             LOG.debugf("Failed to parse findings_json: %s", e.getMessage());
             return List.of();
+        }
+    }
+
+    /**
+     * Same decrypt+parse as {@link #parseFindings}, but distinguishes "genuinely empty" from
+     * "failed to parse" — empty {@link Optional} means failure, {@code Optional.of(List.of())} means
+     * the column was legitimately absent/blank or decrypted to a real empty array. Needed only where
+     * a failure must SKIP a write rather than silently degrade to an empty list: see
+     * {@link #mergeColumnOrSkip}, where {@link #parseFindings}'s ordinary degrade-to-empty would turn
+     * a decrypt/parse failure into a write that REPLACES the column with just one new finding,
+     * destroying whatever was actually stored there. Never throws.
+     */
+    private Optional<List<ReviewDetail.FindingView>> tryParseFindings(String stored, String reviewId) {
+        if (stored == null || stored.isBlank()) {
+            return Optional.of(List.of());
+        }
+        String json;
+        try {
+            json = encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException notEncrypted) {
+            json = stored; // legacy plaintext row
+        }
+        try {
+            return Optional.of(mapper.readerForListOf(ReviewDetail.FindingView.class).readValue(json));
+        } catch (Exception e) {
+            return Optional.empty();
         }
     }
 

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
@@ -138,7 +139,7 @@ class ReviewProjectionConversationFindingTest {
      * yet and writing one would invent a snapshot that was never actually posted.
      */
     @Test
-    void addConversationFindingSkipsThePostedSnapshotWhenNeverPosted() {
+    void addConversationFindingSkipsThePostedSnapshotWhenNeverPosted() throws SQLException {
         long pr = ReviewFixtures.newPr();
         String reviewId = ReviewFixtures.reviewIdFor(pr);
         projection.registerHeader(reviewId, ReviewFixtures.REPO_REF, pr, "TEST-TITLE", "TEST-AUTHOR",
@@ -149,8 +150,62 @@ class ReviewProjectionConversationFindingTest {
         projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
                 Severity.MINOR, "shadows the field");
 
+        // The column check is the real discrimination: priorRunFor returns empty whenever
+        // last_posted_commit is null REGARDLESS of what posted_findings_json holds, so asserting
+        // against priorRunFor alone would pass even if the skip were deleted.
+        assertNull(rawPostedFindingsJson(reviewId),
+                "posted_findings_json must not be written for a review that has never been posted");
         assertTrue(projection.priorRunFor(reviewId).isEmpty(),
                 "posted_findings_json must not be invented for a review that has never been posted");
+    }
+
+    private String rawPostedFindingsJson(String reviewId) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT posted_findings_json FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getString("posted_findings_json");
+            }
+        }
+    }
+
+    /**
+     * A decrypt/parse failure on {@code posted_findings_json} must not turn a conversation finding
+     * into a destructive overwrite. {@code parseFindings}'s ordinary degrade-to-empty-list posture is
+     * correct everywhere else in the file, but {@code addConversationFinding}'s merge is a
+     * read-modify-write: blindly merging into an empty list would REPLACE whatever was actually
+     * stored with just this one new finding. {@code open_findings_json} must still be updated —
+     * one column's corruption must not block the other.
+     */
+    @Test
+    void addConversationFindingSkipsAnUnparseablePostedColumnRatherThanDestroyingIt() throws SQLException {
+        String reviewId = registerReviewWithOpenFindings("src/Bar.java:10", "warning");
+        corruptPostedFindingsJson(reviewId);
+        String corrupted = rawPostedFindingsJson(reviewId);
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+
+        assertEquals(corrupted, rawPostedFindingsJson(reviewId),
+                "a decrypt/parse failure must skip the write, not replace the column with just the "
+                        + "new finding");
+        assertTrue(projection.openFindingsFor(reviewId).stream()
+                        .anyMatch(f -> "src/Foo.java:44".equals(f.loc())),
+                "open_findings_json must still be updated even though posted_findings_json could not be");
+    }
+
+    /** Writes a value that is neither valid Tink ciphertext for this reviewId nor valid legacy-plaintext
+     *  JSON, into {@code posted_findings_json} — simulating real corruption or a decrypt failure. */
+    private void corruptPostedFindingsJson(String reviewId) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE review_status SET posted_findings_json = ? WHERE review_id = ?")) {
+            ps.setString(1, "NOT-VALID-CIPHERTEXT-OR-JSON");
+            ps.setString(2, reviewId);
+            ps.executeUpdate();
+        }
     }
 
     /**
