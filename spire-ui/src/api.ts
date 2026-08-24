@@ -938,6 +938,11 @@ export interface PromptPreview {
   system: string;
   user: string;
   errors: string[];
+  // The review this was rendered against, or null for the annotated (no-data) preview.
+  sampleReviewId: string | null;
+  // Why a requested sample could not be rendered — shown beside the annotated fallback so an
+  // empty-looking panel is never mistaken for a broken preview.
+  unavailableReason: string | null;
 }
 
 export async function fetchPrompts(): Promise<PromptView[]> {
@@ -995,11 +1000,13 @@ export async function resetPrompt(kind: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to reset prompt');
 }
 
-export async function previewPrompt(kind: string, system: string, body: string): Promise<PromptPreview> {
+export async function previewPrompt(
+  kind: string, system: string, body: string, reviewId?: string,
+): Promise<PromptPreview> {
   const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ system, body }),
+    body: JSON.stringify({ system, body, reviewId }),
   });
   if (!res.ok) return throwResponse(res, 'Failed to preview prompt');
   return res.json();

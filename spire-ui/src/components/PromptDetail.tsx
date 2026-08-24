@@ -1,16 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { AlertTriangle, ArrowLeft, Eye, FileText, RotateCcw } from 'lucide-react';
-import {
-  fetchPrompt,
-  previewPrompt,
-  resetPrompt,
-  savePrompt,
-  type PromptPreview,
-  type PromptView,
-} from '../api';
-import Tooltip from './Tooltip';
+import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
+import { fetchPrompt, resetPrompt, savePrompt, type PromptView } from '../api';
 import AutoTextarea from './AutoTextarea';
+import PromptSamplePicker from './PromptSamplePicker';
 import { KIND_LABELS } from './promptKinds';
 
 // Matches the server's PromptValidation token pattern — used only for the client-side
@@ -65,15 +58,18 @@ export default function PromptDetail() {
   );
 }
 
-type Busy = 'save' | 'reset' | 'preview' | null;
+type Busy = 'save' | 'reset' | null;
 
 function PromptEditor({ initial }: { initial: PromptView }) {
   const [system, setSystem] = useState(initial.system);
   const [body, setBody] = useState(initial.body);
   const [customized, setCustomized] = useState(initial.customized);
-  const [preview, setPreview] = useState<PromptPreview | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
+  // Remounts PromptSamplePicker on save/reset, the same way the old inline preview was cleared —
+  // stale sample text and a stale review selection must not survive a system/body change the
+  // operator did not ask this preview to reflect.
+  const [previewGen, setPreviewGen] = useState(0);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const missingRequired = initial.palette.filter((v) => v.required && !referencedVariables(body).has(v.name));
@@ -100,7 +96,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     try {
       const saved = await savePrompt(initial.kind, system, body);
       setCustomized(saved.customized);
-      setPreview(null);
+      setPreviewGen((g) => g + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -119,19 +115,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       setSystem(fresh.system);
       setBody(fresh.body);
       setCustomized(fresh.customized);
-      setPreview(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function onPreview() {
-    setBusy('preview');
-    setError(null);
-    try {
-      setPreview(await previewPrompt(initial.kind, system, body));
+      setPreviewGen((g) => g + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -208,17 +192,6 @@ function PromptEditor({ initial }: { initial: PromptView }) {
         )}
 
         <div className="prov-actions" style={{ marginTop: 4 }}>
-          <Tooltip label="Preview">
-            <button
-              type="button"
-              className="btn-ghost"
-              aria-label="Preview"
-              disabled={busy !== null}
-              onClick={() => void onPreview()}
-            >
-              <Eye size={14} aria-hidden="true" />
-            </button>
-          </Tooltip>
           <button type="button" className="btn-ghost" disabled={busy !== null} onClick={() => void onReset()}>
             <RotateCcw size={14} aria-hidden="true" /> Reset to default
           </button>
@@ -232,29 +205,13 @@ function PromptEditor({ initial }: { initial: PromptView }) {
           </button>
         </div>
 
-        {preview && <PreviewPanel preview={preview} />}
-      </div>
-    </div>
-  );
-}
-
-function PreviewPanel({ preview }: { preview: PromptPreview }) {
-  return (
-    <div className="ctx-preview" style={{ marginTop: 14 }}>
-      {preview.errors.length > 0 && (
-        <div className="modal-msg modal-error">
-          {preview.errors.map((e) => (
-            <div key={e}>{e}</div>
-          ))}
-        </div>
-      )}
-      <div className="ctx-preview-item">
-        <div className="ctx-preview-title">System (with locked suffix)</div>
-        <pre className="ctx-preview-body">{preview.system}</pre>
-      </div>
-      <div className="ctx-preview-item">
-        <div className="ctx-preview-title">User (variable slots annotated)</div>
-        <pre className="ctx-preview-body">{preview.user}</pre>
+        <PromptSamplePicker
+          key={previewGen}
+          kind={initial.kind}
+          system={system}
+          body={body}
+          disabled={busy !== null}
+        />
       </div>
     </div>
   );
