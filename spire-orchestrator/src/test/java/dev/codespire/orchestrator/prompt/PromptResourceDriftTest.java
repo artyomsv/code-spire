@@ -90,7 +90,7 @@ class PromptResourceDriftTest {
              PreparedStatement ps = c.prepareStatement("""
                      INSERT INTO prompt_template (kind, system_text, body_text, updated_at)
                      VALUES (?, ?, ?, now())
-                     ON CONFLICT (kind) DO UPDATE
+                     ON CONFLICT (scope, kind) DO UPDATE
                          SET system_text       = EXCLUDED.system_text,
                              body_text         = EXCLUDED.body_text,
                              base_system_text  = NULL,
@@ -113,7 +113,7 @@ class PromptResourceDriftTest {
                      INSERT INTO prompt_template
                          (kind, system_text, body_text, base_system_text, base_body_text, updated_at)
                      VALUES (?, ?, ?, ?, ?, now())
-                     ON CONFLICT (kind) DO UPDATE
+                     ON CONFLICT (scope, kind) DO UPDATE
                          SET system_text       = EXCLUDED.system_text,
                              body_text         = EXCLUDED.body_text,
                              base_system_text  = EXCLUDED.base_system_text,
