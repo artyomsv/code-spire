@@ -805,7 +805,11 @@ The design is fully specified in `docs/` — **treat those files as the source o
     finding then behaves exactly like a review-discovered one: it counts toward findings/blocker totals,
     carries an `origin: 'conversation'` tag the UI renders as "from discussion," and survives
     reconciliation on the next round via `PriorFinding` like any other prior finding. Closes
-    `techdebt/global/4-4-conversation-derived-findings.md` (deleted). Runbook: SMOKE-TEST **Mode N**.
+    `techdebt/global/4-4-conversation-derived-findings.md` (deleted). `/finding` inherits the same
+    gap `/review` already had — neither checks `policy.observeOnly()` — widened from one path to
+    three rather than fixed here, since whether commands should work at all in observe mode is a
+    product decision; filed as `techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`.
+    Runbook: SMOKE-TEST **Mode N**.
 
   `docs/REPO-RULES.md` now draws the line this raised: a per-repo prompt is an **operator-owned**
   change to the reviewer's *instructions* (structure, persona, which variables even appear), while
