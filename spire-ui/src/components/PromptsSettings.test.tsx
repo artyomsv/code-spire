@@ -13,8 +13,20 @@ const reviewView: api.PromptView = {
   updatedAt: null,
   palette: [{ name: 'diff', required: true, fenced: true, maxTokens: 24000, description: 'The diff.' }],
   lockedSuffixPreview: 'SECURITY: ... "findings"',
+  baseKnown: true,
+  defaultDrifted: false,
+  currentDefaultSystem: 'persona',
+  currentDefaultBody: 'review {{diff}}',
+  baseSystem: null,
+  baseBody: null,
 };
-const reconcileView: api.PromptView = { ...reviewView, kind: 'reconcile', customized: true };
+const reconcileView: api.PromptView = {
+  ...reviewView,
+  kind: 'reconcile',
+  customized: true,
+  baseSystem: 'persona',
+  baseBody: 'review {{diff}}',
+};
 const followupView: api.PromptView = { ...reviewView, kind: 'followup' };
 
 describe('PromptsSettings (list)', () => {
@@ -37,6 +49,22 @@ describe('PromptsSettings (list)', () => {
     expect(screen.getAllByRole('button')).toHaveLength(3);
     // The customized kind is tagged Custom; the list no longer shows editors/palettes.
     expect(screen.getByText('Custom')).toBeInTheDocument();
+  });
+
+  it('badges only the kind whose shipped default has drifted', async () => {
+    vi.spyOn(api, 'fetchPrompts').mockResolvedValue([
+      reviewView,
+      { ...reconcileView, defaultDrifted: true },
+      followupView,
+    ]);
+    render(
+      <MemoryRouter>
+        <PromptsSettings />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/update available/i)).toBeInTheDocument());
+    expect(screen.getAllByText(/update available/i)).toHaveLength(1);
   });
 });
 

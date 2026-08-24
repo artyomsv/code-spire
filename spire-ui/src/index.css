@@ -1159,7 +1159,35 @@
     padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-3);
   }
   .prompt-tag.is-custom { color: var(--iris); border-color: var(--iris); background: var(--iris-soft); }
+  .prompt-tag.is-drifted {
+    display: inline-flex; align-items: center; gap: 3px;
+    color: var(--warn); border-color: var(--warn); background: var(--warn-soft);
+  }
   .prompt-back { margin-bottom: 12px; }
+
+  /* Prompt default drift: what changed in the shipped default since a customization, and the two
+     ways out (keep mine / take the new default). Renders above the editor. */
+  .prompt-drift {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 14px; border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); background: var(--warn-soft);
+  }
+  .prompt-drift-banner { display: flex; align-items: center; gap: 8px; color: var(--warn); font-size: 13px; font-weight: 600; }
+  .prompt-drift-muted { margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+  .prompt-drift-diff { border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); overflow: hidden; }
+  .prompt-drift-diff-title { padding: 7px 10px; font-weight: 600; font-size: 12px; color: var(--text-2); border-bottom: 1px solid var(--border); }
+  .prompt-drift-diff-body {
+    margin: 0; padding: 6px 0; max-height: 260px; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  }
+  .diff-line { padding: 0 10px; }
+  .diff-marker { display: inline-block; width: 14px; color: var(--text-3); }
+  .diff-line.diff-added { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--text); }
+  .diff-line.diff-added .diff-marker { color: var(--good); }
+  .diff-line.diff-removed { background: color-mix(in srgb, var(--crit) 14%, transparent); color: var(--text); }
+  .diff-line.diff-removed .diff-marker { color: var(--crit); }
+  .diff-line.diff-same { color: var(--text-3); }
+  .prompt-drift-actions { display: flex; gap: 8px; }
 
   /* Attention bell. The count badge is the only always-visible signal, so it must read at a
      glance without relying on colour alone -- the panel repeats the severity as an icon. */

@@ -931,6 +931,15 @@ export interface PromptView {
   updatedAt: string | null;
   palette: PromptVariable[];
   lockedSuffixPreview: string; // always appended server-side — shown read-only, never editable
+  // Drift: baseKnown=false means this row predates ancestor tracking, so drift is unknown --
+  // never treat that as "up to date". When baseKnown, baseSystem/baseBody are the ancestor
+  // recorded at last save and currentDefaultSystem/currentDefaultBody are what ships now.
+  baseKnown: boolean;
+  defaultDrifted: boolean;
+  currentDefaultSystem: string;
+  currentDefaultBody: string;
+  baseSystem: string | null;
+  baseBody: string | null;
 }
 
 /** The assembled text a real review call would send, with variable slots annotated. */
@@ -998,6 +1007,17 @@ export async function savePrompt(kind: string, system: string, body: string): Pr
 export async function resetPrompt(kind: string): Promise<void> {
   const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, { method: 'DELETE' });
   if (!res.ok) await throwResponse(res, 'Failed to reset prompt');
+}
+
+/**
+ * Keep the customization, stop reporting drift: re-stamp the ancestor to what ships now. The
+ * operator's saved system/body text is untouched -- callers must re-fetch to see the cleared
+ * drift flags. Deliberately not a `resetPrompt` variant -- reset discards the customization,
+ * this preserves it.
+ */
+export async function acceptPromptDefault(kind: string): Promise<void> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/accept-default`, { method: 'POST' });
+  if (!res.ok) await throwResponse(res, 'Failed to accept current default');
 }
 
 export async function previewPrompt(

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, FileText } from 'lucide-react';
+import { AlertTriangle, ChevronRight, FileText } from 'lucide-react';
 import { fetchPrompts, type PromptView } from '../api';
 import { KIND_LABELS } from './promptKinds';
 
@@ -61,6 +61,14 @@ export default function PromptsSettings() {
                     <span className={`prompt-tag ${p.customized ? 'is-custom' : ''}`}>
                       {p.customized ? 'Custom' : 'Default'}
                     </span>
+                    {p.defaultDrifted && (
+                      <span
+                        className="prompt-tag is-drifted"
+                        title="The built-in default has changed since this was customized"
+                      >
+                        <AlertTriangle size={11} aria-hidden="true" /> Update available
+                      </span>
+                    )}
                   </div>
                   <div className="prompt-row-sub">{KIND_BLURBS[p.kind] ?? ''}</div>
                 </div>

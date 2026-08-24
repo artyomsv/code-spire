@@ -1,10 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
-import { fetchPrompt, resetPrompt, savePrompt, type PromptView } from '../api';
+import { acceptPromptDefault, fetchPrompt, resetPrompt, savePrompt, type PromptView } from '../api';
 import AutoTextarea from './AutoTextarea';
+import PromptDriftBanner, { type PromptDrift } from './PromptDriftBanner';
 import PromptSamplePicker from './PromptSamplePicker';
 import { KIND_LABELS } from './promptKinds';
+
+function driftOf(v: PromptView): PromptDrift {
+  return {
+    baseKnown: v.baseKnown,
+    defaultDrifted: v.defaultDrifted,
+    currentDefaultSystem: v.currentDefaultSystem,
+    currentDefaultBody: v.currentDefaultBody,
+    baseSystem: v.baseSystem,
+    baseBody: v.baseBody,
+  };
+}
 
 // Matches the server's PromptValidation token pattern — used only for the client-side
 // "missing required variable" hint; the server is still the source of truth on Save.
@@ -58,12 +70,13 @@ export default function PromptDetail() {
   );
 }
 
-type Busy = 'save' | 'reset' | null;
+type Busy = 'save' | 'reset' | 'accept' | null;
 
 function PromptEditor({ initial }: { initial: PromptView }) {
   const [system, setSystem] = useState(initial.system);
   const [body, setBody] = useState(initial.body);
   const [customized, setCustomized] = useState(initial.customized);
+  const [drift, setDrift] = useState<PromptDrift>(driftOf(initial));
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   // Remounts PromptSamplePicker on save/reset, the same way the old inline preview was cleared —
@@ -115,7 +128,23 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       setSystem(fresh.system);
       setBody(fresh.body);
       setCustomized(fresh.customized);
+      setDrift(driftOf(fresh));
       setPreviewGen((g) => g + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Keep mine: re-stamp the ancestor, leaving `system`/`body` byte-identical. */
+  async function onAcceptDefault() {
+    setBusy('accept');
+    setError(null);
+    try {
+      await acceptPromptDefault(initial.kind);
+      const fresh = await fetchPrompt(initial.kind);
+      setDrift(driftOf(fresh));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -138,6 +167,13 @@ function PromptEditor({ initial }: { initial: PromptView }) {
         )}
       </div>
       <div className="body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <PromptDriftBanner
+          drift={drift}
+          busy={busy !== null}
+          onTakeDefault={() => void onReset()}
+          onKeepMine={() => void onAcceptDefault()}
+        />
+
         <label className="field">
           <span>Instructions (system)</span>
           <AutoTextarea value={system} onChange={(e) => setSystem(e.target.value)} rows={4} disabled={busy !== null} />
