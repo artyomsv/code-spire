@@ -227,6 +227,73 @@ class ConversationSagaTest {
     }
 
     /**
+     * The prompt {@link ConversationSaga} resolves must be the one that actually reaches the command
+     * — not merely resolved and discarded. {@code GenerateReview}/{@code AnswerFollowUp} both have
+     * convenience constructors that silently default their prompt fields to null, so a future refactor
+     * that switches to one would compile cleanly and disable every repo-scoped prompt customization
+     * with nothing failing; every other test in this class stubs {@code promptTemplates} to always
+     * return null, which cannot tell that apart from the value never being wired at all.
+     */
+    @Test
+    void theResolvedPromptReachesTheAnswerFollowUpCommand() {
+        ConversationSaga saga = new ConversationSaga();
+        saga.reviewProviders = new ReviewProviderResolver() {
+            @Override
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
+                return Optional.of(githubProvider());
+            }
+        };
+        saga.levels = fixedLevel(ConversationLevel.EXPLAIN);
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public int turnCount(String reviewId, ThreadRef thread) {
+                return 0;
+            }
+        };
+        saga.workerCredentials = new WorkerCredentials() {
+            @Override
+            public String pack(ScmProvider p) {
+                return "packed:" + p.workspace();
+            }
+        };
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
+            }
+        };
+        saga.timeline = new TimelineBroadcaster() {
+            @Override
+            public void record(String lane, String type, String reviewId, String detail) {
+            }
+        };
+        saga.projection = projectionWith(List.of());
+        // Only answers for the exact (kind, repo) this reply's command is expected to carry — a stub
+        // that answered for every repo could not tell "the right value was passed through" from
+        // "some value was passed through".
+        saga.promptTemplates = new WorkerPromptTemplates() {
+            @Override
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, RepoRef repo) {
+                if (kind == dev.codespire.contract.llm.PromptKind.FOLLOWUP
+                        && repo.equals(new RepoRef("acme", "web"))) {
+                    return new dev.codespire.contract.llm.PromptTemplate(
+                            kind, "TEST-CANARY-PERSONA", "TEST-CANARY-BODY {{diff}}");
+                }
+                return null;
+            }
+        };
+        saga.spendGate = uncappedGate();
+
+        Optional<ActionCommand> cmd = saga.planFollowUp(topLevelReply("review::acme/web#412"));
+
+        ActionCommand.AnswerFollowUp answer =
+                assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.orElseThrow());
+        assertEquals("TEST-CANARY-PERSONA", answer.followUpPrompt().system(),
+                "the prompt WorkerPromptTemplates resolved must be the one the command carries");
+    }
+
+    /**
      * Bitbucket threads by immediate parent, so a reply to the bot's own answer arrives with THAT
      * answer's comment id as the threadRef. The saga must normalize it to the conversation root, so the
      * command, the turn count and the stored event all key off one id per conversation.
