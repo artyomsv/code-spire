@@ -1159,11 +1159,34 @@
     padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-3);
   }
   .prompt-tag.is-custom { color: var(--iris); border-color: var(--iris); background: var(--iris-soft); }
+  .prompt-tag.is-inherited { color: var(--blue); border-color: var(--blue); background: var(--blue-soft); }
   .prompt-tag.is-drifted {
     display: inline-flex; align-items: center; gap: 3px;
     color: var(--warn); border-color: var(--warn); background: var(--warn-soft);
   }
   .prompt-back { margin-bottom: 12px; }
+
+  /* Scope picker — the "Prompts" card header (list page) and, compactly, wherever else the
+     current scope needs to be visible/changeable. Native <select>, not the custom Select: see
+     PromptScopePicker.tsx. */
+  .prompt-scope-picker { flex: none; min-width: 200px; max-width: 280px; gap: 3px; }
+  .prompt-scope-picker select { height: 32px; padding: 6px 10px; font-size: 12.5px; }
+
+  /* Provenance line — which row (repo override / global override / built-in default) actually
+     supplied the text on screen. Deliberately louder than a footnote: a repo scope showing
+     global's text looks identical to one with its own override unless this line says otherwise. */
+  .prompt-provenance {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 18px; font-size: 12.5px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .prompt-provenance.is-repo { color: var(--iris); background: var(--iris-soft); }
+  .prompt-provenance.is-global { color: var(--blue); background: var(--blue-soft); }
+  .prompt-provenance.is-default { color: var(--text-3); background: var(--panel-2); }
+  .prompt-provenance-scope {
+    font-family: var(--font-mono); font-weight: 500; font-size: 11.5px;
+    color: var(--text-2); margin-left: auto;
+  }
 
   /* Prompt default drift: what changed in the shipped default since a customization, and the two
      ways out (keep mine / take the new default). Renders above the editor. */

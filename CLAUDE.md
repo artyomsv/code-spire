@@ -774,13 +774,53 @@ The design is fully specified in `docs/` — **treat those files as the source o
   across 45 files**; `tsc --noEmit` silent. Spec B — the per-repo admission rate limit — is deliberately
   **not** built (it is the only part needing new storage); what it must carry is recorded in the design.
   Runbook: SMOKE-TEST **Mode M**.
+- **Per-repository prompts and conversation-derived findings delivered (ROADMAP E16/E17, 2026-08-24):**
+  the two items the prompt-management shipment deferred, both closed.
+  - **Prompt scope.** `prompt_template` re-keyed `(scope, kind)` (V34, on top of V33's per-customization
+    ancestor tracking); `PromptRegistry.effective` resolves **repository → global → built-in default**,
+    most-specific-wins with no per-field merge (a repo row replaces both `system` and `body` together,
+    never mixes one field from the repo row with the other from global); the orchestrator resolves each
+    `GenerateReview`/reconcile/follow-up command's prompt against its own repository before dispatch; the
+    whole `/api/prompts` surface (including the new `/api/prompts/scopes` — repositories this deployment
+    has actually reviewed, sourced from the orchestrator's own review rows, not the gateway's
+    `webhook_repo`) takes `?scope=`. `PromptView` gained `scope` and `inheritedFrom` (`repo`/`global`/
+    `default` — which row actually supplied the text, not what scope was requested), and the dashboard
+    finally has a UI for it: `PromptScopePicker` (a native `<select>`, not the project's usual custom
+    combobox — its correctness depends on the browser's own display-value semantics) holds the selection
+    in the URL query string on both `PromptsSettings` and `PromptDetail`, so a reload or a shared link
+    lands back on the same repository. Provenance is unmissable rather than a subtle hint: `PromptDetail`
+    shows one of **Overridden for this repository** / **Inherited from global** / **Built-in default**
+    (scope-aware — a global-scope customization reads "applies to every repository," never "inherited,"
+    since there is nothing above it to inherit from), and `PromptsSettings` tags every kind's row the
+    same way at the current scope, so a repository showing global's text can never look identical to one
+    with its own override. Also delivered in the run-up to this: sample-review preview
+    (`PromptSamplePicker`) and the default-drift banner (`PromptDriftBanner`, V33) — the other two
+    follow-ups the original shipment deferred.
+  - **Conversation-derived findings.** A `/finding` command (`ConfirmFinding` → `ConversationFindingRaised`
+    — anchor and severity only, no message text, so a quoted snippet never enters the replayable event
+    log per DATA-MODEL.md §5) lets an allowed author file the thread they're in as a first-class finding
+    instead of leaving it as prose the reviewer never revisits. Idempotent on redelivery
+    (`raisedFindingComments`, same shape as `reviewedCommits`), refused on an unregistered PR or a
+    disallowed author the same way `/review` is, and confirmed back into the thread it was run in. The
+    finding then behaves exactly like a review-discovered one: it counts toward findings/blocker totals,
+    carries an `origin: 'conversation'` tag the UI renders as "from discussion," and survives
+    reconciliation on the next round via `PriorFinding` like any other prior finding. Closes
+    `techdebt/global/4-4-conversation-derived-findings.md` (deleted). Runbook: SMOKE-TEST **Mode N**.
+
+  `docs/REPO-RULES.md` now draws the line this raised: a per-repo prompt is an **operator-owned**
+  change to the reviewer's *instructions* (structure, persona, which variables even appear), while
+  `.codespire` stays **contributor-owned** *data* that can only add text into the same fenced,
+  untrusted-data slot as a Jira ticket — different owner, different trust level, different power, and
+  the two compose rather than compete.
+
+  Measured, not estimated: **1399 Java tests across 181 suites** (`testFast` 520/64 + `testServices` —
+  gateway 68/11, orchestrator 644/86, worker 167/20); **368 `spire-ui` vitest tests across 51 files**;
+  `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
   deliberately operator-entered (ADR-018): a hardcoded cost table would silently mis-price every
-  review as prices drift, which is the no-fabricated-data rule applied to money. Conversation-derived
-  findings (a discussion that surfaces a real defect doesn't register one) remain open in
-  `techdebt/global/`.
+  review as prices drift, which is the no-fabricated-data rule applied to money.
 
 ## Build & run
 

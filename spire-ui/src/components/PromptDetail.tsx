@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
-import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
-import { acceptPromptDefault, fetchPrompt, resetPrompt, savePrompt, type PromptView } from '../api';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { AlertTriangle, ArrowLeft, FileText, GitBranch, Globe, RotateCcw } from 'lucide-react';
+import { acceptPromptDefault, fetchPrompt, GLOBAL_SCOPE, resetPrompt, savePrompt, type PromptView } from '../api';
 import AutoTextarea from './AutoTextarea';
 import PromptDriftBanner, { type PromptDrift } from './PromptDriftBanner';
 import PromptSamplePicker from './PromptSamplePicker';
-import { KIND_LABELS } from './promptKinds';
+import { KIND_LABELS, provenanceLabel } from './promptKinds';
 
 function driftOf(v: PromptView): PromptDrift {
   return {
@@ -29,10 +29,14 @@ function referencedVariables(text: string): Set<string> {
 }
 
 /** The per-kind edit page (`/settings/prompts/:kind`): loads the effective template by kind and
- *  renders the editor. A missing/unknown kind surfaces the server's 404 as an inline error. */
+ *  renders the editor. A missing/unknown kind surfaces the server's 404 as an inline error.
+ *  Scope lives in `?scope=` -- read here, threaded through every mutation, and carried back onto
+ *  the "All prompts" link so leaving and returning keeps the same repository selected. */
 export default function PromptDetail() {
   const { kind = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const scope = searchParams.get('scope') ?? GLOBAL_SCOPE;
   const [view, setView] = useState<PromptView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,18 +45,20 @@ export default function PromptDetail() {
     let alive = true;
     setLoading(true);
     setError(null);
-    fetchPrompt(kind)
+    fetchPrompt(kind, scope)
       .then((v) => alive && setView(v))
       .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [kind]);
+  }, [kind, scope]);
+
+  const backHref = scope === GLOBAL_SCOPE ? '/settings/prompts' : `/settings/prompts?scope=${encodeURIComponent(scope)}`;
 
   return (
     <section className="content">
-      <button type="button" className="btn-ghost prompt-back" onClick={() => navigate('/settings/prompts')}>
+      <button type="button" className="btn-ghost prompt-back" onClick={() => navigate(backHref)}>
         <ArrowLeft size={14} aria-hidden="true" /> All prompts
       </button>
       {error && (
@@ -65,8 +71,27 @@ export default function PromptDetail() {
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         </div>
       )}
-      {view && <PromptEditor key={view.kind} initial={view} />}
+      {view && <PromptEditor key={`${view.kind}:${view.scope}`} initial={view} />}
     </section>
+  );
+}
+
+/** Icon per provenance level -- reinforces the text line rather than replacing it. */
+function ProvenanceIcon({ inheritedFrom }: { inheritedFrom: PromptView['inheritedFrom'] }) {
+  if (inheritedFrom === 'repo') return <GitBranch size={13} aria-hidden="true" />;
+  if (inheritedFrom === 'global') return <Globe size={13} aria-hidden="true" />;
+  return <FileText size={13} aria-hidden="true" />;
+}
+
+/** Unmissable by design: a repo scope showing global's (or the default's) text looks identical to
+ *  one with its own override unless this line says otherwise. */
+function ProvenanceLine({ scope, inheritedFrom }: { scope: string; inheritedFrom: PromptView['inheritedFrom'] }) {
+  return (
+    <div className={`prompt-provenance is-${inheritedFrom}`}>
+      <ProvenanceIcon inheritedFrom={inheritedFrom} />
+      <span>{provenanceLabel(scope, inheritedFrom)}</span>
+      {scope !== GLOBAL_SCOPE && <span className="prompt-provenance-scope">{scope}</span>}
+    </div>
   );
 }
 
@@ -76,6 +101,9 @@ function PromptEditor({ initial }: { initial: PromptView }) {
   const [system, setSystem] = useState(initial.system);
   const [body, setBody] = useState(initial.body);
   const [customized, setCustomized] = useState(initial.customized);
+  // Tracked alongside `customized` rather than re-derived from `initial`, which is stale as soon
+  // as save/reset/accept-default changes which row now supplies the effective text.
+  const [inheritedFrom, setInheritedFrom] = useState<PromptView['inheritedFrom']>(initial.inheritedFrom);
   const [drift, setDrift] = useState<PromptDrift>(driftOf(initial));
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,8 +135,9 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     setBusy('save');
     setError(null);
     try {
-      const saved = await savePrompt(initial.kind, system, body);
+      const saved = await savePrompt(initial.kind, system, body, initial.scope);
       setCustomized(saved.customized);
+      setInheritedFrom(saved.inheritedFrom);
       setPreviewGen((g) => g + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -121,13 +150,14 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     setBusy('reset');
     setError(null);
     try {
-      await resetPrompt(initial.kind);
-      // Re-fetch the now-effective (default) template rather than reusing `initial`, which still
-      // holds the custom text when this kind was customized on load.
-      const fresh = await fetchPrompt(initial.kind);
+      await resetPrompt(initial.kind, initial.scope);
+      // Re-fetch the now-effective (default-or-inherited) template rather than reusing `initial`,
+      // which still holds the custom text when this scope was customized on load.
+      const fresh = await fetchPrompt(initial.kind, initial.scope);
       setSystem(fresh.system);
       setBody(fresh.body);
       setCustomized(fresh.customized);
+      setInheritedFrom(fresh.inheritedFrom);
       setDrift(driftOf(fresh));
       setPreviewGen((g) => g + 1);
     } catch (err) {
@@ -142,8 +172,9 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     setBusy('accept');
     setError(null);
     try {
-      await acceptPromptDefault(initial.kind);
-      const fresh = await fetchPrompt(initial.kind);
+      await acceptPromptDefault(initial.kind, initial.scope);
+      const fresh = await fetchPrompt(initial.kind, initial.scope);
+      setInheritedFrom(fresh.inheritedFrom);
       setDrift(driftOf(fresh));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -166,6 +197,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
           </span>
         )}
       </div>
+      <ProvenanceLine scope={initial.scope} inheritedFrom={inheritedFrom} />
       <div className="body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <PromptDriftBanner
           drift={drift}

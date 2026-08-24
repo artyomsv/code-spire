@@ -5,7 +5,8 @@
 PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via
 webhook (Tailscale Funnel); **G** provider-parity regression script (run the same scenarios on every
 SCM); **H** the attention panel; **I** context provisioning across every provider type; **J** operator
-authentication; **K** the LLM cost ledger; **L** review archival and retirement. Do A first — it
+authentication; **K** the LLM cost ledger; **L** review archival and retirement; **M** spend caps and
+the refused review; **N** conversation-derived findings (`/finding`) on every SCM. Do A first — it
 validates your local stack in ~2 minutes.
 
 Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
@@ -1323,3 +1324,94 @@ makes the upgrade safe.
 
 Leave the limits blank unless you actually want caps on this deployment. Archive or unarchive the
 refused reviews as you prefer — nothing was spent on them, and nothing was destroyed.
+
+## Mode N — conversation-derived findings (`/finding`) on every SCM
+
+`/finding [severity] [message]` lets an allowed author file the thread they're in as a tracked
+finding instead of leaving it as prose the reviewer never revisits — severity is one of `blocker`,
+`major`, `minor`, `info`, `nit` (case-insensitive; a first word that isn't one of those is just the
+start of the message, and severity defaults to `minor`). Run this once per SCM — GitHub, GitLab,
+Bitbucket — on a PR from any earlier mode with a completed review.
+
+### N-1 — filing off-line is refused, on-line is filed and confirmed
+
+On the summary/PR-level thread (not an inline comment), reply `/finding major this leaks a handle`.
+
+**Expected:** no finding is filed. The bot replies in that same thread: *"`/finding` needs to be on a
+specific line. Open an inline comment on the line in question and run it there."* Reply `/finding`
+again in the **same** thread.
+
+**Expected:** the **same** refusal text, not a second copy — the claim is per thread, and a second
+misuse there has not been helped by hearing it again.
+
+Now open a **new inline comment** on an unflagged line (or reply inside an existing finding's thread)
+and post `/finding major shadows the outer variable`.
+
+**Expected:** the bot replies in that thread within a few seconds: *"Filed as **MAJOR** at
+`<path>:<line>`. It will be tracked with the review's other findings and reconciled on the next
+push."* — the path and line matching exactly where the comment was posted. Reply `/finding` again in
+the **same** thread with different text.
+
+**Expected:** a **second** confirmation, naming the same anchor — a second `/finding` in one
+discussion is a second finding and gets its own confirmation, unlike the refusal and the turn-cap
+notice, which are once-per-thread by design.
+
+### N-2 — the finding appears in the Findings card, marked as from a discussion
+
+Open the review detail page.
+
+**Expected:** the Findings card shows the filed finding (severity **Major**, the message from N-1)
+tagged **from discussion** — distinct from every review-discovered finding on the same card, which
+carries no such tag. It also counts toward the card's open-finding total exactly like a
+review-discovered finding does (re-run N-1 with `/finding blocker …` instead if you want to confirm it
+moves the **blocker** count too).
+
+Findings are Tink-encrypted at rest (`review_status.open_findings_json` — may quote source/comment
+text, DATA-MODEL §5), so unlike Mode G's thread rows there is no plaintext column to read the content
+back from directly; the detail page (which decrypts server-side) is the check. To confirm the write
+actually landed rather than silently no-op'd, it is enough that the column moved:
+
+```sql
+SELECT updated_at, open_findings_json IS NOT NULL AS has_findings
+  FROM orchestrator.review_status WHERE review_id = 'review::<ws>/<slug>#<pr>';
+```
+
+### N-3 — a redelivered `/finding` does not file twice
+
+Using the SCM's own UI, edit the N-1 comment that triggered the confirmation (or otherwise force a
+redelivery of the same webhook event, if your provider's delivery log offers a resend). If neither is
+practical, skip this step — it is the redelivery guard `raisedFindingComments` exists to cover, not a
+distinct user-facing behaviour.
+
+**Expected:** no second finding, no second confirmation. The idempotency key is the triggering
+comment's id, the same shape as `/review`'s.
+
+### N-4 — the finding reconciles like any other on the next push
+
+Push a commit that genuinely fixes the N-1 finding (change the shadowing variable's name), on the same
+branch.
+
+**Expected:** the next round's summary reflects it — the thread gets a closing reply and is marked
+**resolved** on the SCM, and the review detail page shows the finding as **RESOLVED**, not
+`STILL_OPEN` or silently dropped. It went through the same reconcile call and the same
+`PriorFinding`-carried snapshot as a review-discovered finding, tagged `origin: conversation` the whole
+way — there is no separate code path for a conversation finding's reconciliation to fall out of.
+
+**Verify from the read model:**
+
+```sql
+SELECT type, thread_ref, detail FROM orchestrator.review_event
+ WHERE review_id = 'review::<ws>/<slug>#<pr>' AND type = 'ThreadResolved'
+ ORDER BY seq DESC LIMIT 3;
+```
+
+### Where providers legitimately differ
+
+Same as Mode G: Bitbucket's inline comment is single-anchor, resolve mechanisms differ per provider,
+and mention syntax is irrelevant here since `/finding` needs no `@mention` to engage — but all three
+must end with a real reply posted in-thread and a real `resolved: true` in N-4.
+
+### Cleanup
+
+None needed — the filed finding is real review data once N-4 resolves it, and archiving the review (if
+this was a throwaway PR) removes it from the live list without deleting it (ADR-024).

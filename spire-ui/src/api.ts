@@ -923,8 +923,19 @@ export interface PromptVariable {
   description: string;
 }
 
+// The deployment-wide scope every prompt endpoint defaults to. Mirrors the orchestrator's
+// PromptScope.GLOBAL — everything else is a "workspace/slug" repository scope.
+export const GLOBAL_SCOPE = '*';
+
+// Which row actually supplied a PromptView's system/body: this scope's own override, a fallback
+// to the global override, or the built-in default. Not derivable from `customized` alone once a
+// repo scope exists — a repo scope showing global's text is `customized: true` either way.
+export type PromptInheritance = 'repo' | 'global' | 'default';
+
 export interface PromptView {
   kind: string;
+  scope: string; // the scope this view was resolved at (GLOBAL_SCOPE or "workspace/slug")
+  inheritedFrom: PromptInheritance;
   customized: boolean; // false = showing the built-in default (not a stored override)
   system: string;
   body: string;
@@ -954,15 +965,22 @@ export interface PromptPreview {
   unavailableReason: string | null;
 }
 
-export async function fetchPrompts(): Promise<PromptView[]> {
-  const res = await apiFetch('/api/prompts');
+export async function fetchPrompts(scope: string = GLOBAL_SCOPE): Promise<PromptView[]> {
+  const res = await apiFetch(`/api/prompts?scope=${encodeURIComponent(scope)}`);
   if (!res.ok) return throwResponse(res, 'Failed to load prompts');
   return res.json();
 }
 
-export async function fetchPrompt(kind: string): Promise<PromptView> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`);
+export async function fetchPrompt(kind: string, scope: string = GLOBAL_SCOPE): Promise<PromptView> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}?scope=${encodeURIComponent(scope)}`);
   if (!res.ok) return throwResponse(res, 'Failed to load prompt');
+  return res.json();
+}
+
+/** Repositories this deployment has reviewed -- the scopes a prompt override can be written at. */
+export async function fetchPromptScopes(): Promise<string[]> {
+  const res = await apiFetch('/api/prompts/scopes');
+  if (!res.ok) return throwResponse(res, 'Failed to load prompt scopes');
   return res.json();
 }
 
@@ -993,8 +1011,10 @@ async function saveErrorMessage(res: Response): Promise<string> {
   }
 }
 
-export async function savePrompt(kind: string, system: string, body: string): Promise<PromptView> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, {
+export async function savePrompt(
+  kind: string, system: string, body: string, scope: string = GLOBAL_SCOPE,
+): Promise<PromptView> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}?scope=${encodeURIComponent(scope)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ system, body }),
@@ -1004,8 +1024,10 @@ export async function savePrompt(kind: string, system: string, body: string): Pr
 }
 
 /** Reset a kind back to its built-in default. Callers must re-fetch to get the default text. */
-export async function resetPrompt(kind: string): Promise<void> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, { method: 'DELETE' });
+export async function resetPrompt(kind: string, scope: string = GLOBAL_SCOPE): Promise<void> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}?scope=${encodeURIComponent(scope)}`, {
+    method: 'DELETE',
+  });
   if (!res.ok) await throwResponse(res, 'Failed to reset prompt');
 }
 
@@ -1015,15 +1037,18 @@ export async function resetPrompt(kind: string): Promise<void> {
  * drift flags. Deliberately not a `resetPrompt` variant -- reset discards the customization,
  * this preserves it.
  */
-export async function acceptPromptDefault(kind: string): Promise<void> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/accept-default`, { method: 'POST' });
+export async function acceptPromptDefault(kind: string, scope: string = GLOBAL_SCOPE): Promise<void> {
+  const res = await apiFetch(
+    `/api/prompts/${encodeURIComponent(kind)}/accept-default?scope=${encodeURIComponent(scope)}`,
+    { method: 'POST' },
+  );
   if (!res.ok) await throwResponse(res, 'Failed to accept current default');
 }
 
 export async function previewPrompt(
-  kind: string, system: string, body: string, reviewId?: string,
+  kind: string, system: string, body: string, reviewId?: string, scope: string = GLOBAL_SCOPE,
 ): Promise<PromptPreview> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/preview`, {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/preview?scope=${encodeURIComponent(scope)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ system, body, reviewId }),

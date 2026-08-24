@@ -14,10 +14,43 @@ This is the operator- and contributor-facing guide. The design rationale is in
 A review normally sees two things: the diff, and the linked ticket. Between them they describe what a
 change does and what it was meant to do — but neither says anything about the team's own standards.
 
-One bot account reviews every repository in a workspace, and the operator's prompt template
-(Settings → Prompts) is global. A prompt that must serve a Java service, a React app and a Terraform
-module at once has to be vague enough to cover all three. Repository rules are what lets each
-repository be specific without the operator maintaining a template per repo.
+One bot account reviews every repository in a workspace. A prompt template (Settings → Prompts) can
+now be scoped to a single repository — resolved repository → global → built-in default — so an
+operator *can* maintain a Java-service prompt, a React-app prompt and a Terraform-module prompt
+separately. But scoping the template is still an operator action taken once, ahead of time, in
+Settings; it does not let a contributor state their own repository's conventions from inside that
+repository, and an operator with many repositories will not hand-write a bespoke prompt for each one
+just to say "this repo uses four-space indentation." `.codespire` is what lets each repository be
+specific without either of those: a contributor states it, from the repository itself, with no
+Settings access required.
+
+## `.codespire` versus a per-repo prompt override
+
+Both narrow a review to one repository. They are not interchangeable, and the difference is not
+convenience — it is who is trusted with what:
+
+| | `.codespire` | A per-repo prompt (Settings → Prompts) |
+|---|---|---|
+| Who writes it | Any contributor, in a pull request to the repository | An operator, in Settings |
+| Where it lives | The **target branch** of the repository being reviewed | The orchestrator's own database, scoped by `workspace/slug` |
+| How the model receives it | As a fenced **context item** (`kind=RULE`), the same untrusted-data slot as a Jira ticket or a GitHub issue | As the **system/body instructions themselves** — the persona, the priority order, which variables appear at all |
+| What it can do | **Add** text the model is told to weigh alongside the diff. It cannot change the reviewer's persona, remove a step, or alter what data the prompt asks for | **Change structure**: reorder what the reviewer prioritizes, drop or add a whole instruction, change which `{{variable}}` slots the template even references |
+| Trust level | Untrusted data, same as any retrieved content — prompt-fenced, and read from the target branch specifically so the commit under review cannot rewrite the instructions reviewing it (see below) | Fully trusted — an operator write, gated behind the admin role like every other registry (ADR-022) |
+
+The short version: **`.codespire` is contributor-owned data; a per-repo prompt is operator-owned
+instructions.** Reach for `.codespire` to state facts about the repository's conventions — "money is
+integer millicents," "controllers never call repositories directly" — the kind of thing any contributor
+with merge rights to the repository should be able to add without asking anyone. Reach for a per-repo
+prompt override when the *review itself* needs to work differently for this repository — a persona
+tuned for infrastructure code instead of application code, a different output format, a variable
+included or dropped — because that is a change to what the reviewer *is*, not to what it is told, and
+handing that power to whoever can open a pull request would be handing them the fence around every
+other untrusted input too.
+
+In practice the two compose rather than compete: a repository's `.codespire` rides in the same review
+regardless of which prompt scope resolved it, so an operator narrowing the review's *structure* for a
+Terraform module and a contributor stating that module's *conventions* are two independent, additive
+decisions.
 
 ## The file
 

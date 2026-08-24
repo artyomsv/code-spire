@@ -14,6 +14,8 @@ import * as api from '../api';
 function driftedView(): api.PromptView {
   return {
     kind: 'review',
+    scope: '*',
+    inheritedFrom: 'global',
     customized: true,
     system: 'My persona',
     body: 'Diff:\n{{diff}}',
@@ -57,7 +59,7 @@ describe('prompt default drift', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /keep mine/i }));
 
-    expect(accept).toHaveBeenCalledWith('review');
+    expect(accept).toHaveBeenCalledWith('review', '*');
     expect(reset).not.toHaveBeenCalled();
   });
 

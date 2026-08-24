@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import PromptsSettings from './PromptsSettings';
 import PromptDetail from './PromptDetail';
@@ -7,6 +7,8 @@ import * as api from '../api';
 
 const reviewView: api.PromptView = {
   kind: 'review',
+  scope: '*',
+  inheritedFrom: 'default',
   customized: false,
   system: 'persona',
   body: 'review {{diff}}',
@@ -23,6 +25,7 @@ const reviewView: api.PromptView = {
 const reconcileView: api.PromptView = {
   ...reviewView,
   kind: 'reconcile',
+  inheritedFrom: 'global',
   customized: true,
   baseSystem: 'persona',
   baseBody: 'review {{diff}}',
@@ -32,6 +35,7 @@ const followupView: api.PromptView = { ...reviewView, kind: 'followup' };
 describe('PromptsSettings (list)', () => {
   beforeEach(() => {
     vi.spyOn(api, 'fetchPrompts').mockResolvedValue([reviewView, reconcileView, followupView]);
+    vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue([]);
   });
 
   it('lists each prompt kind as a link, tagged Default/Custom', async () => {
@@ -66,6 +70,57 @@ describe('PromptsSettings (list)', () => {
     await waitFor(() => expect(screen.getByText(/update available/i)).toBeInTheDocument());
     expect(screen.getAllByText(/update available/i)).toHaveLength(1);
   });
+
+  it('distinguishes a repo override from an inherited global at a repository scope', async () => {
+    // The exact ambiguity this task exists to remove: at a repo scope, "Custom" alone cannot say
+    // whether THIS repo was customized or the row is falling back to the global override.
+    vi.spyOn(api, 'fetchPrompts').mockResolvedValue([
+      { ...reviewView, scope: 'acme/widgets', inheritedFrom: 'repo', customized: true },
+      { ...reconcileView, scope: 'acme/widgets', inheritedFrom: 'global', customized: true },
+      { ...followupView, scope: 'acme/widgets', inheritedFrom: 'default', customized: false },
+    ]);
+    render(
+      <MemoryRouter initialEntries={['/settings/prompts?scope=acme/widgets']}>
+        <PromptsSettings />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(api.fetchPrompts).toHaveBeenCalledWith('acme/widgets'));
+    expect(screen.getByText('Custom · this repo')).toBeInTheDocument();
+    expect(screen.getByText('Inherited · global')).toBeInTheDocument();
+    expect(screen.getByText('Default')).toBeInTheDocument();
+  });
+
+  it('carries the URL scope into a kind link so a reload lands back on the same repository', async () => {
+    vi.spyOn(api, 'fetchPrompt').mockResolvedValue(reviewView);
+    render(
+      <MemoryRouter initialEntries={['/settings/prompts?scope=acme/widgets']}>
+        <Routes>
+          <Route path="/settings/prompts" element={<PromptsSettings />} />
+          <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Review/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Review/ }));
+
+    await waitFor(() => expect(api.fetchPrompt).toHaveBeenCalledWith('review', 'acme/widgets'));
+  });
+
+  it('re-fetches at the new scope when the picker changes', async () => {
+    vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue(['acme/widgets']);
+    render(
+      <MemoryRouter initialEntries={['/settings/prompts']}>
+        <PromptsSettings />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(api.fetchPrompts).toHaveBeenCalledWith('*'));
+    fireEvent.change(await screen.findByLabelText('Prompt scope'), { target: { value: 'acme/widgets' } });
+
+    await waitFor(() => expect(api.fetchPrompts).toHaveBeenCalledWith('acme/widgets'));
+  });
 });
 
 describe('PromptDetail (edit)', () => {
@@ -84,6 +139,6 @@ describe('PromptDetail (edit)', () => {
     // The editor heading + the palette chip live on the detail page now.
     await waitFor(() => expect(screen.getByRole('heading', { name: /review/i })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /\{\{diff\}\}/ })).toBeInTheDocument();
-    expect(api.fetchPrompt).toHaveBeenCalledWith('review');
+    expect(api.fetchPrompt).toHaveBeenCalledWith('review', '*');
   });
 });
