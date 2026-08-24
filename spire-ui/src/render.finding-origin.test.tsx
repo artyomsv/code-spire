@@ -25,8 +25,10 @@ describe('findingsCard — finding origin', () => {
     ]))}</>);
 
     expect(html).toMatch(/from discussion/i);
-    // The modifier names the state, like every other .pill.* — and it must match the one index.css
-    // defines, or the badge silently loses its styling with every test still green.
+    // Guards only the render side: that findingsCard still emits the "provenance" modifier class,
+    // like every other .pill.*. It does NOT prove index.css still defines a matching rule — a rename
+    // over there would leave this assertion (rendered markup only) green while the badge silently
+    // lost its styling.
     expect(html).toContain('pill provenance');
   });
 
