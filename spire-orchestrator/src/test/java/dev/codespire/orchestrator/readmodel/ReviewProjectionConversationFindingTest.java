@@ -440,6 +440,157 @@ class ReviewProjectionConversationFindingTest {
                 .filter(r -> "src/Foo.java:44".equals(r.loc())).findFirst().orElseThrow();
         assertEquals("conversation", row.origin(),
                 "a verdict on a human-filed finding must still say who filed it");
+        // And the union yields to it rather than shadowing it. The baseline copy still exists, but
+        // rendering it would put the finding back under "new" a round after it was filed and lose the
+        // verdict's own note — one concern on one row, and the richer row wins.
+        assertTrue(detail.findingsList().stream().noneMatch(f -> "src/Foo.java:44".equals(f.loc())),
+                "an open verdict owns the row; the baseline copy must not be listed beside it");
+        assertEquals(2, detail.openFindings(),
+                "two concerns are open — the seeded review finding and the filed one — so the filed "
+                        + "one is counted once across its baseline copy and its verdict, not twice");
+    }
+
+    /**
+     * Defense on read, the same posture {@code priorRunFor} takes for the posted snapshot: a stored
+     * baseline can hold two entries at one anchor even though {@code dedupeByAnchor} makes that
+     * impossible on today's write path — a row written by an older build is exactly that. One anchor
+     * is one concern on the card and one entry in the counts, whatever the column happens to hold.
+     */
+    @Test
+    void aBaselineHoldingTwoEntriesAtOneAnchorStillShowsOneRow() throws SQLException {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+        writeRawOpenFindings(reviewId, """
+                [{"sev":"suggestion","loc":"src/Foo.java:44","msg":"shadows the field",\
+                "threadRef":"t-900","origin":"conversation"},\
+                {"sev":"critical","loc":"src/Foo.java:44","msg":"and it leaks",\
+                "threadRef":"t-901","origin":"conversation"}]""");
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertEquals(1, detail.findingsList().stream()
+                        .filter(f -> "src/Foo.java:44".equals(f.loc())).count(),
+                "one anchor is one row, even when the stored column disagrees");
+        assertEquals(2, detail.openFindings(),
+                "and one entry in the counts — the seeded finding plus this single anchor");
+    }
+
+    /**
+     * One discussion can raise more than one finding. {@code /finding} anchors to whatever line the
+     * command names, and every finding filed in a thread carries that thread's root ref, so two of
+     * them share a {@code threadRef} while being genuinely separate concerns at separate anchors.
+     * Anchor is the identity on this card, exactly as {@code dedupeByAnchor} makes it on the write
+     * side — deduping on thread instead would silently swallow the second.
+     */
+    @Test
+    void twoFindingsFiledFromOneThreadBothAppear() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 88,
+                Severity.BLOCKER, "TEST-BLOCKER and this one leaks");
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertTrue(detail.findingsList().stream().anyMatch(f -> "src/Foo.java:44".equals(f.loc())),
+                "the first finding filed from the thread must be shown");
+        assertTrue(detail.findingsList().stream().anyMatch(f -> "src/Foo.java:88".equals(f.loc())),
+                "and so must the second — one thread can raise several distinct concerns");
+        assertEquals(3, detail.openFindings(), "all three concerns are open");
+        assertEquals(1, detail.openBlockers(), "including the blocker the second one raised");
+    }
+
+    /**
+     * The mirror of the case below: the verdict and the baseline copy can disagree about the ANCHOR
+     * while agreeing about the thread, which is the other reason an open verdict claims both.
+     *
+     * <p>A verdict's path/line is remapped through whatever rename the worker followed (ADR-019),
+     * while the baseline copy keeps the anchor the human filed against until the round's
+     * {@code recordOpenFindings} rewrites it. Matching on anchor alone would list the same concern
+     * twice at two different locations — the most confusing shape this card can take.
+     */
+    @Test
+    void aVerdictThatFollowedARenameStillClaimsItsThread() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+
+        // The follow-up renamed the file, so the verdict names src/Foo2.java:50 while the baseline
+        // copy still names src/Foo.java:44 — the same thread, two anchors.
+        projection.recordReconciliation(reviewId, List.of(new FindingVerdict("t-900",
+                "src/Foo2.java", 50, FindingVerdict.Status.STILL_OPEN, "still there")), priorFindings);
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertTrue(detail.findingsList().stream().noneMatch(f -> "src/Foo.java:44".equals(f.loc())),
+                "the concern moved with the rename; its pre-rename anchor must not be listed beside it");
+        assertEquals(2, detail.openFindings(),
+                "the seeded finding and the filed one — the filed one counted once, not once per anchor");
+    }
+
+    /**
+     * The verdict and the baseline copy can disagree about the THREAD while agreeing about the
+     * anchor, which is why an open verdict claims both.
+     *
+     * <p>{@code toPriorFinding} substitutes the newest {@code review_thread} row for a loc, so once a
+     * later post lands on the filed finding's line the verdict carries that newer thread while
+     * {@code open_findings_json} still carries the one the human filed in. Matching on thread alone
+     * would then see two unrelated rows and put the same concern on the card twice — once as a verdict
+     * and once as a fresh finding.
+     */
+    @Test
+    void aVerdictOnASupersededThreadStillClaimsItsAnchor() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Bar.java:10", "warning");
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field");
+        // A later post at the same loc — "newest row wins" now points away from the human's t-900.
+        threads.markFindingThread(reviewId, new ThreadRef("newer-thread"), "src/Foo.java", 44);
+
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+        assertTrue(priorFindings.stream().anyMatch(pf -> "newer-thread".equals(pf.threadRef())),
+                "setup check: the newer thread must have superseded the filed finding's own");
+        projection.recordReconciliation(reviewId, List.of(new FindingVerdict("newer-thread",
+                "src/Foo.java", 44, FindingVerdict.Status.STILL_OPEN, "still there")), priorFindings);
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertTrue(detail.findingsList().stream().noneMatch(f -> "src/Foo.java:44".equals(f.loc())),
+                "the verdict owns this anchor even though its thread is not the one the human filed in");
+        assertEquals(2, detail.openFindings(),
+                "the seeded finding and the filed one — the filed one counted once, not once per thread");
+    }
+
+    /**
+     * A closed verdict claims nothing. Its anchor is vacated, so a human filing a fresh
+     * {@code /finding} on that same line is raising a NEW concern — and the resolved row still sitting
+     * in the reconciliation history must not swallow it, which is the failure mode a plain
+     * "reconciliation already names this loc" test would have.
+     */
+    @Test
+    void aFindingFiledOnAnAnchorAResolvedVerdictVacatedIsStillShown() {
+        long pr = ReviewFixtures.newPr();
+        String reviewId = registerReviewWithOpenFindings(pr, "src/Foo.java:44", "warning");
+        List<PriorFinding> priorFindings = projection.priorRunFor(reviewId).orElseThrow().findings();
+
+        // The seeded finding is judged fixed, leaving a RESOLVED row at src/Foo.java:44.
+        List<FindingVerdict> verdicts = List.of(new FindingVerdict(null, "src/Foo.java", 44,
+                FindingVerdict.Status.RESOLVED, "fixed"));
+        projection.recordReconciliation(reviewId, verdicts, priorFindings);
+        ReviewResult quiet = new ReviewResult(List.of(), "TEST-SUMMARY-2", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOutcome(reviewId, quiet, ReviewProjection.STAGE_COMMENTS);
+        projection.recordOpenFindings(reviewId, quiet, verdicts, priorFindings);
+
+        // A person then files a new concern on the very line that was just closed out.
+        projection.addConversationFinding(reviewId, "t-900", "src/Foo.java", 44,
+                Severity.BLOCKER, "TEST-BLOCKER on the same line, a different problem");
+
+        ReviewDetail detail = projection.loadDetail(ReviewFixtures.WS, ReviewFixtures.REPO, pr).orElseThrow();
+        assertTrue(detail.findingsList().stream()
+                        .anyMatch(f -> "src/Foo.java:44".equals(f.loc())
+                                && "conversation".equals(f.origin())),
+                "a resolved verdict must not hide a new finding filed on the anchor it vacated");
+        assertEquals(1, detail.openBlockers(), "and the new blocker must be counted");
     }
 
     /**

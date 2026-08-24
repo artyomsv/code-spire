@@ -1457,12 +1457,16 @@ public class ReviewProjection {
      * only the first column is what once made a filed finding invisible on the dashboard in every
      * round — present in the baseline, in the exclusion list and in the next round's reconciliation,
      * but nowhere a person could see it. So {@link #unionConversationFindings} adds the
-     * conversation-origin entries of the second column that the first does not already name.
+     * conversation-origin entries of the second column that nothing on the page already accounts for.
      *
      * <p>A union rather than a repoint, in both directions: {@code findings_json} keeps its meaning as
      * one run's truthful outcome (the card's "+ N more" math and {@link #blockerCount} depend on it),
      * and {@code open_findings_json} keeps its meaning as the NEXT round's baseline, which also holds
      * carried prior findings that this card must not re-list as though this run raised them.
+     *
+     * <p>Reconciliation is read BEFORE the union, not after, because the union defers to it — see
+     * {@link #alreadyTracked}. A filed finding shows as a fresh entry the round it is filed and as its
+     * own verdict every round after, never as both.
      */
     public Optional<ReviewDetail> loadDetail(String workspace, String slug, long pr) {
         String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
@@ -1472,11 +1476,11 @@ public class ReviewProjection {
                 return Optional.empty();
             }
             ThreadIndex threadIndex = buildThreadIndex(loadThreadRows(c, reviewId));
-            FindingsWithThreads attached = unionConversationFindings(
-                    attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex), row);
-            Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
             List<ReviewDetail.ReconciliationView> reconciliation =
                     parseReconciliation(row.reconciliationJson, row.id, threadIndex.resolvedRefs());
+            FindingsWithThreads attached = unionConversationFindings(
+                    attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex), row, reconciliation);
+            Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
 
             return Optional.of(toDetail(row,
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
@@ -1549,16 +1553,8 @@ public class ReviewProjection {
     }
 
     /**
-     * The second half of the card (see {@link #loadDetail}): every conversation-origin entry of
-     * {@code open_findings_json} whose anchor {@code findings_json} does not already name.
-     *
-     * <p>Deduped by ANCHOR, which is the same "one {@code path:line} = one tracked concern" rule
-     * {@link #dedupeByAnchor} enforces on the baseline itself. The two columns are written by
-     * different events and genuinely overlap: a round that reports the very line a human filed
-     * against writes it to {@code findings_json} while the human's own entry still sits in
-     * {@code open_findings_json} until {@link #recordOpenFindings} merges them — a real window, since
-     * {@link #recordOutcome} broadcasts before that merge happens. Concatenating there would show one
-     * line twice under two different messages.
+     * The second half of the card (see {@link #loadDetail}): the conversation-origin entries of
+     * {@code open_findings_json} that nothing else on the page already accounts for.
      *
      * <p>These entries keep their STORED {@code threadRef} instead of taking one from the thread
      * index, unlike {@link #attachThreadRefs}. A {@code /finding} lives in a thread a HUMAN started,
@@ -1567,19 +1563,16 @@ public class ReviewProjection {
      * its conversation. The index's claim rule still applies: a ref another row already owns is not
      * taken twice, so one thread can never nest under two rows.
      */
-    private FindingsWithThreads unionConversationFindings(FindingsWithThreads attached, ReviewRow row) {
-        List<ReviewDetail.FindingView> conversationFindings = conversationFindings(row);
-        if (conversationFindings.isEmpty()) {
+    private FindingsWithThreads unionConversationFindings(FindingsWithThreads attached, ReviewRow row,
+                                                          List<ReviewDetail.ReconciliationView> reconciliation) {
+        Set<String> tracked = alreadyTracked(attached.findings(), reconciliation);
+        List<ReviewDetail.FindingView> untracked = untrackedConversationFindings(row, tracked);
+        if (untracked.isEmpty()) {
             return attached;
         }
         List<ReviewDetail.FindingView> findings = new ArrayList<>(attached.findings());
         Set<String> findingRefs = new HashSet<>(attached.findingRefs());
-        Set<String> anchors = new HashSet<>();
-        attached.findings().forEach(f -> anchors.add(f.loc()));
-        for (ReviewDetail.FindingView f : conversationFindings) {
-            if (!anchors.add(f.loc())) {
-                continue;
-            }
+        for (ReviewDetail.FindingView f : untracked) {
             String ref = f.threadRef() != null && findingRefs.add(f.threadRef()) ? f.threadRef() : null;
             findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref, f.origin()));
         }
@@ -1595,15 +1588,76 @@ public class ReviewProjection {
      * also carries prior findings that are still open; those belong to the reconciliation card, which
      * says what happened to them. Re-listing them here would make the findings card claim this run
      * raised them and would count them a second time beside their own verdict.
-     *
-     * <p>One method because the card and the counts must answer this identically — a card showing a
-     * finding beside a badge reading "passed" is the contradiction two copies of this filter would
-     * eventually produce.
      */
     private List<ReviewDetail.FindingView> conversationFindings(ReviewRow row) {
         return parseFindings(row.openFindingsJson(), row.id()).stream()
                 .filter(f -> CONVERSATION_ORIGIN.equals(f.origin()))
                 .toList();
+    }
+
+    /**
+     * The anchors and threads the page already accounts for, in {@link #keyOf}'s {@code l:}/{@code t:}
+     * form: this run's own findings, plus every verdict that leaves its finding OPEN.
+     *
+     * <p>Deferring to an open verdict is what keeps a filed finding on exactly one row for the whole
+     * life of the PR. It is a fresh entry the round it is filed and a reconciliation verdict every
+     * round after, and the verdict row is the richer of the two — it says "still open" and carries the
+     * model's note, where the baseline copy would render as though this run had just raised it. That
+     * is also why {@link ReviewDetail.ReconciliationView} carries {@code origin}: the badge has to
+     * travel to the row that wins, not to the one that yields.
+     *
+     * <p>A CLOSED verdict deliberately claims nothing. Its anchor is vacated, and a human filing a
+     * fresh {@code /finding} on that same line is raising a new concern that must not be swallowed by
+     * the resolved row still sitting in the history.
+     */
+    private static Set<String> alreadyTracked(List<ReviewDetail.FindingView> findings,
+                                              List<ReviewDetail.ReconciliationView> reconciliation) {
+        Set<String> tracked = new HashSet<>();
+        findings.forEach(f -> tracked.add("l:" + f.loc()));
+        for (ReviewDetail.ReconciliationView r : reconciliation) {
+            if (!isOpenVerdict(r.status())) {
+                continue;
+            }
+            tracked.add("l:" + r.loc());
+            if (r.threadRef() != null) {
+                tracked.add("t:" + r.threadRef());
+            }
+        }
+        return tracked;
+    }
+
+    /**
+     * The conversation findings {@code tracked} does not already account for, matched by anchor OR by
+     * thread — the exact set both {@link #loadDetail}'s card and {@link #openCounts} add, so the two
+     * can never disagree on what is open. MUTATES {@code tracked}, so two baseline entries sharing an
+     * anchor collapse here the same way {@link #dedupeByAnchor} collapses them on the write side.
+     *
+     * <p>Anchor OR thread, not one of the two: an open verdict's anchor is the FRESHER of the pair
+     * (already remapped through any rename the worker followed) while the baseline entry still carries
+     * the thread it was filed in, so either alone leaves a gap the other closes.
+     *
+     * <p>It claims only the ANCHOR of what it takes, never the thread — a person can file several
+     * findings from one discussion, at different lines, and they share that thread's ref. Anchor is
+     * the identity here, exactly as it is for {@link #dedupeByAnchor} on the write side; claiming the
+     * thread would make the second of two filed findings disappear.
+     */
+    private List<ReviewDetail.FindingView> untrackedConversationFindings(ReviewRow row, Set<String> tracked) {
+        List<ReviewDetail.FindingView> untracked = new ArrayList<>();
+        for (ReviewDetail.FindingView f : conversationFindings(row)) {
+            if (tracked.contains("l:" + f.loc())
+                    || (f.threadRef() != null && tracked.contains("t:" + f.threadRef()))) {
+                continue;
+            }
+            tracked.add("l:" + f.loc());
+            untracked.add(f);
+        }
+        return untracked;
+    }
+
+    /** A verdict that leaves its finding open rather than closing it out — the shared test behind the
+     *  open counts, {@link #openFindingLocs} and {@link #alreadyTracked}. */
+    private static boolean isOpenVerdict(String status) {
+        return "still open".equals(status) || "unchanged".equals(status);
     }
 
     /** Classify a timeline turn's thread as the finding it nests under, the summary comment, or a
@@ -1894,38 +1948,39 @@ public class ReviewProjection {
      * matching {@code dedupeByAnchor}/{@code mergeFindingGroup}'s first-wins rule for duplicate
      * anchors, so the list and detail can never disagree on a shared anchor's severity.
      *
-     * <p>Counts the same {@link #conversationFindings} the card renders. Deduped by ANCHOR against
-     * both earlier loops, not by {@link #keyOf}'s thread-or-loc key — a conversation finding's own
-     * threadRef is the human's thread, while the verdict that later judges it may carry a different
-     * one, so a key-only test would count one concern twice the round it is reconciled.
+     * <p>Counts exactly the rows {@link #loadDetail}'s card renders, through the same
+     * {@link #alreadyTracked} / {@link #untrackedConversationFindings} pair: a finding a human filed
+     * is open, so a card that lists it beside a badge reading "passed" contradicts itself on one page.
      *
-     * <p>They are added LAST, so they land in {@code carriedOver} rather than {@code newlyRaised}.
+     * <p>Those are added LAST, so they land in {@code carriedOver} rather than {@code newlyRaised}.
      * {@code newlyRaised} means "this run's review call raised it", and a human-filed finding never
      * came from that call — attributing it to the run would credit the model with a person's work,
      * the same mislabelling {@code origin} exists to prevent.
      */
     private OpenCounts openCounts(ReviewRow row) {
         Map<String, String> openSevByKey = new java.util.LinkedHashMap<>();
-        Set<String> anchors = new HashSet<>();
-        for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
+        List<ReviewDetail.FindingView> findings = parseFindings(row.findingsJson(), row.id());
+        for (ReviewDetail.FindingView f : findings) {
             openSevByKey.putIfAbsent(keyOf(f.threadRef(), f.loc()), f.sev());
-            anchors.add(f.loc());
         }
         // Everything keyed so far is this run's own work; anything the loops below add beyond it was
         // already open before this run started. `putIfAbsent` is what makes the subtraction exact —
         // a carried finding re-reported at the same anchor stays counted once, as new, so the two
         // halves always sum to the total.
         int newlyRaised = openSevByKey.size();
-        for (ReviewDetail.ReconciliationView r : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
-            if ("still open".equals(r.status()) || "unchanged".equals(r.status())) {
+        List<ReviewDetail.ReconciliationView> reconciliation =
+                parseReconciliation(row.reconciliationJson(), row.id(), Set.of());
+        for (ReviewDetail.ReconciliationView r : reconciliation) {
+            if (isOpenVerdict(r.status())) {
                 openSevByKey.putIfAbsent(keyOf(r.threadRef(), r.loc()), r.sev());
-                anchors.add(r.loc());
             }
         }
-        for (ReviewDetail.FindingView f : conversationFindings(row)) {
-            if (anchors.add(f.loc())) {
-                openSevByKey.putIfAbsent(keyOf(f.threadRef(), f.loc()), f.sev());
-            }
+        for (ReviewDetail.FindingView f
+                : untrackedConversationFindings(row, alreadyTracked(findings, reconciliation))) {
+            // Keyed by ANCHOR, deliberately not by thread: several findings filed from one discussion
+            // share that thread's ref, and keyOf prefers the thread when it has one — which would
+            // collapse two separate concerns into one and undercount the card it must agree with.
+            openSevByKey.putIfAbsent(keyOf(null, f.loc()), f.sev());
         }
         int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
         return new OpenCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised);
@@ -1968,8 +2023,7 @@ public class ReviewProjection {
         }
         for (ReviewDetail.ReconciliationView r
                 : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
-            if (("still open".equals(r.status()) || "unchanged".equals(r.status()))
-                    && r.loc() != null && !r.loc().isBlank()) {
+            if (isOpenVerdict(r.status()) && r.loc() != null && !r.loc().isBlank()) {
                 locs.add(r.loc());
             }
         }
