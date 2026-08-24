@@ -169,4 +169,26 @@ class FollowUpWorkerConfirmFindingTest {
 
         assertTrue(emitted.stream().noneMatch(IntegrationEvent.FollowUpPosted.class::isInstance));
     }
+
+    /**
+     * Without this the posted confirmation was never linked back to the conversation root, so a
+     * human replying to it — on an SCM that threads by immediate parent — resolved to a fresh root
+     * instead of being recognized as this conversation (the exact defect class {@code root_ref}, V24,
+     * exists to fix).
+     */
+    @Test
+    void reportsTheConfirmationLinkedToItsThread() {
+        List<IntegrationEvent> emitted = new ArrayList<>();
+
+        worker(new RecordingCommentSink(), new InMemoryIdempotencyStore(), emitted)
+                .confirmFinding(command("c-901"));
+
+        IntegrationEvent.FindingConfirmed reported = emitted.stream()
+                .filter(IntegrationEvent.FindingConfirmed.class::isInstance)
+                .map(IntegrationEvent.FindingConfirmed.class::cast)
+                .findFirst().orElseThrow(() -> new AssertionError("expected a FindingConfirmed, got " + emitted));
+        assertEquals(REVIEW_ID, reported.reviewId());
+        assertEquals(THREAD, reported.threadRef());
+        assertEquals("reply-1", reported.commentId());
+    }
 }

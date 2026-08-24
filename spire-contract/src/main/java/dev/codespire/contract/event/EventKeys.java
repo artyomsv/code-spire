@@ -27,6 +27,8 @@ public final class EventKeys {
             case IntegrationEvent.FollowUpPosted e -> e.reviewId();
             case IntegrationEvent.TurnCapNotified e -> e.reviewId();
             case IntegrationEvent.ArchivedNotified e -> e.reviewId();
+            case IntegrationEvent.FindingConfirmed e -> e.reviewId();
+            case IntegrationEvent.FindingRefused e -> e.reviewId();
         };
     }
 }

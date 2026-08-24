@@ -24,8 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The spoken half of a {@code /finding} refusal: reached only when there IS a thread to reply into
- * (a {@code /finding} typed in a summary thread) — a command with nowhere to post at all is refused
- * on the orchestrator's timeline alone and never reaches this worker.
+ * (a {@code /finding} typed in a summary thread, or a top-level comment routed to a posted summary)
+ * — a command with nowhere to post at all is refused on the orchestrator's timeline alone and never
+ * reaches this worker.
  */
 class FollowUpWorkerRefuseFindingTest {
 
@@ -95,6 +96,11 @@ class FollowUpWorkerRefuseFindingTest {
     }
 
     private static FollowUpWorker worker(RecordingCommentSink sink, InMemoryIdempotencyStore claims) {
+        return worker(sink, claims, new ArrayList<>());
+    }
+
+    private static FollowUpWorker worker(RecordingCommentSink sink, InMemoryIdempotencyStore claims,
+                                         List<IntegrationEvent> emitted) {
         FollowUpWorker worker = new FollowUpWorker();
         worker.promptLog = new PromptLog();
         worker.scm = new WorkerScmClients() {
@@ -107,8 +113,7 @@ class FollowUpWorkerRefuseFindingTest {
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
-                throw new AssertionError("a finding refusal reports nothing back — the orchestrator "
-                        + "already recorded it on the timeline before dispatching this command");
+                emitted.add(event);
             }
         };
         return worker;
@@ -145,5 +150,29 @@ class FollowUpWorkerRefuseFindingTest {
         worker(sink, claims).refuseFinding(command(new ThreadRef("TEST-THREAD-OTHER")));
 
         assertEquals(2, sink.replies().size());
+    }
+
+    /**
+     * Without this the posted reply was never linked back to the conversation root, so a human
+     * replying to it — on an SCM that threads by immediate parent — resolved to a fresh root instead
+     * of being recognized as this conversation (the exact defect class {@code root_ref}, V24, exists
+     * to fix). Deliberately not {@code FollowUpPosted}: a refusal is not a conversational turn.
+     */
+    @Test
+    void reportsTheRefusalLinkedToItsThread() {
+        List<IntegrationEvent> emitted = new ArrayList<>();
+
+        worker(new RecordingCommentSink(), new InMemoryIdempotencyStore(), emitted)
+                .refuseFinding(command(THREAD));
+
+        assertTrue(emitted.stream().noneMatch(IntegrationEvent.FollowUpPosted.class::isInstance),
+                "a refusal is not the bot taking a conversational turn");
+        IntegrationEvent.FindingRefused reported = emitted.stream()
+                .filter(IntegrationEvent.FindingRefused.class::isInstance)
+                .map(IntegrationEvent.FindingRefused.class::cast)
+                .findFirst().orElseThrow(() -> new AssertionError("expected a FindingRefused, got " + emitted));
+        assertEquals(REVIEW_ID, reported.reviewId());
+        assertEquals(THREAD, reported.threadRef());
+        assertEquals("reply-1", reported.commentId());
     }
 }

@@ -7,6 +7,8 @@ import dev.codespire.contract.command.ConversationFindingRefusal;
 import dev.codespire.worker.adapters.LlmFailures;
 import dev.codespire.worker.adapters.ProviderCircuits;
 import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
+import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
+import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
@@ -219,8 +221,11 @@ public class FollowUpWorker {
      * finding and deserves its own confirmation, unlike the turn-cap notice which is once per thread
      * by design.
      *
-     * <p>Emits no {@code FollowUpPosted}: that event bumps the thread's turn count, and confirming a
-     * filing is not the bot taking a turn in the conversation.
+     * <p>Emits {@code FindingConfirmed}, deliberately not {@code FollowUpPosted}: that event bumps
+     * the thread's turn count, and confirming a filing is not the bot taking a turn in the
+     * conversation. Without a result event the posted comment was never linked back to the
+     * conversation root, so a reply to it — on an SCM that threads by immediate parent — resolved to
+     * a fresh root instead of being recognized as this conversation.
      */
     public void confirmFinding(ActionCommand.ConfirmFinding command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
@@ -237,6 +242,7 @@ public class FollowUpWorker {
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, ref.commentId());
         LOG.infof("Confirmed conversation finding on %s at %s:%d (%s)",
                 command.reviewId(), command.path(), command.line(), command.severity());
+        results.emit(new FindingConfirmed(command.reviewId(), command.threadRef(), ref.commentId()));
     }
 
     static String confirmText(Severity severity, String path, int line) {
@@ -253,8 +259,10 @@ public class FollowUpWorker {
      * than collecting a second identical reply — the same reasoning that makes the turn-cap notice
      * once per thread rather than once per comment.
      *
-     * <p>Emits no result event: the orchestrator already recorded the refusal on the timeline before
-     * dispatching this command, so there is nothing further for the worker to report back.
+     * <p>Emits {@code FindingRefused}: the orchestrator already recorded the refusal on the timeline
+     * before dispatching this command, but nothing yet linked the posted reply back to the
+     * conversation root, so a human's reply to it — on an SCM that threads by immediate parent —
+     * resolved to a fresh root instead of being recognized as this conversation.
      */
     public void refuseFinding(ActionCommand.RefuseFinding command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
@@ -269,6 +277,7 @@ public class FollowUpWorker {
                 command.threadRef(), ConversationFindingRefusal.NO_ANCHOR_REPLY);
         idempotency.markPosted(command.reviewId(), thread, ConversationFindingRefusal.KEY, ref.commentId());
         LOG.infof("Posted /finding refusal for %s thread %s", command.reviewId(), thread);
+        results.emit(new FindingRefused(command.reviewId(), command.threadRef(), ref.commentId()));
     }
 
     /**

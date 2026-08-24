@@ -6,6 +6,8 @@ ContextAssembled(reviewId: java.lang.String, prId: long, commit: java.lang.Strin
 ContextContributed(reviewId: java.lang.String, contribution: dev.codespire.contract.review.ContextContribution)
 ContextRequested(request: dev.codespire.contract.review.ContextRequest)
 DiffFetched(reviewId: java.lang.String, prId: long, commit: java.lang.String, changedFiles: int, languages: java.util.List<java.lang.String>, sizeBytes: long, truncated: boolean, references: java.util.Set<java.lang.String>, repoRules: java.lang.String)
+FindingConfirmed(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
+FindingRefused(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 FollowUpGenerated(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, answerText: java.lang.String, usage: dev.codespire.contract.review.ModelUsage, triggeringCommentId: java.lang.String)
 FollowUpPosted(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 ManualCommandReceived(repo: dev.codespire.contract.scm.RepoRef, prId: long, command: java.lang.String, args: java.lang.String, author: dev.codespire.contract.scm.Author, threadRef: dev.codespire.contract.scm.ThreadRef, location: dev.codespire.contract.scm.ThreadLocation, commentId: java.lang.String)

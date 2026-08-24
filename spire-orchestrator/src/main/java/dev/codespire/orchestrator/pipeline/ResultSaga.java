@@ -5,6 +5,8 @@ import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
 import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
+import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
+import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
@@ -305,6 +307,24 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "ArchivedNotified",
                         "told the pull request this review is archived", threadRef);
                 // No bumpTurn: a notice that answers nothing must not consume one of the thread's turns.
+            }
+            case FindingConfirmed e -> {
+                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                projection.appendEvent(e.reviewId(), "result", "FindingConfirmed",
+                        "confirmed a finding filed from this conversation", root.value());
+                // No bumpTurn: filing a finding is not the bot taking a turn in the conversation,
+                // exactly as TurnCapNotified is not. Link the posted confirmation to the root anyway,
+                // so a human's reply to IT — on an SCM that threads by immediate parent — is
+                // recognized as this conversation rather than treated as a fresh thread.
+                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+            }
+            case FindingRefused e -> {
+                ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
+                projection.appendEvent(e.reviewId(), "result", "FindingRefused",
+                        "refused a /finding — no line to anchor to", root.value());
+                // Same reasoning as FindingConfirmed: no turn consumed, but the reply is still linked
+                // back to the root so a follow-up reply to it is recognized as this conversation.
+                threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
@@ -621,6 +641,8 @@ public class ResultSaga {
             case FollowUpPosted e -> e.reviewId();
             case TurnCapNotified e -> e.reviewId();
             case ArchivedNotified e -> e.reviewId();
+            case FindingConfirmed e -> e.reviewId();
+            case FindingRefused e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             default -> "";
         };
