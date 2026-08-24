@@ -147,6 +147,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       const saved = await savePrompt(initial.kind, system, body, initial.scope);
       setCustomized(saved.customized);
       setInheritedFrom(saved.inheritedFrom);
+      setDrift(driftOf(saved));
       setPreviewGen((g) => g + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
