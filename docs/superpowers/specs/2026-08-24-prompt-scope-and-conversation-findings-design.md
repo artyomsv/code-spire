@@ -270,7 +270,8 @@ as `followup:`. A redelivered webhook files nothing twice.
 
 ```java
 record ConfirmFinding(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
-                      Severity severity, String path, int line, String scmCredential)
+                      String triggeringCommentId, Severity severity, String path, int line,
+                      String scmCredential)
         implements ActionCommand {}
 ```
 
