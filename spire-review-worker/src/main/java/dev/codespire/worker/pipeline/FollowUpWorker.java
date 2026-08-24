@@ -19,6 +19,7 @@ import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
@@ -203,6 +204,39 @@ public class FollowUpWorker {
         idempotency.markPosted(command.reviewId(), ArchivedNotice.SLOT, ArchivedNotice.KEY, ref.commentId());
         LOG.infof("Posted archived notice for %s", command.reviewId());
         results.emit(new ArchivedNotified(command.reviewId(), command.threadRef(), ref.commentId()));
+    }
+
+    /**
+     * Confirm in-thread that a {@code /finding} was filed.
+     *
+     * <p>Fixed text and no LLM call, like the turn-cap and archived notices. The claim is per
+     * TRIGGERING COMMENT, not per thread: a second {@code /finding} in one discussion is a second
+     * finding and deserves its own confirmation, unlike the turn-cap notice which is once per thread
+     * by design.
+     *
+     * <p>Emits no {@code FollowUpPosted}: that event bumps the thread's turn count, and confirming a
+     * filing is not the bot taking a turn in the conversation.
+     */
+    public void confirmFinding(ActionCommand.ConfirmFinding command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        String key = "finding:" + command.triggeringCommentId();
+        if (idempotency.claim(command.reviewId(), command.threadRef().value(), key)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            LOG.infof("Finding confirmation already posted for %s thread %s — staying quiet",
+                    command.reviewId(), command.threadRef().value());
+            return;
+        }
+        CommentRef ref = clients.comments().replyInThread(command.repo(), command.prId(),
+                command.threadRef(),
+                confirmText(command.severity(), command.path(), command.line()));
+        idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, ref.commentId());
+        LOG.infof("Confirmed conversation finding on %s at %s:%d (%s)",
+                command.reviewId(), command.path(), command.line(), command.severity());
+    }
+
+    static String confirmText(Severity severity, String path, int line) {
+        return "Filed as **" + severity + "** at `" + path + ":" + line + "`. It will be tracked "
+                + "with the review's other findings and reconciled on the next push.";
     }
 
     /**
