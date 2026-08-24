@@ -54,7 +54,7 @@ describe('PromptSamplePicker', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
-    await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined));
+    await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined, api.GLOBAL_SCOPE));
   });
 
   it('previews against the selected review', async () => {
@@ -75,8 +75,24 @@ describe('PromptSamplePicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
     await waitFor(() => expect(preview).toHaveBeenCalledWith(
-      'review', 's', 'b', 'review::TEST-WS/TEST-REPO#7',
+      'review', 's', 'b', 'review::TEST-WS/TEST-REPO#7', api.GLOBAL_SCOPE,
     ));
+  });
+
+  /**
+   * L6: the picker omitted the scope argument entirely and had no scope prop, so the editor at
+   * `?scope=acme/widgets` sent `scope=*` to preview -- defeating the "a mistaken caller fails loud"
+   * rationale `PromptResource`'s own javadoc gives for validating scope on every endpoint, preview
+   * included.
+   */
+  it('previews at the scope the editor was given, not always global', async () => {
+    vi.spyOn(api, 'fetchReviews').mockResolvedValue([]);
+    const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
+    render(<PromptSamplePicker kind="review" system="s" body="b" scope="acme/widgets" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined, 'acme/widgets'));
   });
 
   it('shows why a sample was unavailable instead of an empty panel', async () => {
@@ -101,6 +117,6 @@ describe('PromptSamplePicker', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
-    await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined));
+    await waitFor(() => expect(preview).toHaveBeenCalledWith('review', 's', 'b', undefined, api.GLOBAL_SCOPE));
   });
 });

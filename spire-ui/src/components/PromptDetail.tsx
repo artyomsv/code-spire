@@ -291,6 +291,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
           system={system}
           body={body}
           disabled={busy !== null}
+          scope={initial.scope}
         />
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Eye } from 'lucide-react';
-import { fetchReviews, previewPrompt, type PromptPreview, type ReviewSummary } from '../api';
+import { fetchReviews, GLOBAL_SCOPE, previewPrompt, type PromptPreview, type ReviewSummary } from '../api';
 import Select from './Select';
 import Tooltip from './Tooltip';
 
@@ -11,6 +11,7 @@ interface PromptSamplePickerProps {
   system: string;
   body: string;
   disabled?: boolean;
+  scope?: string;
 }
 
 /**
@@ -20,9 +21,11 @@ interface PromptSamplePickerProps {
  * reviews endpoint) must not lose the ability to preview at all.
  *
  * Owns the review list, the selection, the preview call and the result panel; `PromptDetail` only
- * supplies the candidate `system`/`body` text being edited.
+ * supplies the candidate `system`/`body` text being edited (and the scope it is being edited at —
+ * threaded through to `previewPrompt` so a caller who typos the endpoint gets the fail-loud 400 the
+ * server's own javadoc argues for, rather than silently previewing at global scope).
  */
-export default function PromptSamplePicker({ kind, system, body, disabled }: PromptSamplePickerProps) {
+export default function PromptSamplePicker({ kind, system, body, disabled, scope = GLOBAL_SCOPE }: PromptSamplePickerProps) {
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [reviewId, setReviewId] = useState(NO_SAMPLE);
   const [preview, setPreview] = useState<PromptPreview | null>(null);
@@ -45,7 +48,7 @@ export default function PromptSamplePicker({ kind, system, body, disabled }: Pro
     setBusy(true);
     setError(null);
     try {
-      setPreview(await previewPrompt(kind, system, body, reviewId || undefined));
+      setPreview(await previewPrompt(kind, system, body, reviewId || undefined, scope));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
