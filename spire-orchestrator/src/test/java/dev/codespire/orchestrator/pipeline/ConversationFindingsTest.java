@@ -41,6 +41,32 @@ class ConversationFindingsTest {
         assertEquals("this shadows the field", result.message());
     }
 
+    /**
+     * S1: no cap here let a single crafted comment (GitHub allows up to 65,536 chars) grow one
+     * finding's stored message without bound. This carried message is command-carried on every
+     * later round ({@code GenerateReview.priorRun}) via {@code open_findings_json}, so an uncapped
+     * message eventually pushes a command past Kafka's 1MB default — a truncation here is what stops
+     * the growth at its source rather than relying on {@code mergeMessages} alone.
+     */
+    @Test
+    void anOverlongMessageIsCappedRatherThanGrowingWithoutBound() {
+        String huge = "x".repeat(10_000);
+        ConversationFindings.ParsedFinding result = ConversationFindings.parse("major " + huge);
+
+        assertTrue(result.message().length() <= ConversationFindings.MAX_MESSAGE_LENGTH + "… [truncated]".length(),
+                "the stored message must stay bounded regardless of how long the comment was");
+        assertTrue(result.message().endsWith("[truncated]"),
+                "truncation must be visible, not a silent mid-word cut with no sign anything was lost");
+    }
+
+    @Test
+    void aMessageAtOrUnderTheCapIsUntouched() {
+        String message = "x".repeat(ConversationFindings.MAX_MESSAGE_LENGTH);
+        ConversationFindings.ParsedFinding result = ConversationFindings.parse("major " + message);
+
+        assertEquals(message, result.message(), "a message within the cap must not be altered at all");
+    }
+
     @Test
     void theEventsOwnLocationWins() {
         ConversationFindings.Outcome outcome = ConversationFindings.resolve(

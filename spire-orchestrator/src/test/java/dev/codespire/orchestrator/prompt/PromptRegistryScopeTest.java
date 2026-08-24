@@ -139,6 +139,40 @@ class PromptRegistryScopeTest {
     }
 
     /**
+     * Security L3, not one of the brief's seven. The old whole-string regex allowed "/" inside its
+     * middle character class, so a shape {@link PromptScope#of} can never produce -- two consecutive
+     * slashes, i.e. an empty segment -- passed as long as the string started and ended with an
+     * alnum character. Per-segment validation rejects it without a special case: splitting on "/"
+     * produces an empty string as one of the segments, and an empty string cannot match the
+     * alnum-bounded segment pattern.
+     */
+    @Test
+    void aDoubleSlashIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> PromptScope.parse("acme//widgets"));
+    }
+
+    /**
+     * Security L3, not one of the brief's seven. A lone "." segment is not traversal ({@code ".."}
+     * is what the explicit substring check catches) but is still a shape {@link PromptScope#of}
+     * never produces. Per-segment validation rejects it the same way it rejects the double slash
+     * above: "." does not match the alnum-bounded segment pattern on its own.
+     */
+    @Test
+    void aDotSegmentIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> PromptScope.parse("acme/./widgets"));
+    }
+
+    /**
+     * Security L3, not one of the brief's seven. Hygiene against an unbounded stored key -- nothing
+     * else bounds {@code scope}'s length, since the column is TEXT and every query is parameterized.
+     */
+    @Test
+    void anOverlongScopeIsRejected() {
+        String tooLong = "acme/" + "w".repeat(300);
+        assertThrows(IllegalArgumentException.class, () -> PromptScope.parse(tooLong));
+    }
+
+    /**
      * Not one of the brief's seven -- added per Ruling 1. {@code drift}/{@code acceptCurrentDefault}
      * now take a scope, and the bug they exist to prevent is a {@code WHERE kind = ?} query silently
      * reading whichever of the two rows Postgres happens to return first. Global is saved undrifted,
