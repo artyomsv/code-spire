@@ -1,0 +1,79 @@
+package dev.codespire.orchestrator.pipeline;
+
+import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
+import dev.codespire.contract.review.Severity;
+import dev.codespire.contract.scm.ThreadLocation;
+import dev.codespire.contract.scm.ThreadRef;
+
+import java.util.Locale;
+
+/**
+ * Turns a {@code /finding} command into either a finding to file or a refusal to say out loud.
+ *
+ * <p>Pure: no injection, no I/O. The stored thread location is passed in by the caller, which is the
+ * only part that needs a database.
+ */
+public final class ConversationFindings {
+
+    /** Said to an authorized author who used the command in a place it cannot work. Deliberately
+     *  different from an authorization refusal, which stays silent so a prober learns nothing. */
+    static final String NO_ANCHOR_REPLY =
+            "`/finding` needs to be on a specific line. Open an inline comment on the line in "
+            + "question and run it there.";
+
+    private ConversationFindings() {
+    }
+
+    public record ParsedFinding(Severity severity, String message) {
+    }
+
+    public sealed interface Outcome {
+    }
+
+    public record Filed(ThreadRef threadRef, String path, int line, Severity severity, String message)
+            implements Outcome {
+    }
+
+    public record Refused(String replyText) implements Outcome {
+    }
+
+    /**
+     * {@code "major shadows the field"} → MAJOR + the rest. A first word that is not a severity is
+     * the start of the message, not an error: refusing on a typo would cost a round trip in the
+     * thread for something the default handles.
+     */
+    public static ParsedFinding parse(String args) {
+        String trimmed = args == null ? "" : args.trim();
+        if (trimmed.isEmpty()) {
+            return new ParsedFinding(Severity.MINOR, "");
+        }
+        String[] parts = trimmed.split("\\s+", 2);
+        Severity severity = severityOrNull(parts[0]);
+        return severity == null
+                ? new ParsedFinding(Severity.MINOR, trimmed)
+                : new ParsedFinding(severity, parts.length > 1 ? parts[1] : "");
+    }
+
+    private static Severity severityOrNull(String word) {
+        try {
+            return Severity.valueOf(word.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException notASeverity) {
+            return null;
+        }
+    }
+
+    /**
+     * @param storedLocation where {@code review_thread} records this thread sitting, or null. Used
+     * only when the event carries no location of its own — not every provider reports one on every
+     * comment surface.
+     */
+    public static Outcome resolve(ManualCommandReceived event, ThreadLocation storedLocation) {
+        ThreadLocation anchor = event.location() != null ? event.location() : storedLocation;
+        if (event.threadRef() == null || anchor == null) {
+            return new Refused(NO_ANCHOR_REPLY);
+        }
+        ParsedFinding parsed = parse(event.args());
+        return new Filed(event.threadRef(), anchor.path(), anchor.line(),
+                parsed.severity(), parsed.message());
+    }
+}
