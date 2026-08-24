@@ -112,6 +112,25 @@ class PromptResourceSamplePreviewTest {
                 .body("unavailableReason", not(emptyOrNullString()));
     }
 
+    /**
+     * {@code ReviewIds.parse} throws {@code IllegalArgumentException} on a reviewId that doesn't
+     * match {@code review::{workspace}/{slug}#{prId}} — unhandled, that surfaced as a 500, the same
+     * class of bug {@code parseScope} exists to prevent for the {@code scope} parameter.
+     */
+    @Test
+    void aMalformedReviewIdIsARequestErrorNotAServerError() {
+        preview("review", "You are a reviewer.", "Diff:\n{{diff}}", "not-a-review-id")
+                .then().statusCode(400);
+    }
+
+    /** {@code Long.parseLong} on the prId segment throws {@code NumberFormatException} — a subtype
+     *  of {@code IllegalArgumentException}, but a distinct enough failure mode to cover on its own. */
+    @Test
+    void aReviewIdWithANonNumericPrIdIsARequestErrorNotAServerError() {
+        preview("review", "You are a reviewer.", "Diff:\n{{diff}}", "review::" + REPO.full() + "#notanumber")
+                .then().statusCode(400);
+    }
+
     @Test
     @TestSecurity(user = "test-viewer", roles = {"spire-viewer"})
     void aViewerCannotPreview() {

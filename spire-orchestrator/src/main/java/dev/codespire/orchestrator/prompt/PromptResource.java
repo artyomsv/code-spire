@@ -27,6 +27,11 @@ import java.util.List;
  *
  * <p>Admin-only in full, reads included: a prompt override is the instruction set every review is
  * conducted under, and the preview renders it against real input.
+ *
+ * <p>{@code scope} is accepted on every endpoint here, {@code preview} included, and validated the
+ * same way on every one of them ({@link #parseScope}) — even though {@code preview} renders the
+ * draft it is given and never uses the scope to look anything up. Purely a fail-loud choice: a
+ * mistaken caller gets an actionable 400 rather than having the parameter silently ignored.
  */
 @Path("/api/prompts")
 @RolesAllowed("spire-admin")
@@ -152,6 +157,11 @@ public class PromptResource {
             PromptValidation.PromptPreview p =
                     PromptValidation.preview(promptKind, in.system(), in.body());
             return new PreviewResult(p.system(), p.user(), errors, null, unavailable.getMessage());
+        } catch (IllegalArgumentException malformed) {
+            // ReviewIds.parse (via PromptSampleRenderer.loadReview) throws IllegalArgumentException,
+            // or its NumberFormatException subtype, on a malformed reviewId -- unhandled that surfaces
+            // as a 500, the same class of bug parseScope exists to prevent for the scope parameter.
+            throw badRequest(List.of(malformed.getMessage()));
         }
     }
 
