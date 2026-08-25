@@ -18,6 +18,7 @@ import dev.codespire.orchestrator.llm.ChargeLine;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import org.jboss.logging.Logger;
 
 import javax.sql.DataSource;
@@ -48,6 +49,11 @@ public class ReviewProjection {
     private static final Logger LOG = Logger.getLogger(ReviewProjection.class);
     private static final List<String> STEPS = List.of("Received", "Diff", "Context", "Review", "Comments", "Done");
     private static final String UNIQUE_VIOLATION = "23505";
+    /** {@link ReviewDetail.FindingView#origin()} for a finding a human filed with {@code /finding};
+     *  null is a finding the review produced, and is what every row stored before the field existed
+     *  reads back as. Named once because it is now a value three methods agree on, one of which
+     *  ({@link #unionConversationFindings}) decides what the dashboard shows by it. */
+    static final String CONVERSATION_ORIGIN = "conversation";
     // Generous: each lost race costs one DB round trip, and N concurrent writers
     // can make one writer lose up to N-1 rounds in a row.
     private static final int SEQ_RETRY_LIMIT = 50;
@@ -517,7 +523,7 @@ public class ReviewProjection {
         int line = Integer.parseInt(f.loc().substring(splitAt + 1));
         String current = index.threadByLoc().get(f.loc());
         String threadRef = current != null ? current : f.threadRef();
-        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), threadRef);
+        return new PriorFinding(path, line, severityFromSlug(f.sev()), f.msg(), threadRef, f.origin());
     }
 
     /** Reverse of {@link #severitySlug} — lossy for NIT/INFO (both slug to "nit");
@@ -563,10 +569,16 @@ public class ReviewProjection {
                 .orElse(null);
     }
 
+    /** {@code origin} comes from the matched prior finding, like severity and message: a verdict
+     *  carries none of the three, and once a conversation finding is reconciled its verdict row is
+     *  the only place the dashboard can still say a person filed it. Null when nothing matched —
+     *  the same "review-derived" reading a row stored before the field existed has. */
     private ReconciliationEntry toReconciliationEntry(FindingVerdict v, PriorFinding match) {
         String sev = severitySlug(match == null ? Severity.INFO : match.severity());
         String msg = match == null ? "" : match.message();
-        return new ReconciliationEntry(sev, v.path() + ":" + v.line(), msg, v.status().name(), v.note(), v.threadRef());
+        String origin = match == null ? null : match.origin();
+        return new ReconciliationEntry(sev, v.path() + ":" + v.line(), msg, v.status().name(), v.note(),
+                v.threadRef(), origin);
     }
 
     /** The stored {@code reconciliation_json}, decrypted and parsed — empty (never throws) on a
@@ -665,9 +677,11 @@ public class ReviewProjection {
         });
     }
 
-    /** Wire shape for {@code reconciliation_json}: one entry per verdict, merged with its finding. */
+    /** Wire shape for {@code reconciliation_json}: one entry per verdict, merged with its finding.
+     *  A stored entry written before {@code origin} existed simply has no such key and reads back
+     *  null — review-derived, which is what every one of them is. */
     private record ReconciliationEntry(String sev, String loc, String msg, String status, String note,
-                                       String threadRef) {
+                                       String threadRef, String origin) {
     }
 
     /**
@@ -675,29 +689,269 @@ public class ReviewProjection {
      * this round's brand-new findings (from {@code result}, threadRef unset — resolved at read time
      * via the thread-index join like a fresh {@code findings_json} row) UNION every prior finding
      * still open after this round's verdicts (STILL_OPEN/UNCHANGED, or no matching verdict at all —
-     * carrying an unmatched prior finding is the safer default over silently dropping it). A carried
-     * finding keeps its ORIGINAL threadRef/severity/message so it survives even when no
-     * {@code review_thread} row exists for its loc. Written to {@code open_findings_json}, encrypted
-     * (AAD = reviewId); lenient on serialization failure (WARN + skip), like {@link #recordReconciliation}.
+     * carrying an unmatched prior finding is the safer default over silently dropping it) UNION any
+     * conversation finding ({@link #addConversationFinding}) this round's verdicts never judged (see
+     * {@link #unmatchedConversationFindings}). A carried finding keeps its ORIGINAL
+     * threadRef/severity/message so it survives even when no {@code review_thread} row exists for
+     * its loc. Written to {@code open_findings_json}, encrypted (AAD = reviewId); lenient on
+     * serialization failure (WARN + skip), like {@link #recordReconciliation}.
+     *
+     * <p><b>Origin is carried per entry, not re-derived.</b> {@link #stillOpenPriorFindings} sources
+     * each carried finding's {@code origin} straight from its {@link PriorFinding#origin()}, and
+     * {@link #unmatchedConversationFindings} passes its {@code FindingView} through unchanged — so a
+     * conversation finding keeps its tag across a rename or a thread superseded in the
+     * {@code review_thread} index, neither of which a loc/threadRef membership test survives (both
+     * used to defeat an earlier re-tag-after-dedupe pass, in one direction silently mislabelling an
+     * unrelated NEW finding that happened to land on a just-vacated conversation anchor, and in the
+     * other silently dropping the tag when the carried entry's own loc or threadRef moved). Two
+     * same-anchor entries — one from {@link #stillOpenPriorFindings}, one from
+     * {@link #unmatchedConversationFindings} — still collapse to one row at {@link #dedupeByAnchor},
+     * but that overlap is harmless now: both copies already agree on {@code origin}, so it no longer
+     * matters which duplicate the merge keeps.
+     *
+     * <p>Runs inside one locked read-modify-write ({@code SELECT ... FOR UPDATE}, {@code @Transactional}):
+     * {@code ManualCommandReceived} (a {@code /finding}) and {@code ReviewGenerated} (this method) are
+     * handled by different sagas off different Kafka topics for the same reviewId, so an unlocked
+     * read here could race a concurrent {@link #addConversationFinding} and have one writer's baseline
+     * silently overwrite the other's.
      */
+    @Transactional
     public void recordOpenFindings(String reviewId, ReviewResult result, List<FindingVerdict> verdicts,
                                    List<PriorFinding> priorFindings) {
-        List<ReviewDetail.FindingView> open = new ArrayList<>();
-        result.findings().forEach(f -> open.add(toView(f)));
-        open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
-        List<ReviewDetail.FindingView> deduped = dedupeByAnchor(open);
-        String json;
-        try {
-            json = mapper.writeValueAsString(deduped);
-        } catch (JsonProcessingException e) {
-            LOG.warn("Failed to serialize open findings", e);
-            return;
+        try (Connection c = dataSource.getConnection()) {
+            LockedRow row = lockRowForUpdate(c, reviewId);
+            // tryParseFindings, not parseFindings: this method REPLACES open_findings_json wholesale,
+            // and unmatchedConversationFindings depends entirely on reading it. parseFindings'
+            // ordinary degrade-to-empty-list posture is correct everywhere else in this file, but
+            // here it would let a decrypt/parse failure silently destroy every human-filed finding on
+            // the round -- the exact outcome the project-then-append reordering in
+            // IntegrationSaga#fileConversationFinding exists to prevent, and the same hazard
+            // mergeColumnOrSkip guards against on the /finding write path itself.
+            Optional<List<ReviewDetail.FindingView>> currentOpenResult =
+                    row == null ? Optional.of(List.of()) : tryParseFindings(row.openJson(), reviewId);
+            if (currentOpenResult.isEmpty()) {
+                LOG.warnf("recordOpenFindings: open_findings_json for %s failed to decrypt/parse; "
+                        + "skipping the write rather than silently dropping any human-filed finding "
+                        + "it cannot see", reviewId);
+                return;
+            }
+            List<ReviewDetail.FindingView> currentOpen = currentOpenResult.get();
+
+            List<ReviewDetail.FindingView> open = new ArrayList<>();
+            result.findings().forEach(f -> open.add(toView(f)));
+            open.addAll(stillOpenPriorFindings(verdicts, priorFindings));
+            open.addAll(unmatchedConversationFindings(currentOpen, verdicts));
+
+            String encrypted = encryptFindings(reviewId, dedupeByAnchor(open));
+            if (encrypted != null) {
+                writeOpenOnly(c, reviewId, encrypted);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("review_status write failed", e);
         }
-        String encrypted = encryption.encryptString(json, reviewId);
-        update("UPDATE review_status SET open_findings_json = ?, updated_at = now() WHERE review_id = ?", ps -> {
-            ps.setString(1, encrypted);
+    }
+
+    /**
+     * Add a finding raised in a conversation ({@code /finding}) to the carry-forward baseline.
+     *
+     * <p>Deliberately {@code open_findings_json} and NOT {@code findings_json}: the latter is what
+     * the review of a commit produced — a truthful record of one model call, copied to
+     * {@code posted_findings_json} as the run snapshot by {@link #recordPosted}. A conversation
+     * finding did not come from that call. {@code open_findings_json} is already defined as the
+     * carry-forward baseline, which is exactly what this is: something now open that the next round
+     * must reconcile against and exclude from re-reporting.
+     *
+     * <p><b>{@code posted_findings_json} is amended, never overwritten.</b> {@link #priorRunFor}
+     * (what a follow-up's reconciliation reads to build its exclusion list) is keyed off that
+     * column, and nothing besides {@link #recordPosted} otherwise refreshes it — which only happens
+     * on the review's NEXT round. A {@code /finding} already lives on a real SCM thread (its
+     * {@code threadRef} names it), so it is already "posted" in every sense that column cares about;
+     * leaving it stale until some future round would mean an author who filed a finding, then pushed
+     * a fix before any new review ran, gets no reconciliation credit for it. But {@code recordPosted}
+     * deliberately guards its write with {@code WHERE commit_sha = ?} so a superseded run can never
+     * pair the PREVIOUS run's {@code last_posted_commit} with newer findings — copying the whole
+     * baseline over {@code posted_findings_json} here would bypass that guard and, on supersession or
+     * a terminal post failure, promote an unposted baseline into the posted snapshot while
+     * {@code last_posted_commit} still names the older run. Reading the CURRENT posted snapshot,
+     * adding just this one finding, deduping, and writing back keeps the two columns' meanings
+     * independent, the way {@code recordOpenFindings} and {@code recordPosted} already are. Skipped
+     * entirely when {@code last_posted_commit IS NULL}: {@link #priorRunFor} returns
+     * {@code Optional.empty()} in that state, so nothing reads {@code posted_findings_json} yet and
+     * writing one would invent a snapshot that was never actually posted.
+     *
+     * <p>Runs the same {@link #dedupeByAnchor} the baseline is always written through, so a
+     * {@code /finding} on a line that already has an open finding merges into it rather than
+     * doubling the count.
+     *
+     * <p>Runs inside one locked read-modify-write, for the same concurrent-writer reason documented
+     * on {@link #recordOpenFindings}. Each column is merged (and, on failure, skipped) independently
+     * by {@link #mergeColumnOrSkip} — a decrypt/parse failure on one column must not stop the other
+     * from being updated, and must not silently replace either with just this one finding.
+     *
+     * <p>Broadcasts after every actual write, like every other mutation in this file — without it a
+     * finding filed from a discussion reached the findings card and open count only once some
+     * unrelated write happened to push a fresh summary. Skipped when nothing was written (no row, or
+     * both columns failed to parse): there is nothing new for a live client to learn.
+     */
+    @Transactional
+    public void addConversationFinding(String reviewId, String threadRef, String path, int line,
+                                       Severity severity, String message) {
+        ReviewDetail.FindingView finding = new ReviewDetail.FindingView(severitySlug(severity),
+                path + ":" + line, message, threadRef, CONVERSATION_ORIGIN);
+        try (Connection c = dataSource.getConnection()) {
+            LockedRow row = lockRowForUpdate(c, reviewId);
+            if (row == null) {
+                LOG.warnf("addConversationFinding: no review_status row for %s", reviewId);
+                return;
+            }
+
+            String encryptedOpen = mergeColumnOrSkip(reviewId, "open_findings_json", row.openJson(), finding);
+
+            if (row.lastPostedCommit() == null) {
+                if (encryptedOpen != null) {
+                    writeOpenOnly(c, reviewId, encryptedOpen);
+                    broadcast(reviewId);
+                }
+                return;
+            }
+
+            String encryptedPosted =
+                    mergeColumnOrSkip(reviewId, "posted_findings_json", row.postedJson(), finding);
+            if (encryptedOpen != null && encryptedPosted != null) {
+                writeOpenAndPosted(c, reviewId, encryptedOpen, encryptedPosted);
+                broadcast(reviewId);
+            } else if (encryptedOpen != null) {
+                writeOpenOnly(c, reviewId, encryptedOpen);
+                broadcast(reviewId);
+            } else if (encryptedPosted != null) {
+                writePostedOnly(c, reviewId, encryptedPosted);
+                broadcast(reviewId);
+            } // else: both columns failed to parse -- nothing safe to write; already warned twice.
+        } catch (SQLException e) {
+            throw new IllegalStateException("review_status write failed", e);
+        }
+    }
+
+    /**
+     * Merge {@code finding} into one column's CURRENT content, or null if that content is non-null
+     * but fails to decrypt/parse — a blind merge in that case ({@code parseFindings}'s ordinary
+     * degrade-to-empty-list posture, correct everywhere else in this file) would silently REPLACE the
+     * column with just this one finding, destroying whatever was actually stored there. This
+     * read-modify-write is the one new place in the file where that degrade posture would be
+     * destructive rather than merely lossy-on-read, because nothing wrote this column from scratch
+     * before this method existed. Absent/blank current content is not a failure — there was
+     * legitimately nothing to lose. Logs only the reviewId and column name on skip, never finding
+     * text.
+     */
+    private String mergeColumnOrSkip(String reviewId, String columnName, String currentJson,
+                                     ReviewDetail.FindingView finding) {
+        Optional<List<ReviewDetail.FindingView>> parsed = tryParseFindings(currentJson, reviewId);
+        if (parsed.isEmpty()) {
+            LOG.warnf("addConversationFinding: %s for %s failed to decrypt/parse; skipping its write "
+                    + "rather than silently replacing it with just this one finding", columnName, reviewId);
+            return null;
+        }
+        List<ReviewDetail.FindingView> merged = new ArrayList<>(parsed.get());
+        merged.add(finding);
+        return encryptFindings(reviewId, dedupeByAnchor(merged));
+    }
+
+    /**
+     * A {@code List<FindingView>} of strings cannot realistically fail to serialize — this catch is
+     * defensive, not a path a real input reaches. It matters most on the {@code /finding} path:
+     * {@link #mergeColumnOrSkip} returns whatever this returns, and {@code IntegrationSaga} still
+     * tells the human "Filed as **MAJOR** at ..." because {@code fileConversationFinding} confirms
+     * once the aggregate accepts the command, with no way to see that the read-model write beneath it
+     * came back null. A silently dropped finding paired with an honest-looking confirmation is worse
+     * than an error nobody sees, hence ERROR rather than WARN.
+     */
+    private String encryptFindings(String reviewId, List<ReviewDetail.FindingView> findings) {
+        try {
+            String json = mapper.writeValueAsString(findings);
+            return encryption.encryptString(json, reviewId);
+        } catch (JsonProcessingException e) {
+            LOG.errorf(e, "Failed to serialize findings for %s — nothing was written", reviewId);
+            return null;
+        }
+    }
+
+    private void writeOpenOnly(Connection c, String reviewId, String encryptedOpen) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE review_status SET open_findings_json = ?, updated_at = now() WHERE review_id = ?")) {
+            ps.setString(1, encryptedOpen);
             ps.setString(2, reviewId);
-        });
+            ps.executeUpdate();
+        }
+    }
+
+    private void writeOpenAndPosted(Connection c, String reviewId, String encryptedOpen, String encryptedPosted)
+            throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE review_status SET open_findings_json = ?, posted_findings_json = ?, "
+                        + "updated_at = now() WHERE review_id = ?")) {
+            ps.setString(1, encryptedOpen);
+            ps.setString(2, encryptedPosted);
+            ps.setString(3, reviewId);
+            ps.executeUpdate();
+        }
+    }
+
+    /** The rare counterpart to {@link #writeOpenOnly}: only reached when
+     *  {@link #mergeColumnOrSkip} skipped {@code open_findings_json} (a decrypt/parse failure on
+     *  it) but {@code posted_findings_json} merged fine. */
+    private void writePostedOnly(Connection c, String reviewId, String encryptedPosted) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE review_status SET posted_findings_json = ?, updated_at = now() WHERE review_id = ?")) {
+            ps.setString(1, encryptedPosted);
+            ps.setString(2, reviewId);
+            ps.executeUpdate();
+        }
+    }
+
+    /** {@code open_findings_json}/{@code posted_findings_json}/{@code last_posted_commit} read
+     *  together under one {@code SELECT ... FOR UPDATE} — the locked counterpart to
+     *  {@link #openFindingsFor} for the mutating paths ({@link #recordOpenFindings},
+     *  {@link #addConversationFinding}). Caller MUST be {@code @Transactional} and pass its own
+     *  connection so the lock is held for the whole read-modify-write, not just this query; null
+     *  when the review has no row yet (never throws for a missing row, same posture as every other
+     *  read in this file). */
+    private LockedRow lockRowForUpdate(Connection c, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT open_findings_json, posted_findings_json, last_posted_commit "
+                        + "FROM review_status WHERE review_id = ? FOR UPDATE")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new LockedRow(rs.getString("open_findings_json"),
+                        rs.getString("posted_findings_json"), rs.getString("last_posted_commit"));
+            }
+        }
+    }
+
+    private record LockedRow(String openJson, String postedJson, String lastPostedCommit) {
+    }
+
+    /** The review's current carry-forward baseline, decrypted — empty (never throws) on a missing
+     *  row, a decrypt failure, or a parse failure, same posture as {@link #priorRunFor}. Unlocked: a
+     *  plain read for callers that just want to look. The mutating paths take their own locked read
+     *  via {@link #lockRowForUpdate} instead, so a read here is never part of a read-modify-write. */
+    public List<ReviewDetail.FindingView> openFindingsFor(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT open_findings_json FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return List.of();
+                }
+                return parseFindings(rs.getString("open_findings_json"), reviewId);
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "openFindingsFor read failed for %s", reviewId);
+            return List.of();
+        }
     }
 
     /**
@@ -707,8 +961,8 @@ public class ReviewProjection {
      * makes the NEXT round's verdict matching ambiguous (one threadRef, two prior findings — see
      * {@link #matchVerdict}). Grouping here, before the baseline is written, guarantees every
      * baseline this method produces has unique anchors (and, after the thread join, unique
-     * threadRefs) — the group keeps the FIRST entry's severity, the first non-null threadRef found
-     * in the group, and concatenates distinct messages with {@code "; also: "}.
+     * threadRefs) — the group keeps the FIRST entry's severity and origin, the first non-null
+     * threadRef found in the group, and concatenates distinct messages with {@code "; also: "}.
      */
     private static List<ReviewDetail.FindingView> dedupeByAnchor(List<ReviewDetail.FindingView> entries) {
         Map<String, List<ReviewDetail.FindingView>> byAnchor = new java.util.LinkedHashMap<>();
@@ -722,20 +976,38 @@ public class ReviewProjection {
         return merged;
     }
 
-    /** Collapse one same-anchor group into a single {@link ReviewDetail.FindingView} — see
-     *  {@link #dedupeByAnchor} for the merge rules. Message merge is idempotent: merging the same
-     *  constituents (in any order, even if already merged) always yields the same result. */
+    /**
+     * Collapse one same-anchor group into a single {@link ReviewDetail.FindingView} — see
+     * {@link #dedupeByAnchor} for the merge rules. Message merge is idempotent: merging the same
+     * constituents (in any order, even if already merged) always yields the same result.
+     *
+     * <p>{@code origin} follows the same "first entry wins" rule as severity: a lone conversation
+     * finding (no prior entry at its anchor) keeps its {@code "conversation"} origin, while a
+     * conversation finding merged into an already-tracked, review-derived concern does not retag
+     * that concern — it was already open and already tracked before the human commented on it.
+     */
     private static ReviewDetail.FindingView mergeFindingGroup(List<ReviewDetail.FindingView> group) {
         ReviewDetail.FindingView first = group.getFirst();
         String threadRef = group.stream().map(ReviewDetail.FindingView::threadRef)
                 .filter(java.util.Objects::nonNull).findFirst().orElse(null);
         String msg = mergeMessages(group.stream().map(ReviewDetail.FindingView::msg).toList());
-        return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef);
+        return new ReviewDetail.FindingView(first.sev(), first.loc(), msg, threadRef, first.origin());
     }
 
+    /**
+     * A single {@code /finding} message is already capped at parse time
+     * ({@link ConversationFindings#MAX_MESSAGE_LENGTH}), but repeated {@code /finding}s on the SAME
+     * anchor accumulate distinct constituents here without limit — this is the defense in depth for
+     * that growth, since the merged result is what {@link #dedupeByAnchor} stores back onto the
+     * carried baseline command-carried on every later round.
+     */
+    static final int MAX_MERGED_MESSAGE_LENGTH = 20_000;
+
     /** Merge a list of message strings (some may contain "; also: "-joined segments) into a single
-     *  message with deduplicated constituents, preserving first-seen order. Idempotent: re-merging
-     *  the result with its own constituents yields the same string. */
+     *  message with deduplicated constituents, preserving first-seen order, capped at
+     *  {@link #MAX_MERGED_MESSAGE_LENGTH}. Idempotent: re-merging the result with its own
+     *  constituents yields the same string, including once capped -- splitting an already-truncated
+     *  result on "; also: " reproduces exactly the constituents it kept. */
     private static String mergeMessages(List<String> messages) {
         java.util.LinkedHashSet<String> constituents = new java.util.LinkedHashSet<>();
         for (String msg : messages) {
@@ -749,8 +1021,20 @@ public class ReviewProjection {
                 }
             }
         }
-        return constituents.isEmpty() ? "" :
-                String.join("; also: ", constituents);
+        StringBuilder merged = new StringBuilder();
+        for (String constituent : constituents) {
+            if (merged.isEmpty()) {
+                merged.append(constituent);
+                continue;
+            }
+            String candidate = merged + "; also: " + constituent;
+            if (candidate.length() > MAX_MERGED_MESSAGE_LENGTH) {
+                break; // further constituents are dropped -- the bound matters more than completeness
+            }
+            merged.setLength(0);
+            merged.append(candidate);
+        }
+        return merged.toString();
     }
 
     /**
@@ -758,8 +1042,8 @@ public class ReviewProjection {
      * (no corresponding verdict — treated as still open, safer than dropping it silently). A
      * MATCHED entry's loc comes from the VERDICT, not the prior finding — the verdict's path/line
      * is fresher (already remapped through any incremental-diff rename the worker followed, ADR-019
-     * rename fix), while severity/message/threadRef still come from the prior finding, which the
-     * verdict does not carry. An unmatched prior finding keeps its own loc, as before.
+     * rename fix), while severity/message/threadRef/origin still come from the prior finding, which
+     * the verdict does not carry. An unmatched prior finding keeps its own loc, as before.
      */
     private List<ReviewDetail.FindingView> stillOpenPriorFindings(List<FindingVerdict> verdicts,
                                                                    List<PriorFinding> priorFindings) {
@@ -771,7 +1055,7 @@ public class ReviewProjection {
                     || status == FindingVerdict.Status.UNCHANGED) {
                 String loc = matched.map(v -> v.path() + ":" + v.line()).orElse(pf.path() + ":" + pf.line());
                 carried.add(new ReviewDetail.FindingView(severitySlug(pf.severity()),
-                        loc, pf.message(), pf.threadRef()));
+                        loc, pf.message(), pf.threadRef(), pf.origin()));
             }
         }
         return carried;
@@ -786,6 +1070,36 @@ public class ReviewProjection {
                 .or(() -> verdicts.stream()
                         .filter(v -> v.path().equals(pf.path()) && v.line() == pf.line())
                         .findFirst());
+    }
+
+    /**
+     * Conversation findings ({@link #addConversationFinding}) — from the CURRENT
+     * {@code open_findings_json}, already read once by the caller's locked row — that this round's
+     * verdicts never judged: the case a {@code /finding} filed between a round's {@code PriorRun}
+     * snapshot (taken when its command was dispatched) and that round's completion produces.
+     * {@link #recordOpenFindings} REPLACES {@code open_findings_json} wholesale from {@code result}
+     * and {@code priorFindings} alone; a finding the command never carried is in neither, so without
+     * this it would be silently destroyed rather than merely delayed a round.
+     *
+     * <p>A conversation finding the command DID carry (filed before the snapshot was taken) is
+     * already a {@link PriorFinding} by then and is ALSO carried by {@link #stillOpenPriorFindings}
+     * when unmatched — matched here the same way that method matches one, by threadRef, else by loc,
+     * but that overlap is not filtered out here; it is a harmless duplicate at dedupe time
+     * ({@link #dedupeByAnchor} collapses it to one row) — harmless because both copies now carry the
+     * same origin ({@link PriorFinding#origin()} on one, the CURRENT open_findings_json row unchanged
+     * on the other), so it no longer matters which duplicate the merge keeps.
+     */
+    private List<ReviewDetail.FindingView> unmatchedConversationFindings(
+            List<ReviewDetail.FindingView> currentOpen, List<FindingVerdict> verdicts) {
+        List<ReviewDetail.FindingView> preserved = new ArrayList<>();
+        for (ReviewDetail.FindingView f : currentOpen) {
+            if (CONVERSATION_ORIGIN.equals(f.origin()) && verdicts.stream().noneMatch(v ->
+                    (f.threadRef() != null && f.threadRef().equals(v.threadRef()))
+                            || (v.path() + ":" + v.line()).equals(f.loc()))) {
+                preserved.add(f);
+            }
+        }
+        return preserved;
     }
 
     /**
@@ -883,7 +1197,44 @@ public class ReviewProjection {
         }
     }
 
-    /** Whether this review has been archived — the gate every resurrection path consults. */
+    /**
+     * Whether this PR has a registered review at all — a row in {@code review_status}.
+     *
+     * <p>Asked by paths that would otherwise write a finding, a note or a status into nothing: the
+     * read-model writers degrade to a WARN on a missing row (the right posture for a projector racing
+     * a registration), which leaves a caller unable to tell "written" from "dropped".
+     *
+     * <p>Deliberately its own query rather than {@code commitOf(...).isPresent()}. Those accessors
+     * answer {@code Optional.empty()} both for a missing row AND for a NULL column, so a caller using
+     * one to mean "registered" is right only for as long as every registration keeps writing that
+     * column.
+     *
+     * <p>Also deliberately NOT fail-open like {@link #archived}: there the fallback is what the code
+     * did before archival existed, and failing closed would silence a live review. Here a read fault
+     * has no safe answer, so it propagates — the caller's message dead-letters with the aggregate
+     * untouched, and a replay files the finding for real.
+     */
+    public boolean registered(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT 1 FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read registration state for " + reviewId, e);
+        }
+    }
+
+    /**
+     * Whether this review has been archived — the gate every resurrection path consults.
+     *
+     * <p>Reads almost identically to {@link #registered} above and fails the OPPOSITE way, so the
+     * two are worth reading together: a fault here answers "live" and lets the event through, while
+     * a fault there propagates. See the catch below, and {@code registered}'s javadoc, for why each
+     * posture is the safe one for its own question.
+     */
     public boolean archived(String reviewId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
@@ -1099,6 +1450,29 @@ public class ReviewProjection {
     // ---- reads (REST + WS) -------------------------------------------------
 
     /**
+     * Repositories this deployment has reviewed at least once, as {@code workspace/slug} —
+     * {@link dev.codespire.orchestrator.prompt.PromptScope}'s own format. Backs the prompt-overrides
+     * scope picker: a repo nobody has reviewed is also one there is nothing to preview a template
+     * against, and reading review rows we already own keeps the prompts feature from reaching across
+     * to the gateway's webhook_repo table for a settings dropdown.
+     */
+    public List<String> knownRepoScopes() {
+        List<String> out = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT DISTINCT workspace || '/' || slug FROM review_status ORDER BY 1");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                out.add(rs.getString(1));
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "knownRepoScopes read failed");
+            return List.of();
+        }
+        return out;
+    }
+
+    /**
      * The reviews list. Archived rows are excluded unless the caller asks for them: they are the
      * dashboard's default view of LIVE work, and an archived review is retired rather than in flight.
      *
@@ -1154,6 +1528,24 @@ public class ReviewProjection {
         return out;
     }
 
+    /**
+     * <b>The findings card is a UNION of two columns, not one.</b> {@code findings_json} is what one
+     * model call produced; a finding a human filed with {@code /finding} never came from a model call
+     * and is written to {@code open_findings_json} alone ({@link #addConversationFinding}). Reading
+     * only the first column is what once made a filed finding invisible on the dashboard in every
+     * round — present in the baseline, in the exclusion list and in the next round's reconciliation,
+     * but nowhere a person could see it. So {@link #unionConversationFindings} adds the
+     * conversation-origin entries of the second column that nothing on the page already accounts for.
+     *
+     * <p>A union rather than a repoint, in both directions: {@code findings_json} keeps its meaning as
+     * one run's truthful outcome (the card's "+ N more" math and {@link #blockerCount} depend on it),
+     * and {@code open_findings_json} keeps its meaning as the NEXT round's baseline, which also holds
+     * carried prior findings that this card must not re-list as though this run raised them.
+     *
+     * <p>Reconciliation is read BEFORE the union, not after, because the union defers to it — see
+     * {@link #alreadyTracked}. A filed finding shows as a fresh entry the round it is filed and as its
+     * own verdict every round after, never as both.
+     */
     public Optional<ReviewDetail> loadDetail(String workspace, String slug, long pr) {
         String reviewId = ReviewIds.reviewId(new RepoRef(workspace, slug), pr);
         try (Connection c = dataSource.getConnection()) {
@@ -1162,10 +1554,11 @@ public class ReviewProjection {
                 return Optional.empty();
             }
             ThreadIndex threadIndex = buildThreadIndex(loadThreadRows(c, reviewId));
-            FindingsWithThreads attached = attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex);
-            Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
             List<ReviewDetail.ReconciliationView> reconciliation =
                     parseReconciliation(row.reconciliationJson, row.id, threadIndex.resolvedRefs());
+            FindingsWithThreads attached = unionConversationFindings(
+                    attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex), row, reconciliation);
+            Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
 
             return Optional.of(toDetail(row,
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
@@ -1229,12 +1622,120 @@ public class ReviewProjection {
             String ref = threadIndex.threadByLoc().get(f.loc());
             if (ref != null && claimedRefs.add(ref)) {
                 findingRefs.add(ref);
-                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref));
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref, f.origin()));
             } else {
-                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), null));
+                findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), null, f.origin()));
             }
         }
         return new FindingsWithThreads(findings, findingRefs);
+    }
+
+    /**
+     * The second half of the card (see {@link #loadDetail}): the conversation-origin entries of
+     * {@code open_findings_json} that nothing else on the page already accounts for.
+     *
+     * <p>These entries keep their STORED {@code threadRef} instead of taking one from the thread
+     * index, unlike {@link #attachThreadRefs}. A {@code /finding} lives in a thread a HUMAN started,
+     * which is recorded with a location but deliberately without {@code is_finding} (V27), so the
+     * index has no entry for its anchor and a lookup would null the very ref that hooks the row to
+     * its conversation. The index's claim rule still applies: a ref another row already owns is not
+     * taken twice, so one thread can never nest under two rows.
+     */
+    private FindingsWithThreads unionConversationFindings(FindingsWithThreads attached, ReviewRow row,
+                                                          List<ReviewDetail.ReconciliationView> reconciliation) {
+        Set<String> tracked = alreadyTracked(attached.findings(), reconciliation);
+        List<ReviewDetail.FindingView> untracked = untrackedConversationFindings(row, tracked);
+        if (untracked.isEmpty()) {
+            return attached;
+        }
+        List<ReviewDetail.FindingView> findings = new ArrayList<>(attached.findings());
+        Set<String> findingRefs = new HashSet<>(attached.findingRefs());
+        for (ReviewDetail.FindingView f : untracked) {
+            String ref = f.threadRef() != null && findingRefs.add(f.threadRef()) ? f.threadRef() : null;
+            findings.add(new ReviewDetail.FindingView(f.sev(), f.loc(), f.msg(), ref, f.origin()));
+        }
+        return new FindingsWithThreads(findings, findingRefs);
+    }
+
+    /**
+     * The conversation-origin entries of the carry-forward baseline: the half of the findings card
+     * {@code findings_json} structurally cannot hold, since its one writer ({@link #recordOutcome})
+     * serializes a finding the model produced and nothing else.
+     *
+     * <p>Everything ELSE in that column is deliberately left out. It is the next round's baseline and
+     * also carries prior findings that are still open; those belong to the reconciliation card, which
+     * says what happened to them. Re-listing them here would make the findings card claim this run
+     * raised them and would count them a second time beside their own verdict.
+     */
+    private List<ReviewDetail.FindingView> conversationFindings(ReviewRow row) {
+        return parseFindings(row.openFindingsJson(), row.id()).stream()
+                .filter(f -> CONVERSATION_ORIGIN.equals(f.origin()))
+                .toList();
+    }
+
+    /**
+     * The anchors and threads the page already accounts for, in {@link #keyOf}'s {@code l:}/{@code t:}
+     * form: this run's own findings, plus every verdict that leaves its finding OPEN.
+     *
+     * <p>Deferring to an open verdict is what keeps a filed finding on exactly one row for the whole
+     * life of the PR. It is a fresh entry the round it is filed and a reconciliation verdict every
+     * round after, and the verdict row is the richer of the two — it says "still open" and carries the
+     * model's note, where the baseline copy would render as though this run had just raised it. That
+     * is also why {@link ReviewDetail.ReconciliationView} carries {@code origin}: the badge has to
+     * travel to the row that wins, not to the one that yields.
+     *
+     * <p>A CLOSED verdict deliberately claims nothing. Its anchor is vacated, and a human filing a
+     * fresh {@code /finding} on that same line is raising a new concern that must not be swallowed by
+     * the resolved row still sitting in the history.
+     */
+    private static Set<String> alreadyTracked(List<ReviewDetail.FindingView> findings,
+                                              List<ReviewDetail.ReconciliationView> reconciliation) {
+        Set<String> tracked = new HashSet<>();
+        findings.forEach(f -> tracked.add("l:" + f.loc()));
+        for (ReviewDetail.ReconciliationView r : reconciliation) {
+            if (!isOpenVerdict(r.status())) {
+                continue;
+            }
+            tracked.add("l:" + r.loc());
+            if (r.threadRef() != null) {
+                tracked.add("t:" + r.threadRef());
+            }
+        }
+        return tracked;
+    }
+
+    /**
+     * The conversation findings {@code tracked} does not already account for, matched by anchor OR by
+     * thread — the exact set both {@link #loadDetail}'s card and {@link #openCounts} add, so the two
+     * can never disagree on what is open. MUTATES {@code tracked}, so two baseline entries sharing an
+     * anchor collapse here the same way {@link #dedupeByAnchor} collapses them on the write side.
+     *
+     * <p>Anchor OR thread, not one of the two: an open verdict's anchor is the FRESHER of the pair
+     * (already remapped through any rename the worker followed) while the baseline entry still carries
+     * the thread it was filed in, so either alone leaves a gap the other closes.
+     *
+     * <p>It claims only the ANCHOR of what it takes, never the thread — a person can file several
+     * findings from one discussion, at different lines, and they share that thread's ref. Anchor is
+     * the identity here, exactly as it is for {@link #dedupeByAnchor} on the write side; claiming the
+     * thread would make the second of two filed findings disappear.
+     */
+    private List<ReviewDetail.FindingView> untrackedConversationFindings(ReviewRow row, Set<String> tracked) {
+        List<ReviewDetail.FindingView> untracked = new ArrayList<>();
+        for (ReviewDetail.FindingView f : conversationFindings(row)) {
+            if (tracked.contains("l:" + f.loc())
+                    || (f.threadRef() != null && tracked.contains("t:" + f.threadRef()))) {
+                continue;
+            }
+            tracked.add("l:" + f.loc());
+            untracked.add(f);
+        }
+        return untracked;
+    }
+
+    /** A verdict that leaves its finding open rather than closing it out — the shared test behind the
+     *  open counts, {@link #openFindingLocs} and {@link #alreadyTracked}. */
+    private static boolean isOpenVerdict(String status) {
+        return "still open".equals(status) || "unchanged".equals(status);
     }
 
     /** Classify a timeline turn's thread as the finding it nests under, the summary comment, or a
@@ -1469,9 +1970,9 @@ public class ReviewProjection {
     private record ReviewRow(String id, String workspace, String slug, long pr, String title, String author,
                              String authorId, String branch, String base, String sha, String htmlUrl,
                              String providerType, String status, boolean answering, int stage, int findings,
-                             String findingsJson, String reconciliationJson, String note, String errorDetail,
-                             int attempt, Instant createdAt, Instant updatedAt, String prState,
-                             Instant archivedAt) {
+                             String findingsJson, String openFindingsJson, String reconciliationJson,
+                             String note, String errorDetail, int attempt, Instant createdAt,
+                             Instant updatedAt, String prState, Instant archivedAt) {
         ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
@@ -1524,21 +2025,40 @@ public class ReviewProjection {
      * before reconciliation entries, so a same-key collision keeps the NEW finding's severity —
      * matching {@code dedupeByAnchor}/{@code mergeFindingGroup}'s first-wins rule for duplicate
      * anchors, so the list and detail can never disagree on a shared anchor's severity.
+     *
+     * <p>Counts exactly the rows {@link #loadDetail}'s card renders, through the same
+     * {@link #alreadyTracked} / {@link #untrackedConversationFindings} pair: a finding a human filed
+     * is open, so a card that lists it beside a badge reading "passed" contradicts itself on one page.
+     *
+     * <p>Those are added LAST, so they land in {@code carriedOver} rather than {@code newlyRaised}.
+     * {@code newlyRaised} means "this run's review call raised it", and a human-filed finding never
+     * came from that call — attributing it to the run would credit the model with a person's work,
+     * the same mislabelling {@code origin} exists to prevent.
      */
     private OpenCounts openCounts(ReviewRow row) {
         Map<String, String> openSevByKey = new java.util.LinkedHashMap<>();
-        for (ReviewDetail.FindingView f : parseFindings(row.findingsJson(), row.id())) {
+        List<ReviewDetail.FindingView> findings = parseFindings(row.findingsJson(), row.id());
+        for (ReviewDetail.FindingView f : findings) {
             openSevByKey.putIfAbsent(keyOf(f.threadRef(), f.loc()), f.sev());
         }
-        // Everything keyed so far is this run's own work; anything the reconciliation loop adds
-        // beyond it was already open before this run started. `putIfAbsent` is what makes the
-        // subtraction exact — a carried finding re-reported at the same anchor stays counted once,
-        // as new, so the two halves always sum to the total.
+        // Everything keyed so far is this run's own work; anything the loops below add beyond it was
+        // already open before this run started. `putIfAbsent` is what makes the subtraction exact —
+        // a carried finding re-reported at the same anchor stays counted once, as new, so the two
+        // halves always sum to the total.
         int newlyRaised = openSevByKey.size();
-        for (ReviewDetail.ReconciliationView r : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
-            if ("still open".equals(r.status()) || "unchanged".equals(r.status())) {
+        List<ReviewDetail.ReconciliationView> reconciliation =
+                parseReconciliation(row.reconciliationJson(), row.id(), Set.of());
+        for (ReviewDetail.ReconciliationView r : reconciliation) {
+            if (isOpenVerdict(r.status())) {
                 openSevByKey.putIfAbsent(keyOf(r.threadRef(), r.loc()), r.sev());
             }
+        }
+        for (ReviewDetail.FindingView f
+                : untrackedConversationFindings(row, alreadyTracked(findings, reconciliation))) {
+            // Keyed by ANCHOR, deliberately not by thread: several findings filed from one discussion
+            // share that thread's ref, and keyOf prefers the thread when it has one — which would
+            // collapse two separate concerns into one and undercount the card it must agree with.
+            openSevByKey.putIfAbsent(keyOf(null, f.loc()), f.sev());
         }
         int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
         return new OpenCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised);
@@ -1581,9 +2101,21 @@ public class ReviewProjection {
         }
         for (ReviewDetail.ReconciliationView r
                 : parseReconciliation(row.reconciliationJson(), row.id(), Set.of())) {
-            if (("still open".equals(r.status()) || "unchanged".equals(r.status()))
-                    && r.loc() != null && !r.loc().isBlank()) {
+            if (isOpenVerdict(r.status()) && r.loc() != null && !r.loc().isBlank()) {
                 locs.add(r.loc());
+            }
+        }
+        // open_findings_json is the carry-forward baseline (recordOpenFindings), so this adds EVERY
+        // entry in it -- not just conversation-origin ones, since the column also carries prior
+        // review-derived findings still open and findings a round could not post. All of them are
+        // genuinely open, so counting them as flagged lines is defensible; it is broader than "a
+        // human filed this", which is the one case that motivated adding this loop: without it, a
+        // human who filed a finding in a thread they started got silence on every later reply at that
+        // line, because ConversationSaga's onFlaggedLine check (deciding when the bot speaks
+        // unprompted) reads this method.
+        for (ReviewDetail.FindingView f : parseFindings(row.openFindingsJson(), row.id())) {
+            if (f.loc() != null && !f.loc().isBlank()) {
+                locs.add(f.loc());
             }
         }
         return locs;
@@ -1651,7 +2183,8 @@ public class ReviewProjection {
                 rs.getString("source_branch"), rs.getString("dest_branch"), rs.getString("commit_sha"),
                 rs.getString("html_url"), rs.getString("provider_type"),
                 rs.getString("status"), rs.getBoolean("answering"), rs.getInt("stage"), rs.getInt("findings_count"),
-                rs.getString("findings_json"), rs.getString("reconciliation_json"), rs.getString("note"),
+                rs.getString("findings_json"), rs.getString("open_findings_json"),
+                rs.getString("reconciliation_json"), rs.getString("note"),
                 rs.getString("error_detail"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
                 rs.getString("pr_state"), instantOrNull(rs.getTimestamp("archived_at")));
@@ -1847,6 +2380,32 @@ public class ReviewProjection {
     }
 
     /**
+     * Same decrypt+parse as {@link #parseFindings}, but distinguishes "genuinely empty" from
+     * "failed to parse" — empty {@link Optional} means failure, {@code Optional.of(List.of())} means
+     * the column was legitimately absent/blank or decrypted to a real empty array. Needed only where
+     * a failure must SKIP a write rather than silently degrade to an empty list: see
+     * {@link #mergeColumnOrSkip}, where {@link #parseFindings}'s ordinary degrade-to-empty would turn
+     * a decrypt/parse failure into a write that REPLACES the column with just one new finding,
+     * destroying whatever was actually stored there. Never throws.
+     */
+    private Optional<List<ReviewDetail.FindingView>> tryParseFindings(String stored, String reviewId) {
+        if (stored == null || stored.isBlank()) {
+            return Optional.of(List.of());
+        }
+        String json;
+        try {
+            json = encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException notEncrypted) {
+            json = stored; // legacy plaintext row
+        }
+        try {
+            return Optional.of(mapper.readerForListOf(ReviewDetail.FindingView.class).readValue(json));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * loadDetail's lenient reader for {@code reconciliation_json} — same posture as {@link
      * #parseFindings}: a null column, decrypt failure, or parse failure all degrade to an empty
      * list rather than throwing. Renders {@code status} lower-case with spaces ("still open") and
@@ -1868,7 +2427,8 @@ public class ReviewProjection {
             List<ReconciliationEntry> entries = mapper.readerForListOf(ReconciliationEntry.class).readValue(json);
             return entries.stream()
                     .map(e -> new ReviewDetail.ReconciliationView(e.sev(), e.loc(), e.msg(),
-                            statusDisplay(e.status()), e.note(), e.threadRef(), resolvedRefs.contains(e.threadRef())))
+                            statusDisplay(e.status()), e.note(), e.threadRef(),
+                            resolvedRefs.contains(e.threadRef()), e.origin()))
                     .toList();
         } catch (Exception e) {
             LOG.debugf("Failed to parse reconciliation_json: %s", e.getMessage());

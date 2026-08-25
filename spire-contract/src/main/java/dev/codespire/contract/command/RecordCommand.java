@@ -1,5 +1,6 @@
 package dev.codespire.contract.command;
 
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.ThreadRef;
 
 /**
@@ -30,5 +31,14 @@ public sealed interface RecordCommand {
     }
 
     record RecordFollowUp(ThreadRef threadRef, String commentId) implements RecordCommand {
+    }
+
+    /**
+     * A human ran {@code /finding} in a review thread. The message rides here on its way to the
+     * encrypted read model; it does NOT reach the domain event, which keeps only the anchor and
+     * severity (a finding message may quote source code — DATA-MODEL §5).
+     */
+    record RaiseConversationFinding(ThreadRef threadRef, String path, int line, Severity severity,
+                                    String message, String triggeringCommentId) implements RecordCommand {
     }
 }

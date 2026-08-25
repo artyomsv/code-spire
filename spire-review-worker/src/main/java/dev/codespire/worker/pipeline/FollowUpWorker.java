@@ -3,9 +3,12 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ArchivedNotice;
+import dev.codespire.contract.command.ConversationFindingRefusal;
 import dev.codespire.worker.adapters.LlmFailures;
 import dev.codespire.worker.adapters.ProviderCircuits;
 import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
+import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
+import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.TurnCapNotified;
@@ -19,6 +22,7 @@ import dev.codespire.contract.port.LlmProvider;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
@@ -148,7 +152,10 @@ public class FollowUpWorker {
      * one hand-off, not a repeated "I'm done" on each new comment.
      *
      * <p>The notice invites an @-mention because {@code ConversationPolicy} lets a mention override the
-     * cap; if that policy ever changes, this text has to change with it.
+     * cap; if that policy ever changes, this text has to change with it. It also points at
+     * {@code /finding}: a capped thread is exactly where a human has been discussing something at
+     * length, and the notice is the last thing the bot says there — the best place to hand off the one
+     * command that outlives the conversation.
      */
     public void notifyTurnCap(ActionCommand.NotifyTurnCap command) {
         WorkerScmClients.Clients clients = scm.forCommand(command);
@@ -173,7 +180,8 @@ public class FollowUpWorker {
 
     static String capNoticeText(int turnCap) {
         return "I've replied " + turnCap + " times in this thread, so I'll hand it back to the team "
-                + "rather than keep going. @-mention me if you still need something here.";
+                + "rather than keep going. @-mention me if you still need something here, or run "
+                + "`/finding` to file what we discussed as a tracked finding.";
     }
 
     /**
@@ -203,6 +211,73 @@ public class FollowUpWorker {
         idempotency.markPosted(command.reviewId(), ArchivedNotice.SLOT, ArchivedNotice.KEY, ref.commentId());
         LOG.infof("Posted archived notice for %s", command.reviewId());
         results.emit(new ArchivedNotified(command.reviewId(), command.threadRef(), ref.commentId()));
+    }
+
+    /**
+     * Confirm in-thread that a {@code /finding} was filed.
+     *
+     * <p>Fixed text and no LLM call, like the turn-cap and archived notices. The claim is per
+     * TRIGGERING COMMENT, not per thread: a second {@code /finding} in one discussion is a second
+     * finding and deserves its own confirmation, unlike the turn-cap notice which is once per thread
+     * by design.
+     *
+     * <p>Emits {@code FindingConfirmed}, deliberately not {@code FollowUpPosted}: that event bumps
+     * the thread's turn count, and confirming a filing is not the bot taking a turn in the
+     * conversation. Without a result event the posted comment was never linked back to the
+     * conversation root, so a reply to it — on an SCM that threads by immediate parent — resolved to
+     * a fresh root instead of being recognized as this conversation.
+     */
+    public void confirmFinding(ActionCommand.ConfirmFinding command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        String key = "finding:" + command.triggeringCommentId();
+        if (idempotency.claim(command.reviewId(), command.threadRef().value(), key)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            LOG.infof("Finding confirmation already posted for %s thread %s — staying quiet",
+                    command.reviewId(), command.threadRef().value());
+            return;
+        }
+        CommentRef ref = clients.comments().replyInThread(command.repo(), command.prId(),
+                command.threadRef(),
+                confirmText(command.severity(), command.path(), command.line()));
+        idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, ref.commentId());
+        LOG.infof("Confirmed conversation finding on %s at %s:%d (%s)",
+                command.reviewId(), command.path(), command.line(), command.severity());
+        results.emit(new FindingConfirmed(command.reviewId(), command.threadRef(), ref.commentId()));
+    }
+
+    static String confirmText(Severity severity, String path, int line) {
+        return "Filed as **" + severity + "** at `" + path + ":" + line + "`. It will be tracked "
+                + "with the review's other findings and reconciled on the next push.";
+    }
+
+    /**
+     * Reply that a {@code /finding} could not be filed, when there was a thread to reply into.
+     *
+     * <p>Fixed text ({@link ConversationFindingRefusal}) and no LLM call, like the confirmation
+     * above. The claim slot is the THREAD, not the triggering comment: unlike a confirmation, this
+     * text never varies, so a second misuse in the same thread finds the slot already taken rather
+     * than collecting a second identical reply — the same reasoning that makes the turn-cap notice
+     * once per thread rather than once per comment.
+     *
+     * <p>Emits {@code FindingRefused}: the orchestrator already recorded the refusal on the timeline
+     * before dispatching this command, but nothing yet linked the posted reply back to the
+     * conversation root, so a human's reply to it — on an SCM that threads by immediate parent —
+     * resolved to a fresh root instead of being recognized as this conversation.
+     */
+    public void refuseFinding(ActionCommand.RefuseFinding command) {
+        WorkerScmClients.Clients clients = scm.forCommand(command);
+        String thread = command.threadRef().value();
+        if (idempotency.claim(command.reviewId(), thread, ConversationFindingRefusal.KEY)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+            LOG.infof("Finding refusal already posted for %s thread %s — staying quiet",
+                    command.reviewId(), thread);
+            return;
+        }
+        CommentRef ref = clients.comments().replyInThread(command.repo(), command.prId(),
+                command.threadRef(), ConversationFindingRefusal.NO_ANCHOR_REPLY);
+        idempotency.markPosted(command.reviewId(), thread, ConversationFindingRefusal.KEY, ref.commentId());
+        LOG.infof("Posted /finding refusal for %s thread %s", command.reviewId(), thread);
+        results.emit(new FindingRefused(command.reviewId(), command.threadRef(), ref.commentId()));
     }
 
     /**

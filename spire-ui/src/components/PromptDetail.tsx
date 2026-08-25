@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
-import { AlertTriangle, ArrowLeft, Eye, FileText, RotateCcw } from 'lucide-react';
-import {
-  fetchPrompt,
-  previewPrompt,
-  resetPrompt,
-  savePrompt,
-  type PromptPreview,
-  type PromptView,
-} from '../api';
-import Tooltip from './Tooltip';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
+import { acceptPromptDefault, fetchPrompt, GLOBAL_SCOPE, resetPrompt, savePrompt, type PromptView } from '../api';
 import AutoTextarea from './AutoTextarea';
+import PromptDriftBanner, { type PromptDrift } from './PromptDriftBanner';
+import ProvenanceLine from './PromptProvenance';
+import PromptSamplePicker from './PromptSamplePicker';
 import { KIND_LABELS } from './promptKinds';
+
+function driftOf(v: PromptView): PromptDrift {
+  return {
+    baseKnown: v.baseKnown,
+    defaultDrifted: v.defaultDrifted,
+    currentDefaultSystem: v.currentDefaultSystem,
+    currentDefaultBody: v.currentDefaultBody,
+    baseSystem: v.baseSystem,
+    baseBody: v.baseBody,
+  };
+}
 
 // Matches the server's PromptValidation token pattern — used only for the client-side
 // "missing required variable" hint; the server is still the source of truth on Save.
@@ -24,10 +30,14 @@ function referencedVariables(text: string): Set<string> {
 }
 
 /** The per-kind edit page (`/settings/prompts/:kind`): loads the effective template by kind and
- *  renders the editor. A missing/unknown kind surfaces the server's 404 as an inline error. */
+ *  renders the editor. A missing/unknown kind surfaces the server's 404 as an inline error.
+ *  Scope lives in `?scope=` -- read here, threaded through every mutation, and carried back onto
+ *  the "All prompts" link so leaving and returning keeps the same repository selected. */
 export default function PromptDetail() {
   const { kind = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const scope = searchParams.get('scope') ?? GLOBAL_SCOPE;
   const [view, setView] = useState<PromptView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,18 +46,20 @@ export default function PromptDetail() {
     let alive = true;
     setLoading(true);
     setError(null);
-    fetchPrompt(kind)
+    fetchPrompt(kind, scope)
       .then((v) => alive && setView(v))
       .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [kind]);
+  }, [kind, scope]);
+
+  const backHref = scope === GLOBAL_SCOPE ? '/settings/prompts' : `/settings/prompts?scope=${encodeURIComponent(scope)}`;
 
   return (
     <section className="content">
-      <button type="button" className="btn-ghost prompt-back" onClick={() => navigate('/settings/prompts')}>
+      <button type="button" className="btn-ghost prompt-back" onClick={() => navigate(backHref)}>
         <ArrowLeft size={14} aria-hidden="true" /> All prompts
       </button>
       {error && (
@@ -60,23 +72,39 @@ export default function PromptDetail() {
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         </div>
       )}
-      {view && <PromptEditor key={view.kind} initial={view} />}
+      {view && <PromptEditor key={`${view.kind}:${view.scope}`} initial={view} />}
     </section>
   );
 }
 
-type Busy = 'save' | 'reset' | 'preview' | null;
+type Busy = 'save' | 'reset' | 'accept' | null;
 
 function PromptEditor({ initial }: { initial: PromptView }) {
   const [system, setSystem] = useState(initial.system);
   const [body, setBody] = useState(initial.body);
   const [customized, setCustomized] = useState(initial.customized);
-  const [preview, setPreview] = useState<PromptPreview | null>(null);
+  // Tracked alongside `customized` rather than re-derived from `initial`, which is stale as soon
+  // as save/reset/accept-default changes which row now supplies the effective text.
+  const [inheritedFrom, setInheritedFrom] = useState<PromptView['inheritedFrom']>(initial.inheritedFrom);
+  const [drift, setDrift] = useState<PromptDrift>(driftOf(initial));
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
+  // Remounts PromptSamplePicker on save/reset, the same way the old inline preview was cleared —
+  // stale sample text and a stale review selection must not survive a system/body change the
+  // operator did not ask this preview to reflect.
+  const [previewGen, setPreviewGen] = useState(0);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const missingRequired = initial.palette.filter((v) => v.required && !referencedVariables(body).has(v.name));
+
+  // `PromptRegistry.drift`/`acceptCurrentDefault`/`reset` are scope-exact (drift is a property of
+  // ONE customization), but `effective` resolves repo -> global -> default and reports the RESOLVED
+  // row's drift/customized flags. So a repo scope with no override of its own, inheriting a drifted
+  // global row, would otherwise show a banner whose two actions match zero rows (repo has no row to
+  // delete, no row to re-stamp) and a "Custom" badge sitting above "Inherited from global". Both are
+  // gated on the scope that actually owns the row this view is reporting on: this scope's own repo
+  // override, or the global scope reporting on its own row.
+  const ownScope = inheritedFrom === 'repo' || initial.scope === GLOBAL_SCOPE;
 
   function insertVariable(name: string) {
     const token = `{{${name}}}`;
@@ -98,9 +126,11 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     setBusy('save');
     setError(null);
     try {
-      const saved = await savePrompt(initial.kind, system, body);
+      const saved = await savePrompt(initial.kind, system, body, initial.scope);
       setCustomized(saved.customized);
-      setPreview(null);
+      setInheritedFrom(saved.inheritedFrom);
+      setDrift(driftOf(saved));
+      setPreviewGen((g) => g + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -112,14 +142,16 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     setBusy('reset');
     setError(null);
     try {
-      await resetPrompt(initial.kind);
-      // Re-fetch the now-effective (default) template rather than reusing `initial`, which still
-      // holds the custom text when this kind was customized on load.
-      const fresh = await fetchPrompt(initial.kind);
+      await resetPrompt(initial.kind, initial.scope);
+      // Re-fetch the now-effective (default-or-inherited) template rather than reusing `initial`,
+      // which still holds the custom text when this scope was customized on load.
+      const fresh = await fetchPrompt(initial.kind, initial.scope);
       setSystem(fresh.system);
       setBody(fresh.body);
       setCustomized(fresh.customized);
-      setPreview(null);
+      setInheritedFrom(fresh.inheritedFrom);
+      setDrift(driftOf(fresh));
+      setPreviewGen((g) => g + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -127,11 +159,15 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     }
   }
 
-  async function onPreview() {
-    setBusy('preview');
+  /** Keep mine: re-stamp the ancestor, leaving `system`/`body` byte-identical. */
+  async function onAcceptDefault() {
+    setBusy('accept');
     setError(null);
     try {
-      setPreview(await previewPrompt(initial.kind, system, body));
+      await acceptPromptDefault(initial.kind, initial.scope);
+      const fresh = await fetchPrompt(initial.kind, initial.scope);
+      setInheritedFrom(fresh.inheritedFrom);
+      setDrift(driftOf(fresh));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -144,7 +180,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       <div className="head">
         <FileText size={15} aria-hidden="true" />
         <h3>{KIND_LABELS[initial.kind] ?? initial.kind}</h3>
-        {customized && (
+        {customized && ownScope && (
           <span
             className="badge"
             title={initial.updatedAt ? `Last saved ${new Date(initial.updatedAt).toLocaleString()}` : undefined}
@@ -153,7 +189,17 @@ function PromptEditor({ initial }: { initial: PromptView }) {
           </span>
         )}
       </div>
+      <ProvenanceLine scope={initial.scope} inheritedFrom={inheritedFrom} />
       <div className="body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {ownScope && (
+          <PromptDriftBanner
+            drift={drift}
+            busy={busy !== null}
+            onTakeDefault={() => void onReset()}
+            onKeepMine={() => void onAcceptDefault()}
+          />
+        )}
+
         <label className="field">
           <span>Instructions (system)</span>
           <AutoTextarea value={system} onChange={(e) => setSystem(e.target.value)} rows={4} disabled={busy !== null} />
@@ -208,17 +254,6 @@ function PromptEditor({ initial }: { initial: PromptView }) {
         )}
 
         <div className="prov-actions" style={{ marginTop: 4 }}>
-          <Tooltip label="Preview">
-            <button
-              type="button"
-              className="btn-ghost"
-              aria-label="Preview"
-              disabled={busy !== null}
-              onClick={() => void onPreview()}
-            >
-              <Eye size={14} aria-hidden="true" />
-            </button>
-          </Tooltip>
           <button type="button" className="btn-ghost" disabled={busy !== null} onClick={() => void onReset()}>
             <RotateCcw size={14} aria-hidden="true" /> Reset to default
           </button>
@@ -232,29 +267,14 @@ function PromptEditor({ initial }: { initial: PromptView }) {
           </button>
         </div>
 
-        {preview && <PreviewPanel preview={preview} />}
-      </div>
-    </div>
-  );
-}
-
-function PreviewPanel({ preview }: { preview: PromptPreview }) {
-  return (
-    <div className="ctx-preview" style={{ marginTop: 14 }}>
-      {preview.errors.length > 0 && (
-        <div className="modal-msg modal-error">
-          {preview.errors.map((e) => (
-            <div key={e}>{e}</div>
-          ))}
-        </div>
-      )}
-      <div className="ctx-preview-item">
-        <div className="ctx-preview-title">System (with locked suffix)</div>
-        <pre className="ctx-preview-body">{preview.system}</pre>
-      </div>
-      <div className="ctx-preview-item">
-        <div className="ctx-preview-title">User (variable slots annotated)</div>
-        <pre className="ctx-preview-body">{preview.user}</pre>
+        <PromptSamplePicker
+          key={previewGen}
+          kind={initial.kind}
+          system={system}
+          body={body}
+          disabled={busy !== null}
+          scope={initial.scope}
+        />
       </div>
     </div>
   );

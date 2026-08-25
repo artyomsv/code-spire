@@ -243,7 +243,7 @@ class SpendCapGateTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, ReviewFixtures.REPO_REF, pr, ReviewState.Status.REVIEWING,
-                        commitFor(pr), Set.of(), null, Map.of());
+                        commitFor(pr), Set.of(), null, Map.of(), Set.of());
             }
         };
         saga.commands = new CommandsEmitter() {
@@ -267,7 +267,8 @@ class SpendCapGateTest {
         };
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
-            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, dev.codespire.contract.scm.RepoRef repo) {
                 return null;
             }
         };

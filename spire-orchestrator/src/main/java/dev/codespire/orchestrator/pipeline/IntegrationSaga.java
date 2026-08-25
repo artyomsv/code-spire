@@ -9,9 +9,11 @@ import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.contract.command.CommentCommands;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
@@ -272,11 +274,177 @@ public class IntegrationSaga {
                     e.command(), reviewId, username(e.author()));
             return;
         }
-        if ("review".equals(e.command())) {
-            triggerManualReview(e);
-        } else {
-            LOG.infof("Manual /%s command received — no handler", e.command());
+        // Normalized because a switch over null throws where the old equals-test simply fell through
+        // to "no handler": a hand-crafted record must not cost a consumer a trip through cs.dlq.
+        String command = e.command() == null ? "" : e.command();
+        switch (command) {
+            case CommentCommands.REVIEW -> triggerManualReview(e);
+            case CommentCommands.FINDING -> raiseConversationFinding(reviewId, e);
+            default -> LOG.infof("Manual /%s command received — no handler", command);
         }
+    }
+
+    /**
+     * A human filed a finding from a discussion ({@code /finding}). No LLM call and no spend gate —
+     * nothing is asked of the model, because a person already decided.
+     *
+     * <p>Normalized to the conversation root first. On an SCM that threads by immediate parent, a
+     * command typed in a reply carries THAT reply's id, and keying the finding — or the confirmation
+     * — off it would split one conversation across two refs and hide the anchor, which lives on the
+     * root. Every sibling path in this saga normalizes for the same reason.
+     *
+     * <p>The refusal here SPEAKS, unlike the authorization refusal in {@link #onManualCommand}: an
+     * authorized author who used the command where it cannot work is told how to use it. Silence is
+     * the answer to a prober, not to a colleague.
+     *
+     * <p>Gated on {@link #registered} before either outcome is even resolved. An unregistered PR is
+     * the dangerous case for BOTH outcomes — nothing else stops it: {@code archived} answers false
+     * for a row that does not exist, and the provider resolves by workspace when the review has no
+     * stored type, so the command clears every gate ahead of it. {@code Filed} needed the check
+     * because the read model would drop the finding with a WARN while the aggregate kept the comment
+     * id, making a later registration-plus-redelivery an idempotent no-op — but {@code Refused}
+     * writes nothing to the aggregate or the read model at all, so a check placed only on the Filed
+     * path (as this used to be) left the refusal replying on a PR that was never registered, into
+     * whatever thread {@code review_thread} happened to carry (that table has no FK to
+     * {@code review_status}). Checking once, here, covers both.
+     */
+    private void raiseConversationFinding(String reviewId, ManualCommandReceived e) {
+        if (!projection.registered(reviewId)) {
+            timeline.record("integration", "skipped:/" + CommentCommands.FINDING, reviewId,
+                    "no registered review for this PR — open/update it first");
+            LOG.infof("Skipping /%s on %s — no registered review for this PR",
+                    CommentCommands.FINDING, reviewId);
+            return;
+        }
+        ThreadRef root = e.threadRef() == null ? null : threads.rootOf(reviewId, e.threadRef());
+        // Only consulted when the event carried no location of its own — not every provider reports
+        // one on every comment surface.
+        ThreadLocation stored = root == null ? null : threads.locationOf(reviewId, root);
+        switch (ConversationFindings.resolve(e, stored)) {
+            case ConversationFindings.Refused r -> refuseConversationFinding(reviewId, e, root, r);
+            case ConversationFindings.Filed f -> fileConversationFinding(reviewId, e, root, f);
+        }
+    }
+
+    /**
+     * Always timeline-only; SPEAKS in the thread too when there is one to speak into.
+     *
+     * <p>{@code root} is null exactly when the event itself carried no thread — a plain top-level PR
+     * comment, on every provider. GitHub routes BOTH a genuinely top-level comment and a reply to the
+     * bot's own summary comment through this same {@code null} (its {@code issue_comment} webhook
+     * carries no thread concept), so without a fallback {@code /finding} typed either way on GitHub
+     * produced no reply at all — the exact silence this project has twice shipped and learned to stop
+     * shipping. {@link ConversationSaga#resolveThread} already routes a top-level reply to the
+     * review's posted summary thread for this reason; this mirrors it, so the refusal lands wherever
+     * a follow-up answer would have. Only when nothing has been posted yet is there truly nowhere to
+     * reply, and the timeline stays the only record.
+     */
+    private void refuseConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
+                                           ConversationFindings.Refused refusal) {
+        timeline.record("integration", "refused:/" + CommentCommands.FINDING, reviewId,
+                refusal.replyText());
+        LOG.infof("Refused /%s on %s — no line to anchor to (thread=%s)", CommentCommands.FINDING,
+                reviewId, e.threadRef() == null ? "none" : e.threadRef().value());
+        ThreadRef target = root != null ? root : summaryThreadOf(reviewId).orElse(null);
+        if (target == null) {
+            return;
+        }
+        Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
+        if (provider.isEmpty()) {
+            LOG.infof("Refused /%s on %s but posted no reply — no provider resolves, so there is no "
+                    + "credential to post with", CommentCommands.FINDING, reviewId);
+            return;
+        }
+        commands.emit(new ActionCommand.RefuseFinding(reviewId, e.repo(), e.prId(), target,
+                workerCredentials.pack(provider.get())));
+    }
+
+    /** The review's posted summary comment, as a {@link ThreadRef} — the same fallback target
+     *  {@link ConversationSaga#resolveThread} uses for a top-level reply. */
+    private Optional<ThreadRef> summaryThreadOf(String reviewId) {
+        return projection.summaryRefOf(reviewId).map(ThreadRef::new);
+    }
+
+    /**
+     * Project, THEN append — the reverse of every other write in this saga, and the reversal is the
+     * point.
+     *
+     * <p>This is the only path here where the read model is the finding's SOLE home: the domain event
+     * deliberately carries anchor and severity but not the message, which may quote source code
+     * (DATA-MODEL §5), so nothing can rebuild the finding from the log. Appending first meant a
+     * transient fault on the projection write dead-lettered the message with the triggering comment
+     * already in {@code raisedFindingComments} — the replay then found the aggregate saying "already
+     * raised", returned here, and the human's finding was gone for good. Reordering makes the worst
+     * case "no confirmation posted" instead of "finding destroyed", and costs nothing, because the
+     * projection write is idempotent by construction ({@code dedupeByAnchor} collapses the anchor and
+     * {@code mergeMessages} deduplicates constituents).
+     *
+     * <p>Which is why the aggregate is CONSULTED before the projection write and commanded after. A
+     * completed round drops a resolved conversation finding from the baseline, so a late replay —
+     * a DLQ replay is an operator action and can arrive hours later — would otherwise resurrect it.
+     * The pre-check in {@link #canFileConversationFinding} is therefore the operative guard on a
+     * redelivery, and it is safe to read-then-act on because everything is keyed by reviewId and
+     * dispatch is per-partition ordered, so one consumer owns this review.
+     *
+     * <p>{@code handle}'s own empty answer is the BACKSTOP, and it is kept for the one window the
+     * pre-check cannot cover: a consumer-group rebalance, where a revoked consumer's in-flight
+     * message can overlap the new owner's replay of the same offset. Two threads can both pass the
+     * pre-check there, and only the event store's optimistic concurrency and this empty answer keep
+     * the confirmation from being posted twice.
+     */
+    private void fileConversationFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
+                                         ConversationFindings.Filed f) {
+        if (!canFileConversationFinding(reviewId, e)) {
+            return;
+        }
+        // The message goes to the encrypted read model and is never logged (DATA-MODEL §5).
+        projection.addConversationFinding(reviewId, root.value(), f.path(), f.line(), f.severity(),
+                f.message());
+        List<DomainEvent> appended = lifecycle.handle(reviewId,
+                new RecordCommand.RaiseConversationFinding(root, f.path(), f.line(), f.severity(),
+                        f.message(), e.commentId()));
+        if (appended.isEmpty()) {
+            LOG.infof("Ignoring redelivered /%s on %s — its comment already raised a finding",
+                    CommentCommands.FINDING, reviewId);
+            return;
+        }
+        confirmFinding(reviewId, e, root, f);
+    }
+
+    /**
+     * The redelivery guard for the {@code Filed} outcome, run after {@link #raiseConversationFinding}
+     * has already refused an unregistered PR ahead of the Filed/Refused split.
+     */
+    private boolean canFileConversationFinding(String reviewId, ManualCommandReceived e) {
+        // Null-guarded: raisedFindingComments() is an immutable Set, whose contains(null) throws
+        // rather than answering false. Unreachable from a real ingress today, but the 5-arg
+        // ManualCommandReceived convenience constructor leaves commentId constructible as null.
+        if (e.commentId() != null && lifecycle.currentState(reviewId).raisedFindingComments().contains(e.commentId())) {
+            LOG.infof("Ignoring redelivered /%s on %s — its comment already raised a finding",
+                    CommentCommands.FINDING, reviewId);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Tell the thread the finding was filed, and at what. Fixed text, so it carries no LLM credential.
+     *
+     * <p>With no resolvable provider there is nothing to broker, and a credential-less command reaches
+     * the worker's stub sink — it would consume the worker's claim while posting nothing real. The
+     * finding itself is already filed and visible on the dashboard either way.
+     */
+    private void confirmFinding(String reviewId, ManualCommandReceived e, ThreadRef root,
+                                ConversationFindings.Filed f) {
+        Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
+        if (provider.isEmpty()) {
+            LOG.infof("Filed a /%s on %s but posted no confirmation — no provider resolves, so there "
+                    + "is no credential to post with", CommentCommands.FINDING, reviewId);
+            return;
+        }
+        commands.emit(new ActionCommand.ConfirmFinding(reviewId, e.repo(), e.prId(), root,
+                e.commentId(), f.severity(), f.path(), f.line(),
+                workerCredentials.pack(provider.get())));
     }
 
     private List<String> allowlistFor(String reviewId) {

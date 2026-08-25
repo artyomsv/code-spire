@@ -911,6 +911,7 @@ public class ReviewWorker {
         }
         appendFindingList(sb, "\nNot anchorable to the diff (cited lines not in the change):\n", unanchored);
         appendFindingList(sb, "\nCould not be posted inline (SCM error):\n", failed);
+        sb.append("\nRun `/finding` in any inline thread to file what you discussed there as a tracked finding.\n");
         return sb.toString();
     }
 

@@ -44,6 +44,22 @@ class ReconciliationTypesTest {
     }
 
     @Test
+    void oldPriorFindingJsonWithoutOriginStillDeserializes() throws Exception {
+        // Wire compat: a PriorFinding stored (or command-carried) before origin existed has no such
+        // key. Reading it back as anything but null would attribute the model's findings to people.
+        String legacy = """
+                {"path":"src/A.java","line":7,"severity":"MAJOR","message":"leak","threadRef":"thread-1"}""";
+        PriorFinding back = mapper.readValue(legacy, PriorFinding.class);
+        assertNull(back.origin());
+        assertEquals("thread-1", back.threadRef());
+    }
+
+    @Test
+    void fiveArgPriorFindingConstructorLeavesOriginNull() {
+        assertNull(new PriorFinding("src/A.java", 7, Severity.MAJOR, "leak", "thread-1").origin());
+    }
+
+    @Test
     void nineArgConvenienceConstructorLeavesPriorRunNull() {
         ActionCommand.GenerateReview cmd = new ActionCommand.GenerateReview(
                 "review::ws/repo#1", new RepoRef("ws", "repo"), 1L, "bbb222",

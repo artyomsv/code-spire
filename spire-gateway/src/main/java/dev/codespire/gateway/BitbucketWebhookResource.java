@@ -29,7 +29,7 @@ public class BitbucketWebhookResource {
     static final String PROVIDER = "bitbucket-cloud";
 
     /** Registered manual commands (CONTRACT §10); mirrors the other edges. */
-    private static final Set<String> COMMANDS = Set.of("review");
+    private static final Set<String> COMMANDS = WebhookCommands.SUPPORTED;
 
     /**
      * Bitbucket's API base. The ingress requires a config, but the internet-facing

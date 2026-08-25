@@ -5,6 +5,8 @@ import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
 import dev.codespire.contract.event.IntegrationEvent.CommentsPosted;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
+import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
+import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
@@ -188,12 +190,13 @@ public class ResultSaga {
                     return;
                 }
                 PriorRun prior = projection.priorRunFor(e.reviewId()).orElse(null);
+                dev.codespire.contract.scm.RepoRef repo = ReviewIds.parse(e.reviewId()).repo();
                 dev.codespire.contract.llm.PromptTemplate reviewPrompt =
-                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW);
+                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.REVIEW, repo);
                 dev.codespire.contract.llm.PromptTemplate reconcilePrompt =
-                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE);
+                        promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.RECONCILE, repo);
                 emitWithCredential(e.reviewId(), "GenerateReview", scmCred -> new ActionCommand.GenerateReview(
-                        e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
+                        e.reviewId(), repo, e.prId(), e.commit(),
                         e.contextRef(), 1, null, scmCred, llm.packed(), prior, reviewPrompt, reconcilePrompt));
             });
             case ReviewGenerated e -> {
@@ -304,6 +307,44 @@ public class ResultSaga {
                 projection.appendEvent(e.reviewId(), "result", "ArchivedNotified",
                         "told the pull request this review is archived", threadRef);
                 // No bumpTurn: a notice that answers nothing must not consume one of the thread's turns.
+            }
+            case FindingConfirmed e -> {
+                // e.threadRef() is null only from a hand-built record (e.g. a DLQ replay) -- both
+                // emitters guarantee non-null today. rootOf binds it into a statement, so a null
+                // would throw an NPE inside a try whose catch (SQLException) cannot see it, the same
+                // hazard the ArchivedNotified handler above is already guarded for.
+                ThreadRef root = e.threadRef() == null ? null : threads.rootOf(e.reviewId(), e.threadRef());
+                projection.appendEvent(e.reviewId(), "result", "FindingConfirmed",
+                        "confirmed a finding filed from this conversation", root == null ? null : root.value());
+                if (root != null) {
+                    // No bumpTurn: filing a finding is not the bot taking a turn in the conversation,
+                    // exactly as TurnCapNotified is not. Link the posted confirmation to the root
+                    // anyway, so a human's reply to IT — on an SCM that threads by immediate parent —
+                    // is recognized as this conversation rather than treated as a fresh thread.
+                    threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                }
+                // appendEvent only writes review_event, which the detail page's live refresh does not
+                // watch — it refetches on a summary updated_at bump (same reason FollowUpGenerated
+                // touches below). Without this the confirmation's timeline line sat unseen until some
+                // unrelated write happened to push a fresh summary.
+                projection.touch(e.reviewId());
+            }
+            case FindingRefused e -> {
+                // Same null-guard as FindingConfirmed, and for the same reason.
+                ThreadRef root = e.threadRef() == null ? null : threads.rootOf(e.reviewId(), e.threadRef());
+                projection.appendEvent(e.reviewId(), "result", "FindingRefused",
+                        "refused a /finding — no line to anchor to", root == null ? null : root.value());
+                if (root != null) {
+                    // Same reasoning as FindingConfirmed: no turn consumed, but the reply is still
+                    // linked back to the root so a follow-up reply to it is recognized as this
+                    // conversation.
+                    threads.markAnswerThread(e.reviewId(), new ThreadRef(e.commentId()), root);
+                }
+                // Same reason as FindingConfirmed's touch: a /finding refusal is exactly as much a
+                // dashboard-visible action as a confirmation, and appendEvent alone never bumps
+                // updated_at -- leaving this out would reproduce the same "two symmetric outcomes,
+                // only one wired up" shape M1 was about in the first place.
+                projection.touch(e.reviewId());
             }
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
@@ -620,6 +661,8 @@ public class ResultSaga {
             case FollowUpPosted e -> e.reviewId();
             case TurnCapNotified e -> e.reviewId();
             case ArchivedNotified e -> e.reviewId();
+            case FindingConfirmed e -> e.reviewId();
+            case FindingRefused e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             default -> "";
         };

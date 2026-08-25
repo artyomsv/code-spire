@@ -344,6 +344,15 @@ class ReviewWorkerTest {
     }
 
     @Test
+    void theSummaryNamesTheFindingCommandOnce() {
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        assertTrue(sink.summaryBody.contains("/finding"), "the footer points at the command");
+        assertEquals(sink.summaryBody.indexOf("/finding"), sink.summaryBody.lastIndexOf("/finding"),
+                "named once, not repeated");
+    }
+
+    @Test
     void summaryFailureEmitsReviewFailedAndNoCommentsPosted() {
         sink.failSummary = true;
         worker.postComments(postCommand(List.of(finding("src/A.java", 2))));

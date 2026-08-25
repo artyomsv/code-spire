@@ -415,6 +415,11 @@
      not read as an outage (crit, like failed) nor as nothing-to-do (muted, like cancelled). Same
      token as .rate-unset, which marks the other "someone has to choose something" state. */
   .pill.refused { --st: var(--warn); --st-soft: var(--warn-soft); }
+  /* Provenance, not a problem: a finding a person filed with /finding is context for the reader,
+     not something that needs attention — muted so it never reads as more alarming than a
+     model-reported finding beside it. Named for the state it marks (where the finding came from),
+     like every other .pill modifier, rather than for the grey it happens to be. */
+  .pill.provenance { --st: var(--muted); --st-soft: var(--muted-soft); }
 
   /* "responding…" indicator: subtle and static (never an unbounded spinner) — `answering`
      is best-effort and can rarely stay true past a terminal failure, so it must not read
@@ -1154,7 +1159,64 @@
     padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-3);
   }
   .prompt-tag.is-custom { color: var(--iris); border-color: var(--iris); background: var(--iris-soft); }
+  .prompt-tag.is-inherited { color: var(--blue); border-color: var(--blue); background: var(--blue-soft); }
+  .prompt-tag.is-drifted {
+    display: inline-flex; align-items: center; gap: 3px;
+    color: var(--warn); border-color: var(--warn); background: var(--warn-soft);
+  }
   .prompt-back { margin-bottom: 12px; }
+
+  /* Scope picker — the "Prompts" card header (list page) and, compactly, wherever else the
+     current scope needs to be visible/changeable. Native <select>, not the custom Select: see
+     PromptScopePicker.tsx. */
+  .prompt-scope-picker { flex: none; min-width: 200px; max-width: 280px; gap: 3px; }
+  .prompt-scope-picker select { height: 32px; padding: 6px 10px; font-size: 12.5px; }
+
+  /* Provenance line — which row (repo override / global override / built-in default) actually
+     supplied the text on screen. Deliberately louder than a footnote: a repo scope showing
+     global's text looks identical to one with its own override unless this line says otherwise. */
+  .prompt-provenance {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 18px; font-size: 12.5px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .prompt-provenance.is-repo { color: var(--iris); background: var(--iris-soft); }
+  .prompt-provenance.is-global { color: var(--blue); background: var(--blue-soft); }
+  .prompt-provenance.is-default { color: var(--text-3); background: var(--panel-2); }
+  .prompt-provenance-scope {
+    font-family: var(--font-mono); font-weight: 500; font-size: 11.5px;
+    color: var(--text-2); margin-left: auto;
+  }
+
+  /* Prompt default drift: what changed in the shipped default since a customization, and the two
+     ways out (keep mine / take the new default). Renders above the editor. */
+  .prompt-drift {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 14px; border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); background: var(--warn-soft);
+  }
+  /* The "customized before tracking began" case: nothing to compare against, so there is nothing to
+     warn about -- neutral, not the amber .prompt-drift base it overrides. */
+  .prompt-drift-unknown { border-color: var(--border); background: var(--panel-2); }
+  .prompt-drift-banner { display: flex; align-items: center; gap: 8px; color: var(--warn); font-size: 13px; font-weight: 600; }
+  .prompt-drift-muted { margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+  .prompt-drift-diff { border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); overflow: hidden; }
+  .prompt-drift-diff-title { padding: 7px 10px; font-weight: 600; font-size: 12px; color: var(--text-2); border-bottom: 1px solid var(--border); }
+  .prompt-drift-diff-body {
+    margin: 0; padding: 6px 0; max-height: 260px; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  }
+  .diff-line { padding: 0 10px; }
+  .diff-marker { display: inline-block; width: 14px; color: var(--text-3); }
+  .diff-line.diff-added { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--text); }
+  .diff-line.diff-added .diff-marker { color: var(--good); }
+  .diff-line.diff-removed { background: color-mix(in srgb, var(--crit) 14%, transparent); color: var(--text); }
+  .diff-line.diff-removed .diff-marker { color: var(--crit); }
+  .diff-line.diff-same { color: var(--text-3); }
+  .prompt-drift-actions { display: flex; gap: 8px; }
+
+  /* Preview-against-a-real-review picker, below the editor's Save/Reset row. */
+  .prompt-sample-picker { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); }
 
   /* Attention bell. The count badge is the only always-visible signal, so it must read at a
      glance without relying on colour alone -- the panel repeats the severity as an icon. */

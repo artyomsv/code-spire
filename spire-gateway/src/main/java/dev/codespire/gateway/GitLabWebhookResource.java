@@ -28,7 +28,7 @@ public class GitLabWebhookResource {
     static final String PROVIDER = "gitlab";
 
     /** Registered manual commands (CONTRACT §10); mirrors the other edges. */
-    private static final Set<String> COMMANDS = Set.of("review");
+    private static final Set<String> COMMANDS = WebhookCommands.SUPPORTED;
 
     @Inject
     ObjectMapper mapper;

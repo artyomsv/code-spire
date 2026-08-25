@@ -8,6 +8,8 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.port.RawWebhook;
+import dev.codespire.contract.scm.ThreadLocation;
+import dev.codespire.contract.scm.ThreadRef;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -28,7 +30,7 @@ class GitLabIngressTest {
     private static final String SECRET = "test-webhook-secret";
     private static final String BOT_ACCOUNT_ID = "9999";
 
-    private final GitLabIngress ingress = new GitLabIngress(SECRET, new ObjectMapper(), Set.of("review"));
+    private final GitLabIngress ingress = new GitLabIngress(SECRET, new ObjectMapper(), Set.of("review", "finding"));
 
     // --- token verification (constant-time compare, NOT an HMAC over the body) ---
 
@@ -158,14 +160,48 @@ class GitLabIngressTest {
         assertEquals("please", e.args());
         assertEquals(7, e.prId()); // merge_request.iid
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+        assertEquals("910", e.commentId());  // the note's own id -- the idempotency key for /finding
+        assertNull(e.threadRef(), "a top-level command has no thread of its own");
+        assertNull(e.location());
     }
 
     @Test
-    void ignoresNoteOnANonMergeRequestOrWithoutACommand() {
+    void ignoresNoteOnANonMergeRequest() {
         // A note on an Issue/Commit/Snippet is not a MR comment.
         assertTrue(ingress.translate(webhook(note("/review", "Issue"), Map.of())).isEmpty());
-        // An unregistered command is not forwarded.
-        assertTrue(ingress.translate(webhook(note("/deploy now", MR_NOTEABLE), Map.of())).isEmpty());
+    }
+
+    @Test
+    void unregisteredCommandOnAMergeRequestNoteBecomesAComment() {
+        // An unregistered command is not forwarded as a command -- it falls through and engages
+        // the bot as an ordinary note, same as any other body.
+        List<IntegrationEvent> events = ingress.translate(webhook(note("/deploy now", MR_NOTEABLE), Map.of()));
+        assertEquals(1, events.size());
+        assertInstanceOf(IntegrationEvent.AuthorReplied.class, events.getFirst());
+    }
+
+    @Test
+    void slashCommandInADiffNoteKeepsItsDiscussionAndPosition() {
+        List<IntegrationEvent> events = ingress.translate(webhook(noteWithPosition(
+                "/finding major shadows the field", "disc-900", 901, "src/Foo.java", 44)));
+        assertEquals(1, events.size());
+        ManualCommandReceived e = assertInstanceOf(ManualCommandReceived.class, events.getFirst());
+        assertEquals("finding", e.command());
+        assertEquals("major shadows the field", e.args());
+        assertEquals(new ThreadRef("disc-900"), e.threadRef());
+        assertEquals(new ThreadLocation("src/Foo.java", 44), e.location());
+        assertEquals("901", e.commentId());
+    }
+
+    @Test
+    void anUnrecognisedSlashWordIsAComment() {
+        // Was dropped entirely (List.of()), while Bitbucket and GitHub treat the same text as a
+        // comment -- one user action, three outcomes.
+        List<IntegrationEvent> events = ingress.translate(webhook(noteWithPosition(
+                "/usr/lib is the wrong path here", "disc-900", 901, "src/Foo.java", 44)));
+        assertEquals(1, events.size());
+        IntegrationEvent.AuthorReplied e = (IntegrationEvent.AuthorReplied) events.getFirst();
+        assertEquals("901", e.commentId());
     }
 
     @Test
@@ -349,6 +385,7 @@ class GitLabIngressTest {
                   "user": { "id": %s, "username": "octocat", "name": "Octo Cat" },
                   "project": { "path_with_namespace": "acme/team/spire-test" },
                   "object_attributes": {
+                    "id": 910,
                     "note": "%s",
                     "noteable_type": "%s"
                   },
@@ -372,6 +409,22 @@ class GitLabIngressTest {
                     "note": "%s", "type": %s, "discussion_id": "%s", "id": %d
                   }
                 }""").formatted(body, typeField, discussionId, noteId).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** A DiffNote carrying both a discussion id and a diff position, for slash-command-in-a-thread tests. */
+    private static byte[] noteWithPosition(String text, String discussionId, long noteId, String path, int line) {
+        return ("""
+                {
+                  "object_kind": "note",
+                  "project": { "path_with_namespace": "sandbox/demo-repo" },
+                  "user": { "id": 42, "username": "jdoe", "name": "Jane Doe" },
+                  "merge_request": { "iid": 7 },
+                  "object_attributes": {
+                    "noteable_type": "MergeRequest", "type": "DiffNote",
+                    "id": %d, "discussion_id": "%s", "note": "%s",
+                    "position": { "new_path": "%s", "new_line": %d }
+                  }
+                }""").formatted(noteId, discussionId, text, path, line).getBytes(StandardCharsets.UTF_8);
     }
 
     private static RawWebhook webhook(byte[] body) {

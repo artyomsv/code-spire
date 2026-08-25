@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle } from 'lucide-react';
+import { Archive, Bot, CheckCircle2, Cpu, GitMerge, GitPullRequest, GitPullRequestClosed, MessageCircle, MessageSquare } from 'lucide-react';
 import { FindingConversation } from './components/FindingConversation';
 import { MessageText } from './components/MessageText';
 import { RiOpenaiFill } from 'react-icons/ri';
@@ -423,6 +423,10 @@ interface FindingRow {
   closed: boolean;
   threadRef?: string;
   resolvedThread?: boolean;
+  // 'conversation' when a human filed this finding with /finding; absent for a review-derived one.
+  // Carried by BOTH row kinds: a filed finding becomes a reconciliation verdict the round after it
+  // is filed, so a badge only the fresh-finding row could show would last exactly one round.
+  origin?: 'conversation';
 }
 
 /**
@@ -456,6 +460,7 @@ function newFindingRows(findingsList: Finding[]): FindingRow[] {
     status: 'new',
     closed: false,
     threadRef: f.threadRef,
+    origin: f.origin,
   }));
 }
 
@@ -477,6 +482,7 @@ function reconciliationRows(reconciliation: ReconciliationItem[], ownedThreads: 
       closed: RECON_CLOSED_STATUSES.has(i.status),
       threadRef: i.threadRef,
       resolvedThread: i.resolvedThread,
+      origin: i.origin,
     }));
 }
 
@@ -506,6 +512,11 @@ function findingRow(r: ReviewDetail, row: FindingRow) {
       <div className="fbody">
         <div className="frow">
           <span className="sev">{row.sev}</span>
+          {row.origin === 'conversation' && (
+            <span className="pill provenance" title="Filed by a person with /finding in a review thread">
+              <MessageSquare size={11} aria-hidden="true" /> from discussion
+            </span>
+          )}
           <span className="loc">{row.loc}</span>
           <span className="recon-verdict">
             {row.closed && <CheckCircle2 size={13} />}

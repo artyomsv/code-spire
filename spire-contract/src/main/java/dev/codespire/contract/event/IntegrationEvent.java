@@ -42,7 +42,9 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpGenerated.class, name = "FollowUpGenerated"),
         @JsonSubTypes.Type(value = IntegrationEvent.FollowUpPosted.class, name = "FollowUpPosted"),
         @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified"),
-        @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified")
+        @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified"),
+        @JsonSubTypes.Type(value = IntegrationEvent.FindingConfirmed.class, name = "FindingConfirmed"),
+        @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused")
 })
 public sealed interface IntegrationEvent {
 
@@ -70,9 +72,28 @@ public sealed interface IntegrationEvent {
     record PullRequestClosed(RepoRef repo, long prId, CloseReason reason) implements IntegrationEvent {
     }
 
-    /** Parsed from a "/command" PR comment; saga maps "review" -> RequestReview{force=true}. */
+    /**
+     * A {@code /command} typed on a pull request.
+     *
+     * <p>{@code threadRef} and {@code location} are the thread the command was typed in, when it was
+     * typed in one — null for a top-level comment, which is every command that existed before
+     * {@code /finding}. They are carried because a command that acts on a thread cannot find its
+     * thread otherwise: two of the three ingresses used to check for {@code /} before computing
+     * either, and discarded the context the command needed.
+     *
+     * <p>{@code commentId} is the id of the comment that carried the command — the idempotency key
+     * for commands that act more than once on one thread.
+     */
     record ManualCommandReceived(RepoRef repo, long prId, String command, String args,
-                                 Author author) implements IntegrationEvent {
+                                 Author author, ThreadRef threadRef, ThreadLocation location,
+                                 String commentId) implements IntegrationEvent {
+
+        // Without thread context — a top-level command. Kept so every existing call site and every
+        // record already on the wire keeps working (the same additive treatment AuthorReplied took
+        // when it grew mentions, then location).
+        public ManualCommandReceived(RepoRef repo, long prId, String command, String args, Author author) {
+            this(repo, prId, command, args, author, null, null, null);
+        }
     }
 
     /**
@@ -275,6 +296,34 @@ public sealed interface IntegrationEvent {
      * the notice went to the top-level PR comment.
      */
     record ArchivedNotified(String reviewId, ThreadRef threadRef, String commentId)
+            implements IntegrationEvent {
+    }
+
+    /**
+     * The in-thread confirmation that a {@code /finding} was filed was posted, at {@code commentId}
+     * in the conversation ROOT {@code threadRef}.
+     *
+     * <p>Deliberately NOT {@link FollowUpPosted}: filing a finding is not the bot taking a turn in the
+     * conversation, so this must not bump the thread's turn count, exactly as {@link TurnCapNotified}
+     * does not. Without a result event here nothing links the posted comment back to the conversation
+     * root, so a reply to it — on an SCM that threads by immediate parent — would resolve to a fresh
+     * root instead of being recognized as this conversation (the defect class {@code root_ref}, V24,
+     * exists to fix).
+     */
+    record FindingConfirmed(String reviewId, ThreadRef threadRef, String commentId)
+            implements IntegrationEvent {
+    }
+
+    /**
+     * The in-thread reply that a {@code /finding} could not be filed was posted, at {@code commentId}
+     * in the conversation ROOT {@code threadRef}. Only ever emitted when there was somewhere to
+     * reply — see {@code RefuseFinding}.
+     *
+     * <p>Deliberately NOT {@link FollowUpPosted}, for the same reason {@link FindingConfirmed} is not:
+     * a refusal is not a conversational turn, and the link back to the root is what makes a human's
+     * reply to it recognized as part of the same conversation.
+     */
+    record FindingRefused(String reviewId, ThreadRef threadRef, String commentId)
             implements IntegrationEvent {
     }
 }

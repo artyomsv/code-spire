@@ -9,6 +9,8 @@ import dev.codespire.contract.event.IntegrationEvent.PrAction;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestClosed;
 import dev.codespire.contract.event.IntegrationEvent.PullRequestEventReceived;
 import dev.codespire.contract.port.RawWebhook;
+import dev.codespire.contract.scm.ThreadLocation;
+import dev.codespire.contract.scm.ThreadRef;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.Mac;
@@ -110,6 +112,9 @@ class GitHubIngressTest {
         assertEquals("please", e.args());
         assertEquals(7, e.prId());
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+        assertEquals("555", e.commentId());  // the comment's own id -- the idempotency key for /finding
+        assertNull(e.threadRef(), "a top-level command has no thread of its own");
+        assertNull(e.location());
     }
 
     @Test
@@ -120,10 +125,12 @@ class GitHubIngressTest {
     }
 
     @Test
-    void unknownSlashCommandStaysDropped() {
-        // An unregistered command is not forwarded (and does not become a conversational reply either).
-        assertTrue(ingress.translate(webhook(issueComment("/deploy now", true),
-                Map.of("X-GitHub-Event", "issue_comment"))).isEmpty());
+    void unknownSlashCommandBecomesAComment() {
+        // An unregistered command is not forwarded as a command -- it falls through and engages
+        // the bot as an ordinary top-level comment, same as any other body.
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(issueComment("/deploy now", true), Map.of("X-GitHub-Event", "issue_comment"))).getFirst());
+        assertTrue(e.topLevel());
     }
 
     @Test
@@ -136,6 +143,30 @@ class GitHubIngressTest {
         assertEquals("555", e.commentId());
         assertEquals("looks wrong to me", e.text());
         assertEquals(BOT_ACCOUNT_ID, e.author().providerUserId());
+    }
+
+    // --- translation: pull_request_review_comment slash commands ---
+
+    @Test
+    void slashCommandInAnInlineThreadIsACommandNotAQuestion() {
+        // GitHub delivers an inline reply on pull_request_review_comment, a different webhook from
+        // issue_comment. Only the latter used to check for "/", so "/review" on a line was answered
+        // by the model as a question -- and paid for an LLM call to do it.
+        ManualCommandReceived e = assertInstanceOf(ManualCommandReceived.class, ingress.translate(
+                webhook(inlineReply(901, 900, "/review", "src/main/java/App.java", 44),
+                        Map.of("X-GitHub-Event", "pull_request_review_comment"))).getFirst());
+        assertEquals("review", e.command());
+        assertEquals(new ThreadRef("900"), e.threadRef());
+        assertEquals(new ThreadLocation("src/main/java/App.java", 44), e.location());
+        assertEquals("901", e.commentId());
+    }
+
+    @Test
+    void anUnrecognisedSlashWordInAnInlineThreadStaysAComment() {
+        AuthorReplied e = assertInstanceOf(AuthorReplied.class, ingress.translate(
+                webhook(inlineReply(901, 900, "/usr/bin/env is on PATH here", "src/main/java/App.java", 44),
+                        Map.of("X-GitHub-Event", "pull_request_review_comment"))).getFirst());
+        assertEquals("901", e.commentId());
     }
 
     // --- where the thread sits in the diff (drives UI placement and the flagged-line policy) ---
@@ -303,6 +334,25 @@ class GitHubIngressTest {
                   }
                 }
                 """.formatted(lineJson).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** An inline reply on a review-comment thread, with an explicit in_reply_to_id (the thread root). */
+    private static byte[] inlineReply(long commentId, long inReplyToId, String body, String path, int line) {
+        return """
+                {
+                  "action": "created",
+                  "repository": { "full_name": "artyomsv/spire-test" },
+                  "pull_request": { "number": 7 },
+                  "comment": {
+                    "id": %d,
+                    "in_reply_to_id": %d,
+                    "body": "%s",
+                    "path": "%s",
+                    "line": %d,
+                    "user": { "id": 4242, "login": "octocat" }
+                  }
+                }
+                """.formatted(commentId, inReplyToId, body, path, line).getBytes(StandardCharsets.UTF_8);
     }
 
     private static RawWebhook webhook(byte[] body, Map<String, String> headers) {

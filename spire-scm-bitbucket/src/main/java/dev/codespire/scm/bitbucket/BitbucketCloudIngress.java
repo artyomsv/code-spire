@@ -152,16 +152,6 @@ public class BitbucketCloudIngress implements ScmIngress {
         String text = comment.path("content").path("raw").asText("").trim();
         Author author = author(comment.path("user"));
 
-        // "/review ..." -> ManualCommandReceived (CONTRACT §10)
-        if (text.startsWith("/")) {
-            String[] parts = text.substring(1).split("\\s+", 2);
-            String command = parts[0].toLowerCase(Locale.ROOT);
-            if (commands.contains(command)) {
-                return List.of(new ManualCommandReceived(repo, prId,
-                        command, parts.length > 1 ? parts[1] : "", author));
-            }
-        }
-
         // Reply threads anchor on the ROOT comment id (SCM-MAPPING §6).
         JsonNode parent = comment.path("parent").path("id");
         boolean hasParent = !(parent.isMissingNode() || parent.isNull());
@@ -169,15 +159,24 @@ public class BitbucketCloudIngress implements ScmIngress {
         // A plain top-level PR comment (no parent, not inline) is answered in the summary thread (topLevel).
         boolean topLevel = !hasParent && !inline;
         String threadRef = hasParent ? parent.asText() : comment.path("id").asText();
-        return List.of(new AuthorReplied(repo, prId,
-                ReviewIds.reviewId(repo, prId),
-                new ThreadRef(threadRef),
-                comment.path("id").asText(),
-                text,
-                author,
-                topLevel,
-                mentions(text),
-                location(comment)));
+        ThreadLocation location = location(comment);
+
+        // "/review ..." -> ManualCommandReceived (CONTRACT §10), now carrying the thread it was
+        // typed in. A top-level command has no thread of its own.
+        if (text.startsWith("/")) {
+            String[] parts = text.substring(1).split("\\s+", 2);
+            String command = parts[0].toLowerCase(Locale.ROOT);
+            if (commands.contains(command)) {
+                return List.of(new ManualCommandReceived(repo, prId, command,
+                        parts.length > 1 ? parts[1] : "", author,
+                        topLevel ? null : new ThreadRef(threadRef), location,
+                        comment.path("id").asText()));
+            }
+        }
+
+        return List.of(new AuthorReplied(repo, prId, ReviewIds.reviewId(repo, prId),
+                new ThreadRef(threadRef), comment.path("id").asText(), text, author, topLevel,
+                mentions(text), location));
     }
 
     /**

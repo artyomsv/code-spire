@@ -180,16 +180,6 @@ public class GitLabIngress implements ScmIngress {
     }
 
     /**
-     * A merge-request comment. A "/command" note becomes ManualCommandReceived when
-     * registered (the saga maps "review" -> force review), dropped when unregistered.
-     * Any other note becomes {@code AuthorReplied}: a threaded reply (GitLab {@code type}
-     * of {@code DiffNote}/{@code DiscussionNote}) is keyed to its {@code discussion_id}
-     * ({@code topLevel = false}); an individual top-level note ({@code type} absent/null)
-     * is {@code topLevel = true}. Notes on issues/commits/snippets are ignored via
-     * {@code noteable_type}. The MR number is {@code merge_request.iid}, not the note's
-     * own id.
-     */
-    /**
      * A DiffNote's {@code position}. GitLab reports {@code new_line} for an added/context line and
      * only {@code old_line} for a removed one, so fall back rather than losing the location; a
      * DiscussionNote or plain note has no position and yields null.
@@ -216,6 +206,16 @@ public class GitLabIngress implements ScmIngress {
         return null;
     }
 
+    /**
+     * A merge-request comment. A "/command" note becomes ManualCommandReceived when registered
+     * (the saga maps "review" -> force review), carrying the discussion and position it was typed
+     * in when it was typed in a thread; an unregistered "/word" is not a command, so it falls
+     * through and is handled like any other note. Any other note becomes {@code AuthorReplied}: a
+     * threaded reply (GitLab {@code type} of {@code DiffNote}/{@code DiscussionNote}) is keyed to
+     * its {@code discussion_id} ({@code topLevel = false}); an individual top-level note ({@code
+     * type} absent/null) is {@code topLevel = true}. Notes on issues/commits/snippets are ignored
+     * via {@code noteable_type}. The MR number is {@code merge_request.iid}, not the note's own id.
+     */
     private List<IntegrationEvent> note(JsonNode payload) {
         JsonNode attrs = payload.path("object_attributes");
         if (!MR_NOTEABLE.equals(attrs.path("noteable_type").asText(""))) {
@@ -224,22 +224,27 @@ public class GitLabIngress implements ScmIngress {
         String text = attrs.path("note").asText("").trim();
         long iid = payload.path("merge_request").path("iid").asLong();
         RepoRef repo = repo(payload);
-        if (!text.startsWith("/")) {
-            String noteType = attrs.path("type").asText(null);       // DiffNote/DiscussionNote => threaded; null => top-level
-            boolean topLevel = noteType == null || noteType.isBlank();
-            String discussionId = attrs.path("discussion_id").asText("");
-            String noteId = attrs.path("id").asText("");
-            return List.of(new AuthorReplied(repo, iid, ReviewIds.reviewId(repo, iid),
-                    new ThreadRef(discussionId), noteId, text, author(payload.path("user")), topLevel,
-                    mentions(text), location(attrs)));
+        String noteType = attrs.path("type").asText(null);   // DiffNote/DiscussionNote => threaded
+        boolean topLevel = noteType == null || noteType.isBlank();
+        String discussionId = attrs.path("discussion_id").asText("");
+        String noteId = attrs.path("id").asText("");
+        ThreadLocation location = location(attrs);
+
+        if (text.startsWith("/")) {
+            String[] parts = text.substring(1).split("\\s+", 2);
+            String command = parts[0].toLowerCase(Locale.ROOT);
+            if (commands.contains(command)) {
+                // A threaded note carries its discussion; a top-level note has no thread of its own.
+                return List.of(new ManualCommandReceived(repo, iid, command,
+                        parts.length > 1 ? parts[1] : "", author(payload.path("user")),
+                        topLevel ? null : new ThreadRef(discussionId), location, noteId));
+            }
+            // Not a recognised command: fall through. "/usr/lib" is a path, not an instruction, and
+            // dropping it made GitLab the only provider that silently swallowed such a comment.
         }
-        String[] parts = text.substring(1).split("\\s+", 2);
-        String command = parts[0].toLowerCase(Locale.ROOT);
-        if (!commands.contains(command)) {
-            return List.of();
-        }
-        return List.of(new ManualCommandReceived(repo, iid, command,
-                parts.length > 1 ? parts[1] : "", author(payload.path("user"))));
+        return List.of(new AuthorReplied(repo, iid, ReviewIds.reviewId(repo, iid),
+                new ThreadRef(discussionId), noteId, text, author(payload.path("user")), topLevel,
+                mentions(text), location));
     }
 
     /**

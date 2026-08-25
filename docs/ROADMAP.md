@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-23)
+## Current status & next-up backlog (updated 2026-08-24)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -478,16 +478,36 @@ down is the original design-time roadmap (kept for reference).
     `PromptValidation` enforces the structural invariants (untrusted-data fencing, sentinel
     neutralization, token clipping, JSON output contract) so customization cannot break them. Editor is
     slot-aware rather than a raw textarea. **Scope shipped global**; per-repo prompts, preview against a
-    sample diff, and a migration story for evolving built-in defaults remain open (see item 16).
-16. **Prompt management follow-ups** · M. The three questions the global-scope shipment deferred:
-    **per-repo prompt scope** (which needs a resolution order — repo overrides global — and a UI that
-    makes the effective template obvious), **preview against a sample diff** so an operator can see what
-    a template renders before it reaches a real PR, and a **migration story for evolving built-in
-    defaults** (a customized template silently misses improvements to the shipped prompt; today's only
-    answer is reset-to-default, which discards the customization wholesale).
-17. **Conversation-derived findings** · M. A discussion that surfaces a real defect doesn't register one —
-    the finding exists only as prose in a thread, so it never reaches the findings list, the reconciled
-    open count, or the next round's exclusion set. Tracked in `techdebt/global/`.
+    sample diff, and a migration story for evolving built-in defaults were deferred — all three are now
+    closed by item 16.
+16. ✅ **Prompt management follow-ups** — **delivered 2026-08-24** · M. The three questions item 15
+    deferred, closed:
+    **preview against a sample review** (`PromptSamplePicker` — a candidate system/body rendered
+    against a real review's diff, or an annotated no-data preview, before the operator saves it);
+    a **migration story for evolving built-in defaults** (`PromptDriftBanner` — a saved override now
+    records the built-in ancestor it forked from, V33, and reports when the shipped default has since
+    moved, with take-the-new-default / keep-mine-and-re-stamp actions; a pre-V33 row reports drift as
+    *unknown*, never as falsely up to date); and **per-repo prompt scope**, the largest piece —
+    storage re-keyed `(scope, kind)` (V34), resolution **repository → global → built-in default**
+    (`PromptRegistry.effective`, most-specific-wins, never a per-field merge), the orchestrator
+    resolving each command's prompt against its own repository, and the whole `/api/prompts` surface
+    accepting `?scope=`. This task closed the last piece: the dashboard's `PromptScopePicker` (a
+    `<select>` of every repository this deployment has reviewed, held in the URL query string) and a
+    provenance line — **Overridden for this repository** / **Inherited from global** / **Built-in
+    default**, from `PromptView.inheritedFrom` rather than the requested scope — so an operator can
+    always tell which row actually supplies the text on screen, not just what the text says. See
+    `docs/REPO-RULES.md` for when to reach for a per-repo prompt override versus a `.codespire` file.
+17. ✅ **Conversation-derived findings** — **delivered 2026-08-24** · M. A `/finding` command, run by an
+    allowed author in a PR thread, files the thread's anchor as a first-class finding
+    (`ConversationFindingRaised` — anchor and severity only, no message text, so a quoted snippet never
+    enters the replayable event log per DATA-MODEL.md §5) rather than leaving it as prose the reviewer
+    never sees again. The bot confirms in the thread it was run in; the finding then behaves exactly
+    like a review-discovered one — it counts toward the findings list and open/blocker totals, is
+    filed with the correct origin so the UI can mark it "from discussion," and carries forward
+    through reconciliation on the next round (STILL_OPEN / RESOLVED / SUPERSEDED) like any other prior
+    finding. `/finding` on an unregistered PR, or a redelivered command, is refused/idempotent the same
+    way the other slash commands are. The former `techdebt/global/4-4-conversation-derived-findings.md`
+    entry describing this gap is deleted — see SMOKE-TEST.md **Mode N**.
 
 **D. Infra & security hardening**
 10. ✅ **OIDC on the dashboard** — **delivered 2026-08-03** as D10 / ADR-022 · M. Every REST and
@@ -511,18 +531,17 @@ down is the original design-time roadmap (kept for reference).
 
 ### What is actually left
 
-**Every numbered item in A, B and C is now closed, and all of D bar one** (1–11, 13, 14, 15 — item 10
-closed with D10 on 2026-08-03). Only **D12**, **E16** and **E17** remain numbered. The product loop —
+**Every numbered item in A through E is now closed** (1–11, 13, 14, 15, 16, 17 — item 10 closed with
+D10 on 2026-08-03; **16 and 17 closed 2026-08-24**). Only **D12** remains numbered. The product loop —
 webhook → diff → context → review → conversation → reconciliation — is complete and live-verified on
-GitHub, GitLab **and** Bitbucket, with operator-editable prompts and an attention panel over its health,
-and reviews now understand a linked issue/PR/epic on every supported platform.
+GitHub, GitLab **and** Bitbucket, with operator-editable per-repo prompts, conversation-derived
+findings, and an attention panel over its health, and reviews now understand a linked issue/PR/epic on
+every supported platform.
 
 Open, by nature of the work rather than by section:
 
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
-| **E16** | Prompt management follow-ups | M | Per-repo scope, preview against a sample diff, and a default-migration story. |
-| **E17** | Conversation-derived findings | M | A discussion that surfaces a real defect leaves no finding behind. |
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
 | **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
@@ -540,7 +559,7 @@ change** for cert-manager; the gap was that nothing said so. Also the **contract
 bump + upcaster, ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it
 iterated event types and skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **17 techdebt items** in `techdebt/` — 7 medium, 10 low,
+Also open and tracked outside this file: **16 techdebt items** in `techdebt/` — 7 medium, 9 low,
 nothing high or critical. Count them rather than trusting this line: `ls techdebt/*/3-*.md` and
 `ls techdebt/*/4-*.md`. The previous version of this paragraph said 8 (1 medium, 7 low) and was wrong
 by more than double, because a transcribed count is stale the moment the next entry lands — the same
@@ -552,19 +571,23 @@ the UI's compile-time union; rejection messages never reaching the client; three
 past the size guideline; and no pull-request check building a `Dockerfile`. (Tracking waived nits
 durably, so a set-aside issue cannot return as its own finding, was considered and deliberately not
 built: it needs a store, a wire field and a prompt slot, which makes it a feature rather than debt. It
-sits closest to **E17**.) **No P1 scope remains pending**: the
+sits closest to the conversation-derived findings work delivered in item 17.) **No P1 scope remains
+pending**: the
 call-level resilience once framed as "SmallRye Fault Tolerance retry budgets" shipped as a hand-rolled
 retry ladder + per-host circuit breaker (ADR-016 rejected per-call `@Retry` for the review budget, and
 the same reasoning held one level down), and model pricing is delivered and deliberately
 operator-entered (ADR-018) rather than a hardcoded cost table that would silently drift.
 
-**Suggested order:** D10, the CI/CD work it was gating, and TLS are all resolved, so "someone else can
-run this" is answered — TLS as a documented contract rather than a shipped terminator, which is the
-honest form for a decision every environment makes differently. What remains is product work:
-**E16** is the cheapest user-visible gain and **P3 (RAG)** is the one item that changes what the
-product *is* rather than how well it runs. The nearest infrastructure item is extending `e2e.sh` to
-exercise an `https` origin — this codebase's own recorded trap is that things which break *only*
-behind TLS pass clean in plaintext, and that check does not exist yet. Operator decides.
+**Suggested order:** D10, the CI/CD work it was gating, TLS, and now E16/E17 are all resolved, so
+"someone else can run this" is answered and the product loop itself has no known gaps — TLS as a
+documented contract rather than a shipped terminator, which is the honest form for a decision every
+environment makes differently. What remains is smaller and more infrastructural: **D12** and the
+per-repo admission rate limit each wait on a trigger (a diff/context blob outgrowing Postgres; a
+fleet actually needing per-repo, not just global, spend limits) rather than being blocked on anything,
+and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs. The
+nearest infrastructure item is extending `e2e.sh` to exercise an `https` origin — this codebase's own
+recorded trap is that things which break *only* behind TLS pass clean in plaintext, and that check
+does not exist yet. Operator decides.
 
 ---
 

@@ -76,6 +76,49 @@ class ResultSagaPricingTest {
         assertInstanceOf(ActionCommand.GenerateReview.class, emitted.get(0));
     }
 
+    /**
+     * The prompt {@link WorkerPromptTemplates} resolves must be the one that actually reaches the
+     * command — not merely resolved and discarded. {@code GenerateReview} has 9-/10-arg convenience
+     * constructors that silently default {@code reviewPrompt}/{@code reconcilePrompt} to null (see
+     * {@code ActionCommand.java}), so a future refactor that switched to either would compile cleanly
+     * and disable every repo-scoped prompt customization with nothing failing; every other test in
+     * this class stubs {@code promptTemplates} to always return null, which cannot tell that apart
+     * from the value never being wired at all.
+     */
+    @Test
+    void contextAssembledCarriesTheResolvedPromptOntoGenerateReview() {
+        ResultSaga saga = sagaFor("TEST-PRICEABLE", true);
+        // Only answers for the exact (kind, repo) this review's command is expected to carry — a
+        // stub that answered for every repo could not tell "the right value was passed through"
+        // from "some value was passed through".
+        saga.promptTemplates = new WorkerPromptTemplates() {
+            @Override
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, dev.codespire.contract.scm.RepoRef repo) {
+                if (!repo.equals(new dev.codespire.contract.scm.RepoRef("TEST-WS", "TEST-REPO"))) {
+                    return null;
+                }
+                return switch (kind) {
+                    case REVIEW -> new dev.codespire.contract.llm.PromptTemplate(
+                            kind, "TEST-CANARY-REVIEW-PERSONA", "TEST-CANARY-BODY {{diff}}");
+                    case RECONCILE -> new dev.codespire.contract.llm.PromptTemplate(
+                            kind, "TEST-CANARY-RECONCILE-PERSONA", "TEST-CANARY-BODY {{diff}}");
+                    default -> null;
+                };
+            }
+        };
+
+        saga.on(contextAssembled(REVIEW_ID, COMMIT));
+
+        assertEquals(1, emitted.size());
+        ActionCommand.GenerateReview command =
+                assertInstanceOf(ActionCommand.GenerateReview.class, emitted.get(0));
+        assertEquals("TEST-CANARY-REVIEW-PERSONA", command.reviewPrompt().system(),
+                "the review prompt WorkerPromptTemplates resolved must be the one the command carries");
+        assertEquals("TEST-CANARY-RECONCILE-PERSONA", command.reconcilePrompt().system(),
+                "the reconcile prompt WorkerPromptTemplates resolved must be the one the command carries");
+    }
+
     @Test
     void reviewGeneratedRecordsChargeLinesUnderADeterministicCallRef() {
         ResultSaga saga = sagaFor("TEST-MODEL", true);
@@ -284,7 +327,7 @@ class ResultSagaPricingTest {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, null, 1L, ReviewState.Status.REVIEWING,
-                        COMMIT, Set.of(), null, java.util.Map.of());
+                        COMMIT, Set.of(), null, java.util.Map.of(), Set.of());
             }
         };
         saga.timeline = new TimelineBroadcaster() {
@@ -323,7 +366,8 @@ class ResultSagaPricingTest {
         };
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
-            public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind) {
+            public dev.codespire.contract.llm.PromptTemplate forKind(
+                    dev.codespire.contract.llm.PromptKind kind, dev.codespire.contract.scm.RepoRef repo) {
                 return null;
             }
         };

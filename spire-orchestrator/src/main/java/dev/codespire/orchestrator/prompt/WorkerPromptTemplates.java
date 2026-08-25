@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.prompt;
 
 import dev.codespire.contract.llm.PromptKind;
 import dev.codespire.contract.llm.PromptTemplate;
+import dev.codespire.contract.scm.RepoRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -16,7 +17,13 @@ public class WorkerPromptTemplates {
     @Inject
     PromptRegistry registry;
 
-    public PromptTemplate forKind(PromptKind kind) {
-        return registry.customized(kind).orElse(null);
+    /**
+     * The override to attach to a command, most specific first: the repository's, else the global
+     * one, else null so the worker uses the built-in default (no command bloat in the common case).
+     */
+    public PromptTemplate forKind(PromptKind kind, RepoRef repo) {
+        return registry.customized(kind, PromptScope.of(repo))
+                .or(() -> registry.customized(kind, PromptScope.GLOBAL))
+                .orElse(null);
     }
 }

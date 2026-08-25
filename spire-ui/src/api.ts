@@ -59,6 +59,9 @@ export interface Finding {
   loc: string;
   msg: string;
   threadRef?: string; // the SCM thread this finding owns (present when it has a conversation)
+  // Absent for a finding the review produced from the diff — which is every row stored before
+  // conversation findings existed. 'conversation' means a human filed it with /finding.
+  origin?: 'conversation';
 }
 
 /**
@@ -78,6 +81,11 @@ export interface ReconciliationItem {
   note?: string;
   threadRef?: string;
   resolvedThread?: boolean;
+  // Carried forward from the prior finding this verdict judges — 'conversation' when a human filed
+  // it with /finding, absent for a review-derived one and for every row stored before this existed.
+  // A filed finding is a fresh `Finding` for one round and one of these for every round after, so
+  // the provenance has to live on both shapes or it survives a single round.
+  origin?: 'conversation';
 }
 
 /** One message in a re-fetched SCM thread (full text, not the persisted preview). */
@@ -915,14 +923,34 @@ export interface PromptVariable {
   description: string;
 }
 
+// The deployment-wide scope every prompt endpoint defaults to. Mirrors the orchestrator's
+// PromptScope.GLOBAL — everything else is a "workspace/slug" repository scope.
+export const GLOBAL_SCOPE = '*';
+
+// Which row actually supplied a PromptView's system/body: this scope's own override, a fallback
+// to the global override, or the built-in default. Not derivable from `customized` alone once a
+// repo scope exists — a repo scope showing global's text is `customized: true` either way.
+export type PromptInheritance = 'repo' | 'global' | 'default';
+
 export interface PromptView {
   kind: string;
+  scope: string; // the scope this view was resolved at (GLOBAL_SCOPE or "workspace/slug")
+  inheritedFrom: PromptInheritance;
   customized: boolean; // false = showing the built-in default (not a stored override)
   system: string;
   body: string;
   updatedAt: string | null;
   palette: PromptVariable[];
   lockedSuffixPreview: string; // always appended server-side — shown read-only, never editable
+  // Drift: baseKnown=false means this row predates ancestor tracking, so drift is unknown --
+  // never treat that as "up to date". When baseKnown, baseSystem/baseBody are the ancestor
+  // recorded at last save and currentDefaultSystem/currentDefaultBody are what ships now.
+  baseKnown: boolean;
+  defaultDrifted: boolean;
+  currentDefaultSystem: string;
+  currentDefaultBody: string;
+  baseSystem: string | null;
+  baseBody: string | null;
 }
 
 /** The assembled text a real review call would send, with variable slots annotated. */
@@ -930,17 +958,29 @@ export interface PromptPreview {
   system: string;
   user: string;
   errors: string[];
+  // The review this was rendered against, or null for the annotated (no-data) preview.
+  sampleReviewId: string | null;
+  // Why a requested sample could not be rendered — shown beside the annotated fallback so an
+  // empty-looking panel is never mistaken for a broken preview.
+  unavailableReason: string | null;
 }
 
-export async function fetchPrompts(): Promise<PromptView[]> {
-  const res = await apiFetch('/api/prompts');
+export async function fetchPrompts(scope: string = GLOBAL_SCOPE): Promise<PromptView[]> {
+  const res = await apiFetch(`/api/prompts?scope=${encodeURIComponent(scope)}`);
   if (!res.ok) return throwResponse(res, 'Failed to load prompts');
   return res.json();
 }
 
-export async function fetchPrompt(kind: string): Promise<PromptView> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`);
+export async function fetchPrompt(kind: string, scope: string = GLOBAL_SCOPE): Promise<PromptView> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}?scope=${encodeURIComponent(scope)}`);
   if (!res.ok) return throwResponse(res, 'Failed to load prompt');
+  return res.json();
+}
+
+/** Repositories this deployment has reviewed -- the scopes a prompt override can be written at. */
+export async function fetchPromptScopes(): Promise<string[]> {
+  const res = await apiFetch('/api/prompts/scopes');
+  if (!res.ok) return throwResponse(res, 'Failed to load prompt scopes');
   return res.json();
 }
 
@@ -971,8 +1011,10 @@ async function saveErrorMessage(res: Response): Promise<string> {
   }
 }
 
-export async function savePrompt(kind: string, system: string, body: string): Promise<PromptView> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, {
+export async function savePrompt(
+  kind: string, system: string, body: string, scope: string = GLOBAL_SCOPE,
+): Promise<PromptView> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}?scope=${encodeURIComponent(scope)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ system, body }),
@@ -982,16 +1024,34 @@ export async function savePrompt(kind: string, system: string, body: string): Pr
 }
 
 /** Reset a kind back to its built-in default. Callers must re-fetch to get the default text. */
-export async function resetPrompt(kind: string): Promise<void> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}`, { method: 'DELETE' });
+export async function resetPrompt(kind: string, scope: string = GLOBAL_SCOPE): Promise<void> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}?scope=${encodeURIComponent(scope)}`, {
+    method: 'DELETE',
+  });
   if (!res.ok) await throwResponse(res, 'Failed to reset prompt');
 }
 
-export async function previewPrompt(kind: string, system: string, body: string): Promise<PromptPreview> {
-  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/preview`, {
+/**
+ * Keep the customization, stop reporting drift: re-stamp the ancestor to what ships now. The
+ * operator's saved system/body text is untouched -- callers must re-fetch to see the cleared
+ * drift flags. Deliberately not a `resetPrompt` variant -- reset discards the customization,
+ * this preserves it.
+ */
+export async function acceptPromptDefault(kind: string, scope: string = GLOBAL_SCOPE): Promise<void> {
+  const res = await apiFetch(
+    `/api/prompts/${encodeURIComponent(kind)}/accept-default?scope=${encodeURIComponent(scope)}`,
+    { method: 'POST' },
+  );
+  if (!res.ok) await throwResponse(res, 'Failed to accept current default');
+}
+
+export async function previewPrompt(
+  kind: string, system: string, body: string, reviewId?: string, scope: string = GLOBAL_SCOPE,
+): Promise<PromptPreview> {
+  const res = await apiFetch(`/api/prompts/${encodeURIComponent(kind)}/preview?scope=${encodeURIComponent(scope)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ system, body }),
+    body: JSON.stringify({ system, body, reviewId }),
   });
   if (!res.ok) return throwResponse(res, 'Failed to preview prompt');
   return res.json();

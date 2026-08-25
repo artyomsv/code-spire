@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.readmodel;
 
+import dev.codespire.contract.scm.ThreadLocation;
 import dev.codespire.contract.scm.ThreadRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -54,6 +55,13 @@ public class ReviewThreadView {
      * the thread it belongs to, so turn counting, event attribution and the reply target all key off
      * one stable id per conversation (as GitHub's {@code in_reply_to_id} already gives us). An unknown
      * ref, or a row with no {@code root_ref}, IS its own root.
+     *
+     * <p>Only a comment the BOT posted (or otherwise marked) ever gets a {@code review_thread} row —
+     * a human's own comments never do. So on a parent-threaded SCM, a {@code /finding} typed as a
+     * reply to another human's reply (not to anything the bot said) resolves to no row at all and
+     * this returns that reply's own id as its root, not the thread's true root several replies up.
+     * Harmless for the anchor (the same conversation still ends up with one thread ref), but worth
+     * knowing before assuming this always finds the topmost comment.
      */
     public ThreadRef rootOf(String reviewId, ThreadRef thread) {
         try (Connection c = dataSource.getConnection();
@@ -189,6 +197,41 @@ public class ReviewThreadView {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to mark thread resolved", e);
+        }
+    }
+
+    /**
+     * Where a thread sits in the diff, as {@code markThreadLocation}/{@code markFindingThread}
+     * recorded it — null for a thread with no row, or a row with no location (a summary or top-level
+     * comment, and every row written before V17 added the columns).
+     *
+     * <p>Answers the question a {@code /finding} asks when the command's own event carried no
+     * location: not every provider reports one on every comment surface. Pass the conversation ROOT
+     * — a reply's own ref is the branch, and only the root carries the anchor.
+     *
+     * <p>{@link ThreadLocation#of} is what rejects a half-written row: it answers null unless both
+     * parts are present, and its {@code line <= 0} test already covers a NULL line, which
+     * {@code getInt} reports as 0. The explicit {@code wasNull} read is not what makes that work —
+     * it is there so the SQL boundary says NULL where it means NULL rather than leaning on that
+     * coincidence. It must be read immediately after its own {@code getInt}: arguments evaluate
+     * left to right, so reading it after a {@code getString} would report on the STRING's column.
+     */
+    public ThreadLocation locationOf(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT path, line FROM review_thread WHERE review_id = ? AND thread_ref = ?")) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                int line = rs.getInt("line");
+                boolean lineIsNull = rs.wasNull();
+                return ThreadLocation.of(rs.getString("path"), lineIsNull ? null : line);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read thread location", e);
         }
     }
 

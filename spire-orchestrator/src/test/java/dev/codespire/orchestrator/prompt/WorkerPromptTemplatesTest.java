@@ -1,7 +1,8 @@
 package dev.codespire.orchestrator.prompt;
 
-import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.llm.PromptKind;
+import dev.codespire.contract.scm.RepoRef;
+import io.quarkus.test.security.TestSecurity;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -20,15 +21,36 @@ class WorkerPromptTemplatesTest {
     PromptRegistry registry;
 
     @Test
-    void nullWhenNotCustomized() {
+    void packsTheRepoOverrideWhenOneExists() {
+        // Both scopes customized, with conflicting content: proves the repo row wins rather than
+        // merely being the only thing found (a global-first resolver would return "Global persona").
+        registry.save(PromptKind.REVIEW, PromptScope.GLOBAL, "Global persona", "Diff:\n{{diff}}");
+        registry.save(PromptKind.REVIEW, "acme/widgets", "Repo persona", "Diff:\n{{diff}}");
+
+        assertEquals("Repo persona",
+                templates.forKind(PromptKind.REVIEW, new RepoRef("acme", "widgets")).system());
+
         registry.reset(PromptKind.REVIEW);
-        assertNull(templates.forKind(PromptKind.REVIEW));
+        registry.reset(PromptKind.REVIEW, "acme/widgets");
     }
 
     @Test
-    void returnsCustomTemplateWhenSet() {
-        registry.save(PromptKind.REVIEW, "sys", "review {{diff}}");
-        assertEquals("review {{diff}}", templates.forKind(PromptKind.REVIEW).body());
+    void fallsBackToGlobalForARepoWithNoOverride() {
         registry.reset(PromptKind.REVIEW);
+        registry.save(PromptKind.REVIEW, PromptScope.GLOBAL, "Global persona", "Diff:\n{{diff}}");
+
+        assertEquals("Global persona",
+                templates.forKind(PromptKind.REVIEW, new RepoRef("acme", "other")).system());
+
+        registry.reset(PromptKind.REVIEW);
+    }
+
+    @Test
+    void packsNothingWhenNeitherScopeIsCustomized() {
+        registry.reset(PromptKind.REVIEW);
+        registry.reset(PromptKind.REVIEW, "acme/widgets");
+
+        // null keeps the common case off the command entirely: the worker uses the built-in default.
+        assertNull(templates.forKind(PromptKind.REVIEW, new RepoRef("acme", "widgets")));
     }
 }

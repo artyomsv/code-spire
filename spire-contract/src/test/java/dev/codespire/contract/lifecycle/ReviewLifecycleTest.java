@@ -1,17 +1,22 @@
 package dev.codespire.contract.lifecycle;
 
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.DomainEvent.ConversationFindingRaised;
 import dev.codespire.contract.event.DomainEvent.ReviewCancelled;
 import dev.codespire.contract.event.DomainEvent.ReviewCompleted;
 import dev.codespire.contract.event.DomainEvent.ReviewFailedTerminally;
 import dev.codespire.contract.event.DomainEvent.ReviewRequested;
 import dev.codespire.contract.event.DomainEvent.ReviewSuperseded;
+import dev.codespire.contract.event.DomainEvent.ThreadOpened;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.command.RecordCommand.CancelReview;
+import dev.codespire.contract.command.RecordCommand.RaiseConversationFinding;
 import dev.codespire.contract.command.RecordCommand.RecordCommentsPosted;
 import dev.codespire.contract.command.RecordCommand.RecordFailure;
 import dev.codespire.contract.command.RecordCommand.RequestReview;
 import dev.codespire.contract.lifecycle.ReviewState.Status;
+import dev.codespire.contract.review.Severity;
+import dev.codespire.contract.scm.ThreadRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -146,5 +151,99 @@ class ReviewLifecycleTest {
         assertEquals(Status.CANCELLED, state.status());
         var events = when(state, new RequestReview("def456", "UPDATED", false));
         assertEquals(List.of(new ReviewRequested("def456", "UPDATED")), events);
+    }
+
+    @Test
+    void raisingAConversationFindingAppendsIt() {
+        var state = given(new ReviewRequested("c1", "OPENED"));
+
+        var events = when(state, new RaiseConversationFinding(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR,
+                "shadows the field", "c-901"));
+
+        assertEquals(List.of(new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR, "c-901")), events);
+    }
+
+    @Test
+    void raisingTheSameCommentTwiceAppendsNothingTheSecondTime() {
+        // ManualCommandReceived is at-least-once over Kafka. The worker's claim guards the SCM
+        // post; only the aggregate can stop a redelivery appending a second finding.
+        var state = given(new ReviewRequested("c1", "OPENED"));
+        var cmd = new RaiseConversationFinding(new ThreadRef("t-900"), "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field", "c-901");
+
+        var after = decider.evolve(state, when(state, cmd).getFirst());
+
+        assertTrue(when(after, cmd).isEmpty());
+    }
+
+    @Test
+    void aDifferentCommentOnTheSameThreadStillAppends() {
+        // The key is the triggering comment, not the thread: a second /finding in one discussion
+        // is a second finding, and keying on the thread would silently drop it.
+        var state = given(new ReviewRequested("c1", "OPENED"));
+        var first = new RaiseConversationFinding(new ThreadRef("t-900"), "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field", "c-901");
+        var after = decider.evolve(state, when(state, first).getFirst());
+
+        var second = new RaiseConversationFinding(new ThreadRef("t-900"), "src/Foo.java", 51,
+                Severity.MAJOR, "and this leaks", "c-902");
+
+        assertEquals(List.of(new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 51, Severity.MAJOR, "c-902")),
+                when(after, second));
+    }
+
+    @Test
+    void aConversationFindingLeavesTheRunUntouched() {
+        // ReviewOutcomeRecorded answers "how many findings did the review of this commit
+        // produce". A conversation finding did not come from that call and must not rewrite it.
+        var state = given(new ReviewRequested("c1", "OPENED"));
+        var after = decider.evolve(state, new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR, "c-901"));
+
+        assertEquals(Status.REVIEWING, after.status());
+        assertEquals("c1", after.currentCommit());
+    }
+
+    /**
+     * {@code raisedFindingComments()} is an immutable {@code Set}, whose {@code contains(null)}
+     * throws rather than answering false — and {@code Set.copyOf} throws on a null element too, so
+     * both {@code decide} and {@code evolve} need their own guard. Not reachable through the normal
+     * ingress today, but a hand-crafted command (or a future caller) must not crash the decider on
+     * a null triggering comment id.
+     */
+    @Test
+    void aNullTriggeringCommentIdDoesNotCrashTheDecider() {
+        var state = given(new ReviewRequested("c1", "OPENED"));
+        var cmd = new RaiseConversationFinding(new ThreadRef("t-900"), "src/Foo.java", 44,
+                Severity.MINOR, "shadows the field", null);
+
+        var events = when(state, cmd);
+
+        assertEquals(List.of(new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR, null)), events);
+        var after = decider.evolve(state, events.getFirst());
+        assertTrue(after.raisedFindingComments().isEmpty(),
+                "a null comment id cannot serve as an idempotency key -- nothing to add");
+    }
+
+    @Test
+    void raisingAConversationFindingPreservesTheRestOfState() {
+        // withRaisedFinding must copy reviewedCommits, threads, and summaryCommentId through
+        // unchanged, not just build a fresh state around the new comment id. A dropped
+        // reviewedCommits or summaryCommentId would leave every test above green, since none of
+        // them evolve a ConversationFindingRaised from a state that already carries one.
+        var state = given(new ReviewRequested("c1", "OPENED"),
+                new ThreadOpened(new ThreadRef("t-1"), "c-1"),
+                new ReviewCompleted("c1", "s-1"));
+
+        var after = decider.evolve(state, new ConversationFindingRaised(
+                new ThreadRef("t-900"), "src/Foo.java", 44, Severity.MINOR, "c-901"));
+
+        assertTrue(after.reviewedCommits().contains("c1"));
+        assertEquals("s-1", after.summaryCommentId());
+        assertTrue(after.threads().containsKey("t-1"));
     }
 }

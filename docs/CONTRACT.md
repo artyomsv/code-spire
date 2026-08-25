@@ -69,6 +69,10 @@ Every event (integration or domain) is wrapped:
 | `CommentsPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, prId, commit, summaryCommentId, inline[]{commentId,path,line}, threadOutcomes[]? (thread resolution outcomes — ADR-019) |
 | `FollowUpGenerated` | `spire-review-worker` | reviewId, threadRef, answerText |
 | `FollowUpPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId |
+| `TurnCapNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`: the hand-off notice must not consume a conversation turn |
+| `ArchivedNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef? (null → top-level), commentId |
+| `FindingConfirmed` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`; links the confirmation back to the conversation root so a reply to it (on an SCM that threads by immediate parent) is still recognized |
+| `FindingRefused` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — same non-turn-consuming, link-back-to-root shape as `FindingConfirmed` |
 
 > Only the **assembled context** is offloaded to the object store (encrypted, referenced by `contextRef`)
 > so events stay small. **Diffs are never stored** (re-fetched by commit); **findings** ride inline in
@@ -86,6 +90,7 @@ Every event (integration or domain) is wrapped:
 | `ReviewCancelled` | the PR was closed/merged/declined mid-run (or an operator cancelled); run abandoned |
 | `ThreadOpened` | a conversational thread was started |
 | `FollowUpRecorded` | a follow-up answer was posted in a thread |
+| `ConversationFindingRaised` | a human ran `/finding` in a thread; anchor + severity only — no `message` (may quote source, stays out of the replayable log, DATA-MODEL §5) |
 
 ## 5. Command catalog
 
@@ -98,6 +103,10 @@ Every event (integration or domain) is wrapped:
 | `GenerateReview` | `spire-review-worker` | reviewId, prId, commit, contextRef, attempt, providerOverride? (set by the fallback saga on retry; worker re-fetches the diff by commit), priorRun? (prior posted run's findings — ADR-019) |
 | `PostComments` | `spire-review-worker` | reviewId, repo, prId, commit, findings[] (inline — same `ReviewResult` as `ReviewGenerated`; findings are not stored as blobs, ADR-011), verdicts[]? (follow-up reconciliation verdicts — ADR-019), priorSummaryRef? (summary comment to update in place on follow-up review) |
 | `AnswerFollowUp` | `spire-review-worker` | reviewId, repo, prId, threadRef, question — the worker fetches the thread history from the SCM on demand (no blob; same re-fetch philosophy as diffs) |
+| `NotifyTurnCap` | `spire-review-worker` | reviewId, repo, prId, threadRef, turnCap — fixed-text hand-off notice, no LLM credential; the worker claims once per thread (the slot is the thread ref) so later replies to a capped thread post nothing |
+| `NotifyArchived` | `spire-review-worker` | reviewId, repo, prId, threadRef? (null → top-level PR comment) — fixed-text retirement notice, no LLM credential; claimed once per review (ADR-024) |
+| `ConfirmFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId, severity, path, line — fixed-text confirmation that a `/finding` was filed, no LLM credential; claimed per triggering comment, so a second finding in one thread gets its own confirmation |
+| `RefuseFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef — fixed-text refusal that a `/finding` had nowhere to anchor, no LLM credential; only emitted when there is a thread to reply into (a bare timeline note otherwise) |
 
 **Record commands** (to the `ReviewLifecycle` decider — append *domain* events):
 
@@ -110,6 +119,7 @@ Every event (integration or domain) is wrapped:
 | `RecordFailure{commit,phase,retryable}` | commit==current AND !retryable → `ReviewFailedTerminally` (stale failure from a superseded run → no-op) |
 | `OpenThread{threadRef,parentCommentId}` | → `ThreadOpened` |
 | `RecordFollowUp{threadRef,commentId}` | → `FollowUpRecorded` |
+| `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` → `ConversationFindingRaised` (redelivered comment id → no-op) |
 
 Sagas translate integration result events → the next Action command *and* the matching Record command
 (e.g. on `CommentsPosted` → `RecordCommentsPosted`; on `PullRequestClosed` → `CancelReview`; on
@@ -127,6 +137,7 @@ currentCommit: sha | null
 reviewedCommits: Set<sha>          // idempotency across redeliveries
 summaryCommentId: string | null
 threads: Map<threadRef, {status, lastCommentId}>
+raisedFindingComments: Set<commentId>  // idempotency for /finding, same shape as reviewedCommits
 ```
 
 **decide(command, state) → events**
@@ -144,6 +155,7 @@ threads: Map<threadRef, {status, lastCommentId}>
 | `REVIEWING` | `CancelReview{reason}` | — | `ReviewCancelled{reason}` | CANCELLED |
 | `IDLE/COMPLETED/FAILED/CANCELLED` | `CancelReview` | — | `[]` (nothing in flight — no-op) | — |
 | any | `OpenThread` / `RecordFollowUp` | — | `ThreadOpened` / `FollowUpRecorded` | threads updated |
+| any | `RaiseConversationFinding{threadRef,path,line,severity,message,triggeringCommentId}` | `triggeringCommentId ∉ raisedFindingComments` | `ConversationFindingRaised` (redelivered comment id → `[]`, idempotent no-op) | +raisedFindingComments |
 
 **Invariants**
 - One active run per PR; a newer commit supersedes an in-flight run (latest-commit-wins).

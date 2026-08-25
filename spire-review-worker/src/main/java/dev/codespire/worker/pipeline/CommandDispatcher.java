@@ -2,12 +2,14 @@ package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
+import dev.codespire.contract.command.ActionCommand.ConfirmFinding;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.NotifyArchived;
 import dev.codespire.contract.command.ActionCommand.NotifyTurnCap;
 import dev.codespire.contract.command.ActionCommand.PostComments;
+import dev.codespire.contract.command.ActionCommand.RefuseFinding;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -60,6 +62,8 @@ public class CommandDispatcher {
                 case AnswerFollowUp c -> followUpWorker.answer(c);
                 case NotifyTurnCap c -> followUpWorker.notifyTurnCap(c);
                 case NotifyArchived c -> followUpWorker.notifyArchived(c);
+                case ConfirmFinding c -> followUpWorker.confirmFinding(c);
+                case RefuseFinding c -> followUpWorker.refuseFinding(c);
                 default -> LOG.debugf("No worker for %s", command.getClass().getSimpleName());
             }
         } finally {

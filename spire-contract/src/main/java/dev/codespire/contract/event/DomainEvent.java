@@ -1,5 +1,6 @@
 package dev.codespire.contract.event;
 
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.ThreadRef;
 
 /**
@@ -33,5 +34,14 @@ public sealed interface DomainEvent {
     }
 
     record FollowUpRecorded(ThreadRef threadRef, String commentId) implements DomainEvent {
+    }
+
+    /**
+     * A finding raised from a conversation rather than from reviewing the diff. Anchor and
+     * severity only — replay-safe, no source quoted. The message lives in the encrypted read
+     * model, as every other finding's does.
+     */
+    record ConversationFindingRaised(ThreadRef threadRef, String path, int line, Severity severity,
+                                     String triggeringCommentId) implements DomainEvent {
     }
 }
