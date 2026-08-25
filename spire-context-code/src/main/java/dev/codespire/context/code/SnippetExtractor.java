@@ -41,11 +41,14 @@ import java.util.regex.Pattern;
  */
 public final class SnippetExtractor {
 
-    // A formatter-wrapped parameter list is ordinarily 2-4 lines; a signature scan that hasn't
-    // found its terminator within this many lines is either pathological input or a declaration
-    // shape this extractor's line-based heuristics can't safely bound, so the scan gives up rather
-    // than keep searching — see the class javadoc.
-    private static final int MAX_SIGNATURE_SCAN_LINES = 5;
+    // The blank-line bound above is the primary guard against annexing unrelated content — it
+    // fires on ordinary files long before this cap would matter. This cap is only a backstop for a
+    // file with no blank line to stop at (or a malformed/truncated fetch), so it can afford to be
+    // generous: measured against this repository's own longest real declarations of the record
+    // shape the class javadoc calls out — from `public record X(` to the line opening `{` — with
+    // ReviewDetail (37 lines) the worst case found. 40 covers that with headroom without being
+    // large enough to matter for genuinely pathological input.
+    private static final int MAX_SIGNATURE_SCAN_LINES = 40;
 
     private static final Pattern LINE_COMMENT = Pattern.compile("^\\s*//");
 
@@ -195,10 +198,17 @@ public final class SnippetExtractor {
 
     /**
      * Takes lines forward from where the signature span left off, tracking brace depth, until the
-     * depth returns to zero (the declaration's body closed naturally), a blank line is reached (the
-     * same end-of-declaration signal {@link #scanSignature} honors — necessary here too, since the
-     * fallback above can hand off starting exactly at a blank line, or just before one), or
-     * {@code maxBodyLines} is reached — whichever comes first.
+     * depth returns to zero (the declaration's body closed naturally) or {@code maxBodyLines} is
+     * reached — whichever comes first.
+     *
+     * <p>The blank-line stop only applies while {@code sawOpenBrace} is still false — i.e. only on
+     * the ambiguous hand-off from {@link #protectDeclarationLineOnly}, where no body has actually
+     * been found yet and a blank line is the same "declaration has ended" signal
+     * {@link #scanSignature} honors. Once a real opening brace has been seen (the ordinary case,
+     * and also the fallback case where the declaration line itself already opened one), we are
+     * inside a genuine, brace-delimited body, and a blank line there is just routine style — for
+     * example a locally-scoped variable followed by a blank line before the return — not a signal
+     * to stop. Reported as {@code false} either way: neither is a clipped-for-budget truncation.
      *
      * @return whether the body was cut short of its natural close
      */
@@ -208,7 +218,7 @@ public final class SnippetExtractor {
         int taken = 0;
         for (int i = start; i < lines.length; i++) {
             String line = lines[i];
-            if (line.isBlank()) {
+            if (!sawOpenBrace && line.isBlank()) {
                 return false;
             }
             if (taken >= cap) {

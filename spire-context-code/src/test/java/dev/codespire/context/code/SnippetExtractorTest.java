@@ -137,25 +137,67 @@ class SnippetExtractorTest {
     }
 
     // A pathologically long, never-terminating parameter list — more continuation lines than
-    // MAX_SIGNATURE_SCAN_LINES before the real opening brace. The scan must give up and fall back
-    // to the declaration line alone rather than sweep everything up to that distant brace in as one
-    // "free," uncounted signature span.
-    private static final String PATHOLOGICALLY_LONG_SIGNATURE_FILE =
-            "public long chargeFor(\n"
-                    + "        TokenCount tokens,\n"
-                    + "        Rate rate,\n"
-                    + "        Extra extra,\n"
-                    + "        More more,\n"
-                    + "        Even moreArgs) {\n"
-                    + "    return 1;\n"
-                    + "}\n";
+    // MAX_SIGNATURE_SCAN_LINES (40) before the real opening brace. The scan must give up and fall
+    // back to the declaration line alone rather than sweep everything up to that distant brace in
+    // as one "free," uncounted signature span. Built rather than hand-written so the line count
+    // stays visibly and reliably above the cap even if the cap is retuned again later.
+    private static final String PATHOLOGICALLY_LONG_SIGNATURE_FILE = pathologicallyLongSignatureFile();
+
+    private static String pathologicallyLongSignatureFile() {
+        StringBuilder file = new StringBuilder("public long chargeFor(\n");
+        for (int i = 0; i < 45; i++) {
+            file.append("        Param").append(i).append(" p").append(i).append(",\n");
+        }
+        file.append("        Rate rate) {\n")
+                .append("    return 1;\n")
+                .append("}\n");
+        return file.toString();
+    }
 
     @Test
     void aScanExceedingTheCapFallsBackToTheDeclarationLineAlone() {
         String snippet = SnippetExtractor.extract(PATHOLOGICALLY_LONG_SIGNATURE_FILE, "chargeFor", 1);
 
         assertTrue(snippet.contains("public long chargeFor("));
-        assertFalse(snippet.contains("Even moreArgs"));
+        assertFalse(snippet.contains("Rate rate) {"));
         assertTrue(snippet.contains("...(truncated to fit the model context)"));
+    }
+
+    // The Critical this round exists for: scanBody's blank-line stop must not fire once a real,
+    // brace-delimited body has actually been found — an internal blank line (routine style, used
+    // constantly in this codebase) is not a signal that the declaration has ended.
+    private static final String BODY_WITH_INTERNAL_BLANK_LINE =
+            "public void foo() {\n"
+                    + "    int a = 1;\n"
+                    + "\n"
+                    + "    return a;\n"
+                    + "}\n";
+
+    @Test
+    void aBlankLineInsideARealBodySurvivesIntact() {
+        String snippet = SnippetExtractor.extract(BODY_WITH_INTERNAL_BLANK_LINE, "foo", 40);
+
+        assertTrue(snippet.contains("int a = 1;\n\n    return a;\n}"));
+        assertFalse(snippet.contains("...(truncated to fit the model context)"));
+    }
+
+    // Re-check the interaction the raised cap invites: a record whose component list itself
+    // contains a blank line (unusual formatting, but not impossible). The blank-line bound fires
+    // before the (now generous) cap ever gets a chance to matter, and the two bounds must compose
+    // sensibly rather than fight — falling back to the declaration line alone, exactly as for the
+    // no-semicolon TypeScript case above, not a crash and not a partial, nonsensical merge.
+    private static final String RECORD_WITH_INTERNAL_BLANK_FILE =
+            "public record ReviewDetail(\n"
+                    + "        String id,\n"
+                    + "\n"
+                    + "        String title) {\n"
+                    + "}\n";
+
+    @Test
+    void aLongRecordWithAnInternalBlankLineFallsBackSafely() {
+        String snippet = SnippetExtractor.extract(RECORD_WITH_INTERNAL_BLANK_FILE, "ReviewDetail", 40);
+
+        assertTrue(snippet.contains("public record ReviewDetail("));
+        assertFalse(snippet.contains("String title"));
     }
 }
