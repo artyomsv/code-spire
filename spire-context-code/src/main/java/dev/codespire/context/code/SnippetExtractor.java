@@ -28,8 +28,24 @@ import java.util.regex.Pattern;
  * to its signature is still useful; one clipped mid-signature is worse than no snippet at all,
  * since it spends prompt budget without teaching the model anything a bare symbol name didn't
  * already say.
+ *
+ * <p>That protected span is itself bounded two ways, so it can never grow into <em>more</em> prompt
+ * budget than an unclipped body would have cost in the first place: it stops at the first blank
+ * line (a declaration is never separated from its own continuation lines by one, in either
+ * supported language, so a blank line marks its true end — including a bodyless single-expression
+ * arrow function, whose "signature" is the whole declaration), and it gives up after
+ * {@link #MAX_SIGNATURE_SCAN_LINES} lines without finding a terminator. Either bound falls back to
+ * protecting only the regex-matched declaration line itself, discarding whatever else was
+ * tentatively scanned — losing a wrapped signature that is this ambiguous is safer than silently
+ * annexing an unrelated declaration or a whole file's worth of content into one symbol's snippet.
  */
 public final class SnippetExtractor {
+
+    // A formatter-wrapped parameter list is ordinarily 2-4 lines; a signature scan that hasn't
+    // found its terminator within this many lines is either pathological input or a declaration
+    // shape this extractor's line-based heuristics can't safely bound, so the scan gives up rather
+    // than keep searching — see the class javadoc.
+    private static final int MAX_SIGNATURE_SCAN_LINES = 5;
 
     private static final Pattern LINE_COMMENT = Pattern.compile("^\\s*//");
 
@@ -125,7 +141,8 @@ public final class SnippetExtractor {
         if (signature.complete()) {
             return false;
         }
-        return scanBody(lines, signature.nextIndex(), signature.braceDepth(), maxBodyLines, out);
+        return scanBody(lines, signature.nextIndex(), signature.braceDepth(),
+                signature.sawOpenBrace(), maxBodyLines, out);
     }
 
     /**
@@ -133,47 +150,80 @@ public final class SnippetExtractor {
      * split across lines, as a formatter commonly does) up to and including the line that opens the
      * body ({@code {}) or terminates the statement ({@code ;}). Every line in this span is added
      * unconditionally — this is the part of the snippet that must never be clipped.
+     *
+     * <p>Bounded by a blank line and by {@link #MAX_SIGNATURE_SCAN_LINES}: neither the tentative
+     * span accumulated so far, nor anything beyond it, is added to {@code out} when either bound is
+     * hit without finding a terminator — {@link #protectDeclarationLineOnly} takes over instead.
      */
     private static SignatureSpan scanSignature(String[] lines, int declarationLine, List<String> out) {
+        int scanLimit = Math.min(lines.length, declarationLine + MAX_SIGNATURE_SCAN_LINES);
+        List<String> span = new ArrayList<>();
         int braceDepth = 0;
-        for (int i = declarationLine; i < lines.length; i++) {
-            String line = lines[i];
-            out.add(line);
-            braceDepth = updatedDepth(braceDepth, line);
 
+        for (int i = declarationLine; i < scanLimit; i++) {
+            String line = lines[i];
+            if (i > declarationLine && line.isBlank()) {
+                break;
+            }
+            span.add(line);
+            braceDepth = updatedDepth(braceDepth, line);
             if (line.indexOf('{') >= 0) {
-                return new SignatureSpan(i + 1, braceDepth, braceDepth <= 0);
+                out.addAll(span);
+                return new SignatureSpan(i + 1, braceDepth, true, braceDepth <= 0);
             }
             if (line.trim().endsWith(";")) {
-                return new SignatureSpan(i + 1, braceDepth, true);
+                out.addAll(span);
+                return new SignatureSpan(i + 1, braceDepth, false, true);
             }
         }
-        // Ran out of file while still inside a wrapped signature — every remaining line is already
-        // in out, and the empty range handed to scanBody below reports this as truncated, since the
-        // input ended before the declaration reached its natural close.
-        return new SignatureSpan(lines.length, braceDepth, false);
+        return protectDeclarationLineOnly(lines, declarationLine, out);
     }
 
     /**
-     * Takes lines forward from where the signature span left off, tracking brace depth, until either
-     * the depth returns to zero (the declaration's body closed naturally) or {@code maxBodyLines} is
-     * reached — whichever comes first.
+     * The fallback for a signature the two bounds above refused to extend across: protects only the
+     * regex-matched declaration line itself, exactly as the pre-fix implementation always did.
+     */
+    private static SignatureSpan protectDeclarationLineOnly(String[] lines, int declarationLine,
+            List<String> out) {
+        String declaration = lines[declarationLine];
+        out.add(declaration);
+        int braceDepth = updatedDepth(0, declaration);
+        boolean sawOpenBrace = declaration.indexOf('{') >= 0;
+        boolean complete = sawOpenBrace ? braceDepth <= 0 : declaration.trim().endsWith(";");
+        return new SignatureSpan(declarationLine + 1, braceDepth, sawOpenBrace, complete);
+    }
+
+    /**
+     * Takes lines forward from where the signature span left off, tracking brace depth, until the
+     * depth returns to zero (the declaration's body closed naturally), a blank line is reached (the
+     * same end-of-declaration signal {@link #scanSignature} honors — necessary here too, since the
+     * fallback above can hand off starting exactly at a blank line, or just before one), or
+     * {@code maxBodyLines} is reached — whichever comes first.
      *
      * @return whether the body was cut short of its natural close
      */
-    private static boolean scanBody(String[] lines, int start, int braceDepth, int maxBodyLines,
-            List<String> out) {
+    private static boolean scanBody(String[] lines, int start, int braceDepth,
+            boolean sawOpenBrace, int maxBodyLines, List<String> out) {
         int cap = Math.max(0, maxBodyLines);
         int taken = 0;
         for (int i = start; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.isBlank()) {
+                return false;
+            }
             if (taken >= cap) {
                 return true;
             }
-            String line = lines[i];
             out.add(line);
             taken++;
             braceDepth = updatedDepth(braceDepth, line);
-            if (braceDepth <= 0) {
+            if (line.indexOf('{') >= 0) {
+                sawOpenBrace = true;
+            }
+            if (sawOpenBrace && braceDepth <= 0) {
+                return false;
+            }
+            if (!sawOpenBrace && line.trim().endsWith(";")) {
                 return false;
             }
         }
@@ -193,11 +243,14 @@ public final class SnippetExtractor {
     }
 
     /**
-     * @param nextIndex  the line index immediately after the signature span
-     * @param braceDepth the brace depth accumulated by the end of the signature span
-     * @param complete   whether the declaration (and, if the whole body fit on the signature span,
-     *                   its body too) is already fully captured — no further body scan is needed
+     * @param nextIndex    the line index immediately after the signature span
+     * @param braceDepth   the brace depth accumulated by the end of the signature span
+     * @param sawOpenBrace whether an opening brace has been seen anywhere in the span so far —
+     *                     {@code scanBody} must not treat a depth of zero as "closed" before one has
+     *                     actually been opened
+     * @param complete     whether the declaration (and, if the whole body fit on the signature span,
+     *                     its body too) is already fully captured — no further body scan is needed
      */
-    private record SignatureSpan(int nextIndex, int braceDepth, boolean complete) {
+    private record SignatureSpan(int nextIndex, int braceDepth, boolean sawOpenBrace, boolean complete) {
     }
 }

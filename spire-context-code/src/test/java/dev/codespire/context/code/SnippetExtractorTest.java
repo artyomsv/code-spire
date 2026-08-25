@@ -2,6 +2,7 @@ package dev.codespire.context.code;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -114,5 +115,47 @@ class SnippetExtractorTest {
         String snippet = SnippetExtractor.extract(TS_FILE, "Mode", 40);
 
         assertTrue(snippet.contains("export type Mode = \"active\" | \"observe\";"));
+    }
+
+    // The re-reviewer's exact case: a no-semicolon TypeScript style where `identity`'s
+    // single-expression arrow body has no braces, so its own declaration line has no `{`/`;`
+    // terminator anywhere on it — the very next non-blank thing forward is `helper`'s unrelated
+    // declaration, which must never be annexed into `identity`'s snippet.
+    private static final String NO_SEMICOLON_STYLE_FILE =
+            "export const identity = (x: number) => x\n"
+                    + "\n"
+                    + "export function helper(y: number): number {\n"
+                    + "    return y\n"
+                    + "}\n";
+
+    @Test
+    void aBlankLineEndsTheDeclarationInsteadOfAnnexingTheNextOne() {
+        String snippet = SnippetExtractor.extract(NO_SEMICOLON_STYLE_FILE, "identity", 40);
+
+        assertTrue(snippet.contains("export const identity = (x: number) => x"));
+        assertFalse(snippet.contains("helper"));
+    }
+
+    // A pathologically long, never-terminating parameter list — more continuation lines than
+    // MAX_SIGNATURE_SCAN_LINES before the real opening brace. The scan must give up and fall back
+    // to the declaration line alone rather than sweep everything up to that distant brace in as one
+    // "free," uncounted signature span.
+    private static final String PATHOLOGICALLY_LONG_SIGNATURE_FILE =
+            "public long chargeFor(\n"
+                    + "        TokenCount tokens,\n"
+                    + "        Rate rate,\n"
+                    + "        Extra extra,\n"
+                    + "        More more,\n"
+                    + "        Even moreArgs) {\n"
+                    + "    return 1;\n"
+                    + "}\n";
+
+    @Test
+    void aScanExceedingTheCapFallsBackToTheDeclarationLineAlone() {
+        String snippet = SnippetExtractor.extract(PATHOLOGICALLY_LONG_SIGNATURE_FILE, "chargeFor", 1);
+
+        assertTrue(snippet.contains("public long chargeFor("));
+        assertFalse(snippet.contains("Even moreArgs"));
+        assertTrue(snippet.contains("...(truncated to fit the model context)"));
     }
 }
