@@ -31,11 +31,69 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DiffWorkerCodeReferencesTest {
 
+    private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
+    private static final FetchDiff COMMAND =
+            new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "cafe1234", null);
+
     private final WorkerCodeReferences refs = new WorkerCodeReferences();
 
     private static FilePatch patch(String path, String language, DiffLine... lines) {
         return new FilePatch(null, path, ChangeType.MODIFIED, language, false, false,
                 List.of(new Hunk(1, 1, 1, lines.length, List.of(lines))));
+    }
+
+    /** A DiffSource that hands back the given diff and otherwise plain PR metadata. */
+    private static DiffSource fakeDiffSource(Diff diff) {
+        return new DiffSource() {
+            @Override
+            public ScmType type() {
+                return ScmType.BITBUCKET_CLOUD;
+            }
+
+            @Override
+            public String apiHost() {
+                return "api.example.invalid";
+            }
+
+            @Override
+            public PullRequest fetchPullRequest(RepoRef repo, long prId) {
+                return new PullRequest(repo, prId, "Demo PR", "desc", "feature/demo", "main",
+                        diff.headCommit(), Author.of("1", "bot", "bot"), "http://pr");
+            }
+
+            @Override
+            public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
+                return null;
+            }
+
+            @Override
+            public Diff fetchDiff(RepoRef repo, long prId, String commit) {
+                return diff;
+            }
+        };
+    }
+
+    /** Wires a real DiffWorker against the given diff source and code-reference bean, runs
+     *  fetchDiff, and returns everything it emitted. */
+    private static List<IntegrationEvent> runFetchDiff(DiffSource diffSource, WorkerCodeReferences codeReferences) {
+        List<IntegrationEvent> emitted = new ArrayList<>();
+        DiffWorker worker = new DiffWorker();
+        worker.references = new WorkerContextReferences();
+        worker.codeRefs = codeReferences;
+        worker.results = new ResultsEmitter() {
+            @Override
+            public void emit(IntegrationEvent event) {
+                emitted.add(event);
+            }
+        };
+        worker.scm = new WorkerScmClients() {
+            @Override
+            public Clients forCommand(ActionCommand command) {
+                return new Clients(diffSource, null);
+            }
+        };
+        worker.fetchDiff(COMMAND);
+        return emitted;
     }
 
     @Test
@@ -63,7 +121,9 @@ class DiffWorkerCodeReferencesTest {
         CodeReferences result = refs.inDiff(diff);
 
         assertTrue(result.identifiers().isEmpty());
-        // The path is still absent: with no identifiers there is nothing to intersect against.
+        // isEmpty() is an OR, so an empty identifier set alone satisfies it — assert the path
+        // directly too, or a leaked path would pass unnoticed.
+        assertFalse(result.changedPaths().contains("infra/main.tf"));
         assertTrue(result.isEmpty());
     }
 
@@ -87,57 +147,11 @@ class DiffWorkerCodeReferencesTest {
      */
     @Test
     void codeIdentifiersDoNotEnterTheNeutralReferencesSet() {
-        RepoRef repoRef = new RepoRef("sandbox", "demo-repo");
-        FetchDiff command = new FetchDiff("review::sandbox/demo-repo#7", repoRef, 7, "cafe1234", null);
+        Diff diff = new Diff("cafe1234", List.of(
+                patch("src/main/java/dev/example/Alpha.java", "java",
+                        new DiffLine(LineType.ADDED, null, 1, "pricingHelper.chargeFor(item);"))), false);
 
-        List<IntegrationEvent> emitted = new ArrayList<>();
-        DiffWorker worker = new DiffWorker();
-        worker.references = new WorkerContextReferences();
-        worker.codeRefs = new WorkerCodeReferences();
-        worker.results = new ResultsEmitter() {
-            @Override
-            public void emit(IntegrationEvent event) {
-                emitted.add(event);
-            }
-        };
-        DiffSource fakeDiff = new DiffSource() {
-            @Override
-            public ScmType type() {
-                return ScmType.BITBUCKET_CLOUD;
-            }
-
-            @Override
-            public String apiHost() {
-                return "api.example.invalid";
-            }
-
-            @Override
-            public PullRequest fetchPullRequest(RepoRef repo, long prId) {
-                return new PullRequest(repo, prId, "Demo PR", "desc", "feature/demo", "main",
-                        "cafe1234", Author.of("1", "bot", "bot"), "http://pr");
-            }
-
-            @Override
-            public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
-                return null;
-            }
-
-            @Override
-            public Diff fetchDiff(RepoRef repo, long prId, String commit) {
-                return new Diff(commit, List.of(
-                        patch("src/main/java/dev/example/Alpha.java", "java",
-                                new DiffLine(LineType.ADDED, null, 1,
-                                        "pricingHelper.chargeFor(item);"))), false);
-            }
-        };
-        worker.scm = new WorkerScmClients() {
-            @Override
-            public Clients forCommand(ActionCommand actionCommand) {
-                return new Clients(fakeDiff, null);
-            }
-        };
-
-        worker.fetchDiff(command);
+        List<IntegrationEvent> emitted = runFetchDiff(fakeDiffSource(diff), refs);
 
         DiffFetched fetched = assertInstanceOf(DiffFetched.class, emitted.getFirst());
         // The two sets are populated by different extractors and must not cross-feed: the ticket
@@ -145,5 +159,29 @@ class DiffWorkerCodeReferencesTest {
         // fetched as a real ticket.
         assertTrue(fetched.codeReferences().identifiers().contains("chargeFor"));
         assertFalse(fetched.references().contains("chargeFor"));
+    }
+
+    /**
+     * Code context is enrichment, exactly like the repo-rules read beside it: a bug in extraction
+     * (a malformed patch, a future {@code LanguageSupport} defect) must degrade to no code
+     * references rather than sink a review that would otherwise have succeeded on the plain diff.
+     */
+    @Test
+    void extractionFailureDegradesToEmptyInsteadOfFailingTheReview() {
+        Diff diff = new Diff("cafe1234", List.of(
+                patch("src/main/java/dev/example/Alpha.java", "java",
+                        new DiffLine(LineType.ADDED, null, 1, "pricingHelper.chargeFor(item);"))), false);
+        WorkerCodeReferences throwing = new WorkerCodeReferences() {
+            @Override
+            public CodeReferences inDiff(Diff patchedDiff) {
+                throw new IllegalStateException("simulated extraction bug");
+            }
+        };
+
+        List<IntegrationEvent> emitted = runFetchDiff(fakeDiffSource(diff), throwing);
+
+        DiffFetched fetched = assertInstanceOf(DiffFetched.class, emitted.getFirst());
+        assertTrue(fetched.codeReferences().isEmpty(),
+                "a failed extraction must fall back to empty, not fail the review");
     }
 }
