@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
@@ -88,12 +89,30 @@ public sealed interface ActionCommand {
      * {@code repoRules} carries the repository's already-fetched {@code .codespire} rules. The
      * aggregator holds context-provider credentials only, never an SCM one, so the file is read at
      * diff-fetch — where an SCM client already exists — and passed through here.
+     *
+     * <p>{@code codeReferences} carries the diff's own changed paths and identifiers through from
+     * {@code DiffFetched}, kept apart from {@code references} — see {@link CodeReferences}.
      */
     record GatherContext(String reviewId, RepoRef repo, long prId, String commit,
                          Set<String> references,
                          String contextCredential,
                          ScmType scmType,
-                         String repoRules) implements ActionCommand {
+                         String repoRules,
+                         CodeReferences codeReferences) implements ActionCommand {
+
+        public GatherContext {
+            codeReferences = codeReferences == null ? CodeReferences.empty() : codeReferences;
+        }
+
+        // Without code references — every existing construction site and any replayed record.
+        public GatherContext(String reviewId, RepoRef repo, long prId, String commit,
+                             Set<String> references,
+                             String contextCredential,
+                             ScmType scmType,
+                             String repoRules) {
+            this(reviewId, repo, prId, commit, references, contextCredential, scmType, repoRules,
+                    CodeReferences.empty());
+        }
     }
 
     /**
