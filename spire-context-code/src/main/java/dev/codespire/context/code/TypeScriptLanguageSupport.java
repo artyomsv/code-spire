@@ -23,6 +23,14 @@ import java.util.regex.Pattern;
  * parser dependency. A real TS/JS parser would be more precise, but this module's job is a cheap,
  * conservative signal for context resolution, not a compiler front end.
  *
+ * <p>{@link #importsIn} recognizes named (<code>{ a, b as c }</code>), bare default
+ * (<code>import X from '...'</code>), namespace (<code>import * as ns from '...'</code>), and the
+ * combined default-plus-named form (<code>import X, { a, b } from '...'</code>) — the last of these
+ * binds the default name alongside the braced ones. Prettier commonly wraps a multi-symbol import
+ * across several lines once it exceeds the print width, so a statement is first joined with its
+ * continuation lines (see {@link #importStatementsIn}) before any of the four patterns are tried;
+ * only where the text comes from changes, never what a matched form binds.
+ *
  * <p>{@code tsconfig.json} {@code paths} aliases are out of scope: an aliased import yields no
  * candidates from {@link #candidatePaths}, which is a recall gap, not an error.
  */
@@ -52,6 +60,19 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
             Pattern.compile("^\\s*import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+['\"]([^'\"]+)['\"]");
 
     private static final Pattern AS_ALIAS = Pattern.compile("\\s+as\\s+");
+
+    // A statement's first line: "import" followed by at least one space, then more content — this
+    // excludes both an unrelated identifier prefix ("importantValue") and "import.meta", neither of
+    // which is an import statement.
+    private static final Pattern IMPORT_START = Pattern.compile("^\\s*import\\s+\\S");
+
+    // The statement is complete once a `from` clause closes its quote — the specifier itself never
+    // spans lines, only the braced symbol list (or the default name before it) does.
+    private static final Pattern FROM_TERMINATED = Pattern.compile("from\\s*(['\"])[^'\"]*\\1");
+
+    // A side-effect-only import (`import './x'`) has no `from` clause at all, so it terminates on
+    // its own closing quote instead.
+    private static final Pattern QUOTED_ONLY = Pattern.compile("^\\s*import\\s*(['\"])[^'\"]*\\1");
 
     @Override
     public Set<String> languages() {
@@ -95,18 +116,18 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
     @Override
     public List<ImportRef> importsIn(String fileContent) {
         List<ImportRef> imports = new ArrayList<>();
-        for (String line : fileContent.split("\\R")) {
-            Matcher named = NAMED_IMPORT.matcher(line);
+        for (String statement : importStatementsIn(fileContent)) {
+            Matcher named = NAMED_IMPORT.matcher(statement);
             if (named.find()) {
                 imports.add(namedImportRef(named));
                 continue;
             }
-            Matcher defaultImport = DEFAULT_IMPORT.matcher(line);
+            Matcher defaultImport = DEFAULT_IMPORT.matcher(statement);
             if (defaultImport.find()) {
                 imports.add(new ImportRef(defaultImport.group(2), Set.of(defaultImport.group(1))));
                 continue;
             }
-            Matcher namespaceImport = NAMESPACE_IMPORT.matcher(line);
+            Matcher namespaceImport = NAMESPACE_IMPORT.matcher(statement);
             if (namespaceImport.find()) {
                 imports.add(new ImportRef(namespaceImport.group(2), Set.of(namespaceImport.group(1))));
             }
@@ -114,6 +135,35 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
             // nothing to intersect against identifiersIn, so it contributes no ImportRef.
         }
         return imports;
+    }
+
+    /**
+     * One entry per {@code import} statement, continuation lines joined onto its first line with a
+     * single space — so a braced symbol list Prettier wrapped across several lines reads as one
+     * statement to the regexes above, exactly as it would if it had fit on one line.
+     */
+    private static List<String> importStatementsIn(String fileContent) {
+        List<String> statements = new ArrayList<>();
+        String[] lines = fileContent.split("\\R");
+        int index = 0;
+        while (index < lines.length) {
+            if (!IMPORT_START.matcher(lines[index]).find()) {
+                index++;
+                continue;
+            }
+            StringBuilder statement = new StringBuilder(lines[index]);
+            index++;
+            while (!isTerminated(statement) && index < lines.length) {
+                statement.append(' ').append(lines[index]);
+                index++;
+            }
+            statements.add(statement.toString());
+        }
+        return statements;
+    }
+
+    private static boolean isTerminated(CharSequence statement) {
+        return FROM_TERMINATED.matcher(statement).find() || QUOTED_ONLY.matcher(statement).find();
     }
 
     private static ImportRef namedImportRef(Matcher named) {

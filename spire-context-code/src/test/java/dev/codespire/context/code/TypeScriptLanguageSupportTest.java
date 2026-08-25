@@ -64,6 +64,37 @@ class TypeScriptLanguageSupportTest {
     }
 
     @Test
+    void multiLineBracedImportsAreJoinedBeforeMatching() {
+        String file = """
+                import {
+                  formatCost,
+                  parseSeverity
+                } from './format'
+                """;
+
+        List<ImportRef> imports = support.importsIn(file);
+
+        assertEquals(
+                List.of(new ImportRef("./format", Set.of("formatCost", "parseSeverity"))), imports);
+    }
+
+    @Test
+    void multiLineCombinedDefaultAndNamedImportBindsBothNames() {
+        String file = """
+                import ReviewCard, {
+                  formatCost,
+                  parseSeverity
+                } from './cards'
+                """;
+
+        List<ImportRef> imports = support.importsIn(file);
+
+        assertEquals(
+                List.of(new ImportRef("./cards", Set.of("ReviewCard", "formatCost", "parseSeverity"))),
+                imports);
+    }
+
+    @Test
     void relativeSpecifiersResolveAgainstTheImportingFileWithExtensionCandidates() {
         List<String> paths = support.candidatePaths(
                 new ImportRef("./format", Set.of("formatCost")),
