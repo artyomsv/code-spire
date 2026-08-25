@@ -4,6 +4,7 @@ import io.quarkus.test.security.TestSecurity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.PrAction;
+import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.Author;
@@ -54,6 +55,7 @@ class OrchestratorChoreographyTest {
     private static final String REVIEW_ID = "review::sandbox/demo-repo#77";
     private static final String COMMIT_A = "aaa111aaa111";
     private static final String COMMIT_B = "bbb222bbb222";
+    private static final String REVIEW_ID_79 = "review::sandbox/demo-repo#79";
 
     @ConfigProperty(name = "kafka.bootstrap.servers")
     String bootstrapServers;
@@ -183,6 +185,34 @@ class OrchestratorChoreographyTest {
                 "the cancelled run must produce no commands beyond its initial FetchDiff");
     }
 
+    @Test
+    void codeReferencesSurviveTheHopFromDiffFetchedToGatherContext() throws Exception {
+        // Own PR id (79): the baseline captured in captureCommandBaseline() only isolates this
+        // test's commands from other test methods' PAST commands on cs.commands, not from PR 77's
+        // run continuing to emit commands concurrently in the same broker.
+        CodeReferences refs = new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("chargeFor"));
+
+        produce("cs.integration", REVIEW_ID_79, prEvent79(PrAction.OPENED));
+        expectCommands(1, "FetchDiff");
+
+        produce("cs.results", REVIEW_ID_79, new IntegrationEvent.DiffFetched(REVIEW_ID_79, 79, "ddd444ddd444", 1,
+                List.of("java"), 100, false, Set.of(), null, refs));
+        List<String> afterDiffFetched = expectCommands(2, "GatherContext");
+        assertTrue(afterDiffFetched.get(1).contains("\"changedPaths\":[\"src/main/java/dev/example/Alpha.java\"]"),
+                "GatherContext must carry the diff's changed paths: " + afterDiffFetched.get(1));
+        assertTrue(afterDiffFetched.get(1).contains("\"identifiers\":[\"chargeFor\"]"),
+                "GatherContext must carry the diff's identifiers: " + afterDiffFetched.get(1));
+    }
+
+    private IntegrationEvent prEvent79(PrAction action) {
+        return new IntegrationEvent.PullRequestEventReceived(
+                REPO, 79, action, "TEST: code references", "TEST description",
+                "feature/TEST-code-refs", "main", "ddd444ddd444",
+                Author.of("TEST-account-id", "test-author", "TEST Author"),
+                "https://example.invalid/pr/79", null);
+    }
+
     private IntegrationEvent prEvent78(PrAction action) {
         return new IntegrationEvent.PullRequestEventReceived(
                 REPO, 78, action, "TEST: cancel flow", "TEST description",
@@ -206,6 +236,10 @@ class OrchestratorChoreographyTest {
     }
 
     private void produce(String topic, IntegrationEvent event) throws Exception {
+        produce(topic, REVIEW_ID, event);
+    }
+
+    private void produce(String topic, String key, IntegrationEvent event) throws Exception {
         if (producer == null) {
             Properties props = new Properties();
             props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -215,7 +249,7 @@ class OrchestratorChoreographyTest {
         }
         // writerFor: root-level polymorphism (the type discriminator)
         String json = mapper.writerFor(IntegrationEvent.class).writeValueAsString(event);
-        producer.send(new ProducerRecord<>(topic, REVIEW_ID, json)).get();
+        producer.send(new ProducerRecord<>(topic, key, json)).get();
     }
 
     private Properties consumerProps() {
