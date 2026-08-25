@@ -88,8 +88,16 @@ class WorkerPipelineTest {
         List<String> results = consumeResults(1);
         assertTrue(results.getFirst().contains("\"type\":\"DiffFetched\""));
         assertTrue(results.getFirst().contains("\"changedFiles\":1"));
-        // ADR-011: metadata only — never diff content on the bus
-        assertTrue(results.stream().noneMatch(v -> v.contains("e2eAddedLine")));
+        // ADR-011 + ADR-026: hunk TEXT never reaches the bus — the fixture's added line,
+        // "int e2eAddedLine = 42;", must never appear verbatim. Identifiers and paths DERIVED
+        // from that line deliberately do (ADR-026's rung 1, DiffFetched.codeReferences) and are
+        // asserted present below; this narrows nothing that was previously guaranteed, since
+        // DiffFetched already carries repoRules — the entire text of the repository's
+        // .codespire file — whenever one exists.
+        assertTrue(results.stream().noneMatch(v -> v.contains("int e2eAddedLine = 42")),
+                "hunk text must never reach the bus: " + results.getFirst());
+        assertTrue(results.getFirst().contains("\"identifiers\":[\"e2eAddedLine\"]"),
+                "codeReferences must carry the identifier the changed line introduced: " + results.getFirst());
     }
 
     @Test
