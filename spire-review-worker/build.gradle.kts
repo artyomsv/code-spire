@@ -33,6 +33,7 @@ dependencies {
     implementation(project(":spire-context-confluence"))
     implementation(project(":spire-context-github"))
     implementation(project(":spire-context-gitlab"))
+    implementation(project(":spire-context-code"))
     implementation(project(":spire-llm"))
 
     implementation("io.quarkus:quarkus-jackson")

@@ -35,6 +35,11 @@ public class DiffWorker {
     @Inject
     dev.codespire.worker.adapters.WorkerContextReferences references;
 
+    /** Code-reference extraction runs on the parsed diff itself — the ticket-key extraction above
+     *  runs on PR metadata instead, and the two must never cross-feed (CodeReferences javadoc). */
+    @Inject
+    dev.codespire.worker.adapters.WorkerCodeReferences codeRefs;
+
     @Inject
     ResultsEmitter results;
 
@@ -58,7 +63,10 @@ public class DiffWorker {
                     // Read from the TARGET branch, never the reviewed commit: the head is written by
                     // the change under review, so taking rules from it would let a PR rewrite the
                     // reviewer's instructions in the same PR being reviewed.
-                    repoRules(diffSource, command, pr)));
+                    repoRules(diffSource, command, pr),
+                    // Metadata only, same as everything else on this event — changed paths and the
+                    // identifiers a changed line mentions, never hunk text (ADR-011).
+                    codeRefs.inDiff(diff)));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {

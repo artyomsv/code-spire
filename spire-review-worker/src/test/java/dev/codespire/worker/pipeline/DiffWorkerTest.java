@@ -49,6 +49,7 @@ class DiffWorkerTest {
         emitted = new ArrayList<>();
         worker = new DiffWorker();
         worker.references = new dev.codespire.worker.adapters.WorkerContextReferences();
+        worker.codeRefs = new dev.codespire.worker.adapters.WorkerCodeReferences();
         worker.results = new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
