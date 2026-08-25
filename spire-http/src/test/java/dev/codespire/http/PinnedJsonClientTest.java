@@ -112,6 +112,29 @@ class PinnedJsonClientTest {
         assertTrue(thrown.getMessage().contains("Check the base URL."));
     }
 
+    /**
+     * The whole reason {@link PinnedJsonClient#getRaw} exists: a successful raw-file response is
+     * ordinary source text, not JSON, and must not be treated as a redirected sign-in page the way
+     * {@link PinnedJsonClient#getJson} would treat it.
+     */
+    @Test
+    void getRawReturnsANonJsonBodyVerbatim() {
+        server.stubFor(get(urlPathEqualTo("/raw-file")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/plain").withBody("class Alpha { }")));
+
+        assertEquals("class Alpha { }", client.getRaw("/raw-file"));
+    }
+
+    /** getRaw shares the same failure classification as getJson — only the success path differs. */
+    @Test
+    void getRawStillBuildsTheAdaptersOwnExceptionOnFailure() {
+        server.stubFor(get(urlPathEqualTo("/raw-missing")).willReturn(aResponse().withStatus(404)));
+
+        TestApiException thrown = assertThrows(TestApiException.class, () -> client.getRaw("/raw-missing"));
+
+        assertEquals(404, thrown.status);
+    }
+
     /** Same-host redirects are followed, and the credential goes with them. */
     @Test
     void followsASameHostRedirectAndKeepsSendingTheCredential() {

@@ -57,10 +57,24 @@ public class PinnedJsonClient {
     }
 
     public JsonNode getJson(String path) {
-        return parse(send("GET", path));
+        return parse(send("GET", path, true));
     }
 
-    private String send(String method, String path) {
+    /**
+     * GET a path whose 2xx body IS the payload itself — a raw source file, not a JSON envelope.
+     *
+     * <p>Same host-pinned, redirect-following, SSRF-guarded transport as {@link #getJson}, minus the
+     * JSON-shape check: that check exists to catch a request silently redirected to an HTML sign-in
+     * page, and it works by asserting a 2xx body parses as JSON. A legitimate raw-file response is
+     * ordinary source text, which routinely fails that assertion on a successful call, so this method
+     * skips it and returns the body verbatim. Non-2xx statuses (404, 401, ...) are still classified
+     * through the adapter's own {@link HttpFailures}, exactly as {@link #getJson} does.
+     */
+    public String getRaw(String path) {
+        return send("GET", path, false);
+    }
+
+    private String send(String method, String path, boolean requireJsonShape) {
         URI target = URI.create(baseUri + path);
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             HttpResponse<String> response = execute(method, path, target);
@@ -75,10 +89,13 @@ public class PinnedJsonClient {
             if (status / 100 != 2) {
                 throw failures.create(status, method, path, bodySnippet(response.body()));
             }
+            String body = response.body();
+            if (!requireJsonShape) {
+                return body;
+            }
             // A 2xx must be JSON. A non-JSON 2xx (an HTML sign-in page) means the request was
             // redirected to authentication — the token was not accepted. Surface it clearly here
             // instead of as a raw JSON parse error deep in the caller.
-            String body = response.body();
             String contentType = response.headers().firstValue("Content-Type").orElse("");
             if (!looksLikeJson(contentType, body)) {
                 throw failures.create(status, method, path,
