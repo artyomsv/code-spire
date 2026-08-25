@@ -271,7 +271,7 @@ git commit -m "Add the code context module and its two SPI ports"
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/command/ActionCommand.java` (`GatherContext`)
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/review/ContextRequest.java`
 - Test: `spire-contract/src/test/java/dev/codespire/contract/review/CodeReferencesTest.java`
-- Test: update the contract snapshot golden file that `ContractSchemaSnapshotTest` reads
+- Test: `spire-contract/src/test/resources/contract-schema.txt` (the golden `ContractSchemaSnapshotTest` reads)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -868,6 +868,7 @@ git commit -m "Carry code references through to the context request"
 **Files:**
 - Create: `spire-context-code/src/main/java/dev/codespire/context/code/SourceFileReader.java`
 - Create: `spire-context-code/src/main/java/dev/codespire/context/code/CodeContextConfig.java`
+- Create: `spire-context-code/src/main/java/dev/codespire/context/code/CodeContextApiException.java`
 - Create: `spire-context-code/src/main/java/dev/codespire/context/code/GitHubSourceFileReader.java`
 - Test: `spire-context-code/src/test/java/dev/codespire/context/code/GitHubSourceFileReaderTest.java`
 
@@ -1308,7 +1309,6 @@ git commit -m "Contribute code snippets for the symbols a diff touches"
 **Files:**
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/llm/PromptCatalog.java` (REVIEW palette + default body)
 - Modify: `spire-llm/src/main/java/dev/codespire/llm/ReviewPromptBuilder.java`
-- Modify: `spire-review-worker/.../pipeline/ReviewWorker.java` (split loaded context by kind)
 - Test: `spire-llm/src/test/java/dev/codespire/llm/CodeContextSlotTest.java`
 
 **Interfaces:**
@@ -1459,7 +1459,7 @@ In `WorkerContextClients.forCommand`, add `case "code" -> providers.add(new Code
 
 - [ ] **Step 5: Add the registry type**
 
-Add `code` to the context-provider registry's supported types and to `BEARER_ONLY_TYPES` (all three platforms' raw-content APIs are bearer-token-only, the same rule `github-issues` and `gitlab-issues` already follow). Give it a Check endpoint that reads a known-present path — the repository root `README.md`, treating 404 as a pass, since the check is of the credential and not of the file.
+Add `code` to `ContextProviderResource.SUPPORTED_TYPES` (line ~60, currently `Set.of("jira", "confluence", "github-issues", "gitlab-issues")`) and to `BEARER_ONLY_TYPES` (line ~69), and give `ContextKeyValidator` its check path (all three platforms' raw-content APIs are bearer-token-only, the same rule `github-issues` and `gitlab-issues` already follow). Give it a Check endpoint that reads a known-present path — the repository root `README.md`, treating 404 as a pass, since the check is of the credential and not of the file.
 
 - [ ] **Step 6: Put the reader behind the per-host circuit breaker**
 
@@ -1507,9 +1507,9 @@ git commit -m "Register the code context provider and fence its snippets"
 ## Task 13: Settings UI for the `code` provider type
 
 **Files:**
-- Modify: `spire-ui/src/components/SettingsContext.tsx`
+- Modify: `spire-ui/src/components/SettingsContextProviders.tsx`
 - Modify: `spire-ui/src/api.ts` (the context-provider type union)
-- Test: `spire-ui/src/components/SettingsContext.test.tsx`
+- Test: `spire-ui/src/components/SettingsContextProviders.form.test.tsx`
 
 **Interfaces:**
 - Consumes: `/api/context-providers` with `type: 'code'`.
@@ -1519,7 +1519,7 @@ git commit -m "Register the code context provider and fence its snippets"
 
 ```tsx
 it('offers the code provider type and forces bearer auth', async () => {
-  render(<SettingsContext />)
+  render(<SettingsContextProviders />)
   await userEvent.selectOptions(await screen.findByLabelText(/type/i), 'code')
 
   // Bearer-only types must not offer a username field — sending one would be
@@ -1529,7 +1529,7 @@ it('offers the code provider type and forces bearer auth', async () => {
 
 it('does not send an empty secret when editing an existing provider', async () => {
   // The blank-secret-on-edit rule: sending secret: '' would wipe the stored token.
-  render(<SettingsContext />)
+  render(<SettingsContextProviders />)
   // ... open an existing 'code' provider, change only the base URL, save ...
   expect(fetchMock.mock.calls.at(-1)?.[1]?.body).not.toContain('"secret":""')
 })
@@ -1537,7 +1537,7 @@ it('does not send an empty secret when editing an existing provider', async () =
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `cd spire-ui && npx vitest run SettingsContext`
+Run: `cd spire-ui && npx vitest run SettingsContextProviders`
 Expected: FAIL — `code` is not an option.
 
 - [ ] **Step 3: Implement**
