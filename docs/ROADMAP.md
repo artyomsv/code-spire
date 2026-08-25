@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-24)
+## Current status & next-up backlog (updated 2026-08-25)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -559,16 +559,21 @@ change** for cert-manager; the gap was that nothing said so. Also the **contract
 bump + upcaster, ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it
 iterated event types and skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **16 techdebt items** in `techdebt/` — 7 medium, 9 low,
+Also open and tracked outside this file: **19 techdebt items** in `techdebt/` — 9 medium, 10 low,
 nothing high or critical. Count them rather than trusting this line: `ls techdebt/*/3-*.md` and
 `ls techdebt/*/4-*.md`. The previous version of this paragraph said 8 (1 medium, 7 low) and was wrong
 by more than double, because a transcribed count is stale the moment the next entry lands — the same
-failure a live view exists to prevent, recorded again at item D10 below. The medium seven, by theme:
+failure a live view exists to prevent, recorded again at item D10 below. The version before this one
+said 16 and had already gone stale inside the branch that wrote it: that branch's own review wave
+filed two mediums and a low, and closed one low, between the count being taken and the merge landing.
+Both numbers here are worth less than the two commands above them. The medium nine, by theme:
 D10's authorization guard copied into all three services (the drift check chosen instead of extracting
 a shared module is still unwritten); the charge ledger keyed on an id two SCMs can share; the
 contract-compat snapshot not recursing into nested wire types; a new backend status being invisible to
 the UI's compile-time union; rejection messages never reaching the client; three orchestrator classes
-past the size guideline; and no pull-request check building a `Dockerfile`. (Tracking waived nits
+past the size guideline; no pull-request check building a `Dockerfile`; `/finding` inheriting the
+observe-mode blindness `/review` already had; and a prompt scope carrying no provider type, so one
+workspace name registered on two SCMs shares a single per-repo prompt row. (Tracking waived nits
 durably, so a set-aside issue cannot return as its own finding, was considered and deliberately not
 built: it needs a store, a wire field and a prompt slot, which makes it a feature rather than debt. It
 sits closest to the conversation-derived findings work delivered in item 17.) **No P1 scope remains
