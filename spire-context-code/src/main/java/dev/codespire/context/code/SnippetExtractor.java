@@ -1,13 +1,14 @@
 package dev.codespire.context.code;
 
+import dev.codespire.contract.llm.PromptClipping;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
 /**
  * Turns a fetched file's full text plus a symbol name into the snippet a review prompt shows for
- * that symbol: its declaration line, any doc comment immediately above it, and a bounded amount of
- * body.
+ * that symbol: its declaration, any doc comment immediately above it, and a bounded amount of body.
  *
  * <p>Framework-free by design (see {@code spire-context-code}'s build file) — JDK regex only, no
  * parser dependency, matching {@link JavaLanguageSupport} and {@link TypeScriptLanguageSupport}.
@@ -18,20 +19,17 @@ import java.util.regex.Pattern;
  * {@code const}/{@code function}/{@code type} declaration — including an exported arrow function,
  * which is just a {@code const} whose value happens to be a lambda.
  *
- * <p>The declaration line and its immediately preceding comment block always survive clipping,
- * uncounted against {@code maxBodyLines} — the high-value information a reviewer needs (return
- * type, thrown exceptions, nullability, the doc comment's prose) lives there, not in the body. A
- * snippet clipped to its signature is still useful; one clipped past the signature is worse than no
- * snippet at all, since it spends prompt budget without teaching the model anything a bare symbol
- * name didn't already say.
+ * <p>The declaration's full signature — extended across any wrapped continuation lines through the
+ * line that opens the body ({@code {}) or terminates the statement ({@code ;}) — and its
+ * immediately preceding comment block always survive clipping, uncounted against
+ * {@code maxBodyLines}. The high-value information a reviewer needs (return type, thrown
+ * exceptions, nullability, the doc comment's prose) lives there, not in the body, and a long
+ * parameter list wrapped onto several lines is still one signature, not "body." A snippet clipped
+ * to its signature is still useful; one clipped mid-signature is worse than no snippet at all,
+ * since it spends prompt budget without teaching the model anything a bare symbol name didn't
+ * already say.
  */
 public final class SnippetExtractor {
-
-    // Mirrors dev.codespire.diff.TokenBudget.TRUNCATION_MARKER in spire-diff exactly (three ASCII
-    // dots, not an ellipsis character). Not imported: spire-context-code does not depend on
-    // spire-diff, so the literal is replicated here rather than pulling in the module for one
-    // constant.
-    private static final String TRUNCATION_MARKER = "\n...(truncated to fit the model context)";
 
     private static final Pattern LINE_COMMENT = Pattern.compile("^\\s*//");
 
@@ -64,7 +62,7 @@ public final class SnippetExtractor {
         boolean truncated = appendBody(lines, declarationLine, maxBodyLines, snippetLines);
 
         String snippet = String.join("\n", snippetLines);
-        return truncated ? snippet + TRUNCATION_MARKER : snippet;
+        return truncated ? snippet + PromptClipping.TRUNCATION_MARKER : snippet;
     }
 
     private static int findDeclarationLine(String[] lines, String symbol) {
@@ -115,46 +113,91 @@ public final class SnippetExtractor {
     }
 
     /**
-     * Appends lines from {@code declarationLine} onward, tracking brace depth so the body stops at
-     * its natural close, until either the depth returns to zero or {@code maxBodyLines} is reached.
-     * The declaration line itself always counts as the first line of that budget and is never
-     * dropped — even a budget of zero or less still yields the signature alone, clipped immediately
-     * after.
+     * Adds the declaration's full signature span first — protected, uncounted against
+     * {@code maxBodyLines} — then, if a body follows the signature's opening brace, adds body lines
+     * charged against that budget.
      *
-     * @return whether the body was cut short of its natural close
+     * @return whether the snippet was cut short of the declaration's natural close
      */
     private static boolean appendBody(String[] lines, int declarationLine, int maxBodyLines,
             List<String> out) {
-        int cap = Math.max(1, maxBodyLines);
-        int taken = 0;
-        int braceDepth = 0;
-        boolean sawOpenBrace = false;
+        SignatureSpan signature = scanSignature(lines, declarationLine, out);
+        if (signature.complete()) {
+            return false;
+        }
+        return scanBody(lines, signature.nextIndex(), signature.braceDepth(), maxBodyLines, out);
+    }
 
+    /**
+     * Extends the declaration line across any wrapped continuation lines (a long parameter list
+     * split across lines, as a formatter commonly does) up to and including the line that opens the
+     * body ({@code {}) or terminates the statement ({@code ;}). Every line in this span is added
+     * unconditionally — this is the part of the snippet that must never be clipped.
+     */
+    private static SignatureSpan scanSignature(String[] lines, int declarationLine, List<String> out) {
+        int braceDepth = 0;
         for (int i = declarationLine; i < lines.length; i++) {
+            String line = lines[i];
+            out.add(line);
+            braceDepth = updatedDepth(braceDepth, line);
+
+            if (line.indexOf('{') >= 0) {
+                return new SignatureSpan(i + 1, braceDepth, braceDepth <= 0);
+            }
+            if (line.trim().endsWith(";")) {
+                return new SignatureSpan(i + 1, braceDepth, true);
+            }
+        }
+        // Ran out of file while still inside a wrapped signature — every remaining line is already
+        // in out, and the empty range handed to scanBody below reports this as truncated, since the
+        // input ended before the declaration reached its natural close.
+        return new SignatureSpan(lines.length, braceDepth, false);
+    }
+
+    /**
+     * Takes lines forward from where the signature span left off, tracking brace depth, until either
+     * the depth returns to zero (the declaration's body closed naturally) or {@code maxBodyLines} is
+     * reached — whichever comes first.
+     *
+     * @return whether the body was cut short of its natural close
+     */
+    private static boolean scanBody(String[] lines, int start, int braceDepth, int maxBodyLines,
+            List<String> out) {
+        int cap = Math.max(0, maxBodyLines);
+        int taken = 0;
+        for (int i = start; i < lines.length; i++) {
             if (taken >= cap) {
                 return true;
             }
             String line = lines[i];
             out.add(line);
             taken++;
-
-            for (int c = 0; c < line.length(); c++) {
-                char ch = line.charAt(c);
-                if (ch == '{') {
-                    braceDepth++;
-                    sawOpenBrace = true;
-                } else if (ch == '}') {
-                    braceDepth--;
-                }
-            }
-
-            if (sawOpenBrace && braceDepth <= 0) {
-                return false;
-            }
-            if (!sawOpenBrace && line.trim().endsWith(";")) {
+            braceDepth = updatedDepth(braceDepth, line);
+            if (braceDepth <= 0) {
                 return false;
             }
         }
-        return false;
+        return true; // ran out of file before the body closed
+    }
+
+    private static int updatedDepth(int braceDepth, String line) {
+        for (int c = 0; c < line.length(); c++) {
+            char ch = line.charAt(c);
+            if (ch == '{') {
+                braceDepth++;
+            } else if (ch == '}') {
+                braceDepth--;
+            }
+        }
+        return braceDepth;
+    }
+
+    /**
+     * @param nextIndex  the line index immediately after the signature span
+     * @param braceDepth the brace depth accumulated by the end of the signature span
+     * @param complete   whether the declaration (and, if the whole body fit on the signature span,
+     *                   its body too) is already fully captured — no further body scan is needed
+     */
+    private record SignatureSpan(int nextIndex, int braceDepth, boolean complete) {
     }
 }

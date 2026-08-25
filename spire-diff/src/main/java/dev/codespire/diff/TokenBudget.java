@@ -1,5 +1,7 @@
 package dev.codespire.diff;
 
+import dev.codespire.contract.llm.PromptClipping;
+
 /**
  * Token estimation + clipping: a chars-per-token heuristic with a safety factor,
  * the approach PR-Agent's clip_tokens also takes. A model-accurate counter
@@ -12,7 +14,7 @@ public final class TokenBudget {
     private static final double CHARS_PER_TOKEN = 3.2;
     /** Headroom for the estimate being wrong; 0.9 is what PR-Agent settled on too. */
     private static final double SAFETY_FACTOR = 0.9;
-    private static final String TRUNCATION_MARKER = "\n...(truncated to fit the model context)";
+    private static final String TRUNCATION_MARKER = PromptClipping.TRUNCATION_MARKER;
 
     private TokenBudget() {
     }
