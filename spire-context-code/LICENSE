@@ -1,0 +1,18 @@
+Code Spire — spire-context-code
+
+Copyright 2026 Artjoms Stukans
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this module except in compliance with the License. The full license text is in
+licenses/Apache-2.0.txt at the repository root, and at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+This module is Apache-2.0 while the Code Spire services are not: it is part of
+the surface third parties build plugins against. See LICENSING.md at the
+repository root for the full map and the reasoning.

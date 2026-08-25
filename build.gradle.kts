@@ -154,6 +154,7 @@ val fastTestModules = listOf(
     "spire-context-confluence",
     "spire-context-github",
     "spire-context-gitlab",
+    "spire-context-code",
 )
 
 val serviceTestModules = listOf(

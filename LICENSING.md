@@ -24,6 +24,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-context-confluence` | Apache-2.0 | Same. |
 | `spire-context-github` | Apache-2.0 | Same. |
 | `spire-context-gitlab` | Apache-2.0 | Same. |
+| `spire-context-code` | Apache-2.0 | Repository code context provider (ADR-026). |
 | `spire-llm` | Apache-2.0 | Reference LLM provider. |
 | `spire-arch` | Apache-2.0 | Build-time architecture check (ADR-020). Tooling, not product. |
 | **`spire-gateway`** | **FSL-1.1-ALv2** | Deployable service. |
