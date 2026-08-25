@@ -14,7 +14,7 @@
 | **Event store** | The append-only, versioned log of events — **source of truth** | `spire-orchestrator` Postgres |
 | **Object store** | In-flight large payloads (assembled context), **encrypted client-side** | S3-compatible (**MinIO** self-host) via `BlobStore` port |
 | **Read models** | Disposable projections rebuilt from events | owning service's Postgres (e.g. `spire-ui`) |
-| **Vector store** *(P3)* | Code embeddings | pgvector |
+| **Symbol index** *(P3, rung 2)* | Code structure — identifiers and paths, never content | `spire-review-worker` Postgres (ADR-026) |
 
 ## 2. Domain value types (records)
 
@@ -115,7 +115,7 @@ Large **in-flight** payloads are encrypted objects, referenced by `…Ref` (the 
 Backend is **S3-compatible object storage — MinIO for self-host** — behind a `BlobStore` port
 (swappable to AWS S3 / GCS). Established from v1 (not Postgres) to avoid a later migration.
 
-- **What's stored:** the **assembled context** only (transient; can be large — Confluence pages, RAG
+- **What's stored:** the **assembled context** only (transient; can be large — Confluence pages, code
   snippets). **Diffs are NOT stored** (decision 1 — re-fetched by commit). **Findings are NOT objects**
   — they go to a read-model table (§5).
 - **Client-side encryption:** payloads are **Tink-encrypted before upload**, so MinIO only ever holds
@@ -175,7 +175,8 @@ Operational state (not projections — ADR-013 guards):
        └──(1)──(N)── review_finding          review_event (timeline)
     (projections owned by spire-ui; rebuildable; source_position = replay cursor; NO FK to event_log)
 
- code_chunk (pgvector, P3)  ── standalone; keyed by (repo, file_path, commit)
+ code_symbol (P3 rung 2)    ── standalone; (repo, symbol, path, role). Structure only, never content;
+                               a hint confirmed at citation, never an answer (ADR-026)
  diffs: NEVER stored — re-fetched from Bitbucket by (repo, commit)
 ```
 

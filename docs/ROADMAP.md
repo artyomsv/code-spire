@@ -543,7 +543,7 @@ Open, by nature of the work rather than by section:
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
+| **P3** | Repository knowledge base | M (rung 1) | The stated differentiator, and **re-scoped by ADR-026** — the technique was named before the need was. Rung 1 resolves the definitions a diff touches through the repository's own import graph and stores nothing; rung 2 adds a grown symbol index, gated on evidence. No embeddings, no vector store, no crawl, no push-fed indexer. Adds a `CodeContextProvider` with zero change to the review flow — true of *contribution*; acquisition costs a wire field and a prompt slot. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
@@ -589,7 +589,8 @@ documented contract rather than a shipped terminator, which is the honest form f
 environment makes differently. What remains is smaller and more infrastructural: **D12** and the
 per-repo admission rate limit each wait on a trigger (a diff/context blob outgrowing Postgres; a
 fleet actually needing per-repo, not just global, spend limits) rather than being blocked on anything,
-and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs. The
+and **P3 (the repository knowledge base)** is the one item that changes what the product *is* rather
+than how well it runs — re-scoped by ADR-026 to something materially smaller than "RAG" implied. The
 nearest infrastructure item is extending `e2e.sh` to exercise an `https` origin — this codebase's own
 recorded trap is that things which break *only* behind TLS pass clean in plaintext, and that check
 does not exist yet. Operator decides.
@@ -630,11 +631,21 @@ does not exist yet. Operator decides.
 - ✅ Conversational follow-up loop (S8).
 - **Exit met (2026-07-18):** reviews cite the linked Jira ticket; author replies get in-thread answers.
 
-## Phase 3 — Whole-repo RAG (the differentiator) (~4–6 pw)
-- `RepositoryIndexDecider` + push-triggered incremental indexer.
-- Code-aware chunking + embeddings + pluggable vector store (Qdrant/LanceDB).
-- `RagContextProvider` contributing retrieved snippets — **added with zero change to the review flow**.
+## Phase 3 — Repository knowledge base (the differentiator) (~2–3 pw for rung 1)
+**Re-scoped by ADR-026** (2026-08-25); the original plan is kept below the rule for the record.
+- **Rung 1, stores nothing:** diff-derived symbols + changed paths on their own wire field; a
+  `spire-context-code` provider resolving them against the changed file's import block at the review
+  commit; `CODE_SNIPPET` items in a dedicated `{{code_context}}` prompt slot. Java + TypeScript.
+- **Rung 2, gated on evidence:** `worker.code_symbol` — structure only, never content — answering
+  call-site impact. A hint confirmed at citation, never an answer.
 - **Exit:** reviews reference code elsewhere in the repo, not just the diff.
+- **Not built:** embeddings, a vector store, a repository crawl, a `PushReceived` consumer,
+  `spire-indexer` as a deployable. The Qdrant/LanceDB-versus-pgvector contradiction between this file
+  and DATA-MODEL is left **unresolved and deferred** rather than settled — this design needs neither.
+
+> *Superseded original:* `RepositoryIndexDecider` + push-triggered incremental indexer; code-aware
+> chunking + embeddings + pluggable vector store (Qdrant/LanceDB); a `RagContextProvider` contributing
+> retrieved snippets. See ADR-026 for why each part was dropped.
 
 ## Phase 4 — Memory & analytics (~2–3 pw)
 - `MemoryView` (learned preferences from accepted/rejected findings) + `MemoryContextProvider`.
@@ -673,7 +684,7 @@ does not exist yet. Operator decides.
   `techdebt/spire-orchestrator/3-3-…` owns), and bot-authored-PR skip. Note that a giant PR was never
   silently mis-reviewed even before the skip existed — the diff is clipped to the token budget and the
   partial review is MARKED (dashboard note + a line on the posted summary comment).
-- Whole-repo RAG (P3), learned memory + per-author analytics (P4).
+- Repository knowledge base (P3, re-scoped by ADR-026), learned memory + per-author analytics (P4).
   (**"non-Bitbucket SCMs" is no longer deferred** — GitHub and GitLab both shipped and are live-verified
   to full parity with Bitbucket as of 2026-07-26.)
 

@@ -6,7 +6,8 @@
 > **Visual board:** open [diagrams/architecture.html](diagrams/architecture.html) in a browser — a
 > swimlane-per-layer view of the deployable services, the Kafka/Redpanda bus, the shared-library SPI +
 > adapters (single row), the data stores (their own lane), and the external systems, with roadmap pieces
-> (RAG / vector index, repo-rules context, MinIO, OIDC, real webhooks) drawn dashed. The board scrolls
+> (the repository knowledge base, MinIO, OIDC, real webhooks) drawn dashed. Repo-rules context has since
+> shipped. The board scrolls
 > sideways.
 
 ## 1. The core idea
@@ -53,8 +54,9 @@ evolve(state, event)   -> state         // pure: fold events into current state
 
 It is **event-sourced**: to handle a command for PR `X`, we replay `X`'s events into `state`,
 then `decide`. No shared mutable state, trivially testable (pure functions), naturally
-concurrent (per-aggregate serialization by stream id). Later, `RepositoryIndex` becomes a
-second decider for the RAG index lifecycle.
+concurrent (per-aggregate serialization by stream id). A second decider for a repository-index
+lifecycle was once planned here and is **not** being built — ADR-026 keeps the knowledge base
+review-time and repo-keyed state rather than an event-sourced aggregate.
 
 ### View — the read models
 
@@ -82,7 +84,7 @@ on AuthorReplied              -> AnswerFollowUp
 on PullRequestClosed          -> CancelReview        (see EVENT-MODEL S9)
 ```
 
-Adding RAG later is *adding a saga + a plugin*, not editing this list's neighbours (see §5).
+Adding the repository knowledge base is *adding a plugin*, not editing this list's neighbours (see §5).
 
 ## 3. The flow, end to end (all asynchronous)
 
@@ -100,7 +102,7 @@ Adding RAG later is *adding a saga + a plugin*, not editing this list's neighbou
                                 GatherContext ──fan-out──► ContextRequested
                                      ┌───────────────┬───────────────┬───────────────┐
                                      ▼               ▼               ▼               ▼
-                              [Jira plugin]   [Confluence plugin] [RAG plugin]  [rules plugin]
+                              [Jira plugin]   [Confluence plugin] [code plugin] [rules plugin]
                                      │ emit          │ emit          │ emit          │ emit
                                      └──ContextContributed (× N)──────────────────────┘
                                                      ▼  (aggregator view + completeness/timeout policy)
@@ -135,7 +137,7 @@ implements one or more; it is a CDI bean discovered at boot. No registry edits, 
 | `ScmIngress` | translate an inbound webhook → domain event(s) | Bitbucket Cloud, Bitbucket DC, GitHub |
 | `DiffSource` | fetch PR + produce canonical `FilePatch` | (same SCM adapters) |
 | `CommentSink` | post inline + summary, **reply in thread**, read **PR author** | (same SCM adapters) — first-class, unlike PR-Agent |
-| `ContextProvider` | on `ContextRequested`, emit a `ContextContributed` | Jira, Confluence, RAG, rules, memory |
+| `ContextProvider` | on `ContextRequested`, emit a `ContextContributed` | Jira, Confluence, issues, rules, code (P3), memory |
 | `LlmProvider` | handle `GenerateReview` → `ReviewGenerated` | Vertex, Anthropic, Azure OpenAI, Ollama (via LangChain4j) |
 | `Capability` | a self-contained flow: declares its events, commands, prompts, config | review, describe, changelog, … |
 
@@ -143,20 +145,32 @@ Discovery: Quarkus CDI — `@All List<ContextProvider> providers;` gives the agg
 context plugin on the classpath. Drop a jar → new provider participates. Config selects *which*
 LLM/SCM providers are active (no default; fail-fast if unset).
 
-## 5. Adding a capability with zero core change — worked example (RAG)
+## 5. Adding a capability with zero core change — worked example (the code knowledge base)
 
-To add whole-repo RAG context *later*:
+To add repository-wide code context (P3, ADR-026):
 
-1. Ship a `spire-context-rag` module with a `RagContextProvider implements ContextProvider`.
-2. It **subscribes** to `ContextRequested`, queries the vector store, and **emits**
-   `ContextContributed{source=RAG, snippets=[...]}`.
-3. It **subscribes** to SCM `PushReceived` events and maintains the index (`RepositoryIndexDecider`
-   → `RepositoryIndexed`), fully independently.
+1. Ship a `spire-context-code` module with a `CodeContextProvider implements ContextProvider`.
+2. It **subscribes** to `ContextRequested`, resolves the symbols a diff touches against the changed
+   file's own import graph, and **emits** `ContextContributed{source=CODE, items=[CODE_SNIPPET…]}`.
 
-That's it. The aggregator already collects *all* `ContextContributed` events up to a completeness
-threshold or timeout, so the new snippets flow into `ContextAssembled` → the prompt — **without
-editing the review flow, the deciders, or any other plugin.** Contrast with PR-Agent, where the
-same feature means forking every tool's `_prepare_prediction`.
+The aggregator already collects *all* `ContextContributed` events up to a completeness threshold or
+timeout, so the new snippets flow into `ContextAssembled` → the prompt — **without editing the review
+flow, the deciders, or any other plugin.** Contrast with PR-Agent, where the same feature means
+forking every tool's `_prepare_prediction`.
+
+**Two corrections to how this example used to read, both from ADR-026.** A third step once stood
+here: *subscribe to SCM `PushReceived` and maintain an index via a `RepositoryIndexDecider`.* It is
+**removed, not deferred.** A push carries no `reviewId`, so it would introduce the first
+non-`reviewId` message class against the keying discipline CONTRACT §9 calls the important
+invariant — and it would be *less* correct, because the index's only reader is a review and a
+review-time refresh keys it to the exact commit under review, which a push-fed index cannot
+guarantee. `PushReceived` stays declared and unemitted.
+
+And "zero core change" holds for **contribution**, not for **acquisition**. Contributing a new kind of
+context really is free: the SPI, the fan-out, the timeout, the `CODE_SNIPPET` kind and the prompt slot
+all exist. *Acquiring* it is not — this one needs diff-derived candidates on the wire and its own
+prompt variable. The claim is worth keeping precisely because it is true of the expensive half; it was
+overstated as covering both.
 
 Memory works the same way: a `MemoryView` projects `ReviewCompleted` / `AuthorReplied` into a
 learned-preferences store; a `MemoryContextProvider` reads it back as just another
@@ -174,13 +188,13 @@ code-spire/
   spire-diff/              # patch parsing / token budgeting / prompt rendering. Pure lib.
   spire-scm-bitbucket/     # ScmIngress + DiffSource + CommentSink (Cloud & Data Center)
   spire-llm/               # LlmProvider adapters via LangChain4j (Vertex/Anthropic/Azure/Ollama)
-  spire-context-jira/  spire-context-confluence/  spire-context-rag/ (P3)   # ContextProvider plugins
+  spire-context-jira/  spire-context-confluence/  spire-context-github/  spire-context-gitlab/
+  spire-context-code/ (P3)                                  # ContextProvider plugins
   # --- deployable services ---
   spire-gateway/           # webhook ingress (the one sync edge, returns 202) + OIDC edge for UI/API
   spire-orchestrator/      # ReviewLifecycle decider + sagas + OWNS the event store; drives the pipeline
   spire-review-worker/     # GenerateReview / PostComments; uses spire-diff, spire-llm, spire-scm-bitbucket
   spire-context-worker/    # ContextProviders + the completeness aggregator
-  spire-indexer/ (P3)      # repo vector index; RAG ContextProvider
   spire-ui/                # dashboard BFF + owns the read-model projections; WebSockets push
 ```
 
