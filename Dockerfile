@@ -17,6 +17,7 @@ WORKDIR /workspace
 COPY gradlew settings.gradle.kts gradle.properties build.gradle.kts ./
 COPY gradle/ gradle/
 COPY spire-arch/build.gradle.kts spire-arch/
+COPY spire-context-code/build.gradle.kts spire-context-code/
 COPY spire-context-confluence/build.gradle.kts spire-context-confluence/
 COPY spire-context-github/build.gradle.kts spire-context-github/
 COPY spire-context-gitlab/build.gradle.kts spire-context-gitlab/
