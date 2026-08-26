@@ -63,6 +63,8 @@ public class ContextWorker {
     private static final long TIMEOUT_SECONDS = 20;
     /** Collection depth cap: level 1 (the PR's refs) + one hop (refs found inside level-1 content). */
     private static final int MAX_DEPTH = 2;
+    /** {@link ContextItem#kind()} for a code-context provider's contributions — see {@link #corpusOf}. */
+    private static final String CODE_SNIPPET_KIND = "CODE_SNIPPET";
 
     @Inject
     WorkerContextClients contextClients;
@@ -228,12 +230,22 @@ public class ContextWorker {
         return uris;
     }
 
-    /** All retrieved text this round (title + body + uri of OK items) — the corpus the next level mines. */
+    /**
+     * All retrieved text this round (title + body + uri of OK items) — the corpus the next level
+     * mines. {@code CODE_SNIPPET} items are excluded: their body IS source code, so a ticket-shaped
+     * string sitting inside a code comment (e.g. {@code // see PROJ-123 for background}) would
+     * otherwise be mined as a genuine reference and fetched — turning a source comment into a live
+     * context fetch against a system nobody mentioned in the PR. This line reads like an
+     * optimization (skip the bulkiest items); it is actually the fix for that hazard.
+     */
     private static String corpusOf(List<ContextContribution> contributions) {
         StringBuilder sb = new StringBuilder();
         for (ContextContribution c : contributions) {
             if (c.status() == ContribStatus.OK && c.items() != null) {
                 for (ContextItem item : c.items()) {
+                    if (CODE_SNIPPET_KIND.equals(item.kind())) {
+                        continue;
+                    }
                     sb.append(item.title()).append('\n').append(item.body()).append('\n');
                     if (item.uri() != null) {
                         sb.append(item.uri()).append('\n');

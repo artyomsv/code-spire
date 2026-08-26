@@ -104,6 +104,16 @@ public class CodeContextProvider implements ContextProvider {
         this.pathAllowList = pathAllowList == null ? Set.of() : Set.copyOf(pathAllowList);
     }
 
+    /**
+     * The allow-list this instance enforces — exposed read-only so a composition-root test can
+     * assert a credential's allow-list actually reached the constructed provider, rather than only
+     * that construction compiled (Task 10 added enforcement precisely because nothing upstream of it
+     * was ever proven to carry the allow-list through).
+     */
+    public Set<String> pathAllowList() {
+        return pathAllowList;
+    }
+
     @Override
     public String source() {
         return SOURCE;

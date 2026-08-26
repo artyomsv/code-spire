@@ -6,6 +6,12 @@ import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.context.ContextCredential;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.ContextProvider;
+import dev.codespire.context.code.BitbucketSourceFileReader;
+import dev.codespire.context.code.CodeContextConfig;
+import dev.codespire.context.code.CodeContextProvider;
+import dev.codespire.context.code.GitHubSourceFileReader;
+import dev.codespire.context.code.GitLabSourceFileReader;
+import dev.codespire.context.code.SourceFileReader;
 import dev.codespire.context.confluence.ConfluenceConfig;
 import dev.codespire.context.confluence.ConfluenceContextProvider;
 import dev.codespire.context.confluence.ConfluenceLinks;
@@ -22,7 +28,9 @@ import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Per-command context-provider factory — the context analog of
@@ -51,6 +59,10 @@ public class WorkerContextClients {
     @Inject
     ObjectMapper mapper;
 
+    /** The languages the {@code code} provider resolves imports for — see {@link WorkerCodeReferences#all()}. */
+    @Inject
+    WorkerCodeReferences codeReferences;
+
     public List<ContextProvider> forCommand(GatherContext command) {
         List<ContextProvider> providers = new java.util.ArrayList<>();
         for (ContextCredential cred : unpack(command)) {
@@ -61,6 +73,8 @@ public class WorkerContextClients {
                         providers.add(new GitHubIssueContextProvider(gitHubIssueConfig(cred), mapper));
                 case "gitlab-issues" ->
                         providers.add(new GitLabIssueContextProvider(gitLabIssueConfig(cred), mapper));
+                case "code" -> providers.add(new CodeContextProvider(readerFor(cred), codeReferences.all(),
+                        CodeContextConfig.parsePathAllowList(cred.projectKeys())));
                 default -> throw new IllegalStateException("Unsupported context provider type: " + cred.type());
             }
         }
@@ -105,5 +119,42 @@ public class WorkerContextClients {
         // projectKeys carries the optional group/project allow-list (same generic registry column).
         return new GitLabIssueConfig(cred.baseUrl(), cred.authKind(), cred.secret(),
                 GitLabIssueRefs.parseProjectAllowList(cred.projectKeys()));
+    }
+
+    /**
+     * Picks the platform reader by the credential's {@code baseUrl} host. Unlike Jira/Confluence
+     * (one platform each) or GitHub/GitLab issues (one registry type per platform), a single generic
+     * {@code code} registry type covers all three raw-content APIs — task-13's Settings UI offers one
+     * "Repository code" option, not three — so the host is the only signal available to tell them
+     * apart; the orchestrator's {@code ContextKeyValidator} connectivity check for this same type has
+     * to infer it independently, on the other side of the module boundary.
+     *
+     * <p>GitLab and Bitbucket both conventionally publish a host containing their own name; a
+     * self-managed GitLab whose host does not (e.g. {@code git.acme.com}) falls through to the GitHub
+     * reader instead, since a GitHub Enterprise Server hostname is the least predictable of the
+     * three. This is a known limitation of having one generic type rather than an oversight.
+     */
+    private SourceFileReader readerFor(ContextCredential cred) {
+        CodeContextConfig config = new CodeContextConfig(cred.baseUrl(), cred.authKind(), cred.secret(),
+                CodeContextConfig.parsePathAllowList(cred.projectKeys()));
+        String host = hostOf(cred.baseUrl());
+        SourceFileReader reader;
+        if (host.contains("gitlab")) {
+            reader = new GitLabSourceFileReader(config);
+        } else if (host.contains("bitbucket")) {
+            reader = new BitbucketSourceFileReader(config);
+        } else {
+            reader = new GitHubSourceFileReader(config);
+        }
+        return new CircuitBreakingSourceFileReader(reader);
+    }
+
+    private static String hostOf(String baseUrl) {
+        try {
+            String host = URI.create(baseUrl.trim()).getHost();
+            return host == null ? "" : host.toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 }

@@ -1,5 +1,6 @@
 package dev.codespire.context.code;
 
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
@@ -37,5 +38,29 @@ public record CodeContextConfig(String baseUrl, String authKind, String secret, 
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("CodeContextConfig '" + name + "' is required");
         }
+    }
+
+    /**
+     * Parse the operator's optional path allow-list ("src/main/, src/allowed/") into trimmed
+     * entries — split on comma or newline only, unlike the ticket/issue allow-lists
+     * ({@code JiraTicketKeys.parseProjectKeys} and siblings), which also split on any whitespace: a
+     * repository name never contains a space, but a file path plausibly can, so splitting on bare
+     * whitespace here would silently sever such a path into two useless entries. Entries are also
+     * kept exactly as typed rather than lower-cased — a file path is case-sensitive on every one of
+     * the three platforms this reads from, so folding case would defeat the prefix match
+     * {@link CodeContextProvider}'s enforcement depends on.
+     */
+    public static Set<String> parsePathAllowList(String raw) {
+        Set<String> entries = new LinkedHashSet<>();
+        if (raw == null || raw.isBlank()) {
+            return entries;
+        }
+        for (String token : raw.split("[,\\n]+")) {
+            String entry = token.strip();
+            if (!entry.isBlank()) {
+                entries.add(entry);
+            }
+        }
+        return entries;
     }
 }

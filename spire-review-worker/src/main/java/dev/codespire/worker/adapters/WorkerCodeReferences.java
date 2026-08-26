@@ -26,17 +26,31 @@ import java.util.Set;
 @ApplicationScoped
 public class WorkerCodeReferences {
 
+    /**
+     * Every registered language, in registration order — reused by {@code WorkerContextClients} when
+     * it builds the {@code code} context provider, so the two never drift apart: a language this
+     * class extracts references for is exactly a language the code-context provider resolves imports
+     * for, with one list to keep in step rather than two hand-maintained ones.
+     */
+    private final List<LanguageSupport> all = List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport());
+
     private final Map<String, LanguageSupport> byLanguage = new HashMap<>();
 
     public WorkerCodeReferences() {
-        register(new JavaLanguageSupport());
-        register(new TypeScriptLanguageSupport());
+        for (LanguageSupport support : all) {
+            register(support);
+        }
     }
 
     private void register(LanguageSupport support) {
         for (String language : support.languages()) {
             byLanguage.put(language, support);
         }
+    }
+
+    /** The languages this worker resolves — see {@link #all}. */
+    public List<LanguageSupport> all() {
+        return all;
     }
 
     /** What the diff's changed lines reference: the paths touched and the identifiers they mention. */
