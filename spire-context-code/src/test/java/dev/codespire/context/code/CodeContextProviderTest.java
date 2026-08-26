@@ -102,12 +102,19 @@ class CodeContextProviderTest {
                 """);
         reads.set(0);
 
-        provider().contribute(request(new CodeReferences(
+        ContextContribution c = provider().contribute(request(new CodeReferences(
                 Set.of("src/main/java/dev/example/Alpha.java"),
                 Set.of("Pricer", "chargeFor", "refundFor")))).toCompletableFuture().get();
 
         // The changed file, then Pricer.java once — not once per symbol found in it.
         assertEquals(2, reads.get());
+        // C1: both declarations found in one file must survive as distinct items — the aggregator's
+        // cross-source dedup keys on `uri`, so `rankAndCap` must not collapse them onto one address.
+        assertEquals(2, c.items().size());
+        assertTrue(c.items().stream().anyMatch(i ->
+                i.uri().equals("src/main/java/dev/example/pricing/Pricer.java#chargeFor")));
+        assertTrue(c.items().stream().anyMatch(i ->
+                i.uri().equals("src/main/java/dev/example/pricing/Pricer.java#refundFor")));
     }
 
     @Test

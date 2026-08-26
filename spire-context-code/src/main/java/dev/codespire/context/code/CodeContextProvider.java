@@ -283,6 +283,16 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * {@link CodeReferences} does not distinguish added from removed identifiers, so rung 1 ships
      * without that tie-break — adding it means a third set on {@code CodeReferences} and is
      * deliberately deferred, not an oversight.
+     *
+     * <p>Each item's {@link ContextItem#uri} is {@code definitionPath + "#" + symbol}, not the bare
+     * path: one file legitimately yields several items — {@link #extractCandidates} deliberately
+     * tries every requested identifier against each fetched file — and a bare path would make
+     * {@code ContextWorker.gatherContext}'s cross-source uri dedup (built for "the same page/ticket
+     * referenced from two places") collapse every symbol from one file down to one item. That was C1
+     * in the rung-1 final review: on a change touching several members of one file, all but the first
+     * silently vanished after `contribute` reported them, with the diagnostic
+     * ({@code ContextResolutionCounts.contributed}) reporting the pre-collapse count as if nothing
+     * were wrong. The uri is also the UI's link target, and {@code path#symbol} still names it.
      */
     private List<ContextItem> rankAndCap(List<DefinitionCandidate> candidates) {
         List<DefinitionCandidate> ranked = new ArrayList<>(candidates);
@@ -294,7 +304,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
                 break;
             }
             items.add(new ContextItem(KIND, candidate.symbol + " — " + candidate.definitionPath,
-                    candidate.snippet, candidate.definitionPath));
+                    candidate.snippet, candidate.definitionPath + "#" + candidate.symbol));
         }
         return items;
     }
