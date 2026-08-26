@@ -57,4 +57,14 @@ class BitbucketSourceFileReaderTest {
                 () -> reader.read("acme/widgets", "src/Alpha.java", "cafe1234"));
         assertEquals(401, e.status());
     }
+
+    // I3, rung-1 final review: the path is percent-encoded one segment at a time, not interpolated
+    // raw — the slashes between segments stay literal, only each segment's own content is encoded.
+    @Test
+    void eachPathSegmentIsPercentEncodedSeparately() {
+        server.stubFor(get(urlPathEqualTo("/repositories/acme/widgets/src/cafe1234/src/On+Call.java"))
+                .willReturn(aResponse().withStatus(200).withBody("class OnCall { }")));
+
+        assertEquals("class OnCall { }", reader.read("acme/widgets", "src/On Call.java", "cafe1234"));
+    }
 }

@@ -14,6 +14,9 @@ import java.util.Map;
  * {@link PinnedJsonClient}, shared with every other adapter. The {@code vnd.github.raw} media type
  * returns the file's bytes directly rather than base64 inside a JSON envelope, so this reader calls
  * {@link PinnedJsonClient#getRaw} rather than {@code getJson}.
+ *
+ * <p>{@code path} is percent-encoded one segment at a time ({@link SourceFileReaders#encodeSegments})
+ * before it reaches the URL — see that class's javadoc for why a raw, unencoded path is unsafe here.
  */
 public class GitHubSourceFileReader implements SourceFileReader {
 
@@ -36,7 +39,8 @@ public class GitHubSourceFileReader implements SourceFileReader {
     @Override
     public String read(String repo, String path, String commit) {
         try {
-            return http.getRaw("/repos/" + repo + "/contents/" + path + "?ref=" + commit);
+            return http.getRaw("/repos/" + repo + "/contents/" + SourceFileReaders.encodeSegments(path)
+                    + "?ref=" + commit);
         } catch (CodeContextApiException e) {
             if (e.isNotFound()) {
                 return null; // absent or moved file — the normal case, not an error

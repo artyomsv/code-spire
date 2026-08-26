@@ -382,6 +382,120 @@ class CodeContextProviderTest {
         assertFalse(attemptedPaths.contains("/etc/passwd"));
     }
 
+    @Test
+    void pathAllowListRejectsAPercentEncodedTraversalCandidateEvenWhenItWouldOtherwiseMatchThePrefix()
+            throws Exception {
+        Set<String> attemptedPaths = new HashSet<>();
+        SourceFileReader trackingReader = new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                attemptedPaths.add(path);
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
+        files.put("src/main/java/dev/example/Alpha.java", "package dev.example;\nclass Alpha { }\n");
+        files.put("deploy/keys", "super-secret-key-material");
+
+        // A literal ".." is normalised away and caught by isTraversal directly; the percent-encoded
+        // form (I3, rung-1 final review) is the one that would otherwise sail past isTraversal (which
+        // compares raw, un-decoded segments) AND the "src/allowed" prefix check, only to be decoded by
+        // the platform on arrival.
+        LanguageSupport escapingSupport = new FixedImportLanguageSupport("Escaper",
+                List.of("src/allowed/%2e%2e/%2e%2e/deploy/keys"));
+
+        CodeContextProvider restricted = new CodeContextProvider(trackingReader,
+                List.of(escapingSupport), Set.of("src/allowed"));
+
+        ContextContribution c = restricted.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("Escaper"))))
+                .toCompletableFuture().get();
+
+        assertEquals(ContribStatus.EMPTY, c.status());
+        assertTrue(c.items().isEmpty());
+        // The reader must never even be called for the rejected candidate — not merely "no items".
+        assertFalse(attemptedPaths.contains("src/allowed/%2e%2e/%2e%2e/deploy/keys"));
+    }
+
+    @Test
+    void aFileFetchedBeforeTheDeadlineStillContributesWhenALaterFetchRunsOutOfBudget() throws Exception {
+        files.put("src/main/java/dev/example/Alpha.java", """
+                package dev.example;
+                import dev.example.pricing.Pricer;
+                import dev.example.discount.Discounter;
+                class Alpha { }
+                """);
+        files.put("src/main/java/dev/example/pricing/Pricer.java", "public long chargeFor(long t) { return t; }");
+        files.put("src/main/java/dev/example/discount/Discounter.java",
+                "public long applyDiscount(long t) { return t; }");
+
+        // Pricer.java's fetch is slow enough, on its own, to burn through the tiny 30ms test deadline
+        // before Discounter.java's fetch is even attempted — proving I2's "whatever resolved before
+        // the deadline still ships" rather than losing the whole contribution.
+        SourceFileReader slowForPricerReader = new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                if (path.contains("Pricer")) {
+                    sleep(60);
+                }
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
+
+        CodeContextProvider provider = new CodeContextProvider(slowForPricerReader,
+                List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport()), Set.of(), 30);
+
+        ContextContribution c = provider.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"),
+                Set.of("Pricer", "chargeFor", "Discounter", "applyDiscount"))))
+                .toCompletableFuture().get();
+
+        assertEquals(ContribStatus.OK, c.status());
+        assertTrue(c.items().stream().anyMatch(i -> i.uri().contains("Pricer.java")),
+                "resolved before the deadline — must still ship");
+        assertTrue(c.items().stream().noneMatch(i -> i.uri().contains("Discounter.java")),
+                "the deadline was already spent by the time this candidate would have been fetched");
+    }
+
+    @Test
+    void aDeadlineAlreadySpentBeforeAnyFetchIsReportedAsErrorRatherThanAMisleadingEmpty() throws Exception {
+        files.put("src/main/java/dev/example/Alpha.java", """
+                package dev.example;
+                import dev.example.pricing.Pricer;
+                class Alpha { }
+                """);
+        files.put("src/main/java/dev/example/pricing/Pricer.java", "public long chargeFor(long t) { return t; }");
+
+        // A negative deadline is already in the past the instant resolve() computes it, so even the
+        // very first fetch attempted afterward is guaranteed to observe it as spent — no timing race.
+        CodeContextProvider provider = new CodeContextProvider(reader,
+                List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport()), Set.of(), -1);
+
+        ContextContribution c = provider.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("Pricer", "chargeFor"))))
+                .toCompletableFuture().get();
+
+        assertEquals(ContribStatus.ERROR, c.status());
+        assertTrue(c.items().isEmpty());
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /**
      * A {@link LanguageSupport} test double that always reports one fixed import (bringing in
      * {@code importedSymbol}) resolving to one fixed list of candidate paths — used to feed

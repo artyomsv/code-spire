@@ -65,7 +65,16 @@ public final class SnippetExtractor {
      *     or does not define at all, never an error.
      */
     public static String extract(String fileContent, String symbol, int maxBodyLines) {
-        String[] lines = fileContent.split("\\R");
+        return extract(fileContent.split("\\R"), symbol, maxBodyLines);
+    }
+
+    /**
+     * Same as {@link #extract(String, String, int)}, but takes a file already split into lines — a
+     * caller resolving several symbols against one file (see {@code CodeContextProvider}'s
+     * {@code extractCandidates}) splits it exactly once and reuses the array, rather than
+     * re-splitting the whole file per symbol (M7, rung-1 final review).
+     */
+    public static String extract(String[] lines, String symbol, int maxBodyLines) {
         int declarationLine = findDeclarationLine(lines, symbol);
         if (declarationLine < 0) {
             return null;

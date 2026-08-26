@@ -10,10 +10,11 @@ import java.util.Map;
 /**
  * Reads a repository file at a specific commit from the Bitbucket Cloud REST API.
  *
- * <p>Unlike GitLab, Bitbucket's {@code src} browse endpoint takes the repository and file path as
- * literal path segments — no percent-encoding of the slashes. GitHub matches Bitbucket in this
- * respect ({@link GitHubSourceFileReader} builds its URL the same literal-path way); GitLab is the
- * one that requires {@code encode(repo)}/{@code encode(path)}.
+ * <p>Unlike GitLab, Bitbucket's {@code src} browse endpoint takes the file path as literal path
+ * segments joined by {@code /} — the slashes themselves must stay literal; only the content of each
+ * segment is percent-encoded ({@link SourceFileReaders#encodeSegments}). GitHub matches Bitbucket in
+ * this respect ({@link GitHubSourceFileReader} builds its URL the same way); GitLab instead encodes
+ * the whole path, slashes included, as one opaque segment.
  */
 public class BitbucketSourceFileReader implements SourceFileReader {
 
@@ -33,7 +34,8 @@ public class BitbucketSourceFileReader implements SourceFileReader {
     @Override
     public String read(String repo, String path, String commit) {
         try {
-            return http.getRaw("/repositories/" + repo + "/src/" + commit + "/" + path);
+            return http.getRaw("/repositories/" + repo + "/src/" + commit + "/"
+                    + SourceFileReaders.encodeSegments(path));
         } catch (CodeContextApiException e) {
             if (e.isNotFound()) {
                 return null; // absent or moved file — the normal case, not an error

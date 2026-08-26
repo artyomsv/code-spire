@@ -68,11 +68,31 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     /**
      * Cap on the number of snippets one contribution may return — a large diff can resolve far more
      * definitions than the prompt budget should spend on this one source.
+     *
+     * <p>Derived from the slot it feeds, not chosen freely: {@code {{code_context}}}'s budget is
+     * 6,000 tokens (`PromptCatalog`), {@code TokenBudget.CHARS_PER_TOKEN} is 3.2, and a worst-case
+     * snippet — {@link #MAX_BODY_LINES} body lines plus a short signature/doc comment and the
+     * rendered title/prefix (see {@code ReviewPromptBuilder.renderContext}) — runs to roughly 1,600
+     * characters (~500 tokens). 6,000 / 500 is 12: the previous cap of 20 could reach ~9,000 tokens,
+     * which {@code PromptRenderer} would then silently tail-clip inside this slot — the very
+     * eviction the dedicated slot exists to prevent, just relocated (M1, rung-1 final review).
      */
-    public static final int MAX_SNIPPETS = 20;
+    public static final int MAX_SNIPPETS = 12;
 
     /** Body lines kept per snippet, beyond the always-kept signature and doc comment (SnippetExtractor). */
     private static final int MAX_BODY_LINES = 40;
+
+    /**
+     * Wall-clock budget this provider gives itself, checked between fetches (see {@link Fetcher}) so
+     * a slow host degrades to a partial contribution — whatever resolved before the deadline still
+     * ships — rather than losing everything to the aggregator's own cancellation. Deliberately below
+     * {@code ContextWorker.TIMEOUT_SECONDS} (20s): this module cannot reference that class (see
+     * {@code spire-context-code}'s build file — no dependency on {@code spire-review-worker}), and
+     * even if it could, this deadline must expire *first* so the partial result below is what the
+     * aggregator actually observes, instead of racing its own {@code CompletableFuture.cancel} (which
+     * does not interrupt a running fetch) (I2, rung-1 final review).
+     */
+    private static final long DEADLINE_MILLIS = 18_000;
 
     /**
      * Extension -> language tag, scoped to exactly the languages this module ships
@@ -88,6 +108,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     private final SourceFileReader reader;
     private final List<LanguageSupport> languages;
     private final Set<String> pathAllowList;
+    private final long deadlineMillis;
 
     public CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages) {
         this(reader, languages, Set.of());
@@ -107,9 +128,20 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     public CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
             Set<String> pathAllowList) {
+        this(reader, languages, pathAllowList, DEADLINE_MILLIS);
+    }
+
+    /**
+     * Same as the three-argument constructor, with the resolution deadline overridable —
+     * package-private, for a same-package test to prove the deadline behaviour (I2, rung-1 final
+     * review) without waiting out the real {@link #DEADLINE_MILLIS} budget.
+     */
+    CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
+            Set<String> pathAllowList, long deadlineMillis) {
         this.reader = reader;
         this.languages = List.copyOf(languages);
         this.pathAllowList = pathAllowList == null ? Set.of() : Set.copyOf(pathAllowList);
+        this.deadlineMillis = deadlineMillis;
     }
 
     /**
@@ -156,7 +188,9 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     @Override
     public Resolution resolve(ContextRequest request) {
         long start = System.nanoTime();
-        Fetcher fetcher = new Fetcher(reader, request.repo().full(), request.commit(), pathAllowList);
+        long deadlineNanos = start + deadlineMillis * 1_000_000L;
+        Fetcher fetcher = new Fetcher(reader, request.repo().full(), request.commit(), pathAllowList,
+                deadlineNanos);
         CodeReferences refs = request.codeReferences();
 
         Map<String, Set<String>> filesByDefinitionPath = resolveDefinitionFiles(refs, fetcher);
@@ -248,6 +282,11 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * For each resolved definition file, tries every identifier the request carries — not only the
      * symbol whose import led here — against its content; see the class javadoc for why. Identifiers
      * are tried in sorted order purely for deterministic candidate ordering before ranking.
+     *
+     * <p>Each file's content is split into lines exactly once and reused across every identifier
+     * tried against it (M7, rung-1 final review) — the loop runs (definition files × identifiers)
+     * times, so re-splitting per identifier would re-split the same file's full text as many times
+     * as it has identifiers to try.
      */
     private List<DefinitionCandidate> extractCandidates(Map<String, Set<String>> filesByDefinitionPath,
             Set<String> identifiers, Fetcher fetcher) {
@@ -261,8 +300,9 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
             if (content == null) {
                 continue;
             }
+            String[] lines = content.split("\\R");
             for (String identifier : sortedIdentifiers) {
-                String snippet = SnippetExtractor.extract(content, identifier, MAX_BODY_LINES);
+                String snippet = SnippetExtractor.extract(lines, identifier, MAX_BODY_LINES);
                 if (snippet == null) {
                     continue;
                 }
@@ -336,15 +376,19 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
         private final String repo;
         private final String commit;
         private final Set<String> pathAllowList;
+        private final long deadlineNanos;
         private final Map<String, String> cache = new HashMap<>();
         private final Set<String> attempted = new HashSet<>();
         private boolean hadError;
+        private boolean deadlineExceeded;
 
-        Fetcher(SourceFileReader reader, String repo, String commit, Set<String> pathAllowList) {
+        Fetcher(SourceFileReader reader, String repo, String commit, Set<String> pathAllowList,
+                long deadlineNanos) {
             this.reader = reader;
             this.repo = repo;
             this.commit = commit;
             this.pathAllowList = pathAllowList;
+            this.deadlineNanos = deadlineNanos;
         }
 
         /**
@@ -383,8 +427,15 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
             return cache.get(path);
         }
 
+        /**
+         * True when a real error (5xx, rate limit) skipped at least one path, OR the resolution
+         * deadline was reached before every path could be attempted — both are reasons a contribution
+         * fell short of what it could have resolved, as opposed to an ordinary, error-free EMPTY
+         * (nothing to look up). See {@link CodeContextProvider#DEADLINE_MILLIS} and I2 in the rung-1
+         * final review.
+         */
         boolean hadError() {
-            return hadError;
+            return hadError || deadlineExceeded;
         }
 
         /**
@@ -398,9 +449,16 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
          * {@link LanguageSupport#candidatePaths} promises it never will. Checked unconditionally, even
          * with an empty allow-list: a resolved path escaping the repository is never a path this
          * provider should read, restriction configured or not.
+         *
+         * <p>A percent-encoded candidate is rejected the same way, for the same reason: {@link
+         * #isTraversal} compares raw, un-decoded segments against {@code ".."}, so an encoded
+         * traversal segment ({@code %2e%2e}) would sail past it and past the prefix check below, only
+         * to be decoded by the platform on arrival — I3 in the rung-1 final review. No legitimate
+         * candidate either {@code JavaLanguageSupport} or {@code TypeScriptLanguageSupport} produces
+         * contains a {@code %}, so this costs no real recall.
          */
         private boolean isAllowed(String path) {
-            if (isTraversal(path)) {
+            if (isTraversal(path) || containsPercentEncoding(path)) {
                 return false;
             }
             if (pathAllowList.isEmpty()) {
@@ -426,13 +484,28 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
             return false;
         }
 
+        private static boolean containsPercentEncoding(String path) {
+            return path.indexOf('%') >= 0;
+        }
+
         /**
          * One fetch per path per {@link #fetch} call: a cached outcome — success, absence, or a prior
          * error — never calls {@link SourceFileReader#read} again for the same path.
+         *
+         * <p>Checked against {@code deadlineNanos} before every attempt, not only at entry to
+         * {@link CodeContextProvider#resolve}: several fetches happen per invocation (the changed
+         * files, then each resolved candidate), and the budget is meant to bound the whole sequence,
+         * not just the first fetch in it (I2, rung-1 final review). A path skipped this way is
+         * reported as absent — indistinguishable to the caller from a 404 — which is the correct
+         * degrade: whatever already resolved before the deadline still ships, via {@link #hadError()}.
          */
         private String read(String path) {
             if (attempted.contains(path)) {
                 return cache.get(path);
+            }
+            if (System.nanoTime() > deadlineNanos) {
+                deadlineExceeded = true;
+                return null;
             }
             attempted.add(path);
             try {
