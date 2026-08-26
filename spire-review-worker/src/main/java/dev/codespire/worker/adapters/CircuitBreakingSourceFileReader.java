@@ -40,6 +40,15 @@ public class CircuitBreakingSourceFileReader implements SourceFileReader {
     }
 
     /**
+     * The wrapped reader. Every {@code code} provider is built around one of these, so a test asking
+     * which platform's reader a credential resolved to has to be able to see past the wrapper —
+     * see {@code CodeContextProvider.reader()}.
+     */
+    public SourceFileReader delegate() {
+        return delegate;
+    }
+
+    /**
      * Only a real server-side failure counts against the shared circuit. A 404 — an absent or moved
      * file — is the normal case per {@link SourceFileReader#read}'s own contract, not illness; a
      * 401/403 means this credential or this repository, not the host, is the problem. Counting either

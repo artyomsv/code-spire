@@ -1,7 +1,11 @@
 package dev.codespire.worker.adapters;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.context.code.BitbucketSourceFileReader;
 import dev.codespire.context.code.CodeContextProvider;
+import dev.codespire.context.code.GitHubSourceFileReader;
+import dev.codespire.context.code.GitLabSourceFileReader;
+import dev.codespire.context.code.SourceFileReader;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.context.ContextCredential;
 import dev.codespire.contract.port.ContextProvider;
@@ -13,6 +17,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
  * The {@code code} branch of {@link WorkerContextClients#forCommand} is the one place a credential's
@@ -76,5 +81,51 @@ class WorkerContextClientsTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("forCommand did not construct a CodeContextProvider"));
         assertEquals(Set.of(), code.pathAllowList());
+    }
+
+    /**
+     * One generic {@code code} credential covers three raw-content APIs and carries no platform field,
+     * so {@code readerFor} infers it from the base URL's host. Which reader that picks has no other
+     * observable trace: routing a self-managed GitLab to the GitHub reader produces 404s
+     * indistinguishable from "the file isn't there", so context is silently never contributed. Both
+     * pre-existing tests used {@code api.github.com}, which is the fallback branch, and asserted only
+     * the allow-list — so nothing covered the selection at all (PR 63 QA review).
+     */
+    @Test
+    void aGitLabHostSelectsTheGitLabReader() throws Exception {
+        assertEquals(GitLabSourceFileReader.class, readerClassFor("https://gitlab.acme.example"));
+    }
+
+    @Test
+    void aBitbucketHostSelectsTheBitbucketReader() throws Exception {
+        assertEquals(BitbucketSourceFileReader.class, readerClassFor("https://api.bitbucket.org/2.0"));
+    }
+
+    /** GitHub is the fallback — its hostname is the least predictable of the three. */
+    @Test
+    void anyOtherHostFallsBackToTheGitHubReader() throws Exception {
+        assertEquals(GitHubSourceFileReader.class, readerClassFor("https://api.github.com"));
+        assertEquals(GitHubSourceFileReader.class, readerClassFor("https://source.acme.example"));
+    }
+
+    /**
+     * Every reader is wrapped by the circuit breaker before it reaches the provider, so the selection
+     * is only visible through the wrapper — asserted here rather than assumed, since a wiring that
+     * skipped the breaker would leave one struggling host able to stall every review.
+     */
+    private Class<?> readerClassFor(String baseUrl) throws Exception {
+        ContextCredential cred =
+                new ContextCredential("code", baseUrl, "bearer", null, "token", null);
+
+        CodeContextProvider code = clients().forCommand(command(pack(cred))).stream()
+                .filter(CodeContextProvider.class::isInstance)
+                .map(CodeContextProvider.class::cast)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("forCommand did not construct a CodeContextProvider"));
+
+        SourceFileReader reader = code.reader();
+        assertInstanceOf(CircuitBreakingSourceFileReader.class, reader,
+                "the code reader must stay behind the shared per-host circuit breaker");
+        return ((CircuitBreakingSourceFileReader) reader).delegate().getClass();
     }
 }
