@@ -55,6 +55,24 @@ public final class SnippetExtractor {
     // large enough to matter for genuinely pathological input.
     private static final int MAX_SIGNATURE_SCAN_LINES = 40;
 
+    /**
+     * The backward counterpart to {@link #MAX_SIGNATURE_SCAN_LINES}, and needed for the same reason:
+     * {@link #leadingCommentStart}'s span is added to the snippet <em>uncounted</em> against
+     * {@code maxBodyLines}, so an unbounded walk is an unbounded snippet.
+     *
+     * <p>The walk that could run away is the block-comment one. {@link #BLOCK_COMMENT_END} matches any
+     * line ENDING in a block-comment terminator — a trailing inline comment on the line above a
+     * declaration reads exactly like the close of a doc comment — while {@link #BLOCK_COMMENT_START}
+     * only matches a line whose FIRST non-whitespace opens one. In a file carrying a license header
+     * the walk then found that header and returned 0: the snippet became the whole file down to the
+     * declaration. One such item fills the entire {@code {{code_context}}} budget on its own,
+     * {@code PromptRenderer} tail-clips
+     * it, and the other eleven snippets vanish while {@code ContextResolutionCounts.contributed} still
+     * reports twelve — the eviction {@code CodeContextProvider.MAX_SNIPPETS} was derived to prevent,
+     * relocated one stage later (H2, PR 63 review).
+     */
+    private static final int MAX_COMMENT_SCAN_LINES = 40;
+
     private static final Pattern LINE_COMMENT = Pattern.compile("^\\s*//");
 
     private static final Pattern BLOCK_COMMENT_START = Pattern.compile("^\\s*/\\*");
@@ -80,6 +98,14 @@ public final class SnippetExtractor {
      * re-splitting the whole file per symbol (M7, rung-1 final review).
      */
     public static String extract(String[] lines, String symbol, int maxBodyLines) {
+        return extract(lines, new Symbol(symbol), maxBodyLines);
+    }
+
+    /**
+     * Same again, for a caller that already built the symbol's {@link Symbol} — the form to use when
+     * one symbol is tried against many files. See {@link Symbol}.
+     */
+    public static String extract(String[] lines, Symbol symbol, int maxBodyLines) {
         int declarationLine = findDeclarationLine(lines, symbol);
         if (declarationLine < 0) {
             return null;
@@ -109,15 +135,38 @@ public final class SnippetExtractor {
     private static final Set<String> CALL_CONTEXT_KEYWORDS = Set.of(
             "return", "throw", "yield", "new", "case", "typeof", "delete", "await", "instanceof");
 
-    private static int findDeclarationLine(String[] lines, String symbol) {
-        Pattern keywordForm = keywordDeclarationPattern(symbol);
-        Pattern bareForm = bareDeclarationPattern(symbol);
+    /**
+     * One symbol's two compiled declaration patterns.
+     *
+     * <p>Exists so a caller trying one symbol against many files compiles them <b>once per symbol</b>
+     * instead of once per (file, symbol). {@code CodeContextProvider.extractCandidates} runs
+     * {@code definitionFiles × identifiers} extractions, so the per-call compile this replaces was two
+     * fresh {@link Pattern}s per pair — tens of thousands of compiles on a large diff, all of the same
+     * few hundred patterns (M1/M2, PR 63 review).
+     */
+    public static final class Symbol {
+
+        private final Pattern keywordForm;
+        private final Pattern bareForm;
+
+        public Symbol(String name) {
+            // class Foo / const foo / etc. — unambiguous; a call never reads this way.
+            this.keywordForm = Pattern.compile(
+                    "\\b(?:class|interface|record|const|function|type)\\s+" + Pattern.quote(name) + "\\b");
+            // symbol( / symbol= — covers a Java method (no keyword precedes a return type) and a TS
+            // class-field arrow function, but also matches an ordinary call or comparison; see
+            // isGenuineDeclaration, which every match on this pattern must additionally pass.
+            this.bareForm = Pattern.compile("\\b" + Pattern.quote(name) + "\\b\\s*([(=])");
+        }
+    }
+
+    private static int findDeclarationLine(String[] lines, Symbol symbol) {
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
-            if (keywordForm.matcher(line).find()) {
+            if (symbol.keywordForm.matcher(line).find()) {
                 return i;
             }
-            Matcher bare = bareForm.matcher(line);
+            Matcher bare = symbol.bareForm.matcher(line);
             while (bare.find()) {
                 if (isGenuineDeclaration(line, bare)) {
                     return i;
@@ -125,20 +174,6 @@ public final class SnippetExtractor {
             }
         }
         return -1;
-    }
-
-    /** {@code class Foo} / {@code const foo} / etc. — unambiguous; a call never reads this way. */
-    private static Pattern keywordDeclarationPattern(String symbol) {
-        return Pattern.compile("\\b(?:class|interface|record|const|function|type)\\s+" + Pattern.quote(symbol) + "\\b");
-    }
-
-    /**
-     * {@code symbol(} / {@code symbol=} — covers a Java method (no keyword precedes a return type)
-     * and a TS class-field arrow function, but also matches an ordinary call or comparison; see
-     * {@link #isGenuineDeclaration}, which every match here must additionally pass.
-     */
-    private static Pattern bareDeclarationPattern(String symbol) {
-        return Pattern.compile("\\b" + Pattern.quote(symbol) + "\\b\\s*([(=])");
     }
 
     /**
@@ -154,7 +189,7 @@ public final class SnippetExtractor {
      * {@link #CALL_CONTEXT_KEYWORDS} (M3, rung-1 final review; the assignment check closes a gap the
      * final re-review found still open in that same fix — every legitimate {@code x = …} declaration
      * shape, e.g. a TS class-field arrow function, is already matched by
-     * {@link #keywordDeclarationPattern} or has {@code =} as the matched character itself, not
+     * {@link Symbol}'s keyword form or has {@code =} as the matched character itself, not
      * {@code (}, so rejecting this shape never rejects a real declaration).
      *
      * <p>Known residual gap, accepted rather than hidden — and broader than just a bare call with
@@ -211,24 +246,34 @@ public final class SnippetExtractor {
      * comment (opening {@code /*}) or a contiguous run of {@code //} lines — so a doc comment rides
      * along with the declaration it documents. A blank line breaks the walk: only a comment directly
      * attached to the declaration counts.
+     *
+     * <p>Both walks stop after {@link #MAX_COMMENT_SCAN_LINES} lines — see that constant for why an
+     * unbounded walk here is an unbounded snippet. Reaching the bound without finding a line that
+     * opens a block comment falls back to the declaration line itself (no leading comment at all):
+     * the run of lines above it is then, by construction, not a comment block this extractor can
+     * identify the start of, and annexing an arbitrary prefix of the file is strictly worse than
+     * showing the declaration alone. The line-comment walk needs no such fallback — every line it took is a
+     * {@code //} line, so stopping early simply keeps the nearest {@link #MAX_COMMENT_SCAN_LINES} of
+     * an unusually long comment.
      */
     private static int leadingCommentStart(String[] lines, int declarationLine) {
         int i = declarationLine - 1;
         if (i < 0) {
             return declarationLine;
         }
+        int floor = Math.max(0, declarationLine - MAX_COMMENT_SCAN_LINES);
         String previous = lines[i].trim();
         if (BLOCK_COMMENT_END.matcher(previous).find()) {
-            while (i >= 0) {
+            while (i >= floor) {
                 if (BLOCK_COMMENT_START.matcher(lines[i]).find()) {
                     return i;
                 }
                 i--;
             }
-            return 0;
+            return declarationLine;
         }
         if (LINE_COMMENT.matcher(previous).find()) {
-            while (i >= 0 && LINE_COMMENT.matcher(lines[i]).find()) {
+            while (i >= floor && LINE_COMMENT.matcher(lines[i]).find()) {
                 i--;
             }
             return i + 1;

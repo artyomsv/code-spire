@@ -288,4 +288,47 @@ class SnippetExtractorTest {
         assertTrue(snippet.contains("public long chargeFor(long t) {"));
         assertFalse(snippet.contains("long total ="));
     }
+
+    /**
+     * H2 (PR 63 review). The line above the declaration ends in a block-comment terminator — a
+     * trailing inline comment on a field, not the close of a doc comment — so the backward walk
+     * starts looking for a line that OPENS one. The only such line is the file's license header, and
+     * everything from there down used to be prepended to the snippet, uncounted against
+     * {@code maxBodyLines}: one item became the whole file and consumed the entire code-context slot,
+     * tail-clipping every other snippet away while the counts still reported them all.
+     */
+    @Test
+    void aTrailingInlineCommentAboveADeclarationCannotAnnexTheWholeFile() {
+        StringBuilder file = new StringBuilder("/*\n * Copyright (c) Acme.\n */\n");
+        for (int i = 0; i < 200; i++) {
+            file.append("class Filler").append(i).append(" { }\n");
+        }
+        file.append("private final Map<String, String> m = new HashMap<>(); /* legacy */\n");
+        file.append("public long chargeFor(long tokens) { return tokens; }\n");
+
+        String snippet = SnippetExtractor.extract(file.toString(), "chargeFor", 40);
+
+        assertTrue(snippet.contains("public long chargeFor(long tokens)"));
+        assertFalse(snippet.contains("Copyright"), "the license header is not this symbol's doc comment");
+        assertFalse(snippet.contains("class Filler0 "), "nothing above the declaration belongs here");
+        assertTrue(snippet.lines().count() < 10,
+                "a snippet for a one-line declaration must stay small: " + snippet.lines().count() + " lines");
+    }
+
+    /** The bound must not cost a real doc comment its ride — it only stops an unidentifiable one. */
+    @Test
+    void aDocCommentWithinTheBoundStillRidesAlongWithItsDeclaration() {
+        String file = "class Holder {\n"
+                + "    /**\n"
+                + "     * Prices one call.\n"
+                + "     */\n"
+                + "    public long chargeFor(long t) {\n"
+                + "        return t;\n"
+                + "    }\n"
+                + "}\n";
+
+        String snippet = SnippetExtractor.extract(file, "chargeFor", 40);
+
+        assertTrue(snippet.contains("Prices one call."));
+    }
 }
