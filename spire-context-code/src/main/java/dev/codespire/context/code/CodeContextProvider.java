@@ -63,7 +63,7 @@ import java.util.concurrent.CompletionStage;
 public class CodeContextProvider implements ContextProvider, ContextResolutionSource, FirstLevelOnly {
 
     public static final String SOURCE = "CODE";
-    private static final String KIND = "CODE_SNIPPET";
+    private static final String KIND = ContextItem.CODE_SNIPPET;
 
     /**
      * Cap on the number of snippets one contribution may return — a large diff can resolve far more
@@ -83,6 +83,26 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     private static final int MAX_BODY_LINES = 40;
 
     /**
+     * Identifiers {@link #extractCandidates} will try against each resolved definition file.
+     *
+     * <p>Extraction is the quadratic step — every resolved file is scanned once per identifier — and
+     * {@link CodeReferences} carries whatever the diff produced, up to its own (much larger) wire cap.
+     * Bounding the wire value alone would still leave a big refactor running hundreds of full-file
+     * regex scans per resolved file. {@link #EXTRACTION_BUDGET_MILLIS} stops that mid-flight; this cap
+     * keeps it from being entered at that size in the first place, so the ordinary case never has to
+     * fall back on a wall-clock check to finish in reasonable time.
+     *
+     * <p>Chosen well above what a real review carries: {@link #MAX_SNIPPETS} is 12, so the identifiers
+     * past this point could only ever compete for a budget already spent many times over. Identifiers
+     * are sorted before the cut, so which ones survive is deterministic rather than depending on a
+     * {@code Set}'s iteration order.
+     *
+     * <p>Package-private, like the deadline-overriding constructor below and for the same reason: a
+     * same-package test asserts the cut without hard-coding the number.
+     */
+    static final int MAX_EXTRACTION_IDENTIFIERS = 500;
+
+    /**
      * Wall-clock budget this provider gives itself, checked between fetches (see {@link Fetcher}) so
      * a slow host degrades to a partial contribution — whatever resolved before the deadline still
      * ships — rather than losing everything to the aggregator's own cancellation. Deliberately below
@@ -93,6 +113,27 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * does not interrupt a running fetch) (I2, rung-1 final review).
      */
     private static final long DEADLINE_MILLIS = 18_000;
+
+    /**
+     * Wall-clock budget {@link #extractCandidates} gives itself, measured from when extraction starts.
+     *
+     * <p>Extraction is CPU, not I/O, and it is the quadratic step — every resolved definition file is
+     * scanned once per identifier. Until this existed, {@link Fetcher} was the only place the deadline
+     * was consulted, so extraction ran <em>in full</em> however long it took, and
+     * {@code CompletableFuture.cancel} does not interrupt a running task, so the aggregator giving up
+     * did not stop it either: it kept burning a pool thread long after the review had moved on
+     * (M1/M2, PR 63 review).
+     *
+     * <p><b>Its own budget, not {@link #DEADLINE_MILLIS} itself</b>, which was the obvious first move
+     * and is wrong: the whole point of that deadline is that a slow host degrades to a partial
+     * contribution — "whatever resolved before the deadline still ships" (I2). Sharing it would mean
+     * a run whose budget went entirely on fetching contributes <em>nothing</em>, having already paid
+     * for the files it holds, and extracting a handful of cached files costs milliseconds, so there
+     * would be no CPU saved for the contribution lost. A separate budget bounds the pathological case
+     * (hundreds of files × hundreds of identifiers) without touching the ordinary slow-host one. Kept
+     * short enough that the worst case still lands inside {@code ContextWorker}'s 20s fan-out budget.
+     */
+    private static final long EXTRACTION_BUDGET_MILLIS = 1_000;
 
     /**
      * Extension -> language tag, scoped to exactly the languages this module ships
@@ -109,6 +150,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     private final List<LanguageSupport> languages;
     private final Set<String> pathAllowList;
     private final long deadlineMillis;
+    private final long extractionBudgetMillis;
 
     public CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages) {
         this(reader, languages, Set.of());
@@ -138,10 +180,22 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
             Set<String> pathAllowList, long deadlineMillis) {
+        this(reader, languages, pathAllowList, deadlineMillis, EXTRACTION_BUDGET_MILLIS);
+    }
+
+    /**
+     * Same again with the extraction budget overridable too — package-private, so a same-package test
+     * can prove extraction stops on a budget of its own while every fetch still succeeds. The two
+     * budgets have to be separately settable to show that at all: sharing one makes "the fetches
+     * finished, the extraction did not" unreachable.
+     */
+    CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
+            Set<String> pathAllowList, long deadlineMillis, long extractionBudgetMillis) {
         this.reader = reader;
         this.languages = List.copyOf(languages);
         this.pathAllowList = pathAllowList == null ? Set.of() : Set.copyOf(pathAllowList);
         this.deadlineMillis = deadlineMillis;
+        this.extractionBudgetMillis = extractionBudgetMillis;
     }
 
     /**
@@ -152,6 +206,18 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     public Set<String> pathAllowList() {
         return pathAllowList;
+    }
+
+    /**
+     * The reader this instance fetches through — exposed read-only for the same reason
+     * {@link #pathAllowList()} is. A single generic {@code code} credential covers three raw-content
+     * APIs and the platform is inferred from its host, so which {@link SourceFileReader} a composition
+     * root picked is a real decision with no other observable trace: routing a self-managed GitLab to
+     * the GitHub reader produces 404s indistinguishable from "the file isn't there", and without this
+     * accessor that branch could not be asserted even by intent (PR 63 QA review).
+     */
+    public SourceFileReader reader() {
+        return reader;
     }
 
     @Override
@@ -286,12 +352,27 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * <p>Each file's content is split into lines exactly once and reused across every identifier
      * tried against it (M7, rung-1 final review) — the loop runs (definition files × identifiers)
      * times, so re-splitting per identifier would re-split the same file's full text as many times
-     * as it has identifiers to try.
+     * as it has identifiers to try. For the same reason each identifier's declaration patterns are
+     * compiled once, before the file loop, rather than once per (file, identifier) pair, and the
+     * identifier list is capped at {@link #MAX_EXTRACTION_IDENTIFIERS}.
+     *
+     * <p><b>Bounded by {@link #EXTRACTION_BUDGET_MILLIS}</b>, its own budget rather than the fetches' —
+     * see that constant for why sharing one would have cost a contribution it saves no work by
+     * dropping. A run cut short here reports the shortfall through {@link Fetcher#hadError()}, exactly
+     * as a deadline-skipped fetch does, and whatever was extracted before it still ships.
      */
     private List<DefinitionCandidate> extractCandidates(Map<String, Set<String>> filesByDefinitionPath,
             Set<String> identifiers, Fetcher fetcher) {
+        long extractionDeadline = System.nanoTime() + extractionBudgetMillis * 1_000_000L;
         List<String> sortedIdentifiers = new ArrayList<>(identifiers);
         Collections.sort(sortedIdentifiers);
+        if (sortedIdentifiers.size() > MAX_EXTRACTION_IDENTIFIERS) {
+            sortedIdentifiers = sortedIdentifiers.subList(0, MAX_EXTRACTION_IDENTIFIERS);
+        }
+        List<SnippetExtractor.Symbol> symbols = new ArrayList<>(sortedIdentifiers.size());
+        for (String identifier : sortedIdentifiers) {
+            symbols.add(new SnippetExtractor.Symbol(identifier));
+        }
 
         List<DefinitionCandidate> candidates = new ArrayList<>();
         for (Map.Entry<String, Set<String>> entry : filesByDefinitionPath.entrySet()) {
@@ -301,12 +382,17 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
                 continue;
             }
             String[] lines = content.split("\\R");
-            for (String identifier : sortedIdentifiers) {
-                String snippet = SnippetExtractor.extract(lines, identifier, MAX_BODY_LINES);
+            for (int i = 0; i < symbols.size(); i++) {
+                if (System.nanoTime() > extractionDeadline) {
+                    fetcher.recordBudgetExhausted();
+                    return candidates;
+                }
+                String snippet = SnippetExtractor.extract(lines, symbols.get(i), MAX_BODY_LINES);
                 if (snippet == null) {
                     continue;
                 }
-                DefinitionCandidate candidate = new DefinitionCandidate(identifier, definitionPath, snippet);
+                DefinitionCandidate candidate =
+                        new DefinitionCandidate(sortedIdentifiers.get(i), definitionPath, snippet);
                 candidate.changedFiles.addAll(entry.getValue());
                 candidates.add(candidate);
             }
@@ -394,9 +480,17 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
         /**
          * Reads one of the diff's own changed files. Never subject to {@code pathAllowList}: that list
          * narrows where import resolution may wander, not the files already under review.
+         *
+         * <p>The traversal and percent-encoding checks DO apply, exactly as they do to a resolved
+         * candidate — {@link #isSafePath}'s contract is that a path escaping the repository is never
+         * one this provider reads, restriction configured or not, and this path used to be the one
+         * place that skipped it. No leak followed today (a changed file's content is parsed for
+         * imports and never becomes a {@code ContextItem}, and every reader encodes the path before it
+         * reaches a URL), but the invariant was stated and not enforced, which is one refactor away
+         * from mattering (L1, PR 63 review).
          */
         String readChangedFile(String path) {
-            return read(path);
+            return isSafePath(path) ? read(path) : null;
         }
 
         /**
@@ -438,6 +532,25 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
             return hadError || deadlineExceeded;
         }
 
+        /** Whether the fetch budget is spent, recording it so {@link #hadError()} reports the shortfall. */
+        private boolean deadlineReached() {
+            if (System.nanoTime() > deadlineNanos) {
+                recordBudgetExhausted();
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * Records that a budget cut this resolution short. Called from
+         * {@code CodeContextProvider.extractCandidates} too, which runs on its own budget: a
+         * contribution that fell short because extraction stopped is exactly as incomplete as one that
+         * fell short because a fetch was skipped, and {@link #hadError()} is where that is reported.
+         */
+        void recordBudgetExhausted() {
+            deadlineExceeded = true;
+        }
+
         /**
          * A traversal-shaped candidate is rejected outright, before the prefix check even runs — a
          * plain {@code startsWith} would otherwise happily approve
@@ -458,7 +571,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
          * contains a {@code %}, so this costs no real recall.
          */
         private boolean isAllowed(String path) {
-            if (isTraversal(path) || containsPercentEncoding(path)) {
+            if (!isSafePath(path)) {
                 return false;
             }
             if (pathAllowList.isEmpty()) {
@@ -470,6 +583,11 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
                 }
             }
             return false;
+        }
+
+        /** The unconditional half of {@link #isAllowed} — see its javadoc, and {@link #readChangedFile}. */
+        private static boolean isSafePath(String path) {
+            return !isTraversal(path) && !containsPercentEncoding(path);
         }
 
         private static boolean isTraversal(String path) {
@@ -503,8 +621,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
             if (attempted.contains(path)) {
                 return cache.get(path);
             }
-            if (System.nanoTime() > deadlineNanos) {
-                deadlineExceeded = true;
+            if (deadlineReached()) {
                 return null;
             }
             attempted.add(path);

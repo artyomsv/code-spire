@@ -51,6 +51,32 @@ class JavaLanguageSupportTest {
         assertEquals(Set.of("alphaCount"), found);
     }
 
+    /**
+     * The keyword list was partial, and a partial list is not merely untidy: every token it lets
+     * through is tried against every resolved definition file in the quadratic extraction loop, so
+     * {@code var}, {@code switch}, {@code case} and friends inflated that loop on every Java diff
+     * while resolving nothing (PR 63 review). Each token below appeared in a real omission.
+     */
+    @Test
+    void theOnceMissingKeywordsAreNotIdentifiersEither() {
+        FilePatch p = patch(
+                new DiffLine(LineType.ADDED, null, 1, "var mode = pricingMode;"),
+                new DiffLine(LineType.ADDED, null, 2, "switch (mode) { case METERED: break; default: }"),
+                new DiffLine(LineType.ADDED, null, 3, "abstract float ratio;"),
+                new DiffLine(LineType.ADDED, null, 4, "char c; byte b; short s;"),
+                new DiffLine(LineType.ADDED, null, 5, "if (mode instanceof String) { }"));
+
+        Set<String> found = support.identifiersIn(p);
+
+        for (String keyword : List.of("var", "String", "switch", "case", "break", "default",
+                "instanceof", "abstract", "float", "char", "byte", "short")) {
+            assertFalse(found.contains(keyword), keyword + " is not a symbol worth resolving");
+        }
+        // The real symbols on those same lines still come through — this is a narrowing, not a mute.
+        assertTrue(found.contains("pricingMode"));
+        assertTrue(found.contains("METERED"));
+    }
+
     @Test
     void stringLiteralsAndCommentsAreNotMined() {
         FilePatch p = patch(

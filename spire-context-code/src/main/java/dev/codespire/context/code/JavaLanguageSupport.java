@@ -23,11 +23,28 @@ import java.util.regex.Pattern;
  */
 public final class JavaLanguageSupport implements LanguageSupport {
 
+    /**
+     * Tokens that are never a symbol worth resolving, so they never become an identifier to look up.
+     *
+     * <p>Every reserved word the language has, plus the contextual ones ({@code var}, {@code yield},
+     * {@code sealed}, {@code permits}) and {@code String} — not a keyword, but by a wide margin the
+     * most common token on a Java line that could never resolve to a repository file. The list was
+     * partial, and a partial list is not merely untidy here: each surviving token is tried against
+     * every resolved definition file, so {@code var}, {@code switch}, {@code case}, {@code break} and
+     * friends inflated the quadratic extraction loop on <em>every</em> Java diff while resolving
+     * nothing (M1/M2, PR 63 review).
+     */
     private static final Set<String> KEYWORDS = Set.of(
-            "public", "private", "protected", "static", "final", "int", "long", "double", "boolean",
-            "void", "class", "interface", "record", "new", "return", "if", "else", "for", "while",
-            "this", "super", "null", "true", "false", "import", "package", "throws", "throw", "try",
-            "catch");
+            "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class",
+            "const", "continue", "default", "do", "double", "else", "enum", "extends", "final",
+            "finally", "float", "for", "goto", "if", "implements", "import", "instanceof", "int",
+            "interface", "long", "native", "new", "package", "private", "protected", "public",
+            "return", "short", "static", "strictfp", "super", "switch", "synchronized", "this",
+            "throw", "throws", "transient", "try", "void", "volatile", "while",
+            // Contextual keywords and the one ubiquitous type — see the javadoc above.
+            "record", "sealed", "permits", "var", "yield", "String",
+            // Literals, which the identifier regex also matches.
+            "true", "false", "null");
 
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 

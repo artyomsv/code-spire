@@ -67,7 +67,7 @@ class CodeContextProviderTest {
                 .toCompletableFuture().get();
 
         assertEquals(ContribStatus.OK, c.status());
-        assertTrue(c.items().stream().allMatch(i -> "CODE_SNIPPET".equals(i.kind())));
+        assertTrue(c.items().stream().allMatch(i -> ContextItem.CODE_SNIPPET.equals(i.kind())));
         assertTrue(c.items().stream().anyMatch(i -> i.body().contains("Returns millicents")));
     }
 
@@ -139,8 +139,14 @@ class CodeContextProviderTest {
         assertTrue(c.items().isEmpty());
     }
 
+    /**
+     * Named for what it asserts. It used to be called {@code symbolsFromAddedLinesRankAboveOthers…},
+     * a rule {@code rankAndCap}'s own javadoc says rung 1 deliberately does NOT implement —
+     * {@code CodeReferences} carries no added/removed split to rank on — so anyone grepping for that
+     * tie-break found a green test claiming it existed (PR 63 review).
+     */
     @Test
-    void symbolsFromAddedLinesRankAboveOthersAndTheCapHolds() throws Exception {
+    void aDefinitionBroughtInByMoreChangedFilesRanksHigherAndTheCapHolds() throws Exception {
         Set<String> changedPaths = new HashSet<>();
         Set<String> identifiers = new HashSet<>();
         identifiers.add("Popular");
@@ -490,6 +496,140 @@ class CodeContextProviderTest {
 
         assertEquals(ContribStatus.ERROR, c.status());
         assertTrue(c.items().isEmpty());
+    }
+
+    /**
+     * Extraction — {@code definitionFiles × identifiers} full-file regex scans — used to run in full
+     * however long it took, and {@code CompletableFuture.cancel} does not interrupt, so the aggregator
+     * giving up did not stop it either (M1/M2, PR 63 review). Here the fetch budget is generous and
+     * every fetch SUCCEEDS; only extraction's own budget is spent, which is the one state that shows
+     * the check is extraction's rather than the fetches'.
+     */
+    @Test
+    void extractionStopsAtItsOwnBudgetEvenThoughEveryFetchSucceeded() throws Exception {
+        files.put("src/main/java/dev/example/Alpha.java", """
+                package dev.example;
+                import dev.example.pricing.Pricer;
+                class Alpha { }
+                """);
+        files.put("src/main/java/dev/example/pricing/Pricer.java", "public long chargeFor(long t) { return t; }");
+
+        AtomicInteger reads = new AtomicInteger();
+        SourceFileReader countingReader = new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                reads.incrementAndGet();
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
+
+        // A negative extraction budget is already in the past the instant extraction computes it, so
+        // the first symbol observes it as spent — no timing race. The 10s fetch deadline is untouched.
+        CodeContextProvider provider = new CodeContextProvider(countingReader,
+                List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport()), Set.of(), 10_000, -1);
+
+        ContextContribution c = provider.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("Pricer", "chargeFor"))))
+                .toCompletableFuture().get();
+
+        assertEquals(2, reads.get(), "both the changed file and the definition file were fetched");
+        assertTrue(c.items().isEmpty(), "extraction must not run on a budget that is already gone");
+        assertEquals(ContribStatus.ERROR, c.status(), "a budget shortfall is reported, not hidden as EMPTY");
+    }
+
+    /**
+     * L1 (PR 63 review). {@code isAllowed}'s javadoc calls the traversal/percent-encoding check
+     * unconditional, and the changed-file path was the one caller that skipped it. The allow-list
+     * exemption stays — a changed file is by definition part of the repository under review — but the
+     * shape check applies to every path this provider fetches.
+     */
+    @Test
+    void aTraversalShapedChangedPathIsNeverFetched() throws Exception {
+        Set<String> attemptedPaths = new HashSet<>();
+        SourceFileReader trackingReader = new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                attemptedPaths.add(path);
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
+        files.put("../../etc/passwd.java", "root:x:0:0:root:/root:/bin/bash");
+        files.put("src/main/java/dev/example/Alpha.java", """
+                package dev.example;
+                import dev.example.pricing.Pricer;
+                class Alpha { }
+                """);
+        files.put("src/main/java/dev/example/pricing/Pricer.java", "public long chargeFor(long t) { return t; }");
+
+        CodeContextProvider provider = new CodeContextProvider(trackingReader,
+                List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport()));
+
+        ContextContribution c = provider.contribute(request(new CodeReferences(
+                Set.of("../../etc/passwd.java", "src/main/java/dev/example/Alpha.java"),
+                Set.of("Pricer", "chargeFor")))).toCompletableFuture().get();
+
+        assertFalse(attemptedPaths.contains("../../etc/passwd.java"));
+        // The legitimate changed file is still read, and still resolves — the guard rejects a shape,
+        // not the changed-path list.
+        assertTrue(attemptedPaths.contains("src/main/java/dev/example/Alpha.java"));
+        assertTrue(c.items().stream().anyMatch(i -> i.uri().contains("Pricer.java")));
+    }
+
+    /**
+     * Extraction is the quadratic step, so the identifier list it walks is capped independently of
+     * {@code CodeReferences}'s (much larger) wire cap. Identifiers are sorted before the cut, so which
+     * ones survive is deterministic — this asserts that, not merely that "some" were dropped.
+     */
+    @Test
+    void identifiersPastTheExtractionCapAreNotTriedAgainstADefinitionFile() throws Exception {
+        files.put("src/main/java/dev/example/Alpha.java", "package dev.example;\nclass Alpha { }\n");
+        files.put("src/def/Defs.java", """
+                public long aaaEarly(long t) { return t; }
+                public long zzzLate(long t) { return t; }
+                """);
+
+        Set<String> identifiers = new HashSet<>(Set.of("Escaper", "aaaEarly", "zzzLate"));
+        // Sort between "aaaEarly" and "zzzLate", and there are enough of them to push "zzzLate" past
+        // the cap while "aaaEarly" stays comfortably inside it.
+        for (int i = 0; i < CodeContextProvider.MAX_EXTRACTION_IDENTIFIERS + 50; i++) {
+            identifiers.add(String.format("m%04d", i));
+        }
+
+        LanguageSupport fixed = new FixedImportLanguageSupport("Escaper", List.of("src/def/Defs.java"));
+        CodeContextProvider provider = new CodeContextProvider(trackingReaderOverFiles(), List.of(fixed));
+
+        ContextContribution c = provider.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), identifiers)))
+                .toCompletableFuture().get();
+
+        assertTrue(c.items().stream().anyMatch(i -> i.uri().endsWith("#aaaEarly")),
+                "an identifier inside the cap still resolves");
+        assertTrue(c.items().stream().noneMatch(i -> i.uri().endsWith("#zzzLate")),
+                "an identifier past the cap is never tried");
+    }
+
+    private SourceFileReader trackingReaderOverFiles() {
+        return new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
     }
 
     private static void sleep(long millis) {
