@@ -4,6 +4,8 @@ import dev.codespire.contract.llm.PromptClipping;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -17,7 +19,10 @@ import java.util.regex.Pattern;
  * preceded by {@code class}/{@code interface}/{@code record}/{@code const}/{@code function}/
  * {@code type}. That covers a Java method, a Java or TS class-shaped type, and a TS
  * {@code const}/{@code function}/{@code type} declaration — including an exported arrow function,
- * which is just a {@code const} whose value happens to be a lambda.
+ * which is just a {@code const} whose value happens to be a lambda. The {@code (}/{@code =} form
+ * also matches an ordinary call or comparison, so {@link #isGenuineDeclaration} filters those out
+ * before {@link #findDeclarationLine} accepts a match — see its javadoc for exactly what is (and, by
+ * design, is not) excluded.
  *
  * <p>The declaration's full signature — extended across any wrapped continuation lines through the
  * line that opens the body ({@code {}) or terminates the statement ({@code ;}) — and its
@@ -93,21 +98,96 @@ public final class SnippetExtractor {
         return truncated ? snippet + PromptClipping.TRUNCATION_MARKER : snippet;
     }
 
+    /**
+     * Keywords that precede {@code symbol} when it is being CALLED or USED, never when it is being
+     * DECLARED — so a bare {@code symbol(} / {@code symbol=} match immediately after one of these is
+     * rejected by {@link #isGenuineDeclaration}. Not exhaustive (see that method's javadoc for the
+     * residual gap this does not close); chosen to cover the shape the rung-1 final review's M3
+     * illustrates: {@code return chargeFor(1);} appearing, in file order, before {@code chargeFor}'s
+     * own declaration.
+     */
+    private static final Set<String> CALL_CONTEXT_KEYWORDS = Set.of(
+            "return", "throw", "yield", "new", "case", "typeof", "delete", "await", "instanceof");
+
     private static int findDeclarationLine(String[] lines, String symbol) {
-        Pattern declaration = declarationPattern(symbol);
+        Pattern keywordForm = keywordDeclarationPattern(symbol);
+        Pattern bareForm = bareDeclarationPattern(symbol);
         for (int i = 0; i < lines.length; i++) {
-            if (declaration.matcher(lines[i]).find()) {
+            String line = lines[i];
+            if (keywordForm.matcher(line).find()) {
                 return i;
+            }
+            Matcher bare = bareForm.matcher(line);
+            while (bare.find()) {
+                if (isGenuineDeclaration(line, bare)) {
+                    return i;
+                }
             }
         }
         return -1;
     }
 
-    private static Pattern declarationPattern(String symbol) {
-        String quoted = Pattern.quote(symbol);
-        return Pattern.compile(
-                "\\b(class|interface|record|const|function|type)\\s+" + quoted + "\\b"
-                        + "|\\b" + quoted + "\\b\\s*[(=]");
+    /** {@code class Foo} / {@code const foo} / etc. — unambiguous; a call never reads this way. */
+    private static Pattern keywordDeclarationPattern(String symbol) {
+        return Pattern.compile("\\b(?:class|interface|record|const|function|type)\\s+" + Pattern.quote(symbol) + "\\b");
+    }
+
+    /**
+     * {@code symbol(} / {@code symbol=} — covers a Java method (no keyword precedes a return type)
+     * and a TS class-field arrow function, but also matches an ordinary call or comparison; see
+     * {@link #isGenuineDeclaration}, which every match here must additionally pass.
+     */
+    private static Pattern bareDeclarationPattern(String symbol) {
+        return Pattern.compile("\\b" + Pattern.quote(symbol) + "\\b\\s*([(=])");
+    }
+
+    /**
+     * The bare {@code symbol(} / {@code symbol=} form also matches an ordinary call or comparison —
+     * {@code return chargeFor(5);}, {@code obj.chargeFor(5);}, {@code if (chargeFor == 5)} — so a
+     * match is trusted only when: the matched character is a real assignment rather than half of
+     * {@code ==}/{@code !=}/{@code <=}/{@code >=}; the symbol is not preceded by a {@code .} qualifier
+     * (a method call on some receiver, never a declaration in this file); and the token immediately
+     * before it is not one of {@link #CALL_CONTEXT_KEYWORDS} (M3, rung-1 final review).
+     *
+     * <p>Known residual gap, accepted rather than hidden: an unqualified call with nothing at all
+     * before it on the line (e.g. a bare {@code chargeFor(0);} statement) still passes this check,
+     * because a Java constructor's own declaration line (e.g. {@code Pricer(long rate)}, opening its
+     * body on the same line) has the same shape — nothing precedes the name but the class it belongs
+     * to, which this per-line regex approach has no way to know. Closing that gap needs either a real
+     * parser or plumbing the enclosing class name in, both out of proportion for this loose,
+     * conservative heuristic (see the class javadoc).
+     */
+    private static boolean isGenuineDeclaration(String line, Matcher bare) {
+        char matched = bare.group(1).charAt(0);
+        if (matched == '=' && isComparisonOperator(line, bare.start(1))) {
+            return false;
+        }
+        String before = line.substring(0, bare.start()).strip();
+        if (before.endsWith(".")) {
+            return false;
+        }
+        return !CALL_CONTEXT_KEYWORDS.contains(lastWord(before));
+    }
+
+    /** True when the matched {@code =} is actually part of {@code ==}, {@code !=}, {@code <=} or {@code >=}. */
+    private static boolean isComparisonOperator(String line, int equalsIndex) {
+        char previous = equalsIndex > 0 ? line.charAt(equalsIndex - 1) : '\0';
+        char next = equalsIndex + 1 < line.length() ? line.charAt(equalsIndex + 1) : '\0';
+        return next == '=' || previous == '=' || previous == '!' || previous == '<' || previous == '>';
+    }
+
+    /** The trailing run of identifier characters in {@code text}, or {@code ""} if it ends in none. */
+    private static String lastWord(String text) {
+        int end = text.length();
+        int start = end;
+        while (start > 0 && isIdentifierChar(text.charAt(start - 1))) {
+            start--;
+        }
+        return text.substring(start, end);
+    }
+
+    private static boolean isIdentifierChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_' || c == '$';
     }
 
     /**

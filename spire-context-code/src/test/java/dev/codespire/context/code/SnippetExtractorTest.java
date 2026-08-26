@@ -200,4 +200,69 @@ class SnippetExtractorTest {
         assertTrue(snippet.contains("public record ReviewDetail("));
         assertFalse(snippet.contains("String title"));
     }
+
+    // M3, rung-1 final review: findDeclarationLine took the FIRST line matching `symbol(`/`symbol=`,
+    // which a call site earlier in the file could win against the symbol's own, later declaration.
+    // The three scenarios below are the three ways `isGenuineDeclaration` rejects such a match.
+
+    private static final String CALL_BEFORE_DECLARATION_FILE =
+            "public class Pricer {\n"
+                    + "    public long compute(long t) {\n"
+                    + "        return chargeFor(t) * 2;\n"
+                    + "    }\n"
+                    + "\n"
+                    + "    public long chargeFor(long t) {\n"
+                    + "        return t;\n"
+                    + "    }\n"
+                    + "}\n";
+
+    @Test
+    void aCallPrecededByACallContextKeywordIsNotMistakenForTheDeclaration() {
+        String snippet = SnippetExtractor.extract(CALL_BEFORE_DECLARATION_FILE, "chargeFor", 40);
+
+        // A wrongly-rooted extraction would capture the call line itself ("return chargeFor(t) * 2;")
+        // instead of the true declaration further down the file.
+        assertTrue(snippet.contains("public long chargeFor(long t) {"));
+        assertFalse(snippet.contains("* 2"));
+    }
+
+    private static final String QUALIFIED_CALL_BEFORE_DECLARATION_FILE =
+            "public class Wrapper {\n"
+                    + "    public long delegate(Pricer p, long t) {\n"
+                    + "        long x = p.chargeFor(t);\n"
+                    + "        return x;\n"
+                    + "    }\n"
+                    + "\n"
+                    + "    public long chargeFor(long t) {\n"
+                    + "        return t;\n"
+                    + "    }\n"
+                    + "}\n";
+
+    @Test
+    void aDotQualifiedCallBeforeTheDeclarationIsNotMistakenForIt() {
+        String snippet = SnippetExtractor.extract(QUALIFIED_CALL_BEFORE_DECLARATION_FILE, "chargeFor", 40);
+
+        assertTrue(snippet.contains("public long chargeFor(long t) {"));
+        assertFalse(snippet.contains("long x ="));
+    }
+
+    private static final String COMPARISON_BEFORE_DECLARATION_FILE =
+            "public class Pricer {\n"
+                    + "    public boolean check(long t) {\n"
+                    + "        boolean ok = chargeFor == 5;\n"
+                    + "        return ok;\n"
+                    + "    }\n"
+                    + "\n"
+                    + "    public long chargeFor(long t) {\n"
+                    + "        return t;\n"
+                    + "    }\n"
+                    + "}\n";
+
+    @Test
+    void anEqualityComparisonBeforeTheDeclarationIsNotMistakenForIt() {
+        String snippet = SnippetExtractor.extract(COMPARISON_BEFORE_DECLARATION_FILE, "chargeFor", 40);
+
+        assertTrue(snippet.contains("public long chargeFor(long t) {"));
+        assertFalse(snippet.contains("boolean ok"));
+    }
 }
