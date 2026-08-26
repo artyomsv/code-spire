@@ -1,10 +1,12 @@
 package dev.codespire.context.code;
 
+import dev.codespire.contract.port.LanguageSupport;
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.ContribStatus;
+import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
@@ -302,5 +304,111 @@ class CodeContextProviderTest {
 
         assertEquals(ContribStatus.ERROR, c.status());
         assertTrue(c.items().isEmpty());
+    }
+
+    @Test
+    void pathAllowListRejectsATraversalCandidateEvenWhenItWouldOtherwiseMatchThePrefix() throws Exception {
+        Set<String> attemptedPaths = new HashSet<>();
+        SourceFileReader trackingReader = new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                attemptedPaths.add(path);
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
+        files.put("src/main/java/dev/example/Alpha.java", "package dev.example;\nclass Alpha { }\n");
+        files.put("etc/passwd", "root:x:0:0:root:/root:/bin/bash");
+
+        // A naive `startsWith("src/allowed")` would approve this — it IS textually prefixed that
+        // way — even though the trailing ".." segments walk it out of the allowed tree entirely.
+        LanguageSupport escapingSupport = new FixedImportLanguageSupport("Escaper",
+                List.of("src/allowed/../../etc/passwd"));
+
+        CodeContextProvider restricted = new CodeContextProvider(trackingReader,
+                List.of(escapingSupport), Set.of("src/allowed"));
+
+        ContextContribution c = restricted.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("Escaper"))))
+                .toCompletableFuture().get();
+
+        assertEquals(ContribStatus.EMPTY, c.status());
+        assertTrue(c.items().isEmpty());
+        assertFalse(attemptedPaths.contains("src/allowed/../../etc/passwd"));
+    }
+
+    @Test
+    void pathAllowListRejectsALeadingSlashCandidateEvenWhenItWouldOtherwiseMatchThePrefix() throws Exception {
+        Set<String> attemptedPaths = new HashSet<>();
+        SourceFileReader trackingReader = new SourceFileReader() {
+            @Override
+            public String read(String repo, String path, String commit) {
+                attemptedPaths.add(path);
+                return files.get(path);
+            }
+
+            @Override
+            public String apiHost() {
+                return "code.example.invalid";
+            }
+        };
+        files.put("src/main/java/dev/example/Alpha.java", "package dev.example;\nclass Alpha { }\n");
+        files.put("/etc/passwd", "root:x:0:0:root:/root:/bin/bash");
+
+        // An allow-list entry that itself starts with "/" would let a naive `startsWith` approve
+        // this absolute-looking candidate too — the leading-slash guard rejects it regardless.
+        LanguageSupport escapingSupport = new FixedImportLanguageSupport("Escaper", List.of("/etc/passwd"));
+
+        CodeContextProvider restricted = new CodeContextProvider(trackingReader,
+                List.of(escapingSupport), Set.of("/etc"));
+
+        ContextContribution c = restricted.contribute(request(new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("Escaper"))))
+                .toCompletableFuture().get();
+
+        assertEquals(ContribStatus.EMPTY, c.status());
+        assertTrue(c.items().isEmpty());
+        assertFalse(attemptedPaths.contains("/etc/passwd"));
+    }
+
+    /**
+     * A {@link LanguageSupport} test double that always reports one fixed import (bringing in
+     * {@code importedSymbol}) resolving to one fixed list of candidate paths — used to feed
+     * {@link CodeContextProvider} a candidate path shape neither real {@link LanguageSupport}
+     * implementation produces today (see the traversal/leading-slash tests above), without reaching
+     * into the provider's private allow-list-enforcement internals directly.
+     */
+    private static final class FixedImportLanguageSupport implements LanguageSupport {
+        private final String importedSymbol;
+        private final List<String> candidates;
+
+        FixedImportLanguageSupport(String importedSymbol, List<String> candidates) {
+            this.importedSymbol = importedSymbol;
+            this.candidates = candidates;
+        }
+
+        @Override
+        public Set<String> languages() {
+            return Set.of("java");
+        }
+
+        @Override
+        public Set<String> identifiersIn(FilePatch patch) {
+            return Set.of();
+        }
+
+        @Override
+        public List<ImportRef> importsIn(String fileContent) {
+            return List.of(new ImportRef("fixed", Set.of(importedSymbol)));
+        }
+
+        @Override
+        public List<String> candidatePaths(ImportRef ref, String importingPath) {
+            return candidates;
+        }
     }
 }

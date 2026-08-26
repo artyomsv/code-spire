@@ -38,6 +38,12 @@ import java.util.concurrent.CompletionStage;
  * names, and what makes the import "kept") and the member {@code chargeFor} (what the diff is actually
  * calling, and what {@link SnippetExtractor} finds declared in the fetched file) — restricting
  * extraction to the import's own symbol would silently miss the member the diff cares about.
+ * Accepted consequence: a file reached via one import can surface a snippet for an identifier that
+ * import never brought in, if the file happens to declare something else of the same name — so a
+ * snippet is occasionally attributed to the "wrong" import. This is a byproduct of widening
+ * extraction to every requested identifier per fetched file, not a separate defect, and is not worth
+ * guarding against given how narrow the resulting misattribution is (the item still names its own
+ * true definition path; only which import is credited for having found it can be off).
  *
  * <p>Retrieved source is UNTRUSTED input to the prompt (SECURITY.md), same as every other
  * {@link ContextProvider}.
@@ -329,12 +335,39 @@ public class CodeContextProvider implements ContextProvider {
             return hadError;
         }
 
+        /**
+         * A traversal-shaped candidate is rejected outright, before the prefix check even runs — a
+         * plain {@code startsWith} would otherwise happily approve
+         * {@code "src/allowed/../../etc/passwd"} against an allow-list entry of {@code "src/allowed"},
+         * or {@code "/etc/passwd"} against an entry of {@code "/etc"}, since both are textually
+         * prefixed exactly as configured. Neither {@code JavaLanguageSupport} nor
+         * {@code TypeScriptLanguageSupport} builds a candidate path that looks like this today — this
+         * guard exists for the resolver either could grow tomorrow, since nothing about
+         * {@link LanguageSupport#candidatePaths} promises it never will. Checked unconditionally, even
+         * with an empty allow-list: a resolved path escaping the repository is never a path this
+         * provider should read, restriction configured or not.
+         */
         private boolean isAllowed(String path) {
+            if (isTraversal(path)) {
+                return false;
+            }
             if (pathAllowList.isEmpty()) {
                 return true;
             }
             for (String prefix : pathAllowList) {
                 if (path.startsWith(prefix)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static boolean isTraversal(String path) {
+            if (path.startsWith("/")) {
+                return true;
+            }
+            for (String segment : path.split("/")) {
+                if (segment.equals("..")) {
                     return true;
                 }
             }
