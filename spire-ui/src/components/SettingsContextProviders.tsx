@@ -255,12 +255,17 @@ export default function SettingsContextProviders() {
                   </td>
                   <td>
                     <div className="prov-actions">
-                      <IconButton
-                        kind="test"
-                        onClick={() => setTestProvider(p)}
-                        title="Test connection & preview context"
-                        aria-label="Test"
-                      />
+                      {/* Not offered for 'code': the backend refuses a preview for that type with a
+                          400, so the control could only ever produce an error. Check (above) is the
+                          verification this type has. */}
+                      {p.type !== 'code' && (
+                        <IconButton
+                          kind="test"
+                          onClick={() => setTestProvider(p)}
+                          title="Test connection & preview context"
+                          aria-label="Test"
+                        />
+                      )}
                       <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
                       <IconButton
                         kind="delete"

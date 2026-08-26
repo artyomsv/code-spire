@@ -145,4 +145,48 @@ describe('SettingsContextProviders — add-provider form', () => {
     expect(update.mock.calls[0][1].secret).toBeUndefined();
     expect(update.mock.calls[0][1]).toMatchObject({ baseUrl: 'https://github.example.invalid' });
   });
+
+  /**
+   * The backend refuses a preview for the code type with a 400, so the control could only ever
+   * produce a raw error message. Check is the verification this type has.
+   */
+  it('does not offer the preview control for a code provider', async () => {
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
+      codeProvider('ctx-code-1', 'Acme repository code'),
+    ] as never);
+
+    renderPage();
+
+    await screen.findByRole('button', { name: /edit/i });
+    expect(screen.queryByRole('button', { name: /^test$/i })).not.toBeInTheDocument();
+  });
+
+  it('still offers it for a type the backend can preview', async () => {
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
+      { ...codeProvider('ctx-jira-1', 'Acme Jira'), type: 'jira', authKind: 'basic' },
+    ] as never);
+
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: /^test$/i })).toBeInTheDocument();
+  });
 });
+
+function codeProvider(id: string, name: string) {
+  return {
+    id,
+    name,
+    type: 'code',
+    baseUrl: 'https://api.github.com',
+    authKind: 'bearer',
+    username: null,
+    projectKeys: 'src/main/',
+    enabled: true,
+    isDefault: false,
+    hasSecret: true,
+    createdAt: '2026-08-01T00:00:00Z',
+    lastCheckAt: null,
+    lastCheckOk: null,
+    lastCheckError: null,
+  };
+}
