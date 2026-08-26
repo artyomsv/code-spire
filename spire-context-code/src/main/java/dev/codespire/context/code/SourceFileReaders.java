@@ -19,6 +19,13 @@ import java.nio.charset.StandardCharsets;
  * that check, not to be the security boundary itself. Encoding also protects a path containing
  * {@code #}, which would otherwise truncate the URL's own query string (e.g. GitHub's
  * {@code ?ref=}).
+ *
+ * <p>{@link URLEncoder#encode(String, java.nio.charset.Charset)} implements
+ * {@code application/x-www-form-urlencoded}, which encodes a space as {@code +} — correct for a
+ * form body, wrong for a URL path, where {@code +} is a literal plus. Left uncorrected, a
+ * repository file such as {@code src/On Call.java} would be requested as {@code src/On+Call.java}
+ * and 404. Every other character already round-trips correctly through {@code URLEncoder}, so
+ * replacing that one substitution back to {@code %20} is the only correction needed.
  */
 final class SourceFileReaders {
 
@@ -32,7 +39,7 @@ final class SourceFileReaders {
             if (i > 0) {
                 out.append('/');
             }
-            out.append(URLEncoder.encode(segments[i], StandardCharsets.UTF_8));
+            out.append(URLEncoder.encode(segments[i], StandardCharsets.UTF_8).replace("+", "%20"));
         }
         return out.toString();
     }

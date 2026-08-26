@@ -433,14 +433,18 @@ class CodeContextProviderTest {
         files.put("src/main/java/dev/example/discount/Discounter.java",
                 "public long applyDiscount(long t) { return t; }");
 
-        // Pricer.java's fetch is slow enough, on its own, to burn through the tiny 30ms test deadline
+        // Pricer.java's fetch is slow enough, on its own, to burn through the 500ms test deadline
         // before Discounter.java's fetch is even attempted — proving I2's "whatever resolved before
-        // the deadline still ships" rather than losing the whole contribution.
+        // the deadline still ships" rather than losing the whole contribution. The deadline and sleep
+        // are scaled well above the timings actually being asserted (rather than the tightest values
+        // that would still pass) so the test doesn't flake under load: too tight a margin here failed
+        // the "must still ship" assertion whenever something on the machine stalled before the first
+        // fetch (final rung-1 re-review).
         SourceFileReader slowForPricerReader = new SourceFileReader() {
             @Override
             public String read(String repo, String path, String commit) {
                 if (path.contains("Pricer")) {
-                    sleep(60);
+                    sleep(1000);
                 }
                 return files.get(path);
             }
@@ -452,7 +456,7 @@ class CodeContextProviderTest {
         };
 
         CodeContextProvider provider = new CodeContextProvider(slowForPricerReader,
-                List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport()), Set.of(), 30);
+                List.of(new JavaLanguageSupport(), new TypeScriptLanguageSupport()), Set.of(), 500);
 
         ContextContribution c = provider.contribute(request(new CodeReferences(
                 Set.of("src/main/java/dev/example/Alpha.java"),

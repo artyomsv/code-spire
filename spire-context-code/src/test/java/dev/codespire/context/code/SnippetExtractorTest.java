@@ -265,4 +265,27 @@ class SnippetExtractorTest {
         assertTrue(snippet.contains("public long chargeFor(long t) {"));
         assertFalse(snippet.contains("boolean ok"));
     }
+
+    // Final rung-1 re-review: `lastWord` of "long total =" is "" (`=` is not an identifier
+    // character), so this assignment call site slipped past the CALL_CONTEXT_KEYWORDS check
+    // entirely — the same class of bug M3 raised, and at least as common as the `return` form.
+    private static final String ASSIGNMENT_CALL_BEFORE_DECLARATION_FILE =
+            "public class Pricer {\n"
+                    + "    public long compute(long t) {\n"
+                    + "        long total = chargeFor(t);\n"
+                    + "        return total;\n"
+                    + "    }\n"
+                    + "\n"
+                    + "    public long chargeFor(long t) {\n"
+                    + "        return t;\n"
+                    + "    }\n"
+                    + "}\n";
+
+    @Test
+    void anAssignmentCallSiteBeforeTheDeclarationIsNotMistakenForIt() {
+        String snippet = SnippetExtractor.extract(ASSIGNMENT_CALL_BEFORE_DECLARATION_FILE, "chargeFor", 40);
+
+        assertTrue(snippet.contains("public long chargeFor(long t) {"));
+        assertFalse(snippet.contains("long total ="));
+    }
 }

@@ -143,19 +143,32 @@ public final class SnippetExtractor {
 
     /**
      * The bare {@code symbol(} / {@code symbol=} form also matches an ordinary call or comparison —
-     * {@code return chargeFor(5);}, {@code obj.chargeFor(5);}, {@code if (chargeFor == 5)} — so a
-     * match is trusted only when: the matched character is a real assignment rather than half of
-     * {@code ==}/{@code !=}/{@code <=}/{@code >=}; the symbol is not preceded by a {@code .} qualifier
-     * (a method call on some receiver, never a declaration in this file); and the token immediately
-     * before it is not one of {@link #CALL_CONTEXT_KEYWORDS} (M3, rung-1 final review).
+     * {@code return chargeFor(5);}, {@code obj.chargeFor(5);}, {@code if (chargeFor == 5)},
+     * {@code long total = chargeFor(5);} — so a match is trusted only when: the matched character is
+     * a real assignment rather than half of {@code ==}/{@code !=}/{@code <=}/{@code >=}; the symbol
+     * is not preceded by a {@code .} qualifier (a method call on some receiver, never a declaration
+     * in this file); a {@code (} match is not itself preceded by {@code =} (an assignment call site —
+     * {@code long total = chargeFor(t);} is a call to {@code chargeFor}, not its declaration, even
+     * though {@code lastWord} of {@code "long total ="} is {@code ""} and so would otherwise pass the
+     * next check unfiltered); and the token immediately before it is not one of
+     * {@link #CALL_CONTEXT_KEYWORDS} (M3, rung-1 final review; the assignment check closes a gap the
+     * final re-review found still open in that same fix — every legitimate {@code x = …} declaration
+     * shape, e.g. a TS class-field arrow function, is already matched by
+     * {@link #keywordDeclarationPattern} or has {@code =} as the matched character itself, not
+     * {@code (}, so rejecting this shape never rejects a real declaration).
      *
-     * <p>Known residual gap, accepted rather than hidden: an unqualified call with nothing at all
-     * before it on the line (e.g. a bare {@code chargeFor(0);} statement) still passes this check,
-     * because a Java constructor's own declaration line (e.g. {@code Pricer(long rate)}, opening its
-     * body on the same line) has the same shape — nothing precedes the name but the class it belongs
-     * to, which this per-line regex approach has no way to know. Closing that gap needs either a real
-     * parser or plumbing the enclosing class name in, both out of proportion for this loose,
-     * conservative heuristic (see the class javadoc).
+     * <p>Known residual gap, accepted rather than hidden — and broader than just a bare call with
+     * literally nothing before it: {@link #lastWord} only recognizes a
+     * {@link #CALL_CONTEXT_KEYWORDS} token that sits directly adjacent to the match, so any call site
+     * whose immediately preceding character is punctuation rather than an identifier, a {@code .}, or
+     * (now) a {@code =} — an argument inside another call ({@code foo(a, chargeFor(t))}), an index
+     * expression ({@code arr[chargeFor(t)]}), a unary or binary operand ({@code !chargeFor(t)},
+     * {@code x + chargeFor(t)}) — presents {@code lastWord} with an empty string and is accepted just
+     * like a genuine no-prefix statement (a bare {@code chargeFor(0);}) or a Java constructor's own
+     * declaration line (e.g. {@code Pricer(long rate)}, opening its body on the same line): nothing
+     * precedes the name but the class it belongs to, which this per-line regex approach has no way to
+     * know. Closing this gap needs either a real parser or plumbing the enclosing class name in, both
+     * out of proportion for this loose, conservative heuristic (see the class javadoc).
      */
     private static boolean isGenuineDeclaration(String line, Matcher bare) {
         char matched = bare.group(1).charAt(0);
@@ -164,6 +177,9 @@ public final class SnippetExtractor {
         }
         String before = line.substring(0, bare.start()).strip();
         if (before.endsWith(".")) {
+            return false;
+        }
+        if (matched == '(' && before.endsWith("=")) {
             return false;
         }
         return !CALL_CONTEXT_KEYWORDS.contains(lastWord(before));
