@@ -1455,7 +1455,16 @@ In `ContextWorker.collect`, filter out items whose `kind()` is `CODE_SNIPPET` be
 
 - [ ] **Step 4: Wire the provider into the composition root**
 
-In `WorkerContextClients.forCommand`, add `case "code" -> providers.add(new CodeContextProvider(readerFor(cred), LANGUAGES));` where `readerFor` selects the platform reader from the credential's baseUrl host, and `LANGUAGES` is the same list `WorkerCodeReferences` holds.
+In `WorkerContextClients.forCommand`, add:
+
+```java
+case "code" -> providers.add(new CodeContextProvider(
+        readerFor(cred), LANGUAGES, CodeContextConfig.parsePathAllowList(cred.projectKeys())));
+```
+
+where `readerFor` selects the platform reader from the credential's baseUrl host, and `LANGUAGES` is the same list `WorkerCodeReferences` holds.
+
+**Use the three-argument constructor.** `CodeContextProvider` also has a two-argument overload that defaults the allow-list to empty, meaning *unrestricted*. Task 10 added `pathAllowList` enforcement precisely because a review found nothing enforced it; calling the short overload here would make the control dead code again while Settings presents operators a field that silently does nothing. A test must assert the constructed provider carries the credential's allow-list.
 
 - [ ] **Step 5: Add the registry type**
 
