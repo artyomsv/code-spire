@@ -60,7 +60,7 @@ public final class ReviewPromptBuilder {
     private static String renderContext(List<ContextItem> context, boolean codeSnippets) {
         StringBuilder out = new StringBuilder();
         for (ContextItem item : context) {
-            boolean isCodeSnippet = "CODE_SNIPPET".equals(item.kind());
+            boolean isCodeSnippet = ContextItem.CODE_SNIPPET.equals(item.kind());
             if (isCodeSnippet != codeSnippets) {
                 continue;
             }

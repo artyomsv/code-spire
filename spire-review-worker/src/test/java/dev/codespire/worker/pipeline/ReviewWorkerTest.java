@@ -543,7 +543,7 @@ class ReviewWorkerTest {
      */
     @Test
     void aCodeSnippetReachesThePromptSentToTheModel() throws Exception {
-        ContextItem item = new ContextItem("CODE_SNIPPET", "chargeFor — src/Pricer.java",
+        ContextItem item = new ContextItem(ContextItem.CODE_SNIPPET, "chargeFor — src/Pricer.java",
                 "public long chargeFor(long tokens) { return tokens; }", "src/Pricer.java");
         AssembledContext assembled = new AssembledContext("ctx-1", List.of(item),
                 Set.of("CODE"), Set.of());

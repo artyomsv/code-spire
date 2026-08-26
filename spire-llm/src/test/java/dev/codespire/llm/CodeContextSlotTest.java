@@ -18,7 +18,8 @@ class CodeContextSlotTest {
     void codeSnippetsRenderIntoTheirOwnSlotAndTicketsIntoTheirs() {
         String user = bodyOf(List.of(
                 new ContextItem("JIRA_TICKET", "CANARY-1", "ticket body text", "https://example.invalid/1"),
-                new ContextItem("CODE_SNIPPET", "chargeFor — src/Pricer.java", "long chargeFor()", "src/Pricer.java")));
+                new ContextItem(ContextItem.CODE_SNIPPET, "chargeFor — src/Pricer.java", "long chargeFor()",
+                        "src/Pricer.java")));
 
         assertTrue(user.contains("ticket body text"));
         assertTrue(user.contains("long chargeFor()"));
@@ -29,7 +30,8 @@ class CodeContextSlotTest {
         String huge = "x".repeat(200_000);
         String user = bodyOf(List.of(
                 new ContextItem("JIRA_TICKET", "CANARY-1", huge, "https://example.invalid/1"),
-                new ContextItem("CODE_SNIPPET", "chargeFor — src/Pricer.java", "long chargeFor()", "src/Pricer.java")));
+                new ContextItem(ContextItem.CODE_SNIPPET, "chargeFor — src/Pricer.java", "long chargeFor()",
+                        "src/Pricer.java")));
 
         // The slots are budgeted independently. Sharing one slot is what would make this fail,
         // silently, on exactly the repositories with the richest ticket context.
@@ -45,7 +47,7 @@ class CodeContextSlotTest {
         // clip), which is not a property of this feature and would not discriminate the mutation.
         String huge = "y".repeat(200_000);
         String user = bodyOf(List.of(
-                new ContextItem("CODE_SNIPPET", "big — src/Big.java", huge, "src/Big.java"),
+                new ContextItem(ContextItem.CODE_SNIPPET, "big — src/Big.java", huge, "src/Big.java"),
                 new ContextItem("JIRA_TICKET", "CANARY-1", "ticket body text", "https://example.invalid/1")));
 
         assertTrue(user.contains("ticket body text"));

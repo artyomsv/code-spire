@@ -116,7 +116,8 @@ class ContextWorkerCodeExclusionTest {
 
         @Override
         public CompletionStage<ContextContribution> contribute(ContextRequest request) {
-            ContextItem item = new ContextItem("CODE_SNIPPET", "alpha — src/Alpha.java", body, "src/Alpha.java");
+            ContextItem item = new ContextItem(ContextItem.CODE_SNIPPET, "alpha — src/Alpha.java", body,
+                    "src/Alpha.java");
             return CompletableFuture.completedFuture(
                     new ContextContribution("CODE", ContribStatus.OK, List.of(item), 1));
         }

@@ -397,7 +397,7 @@ class ContextWorkerTest {
         @Override
         public CompletionStage<ContextContribution> contribute(ContextRequest request) {
             contributed = true;
-            ContextItem item = new ContextItem("CODE_SNIPPET", "Pricer.chargeFor",
+            ContextItem item = new ContextItem(ContextItem.CODE_SNIPPET, "Pricer.chargeFor",
                     "long chargeFor(long tokens) { return tokens; }",
                     "src/main/java/dev/example/pricing/Pricer.java");
             return CompletableFuture.completedFuture(
@@ -426,7 +426,7 @@ class ContextWorkerTest {
         @Override
         public CompletionStage<ContextContribution> contribute(ContextRequest request) {
             invocations++;
-            ContextItem item = new ContextItem("CODE_SNIPPET", "Pricer.chargeFor",
+            ContextItem item = new ContextItem(ContextItem.CODE_SNIPPET, "Pricer.chargeFor",
                     "long chargeFor(long tokens) { return tokens; }",
                     "src/main/java/dev/example/pricing/Pricer.java");
             return CompletableFuture.completedFuture(
