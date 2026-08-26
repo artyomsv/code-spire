@@ -9,6 +9,7 @@ import dev.codespire.contract.event.IntegrationEvent.ContextRequested;
 import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.ContextProvider;
 import dev.codespire.contract.port.ContextResolutionSource;
+import dev.codespire.contract.port.FirstLevelOnly;
 import dev.codespire.contract.review.AssembledContext;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
@@ -60,6 +61,12 @@ import java.util.stream.Collectors;
  * ({@link #MAX_DEPTH}): this is what breaks a jira→confluence→jira→… cycle. A reference already
  * fetched at level 1 (e.g. a Confluence page linked from both the PR and a ticket) is de-duplicated,
  * not re-fetched.
+ *
+ * <p>A provider whose inputs are entirely carried on the command itself — nothing it could ever
+ * discover from level 2's mined references — implements {@link FirstLevelOnly} and is excluded from
+ * every level past the first: without that gate, {@code codeReferences} riding unchanged onto every
+ * level's request would make the code provider re-run its whole fetch-and-extract pipeline a second
+ * time whenever the PR also carries a ticket, inside the same 20s budget.
  */
 @ApplicationScoped
 public class ContextWorker {
@@ -155,7 +162,14 @@ public class ContextWorker {
                 break;
             }
             ContextRequest request = request(command, next, Set.of());
-            List<ContextProvider> supported = providers.stream().filter(p -> p.supports(request)).toList();
+            boolean firstLevel = level == 1;
+            List<ContextProvider> supported = providers.stream()
+                    .filter(p -> p.supports(request))
+                    // A FirstLevelOnly provider (the code provider) has already run at level 1 and
+                    // has nothing new to resolve from references discovered since — see I1 in the
+                    // rung-1 final review and FirstLevelOnly's own javadoc.
+                    .filter(p -> firstLevel || !(p instanceof FirstLevelOnly))
+                    .toList();
             List<ContextContribution> round = fanOut(supported, request);
             all.addAll(round);
 

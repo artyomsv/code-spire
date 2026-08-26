@@ -2,6 +2,7 @@ package dev.codespire.context.code;
 
 import dev.codespire.contract.port.ContextProvider;
 import dev.codespire.contract.port.ContextResolutionSource;
+import dev.codespire.contract.port.FirstLevelOnly;
 import dev.codespire.contract.port.LanguageSupport;
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
@@ -53,8 +54,13 @@ import java.util.concurrent.CompletionStage;
  * <p>Framework-free by design (see {@code spire-context-code}'s build file) — no CDI; one instance is
  * built per {@code GatherContext} command from the brokered credential, the same lifecycle the
  * sibling context providers (Jira, Confluence, GitHub/GitLab issues) already use.
+ *
+ * <p>Implements {@link FirstLevelOnly}: {@code codeReferences} is carried unchanged on every level of
+ * {@code ContextWorker}'s bounded two-level fan-out, so without that gate this provider would re-run
+ * its whole fetch-and-extract pipeline a second time whenever the PR also carries a ticket reference
+ * that triggers level 2 — for zero new information, inside the same 20s budget.
  */
-public class CodeContextProvider implements ContextProvider, ContextResolutionSource {
+public class CodeContextProvider implements ContextProvider, ContextResolutionSource, FirstLevelOnly {
 
     public static final String SOURCE = "CODE";
     private static final String KIND = "CODE_SNIPPET";

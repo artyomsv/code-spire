@@ -91,7 +91,12 @@ class ContextWorkerCodeExclusionTest {
         }
     }
 
-    /** Stands in for CodeContextProvider: contributes one fixed CODE_SNIPPET item at every level. */
+    /**
+     * Stands in for CodeContextProvider's CODE_SNIPPET shape, but — unlike the real provider, which
+     * implements {@code FirstLevelOnly} and is gated to level 1 (I1, rung-1 final review) —
+     * deliberately supports every level, so this test exercises corpus exclusion regardless of which
+     * level actually runs it.
+     */
     private static final class CodeSnippetProvider implements ContextProvider {
         private final String body;
 

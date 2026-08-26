@@ -8,6 +8,7 @@ import dev.codespire.contract.event.IntegrationEvent.ContextContributed;
 import dev.codespire.contract.event.IntegrationEvent.ContextRequested;
 import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.ContextProvider;
+import dev.codespire.contract.port.FirstLevelOnly;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
@@ -254,6 +255,27 @@ class ContextWorkerTest {
     }
 
     @Test
+    void aFirstLevelOnlyProviderContributesOnlyAtLevelOneEvenWhenATicketTriggersLevelTwo() {
+        // I1, rung-1 final review: codeReferences rides unchanged onto every level's request, so
+        // without the FirstLevelOnly gate the code provider's supports() would report true again at
+        // level 2 whenever the PR also carries a ticket that discovers a fresh reference — re-running
+        // its whole fetch-and-extract pipeline a second time for zero new information.
+        CountingFirstLevelOnlyProvider code = new CountingFirstLevelOnlyProvider();
+        KeyProvider jira = new KeyProvider("JIRA", Map.of(
+                "AB-1", "see CD-2 for the design", "CD-2", "no further reference in here"));
+        clients.providers = List.of(code, jira);
+        CodeReferences codeReferences = new CodeReferences(
+                Set.of("src/main/java/dev/example/Alpha.java"), Set.of("Pricer", "chargeFor"));
+        GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
+                Set.of("AB-1"), null, null, null, codeReferences);
+
+        worker.gatherContext(command);
+
+        assertEquals(1, code.invocations, "must not re-run at level 2 even though level 2 does run");
+        assertEquals(List.of("AB-1", "CD-2"), jira.fetched, "level 2 still runs for the ticket-based provider");
+    }
+
+    @Test
     void repoRulesAloneFanOutWithNoTicketReference() {
         // Pins the shipped repo-rules feature (a real defect this same fix closes, not a new one):
         // RulesContextProvider.supports() depends only on repoRules, never on references, but the
@@ -375,6 +397,35 @@ class ContextWorkerTest {
         @Override
         public CompletionStage<ContextContribution> contribute(ContextRequest request) {
             contributed = true;
+            ContextItem item = new ContextItem("CODE_SNIPPET", "Pricer.chargeFor",
+                    "long chargeFor(long tokens) { return tokens; }",
+                    "src/main/java/dev/example/pricing/Pricer.java");
+            return CompletableFuture.completedFuture(
+                    new ContextContribution("CODE", ContribStatus.OK, List.of(item), 1));
+        }
+    }
+
+    /**
+     * Like {@link CodeLikeProvider}, but also implements {@link FirstLevelOnly} and counts every
+     * invocation — proves {@code collect} excludes a {@code FirstLevelOnly} provider from level 2+
+     * (I1, rung-1 final review).
+     */
+    private static final class CountingFirstLevelOnlyProvider implements ContextProvider, FirstLevelOnly {
+        int invocations;
+
+        @Override
+        public String source() {
+            return "CODE";
+        }
+
+        @Override
+        public boolean supports(ContextRequest request) {
+            return !request.codeReferences().isEmpty();
+        }
+
+        @Override
+        public CompletionStage<ContextContribution> contribute(ContextRequest request) {
+            invocations++;
             ContextItem item = new ContextItem("CODE_SNIPPET", "Pricer.chargeFor",
                     "long chargeFor(long tokens) { return tokens; }",
                     "src/main/java/dev/example/pricing/Pricer.java");
