@@ -126,10 +126,24 @@ public class CodeContextProvider implements ContextProvider {
 
     @Override
     public CompletionStage<ContextContribution> contribute(ContextRequest request) {
-        return CompletableFuture.supplyAsync(() -> fetch(request));
+        return CompletableFuture.supplyAsync(() -> resolve(request).contribution());
     }
 
-    private ContextContribution fetch(ContextRequest request) {
+    /**
+     * Runs the full resolution pipeline and returns both the {@link ContextContribution} and the
+     * {@link Counts} that produced it. {@link #contribute} is still the SPI entry point and discards
+     * the counts down to the plain contribution; this method exists so a same-package diagnostics test
+     * can assert on the counts directly, and — the reason it must be {@code public} rather than merely
+     * package-visible — so {@code ContextWorker} (a different module, {@code spire-review-worker}) can
+     * call it and log the counts itself, under the reviewId MDC it already carries and this
+     * framework-free module has no access to (see {@code spire-context-code}'s build file).
+     *
+     * <p>Counts are a return value, never provider state: one {@link Fetcher} is built fresh per call
+     * (see its own javadoc), and a mutable counts field here would suffer the identical hazard —
+     * interleaving one review's counts with another's on a provider instance shared across concurrent
+     * requests.
+     */
+    public Resolved resolve(ContextRequest request) {
         long start = System.nanoTime();
         Fetcher fetcher = new Fetcher(reader, request.repo().full(), request.commit(), pathAllowList);
         CodeReferences refs = request.codeReferences();
@@ -145,7 +159,37 @@ public class CodeContextProvider implements ContextProvider {
         ContribStatus status = items.isEmpty()
                 ? (fetcher.hadError() ? ContribStatus.ERROR : ContribStatus.EMPTY)
                 : ContribStatus.OK;
-        return new ContextContribution(SOURCE, status, items, latencyMs(start));
+        ContextContribution contribution = new ContextContribution(SOURCE, status, items, latencyMs(start));
+        Counts counts = new Counts(refs.identifiers().size(), candidates.size(), items.size(),
+                candidates.size() - items.size());
+        return new Resolved(contribution, counts);
+    }
+
+    /**
+     * The pipeline's stage counts — the only thing that distinguishes "nothing to do" from
+     * "systematically broken", since both report {@link ContribStatus#EMPTY} identically.
+     *
+     * @param extracted        identifiers the diff-side extraction handed this request ({@link
+     *                         CodeReferences#identifiers()} size) — zero here means a diff with no
+     *                         symbols to look up (e.g. YAML-only), which is correct and uninteresting.
+     * @param resolved         candidate snippets found — an import matched a requested identifier AND
+     *                         the definition file it resolved to was fetched AND
+     *                         {@link SnippetExtractor} found the identifier declared in it — counted
+     *                         before the {@link #MAX_SNIPPETS} budget is applied. Zero while
+     *                         {@code extracted} is positive is the broken case: plenty to look up, none
+     *                         of it resolved.
+     * @param contributed      items actually present in the returned {@link ContextContribution}, after
+     *                         ranking and the cap.
+     * @param droppedForBudget resolved candidates cut by the cap ({@code resolved - contributed}) — a
+     *                         nonzero value means snippets that DID resolve were discarded for space,
+     *                         not that resolution failed; without this a deployment silently losing
+     *                         good snippets to a full diff would look identical to one working fine.
+     */
+    public record Counts(int extracted, int resolved, int contributed, int droppedForBudget) {
+    }
+
+    /** One resolution run: the {@link ContextContribution} it produced, paired with its {@link Counts}. */
+    public record Resolved(ContextContribution contribution, Counts counts) {
     }
 
     /**

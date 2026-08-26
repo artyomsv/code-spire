@@ -2,6 +2,7 @@ package dev.codespire.worker.pipeline;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.context.code.CodeContextProvider;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.IntegrationEvent.ContextContributed;
@@ -168,7 +169,7 @@ public class ContextWorker {
      */
     private List<ContextContribution> fanOut(List<ContextProvider> supported, ContextRequest request) {
         List<CompletableFuture<ContextContribution>> futures = supported.stream()
-                .map(p -> p.contribute(request).toCompletableFuture())
+                .map(p -> contributionFuture(p, request))
                 .toList();
         try {
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
@@ -195,6 +196,35 @@ public class ContextWorker {
             }
         }
         return contributions;
+    }
+
+    /**
+     * {@link ContextProvider#contribute} for every provider except {@link CodeContextProvider}, whose
+     * per-invocation {@link CodeContextProvider.Counts} — extracted / resolved / contributed /
+     * droppedForBudget — cannot be read off the SPI's plain {@link ContextContribution} return type, so
+     * the worker calls {@link CodeContextProvider#resolve} directly and logs them (see
+     * {@link #logCodeCounts}) before handing back the same {@link ContextContribution} {@code contribute}
+     * would have returned.
+     */
+    private CompletableFuture<ContextContribution> contributionFuture(ContextProvider provider,
+            ContextRequest request) {
+        if (provider instanceof CodeContextProvider codeProvider) {
+            return CompletableFuture.supplyAsync(() -> codeProvider.resolve(request))
+                    .thenApply(resolved -> {
+                        logCodeCounts(resolved.counts());
+                        return resolved.contribution();
+                    });
+        }
+        return provider.contribute(request).toCompletableFuture();
+    }
+
+    /**
+     * Counts carry no source text — safe to log, unlike a {@code CODE_SNIPPET} item's title, body, or
+     * path, which quote retrieved source and must never appear in a log line.
+     */
+    private void logCodeCounts(CodeContextProvider.Counts counts) {
+        LOG.infof("Code context resolution: extracted=%d resolved=%d contributed=%d droppedForBudget=%d",
+                counts.extracted(), counts.resolved(), counts.contributed(), counts.droppedForBudget());
     }
 
     private String persist(String reviewId, List<ContextItem> items,
