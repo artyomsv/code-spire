@@ -6,7 +6,8 @@ PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real
 webhook (Tailscale Funnel); **G** provider-parity regression script (run the same scenarios on every
 SCM); **H** the attention panel; **I** context provisioning across every provider type; **J** operator
 authentication; **K** the LLM cost ledger; **L** review archival and retirement; **M** spend caps and
-the refused review; **N** conversation-derived findings (`/finding`) on every SCM. Do A first — it
+the refused review; **N** conversation-derived findings (`/finding`) on every SCM; **O** the
+repository knowledge base — a resolved code snippet reaching the review (P3 rung 1). Do A first — it
 validates your local stack in ~2 minutes.
 
 Prerequisites for all modes: JDK 25 (SDKMAN `25.0.3-tem`), Docker running.
@@ -1415,3 +1416,89 @@ must end with a real reply posted in-thread and a real `resolved: true` in N-4.
 
 None needed — the filed finding is real review data once N-4 resolves it, and archiving the review (if
 this was a throwaway PR) removes it from the live list without deleting it (ADR-024).
+
+## Mode O — repository knowledge base: a resolved code snippet reaches the review (P3 rung 1)
+
+Proves ADR-026's rung 1 end to end against a real repository: a diff that calls an imported symbol
+resolves the symbol's own definition through the repository's import graph, the resulting
+`CODE_SNIPPET` item is visible on the review, and the finding reflects it. This is the manual
+counterpart to the seam test in `ReviewWorkerTest` — that test proves a snippet reaches the `Prompt`
+object; this mode proves the whole pipeline that produces the snippet in the first place, against a
+real host.
+
+### Setup
+
+1. Stack up, active mode, default LLM configured (same prerequisites as Mode I).
+2. Register a `code` context provider in Settings → Context: type **Repository code**, baseUrl the
+   API root of whichever platform hosts your test repository (`https://api.github.com` for GitHub —
+   `…/api/v3` on Enterprise Server, `https://gitlab.com` for GitLab — no `/api/v4` suffix,
+   `https://api.bitbucket.org/2.0` for Bitbucket Cloud), authKind `bearer`, a token that can read
+   repository contents. Path allow-list left blank reads from anywhere in the repository; a prefix
+   like `src/` narrows it (it's a prefix match — `src/foo` also matches `src/foobar/`, so add a
+   trailing slash when a whole directory is meant). **The platform is inferred from this host** — a
+   self-managed GitLab whose hostname does not contain "gitlab" is read as GitHub
+   (`WorkerContextClients.readerFor`). **Live preview is not available for this type** — Settings
+   shows that message in place of a Test box; use **Check** instead, which requests a
+   near-certainly-absent path and reads 2xx/404 as proof the token was accepted (401/403 as
+   rejection).
+3. Pick or create a Java or TypeScript repository — rung 1 ships exactly these two languages via
+   `LanguageSupport`, nothing else resolves. It needs at least two files where one imports and calls
+   something from the other, e.g. a `Pricer` class with a `chargeFor` method, imported and called
+   from a separate `Billing` file.
+
+### Trigger
+
+4. Open a PR/MR that changes only the **calling** file, touching the line that calls the imported
+   symbol (add a second call, or change how the result is used) — the **definition** file must stay
+   unchanged in this diff. This is the shape rung 1 targets: the identifier appears on a changed
+   line, and the file that defines it doesn't need to change for the reviewer to need its definition.
+5. Trigger a review (webhook, or Register PR — Modes C/D/E/F).
+
+### Observe
+
+6. **Context card**, review detail page: a row with kind `CODE_SNIPPET` and title
+   `<symbol> — <path>` (e.g. `chargeFor — src/Pricer.java`), expandable to the extracted snippet —
+   the definition's signature plus up to 40 body lines. The card only refetches once the pipeline's
+   Context stage completes for this run, so check after the review has reached at least the Review
+   stage, not immediately on registration.
+7. **The posted finding** — if the diff changed how the definition is used incorrectly (wrong unit
+   passed, a documented return value ignored), read the finding text and confirm it engages with what
+   the snippet showed, not just what is visible in the diff alone. There is no separate UI tag for a
+   code-context-influenced finding the way `/finding` gets `origin: conversation` — this is judged by
+   content, not a marker.
+8. **Attribution**, same caveat as Mode I: enable only the `code` provider so a `worker.context_blob`
+   row for this review can only have come from it. Mode I's Postgres query
+   (`SELECT review_id, size_bytes, created_at FROM worker.context_blob …`) works unchanged here if the
+   Context card alone leaves you unsure whether anything was assembled.
+
+### The last hop, specifically for code
+
+Mode I's Part 4 already proves an assembled context item reaches the `Prompt` object sent to the
+model in general. `{{code_context}}` is a separate prompt slot from `{{context}}`
+(`ReviewPromptBuilder.renderContext`) with its own token budget, so that proof does not cover this
+path by itself — a break in one slot's rendering can leave the other looking healthy. A sibling test
+closes that gap:
+
+```bash
+./gradlew :spire-review-worker:test --tests '*ReviewWorkerTest*aCodeSnippet*'
+```
+
+`aCodeSnippetReachesThePromptSentToTheModel` asserts a `CODE_SNIPPET` item's body reaches the
+`Prompt` actually sent to the model, and is confirmed to discriminate the same way its sibling is
+(fails when `ReviewPromptBuilder` is made to render `code_context` empty).
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| No `CODE_SNIPPET` item; `worker.context_blob` row absent or small | The diff's language has no `LanguageSupport` (only Java/TypeScript ship in rung 1), or the touched identifier doesn't match anything the calling file's import graph resolves — check the import statement actually names the file you expect |
+| Item present but from an unexpected file | A file reached through one import can surface a snippet for an identifier that import didn't itself bring in, if the file happens to declare something else of the same name (`CodeContextProvider` javadoc) — the item still names its own true definition path, so this is a known, narrow misattribution, not a defect to chase |
+| Check fails with 401/403 | Credential rejected, same as every other provider type |
+| Check passes but a review never resolves anything | The token's platform doesn't match the host heuristic — see the platform-inference note in Setup step 2; use a hostname containing the platform name |
+| Path present in the repo but never fetched | Path allow-list excludes it — an **empty** allow-list accepts everything; a configured one that doesn't cover the definition file silently excludes it |
+
+### Cleanup
+
+Remove the provider added for this pass in Settings → Context (or `DELETE
+/api/context-providers/{id}`). Context blobs vanish with their reviews — no separate cleanup. Flip
+Review-mode back to `observe`.

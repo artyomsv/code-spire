@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-25)
+## Current status & next-up backlog (updated 2026-08-26)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -543,7 +543,7 @@ Open, by nature of the work rather than by section:
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P3** | Whole-repo RAG | L | The stated differentiator, and the largest single item on this roadmap. Adds a `RagContextProvider` with **zero change to the review flow** — the SPI investment is what makes that true. |
+| **P3** | Repository knowledge base, rung 2 | S–M | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) is **not authorized by rung 1 shipping** — it starts only after the evidence measurement fixed in spec §9: re-run reviewed PRs with and without code context and diff the findings; ships only if at least one new finding is judged correct and false positives do not increase. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
@@ -559,21 +559,26 @@ change** for cert-manager; the gap was that nothing said so. Also the **contract
 bump + upcaster, ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it
 iterated event types and skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **19 techdebt items** in `techdebt/` — 9 medium, 10 low,
+Also open and tracked outside this file: **23 techdebt items** in `techdebt/` — 12 medium, 11 low,
 nothing high or critical. Count them rather than trusting this line: `ls techdebt/*/3-*.md` and
 `ls techdebt/*/4-*.md`. The previous version of this paragraph said 8 (1 medium, 7 low) and was wrong
 by more than double, because a transcribed count is stale the moment the next entry lands — the same
 failure a live view exists to prevent, recorded again at item D10 below. The version before this one
 said 16 and had already gone stale inside the branch that wrote it: that branch's own review wave
 filed two mediums and a low, and closed one low, between the count being taken and the merge landing.
-Both numbers here are worth less than the two commands above them. The medium nine, by theme:
-D10's authorization guard copied into all three services (the drift check chosen instead of extracting
-a shared module is still unwritten); the charge ledger keyed on an id two SCMs can share; the
-contract-compat snapshot not recursing into nested wire types; a new backend status being invisible to
-the UI's compile-time union; rejection messages never reaching the client; three orchestrator classes
-past the size guideline; no pull-request check building a `Dockerfile`; `/finding` inheriting the
-observe-mode blindness `/review` already had; and a prompt scope carrying no provider type, so one
-workspace name registered on two SCMs shares a single per-repo prompt row. (Tracking waived nits
+The version before *that* one said 19 and did not even survive its own working session: that fix
+(`6c24e0c`) landed earlier in the same session that later filed the two entries making it stale
+again, so a transcribed count here has now failed to outlast a branch, a review wave, **and** a
+single session's own remaining work. All three numbers here are worth less than the two commands
+above them. The medium ten, by theme: D10's authorization guard copied into all three services (the drift
+check chosen instead of extracting a shared module is still unwritten); the charge ledger keyed on an
+id two SCMs can share; the contract-compat snapshot not recursing into nested wire types; a new
+backend status being invisible to the UI's compile-time union; rejection messages never reaching the
+client; three orchestrator classes past the size guideline; no pull-request check building a
+`Dockerfile`; `/finding` inheriting the observe-mode blindness `/review` already had; a prompt scope
+carrying no provider type, so one workspace name registered on two SCMs shares a single per-repo
+prompt row; and the `code` context provider's platform-from-host heuristic duplicated between the
+worker and the orchestrator with no build guard forcing the two to agree. (Tracking waived nits
 durably, so a set-aside issue cannot return as its own finding, was considered and deliberately not
 built: it needs a store, a wire field and a prompt slot, which makes it a feature rather than debt. It
 sits closest to the conversation-derived findings work delivered in item 17.) **No P1 scope remains
@@ -589,7 +594,8 @@ documented contract rather than a shipped terminator, which is the honest form f
 environment makes differently. What remains is smaller and more infrastructural: **D12** and the
 per-repo admission rate limit each wait on a trigger (a diff/context blob outgrowing Postgres; a
 fleet actually needing per-repo, not just global, spend limits) rather than being blocked on anything,
-and **P3 (RAG)** is the one item that changes what the product *is* rather than how well it runs. The
+and **P3 (the repository knowledge base)** is the one item that changes what the product *is* rather
+than how well it runs — re-scoped by ADR-026 to something materially smaller than "RAG" implied. The
 nearest infrastructure item is extending `e2e.sh` to exercise an `https` origin — this codebase's own
 recorded trap is that things which break *only* behind TLS pass clean in plaintext, and that check
 does not exist yet. Operator decides.
@@ -630,11 +636,31 @@ does not exist yet. Operator decides.
 - ✅ Conversational follow-up loop (S8).
 - **Exit met (2026-07-18):** reviews cite the linked Jira ticket; author replies get in-thread answers.
 
-## Phase 3 — Whole-repo RAG (the differentiator) (~4–6 pw)
-- `RepositoryIndexDecider` + push-triggered incremental indexer.
-- Code-aware chunking + embeddings + pluggable vector store (Qdrant/LanceDB).
-- `RagContextProvider` contributing retrieved snippets — **added with zero change to the review flow**.
-- **Exit:** reviews reference code elsewhere in the repo, not just the diff.
+## Phase 3 — Repository knowledge base (the differentiator) (~2–3 pw for rung 1)
+**Re-scoped by ADR-026** (2026-08-25); the original plan is kept below the rule for the record.
+- ✅ **Rung 1, stores nothing — delivered 2026-08-26.** Diff-derived symbols + changed paths on their
+  own wire field; a `spire-context-code` provider resolving them against the changed file's import
+  block at the review commit; `CODE_SNIPPET` items in a dedicated `{{code_context}}` prompt slot. Java
+  + TypeScript. Proven by a worker seam test
+  (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) asserting a retrieved snippet's body
+  reaches the `Prompt` object actually sent to the model, confirmed to discriminate. 1504 Java tests
+  across 197 suites; 375 `spire-ui` vitest tests across 51 files.
+- **Rung 2, gated on evidence — not started.** `worker.code_symbol` — structure only, never content —
+  answering call-site impact. A hint confirmed at citation, never an answer. **Rung 1 shipping does
+  not authorize rung 2**: it begins only after the measurement fixed in spec §9 — re-run reviewed PRs
+  with and without code context and diff the findings; ships only if at least one new finding is
+  judged correct by the operator and false positives do not increase. Failing that bar stops P3 here.
+- **Exit:** reviews reference code elsewhere in the repo, not just the diff. Mechanically true of
+  rung 1 — a `CODE_SNIPPET` item can name a file the diff never touched. Whether that reference makes
+  a review *better* is a separate, unproven claim, which is exactly what the evidence gate above tests
+  before rung 2 is allowed to start.
+- **Not built:** embeddings, a vector store, a repository crawl, a `PushReceived` consumer,
+  `spire-indexer` as a deployable. The Qdrant/LanceDB-versus-pgvector contradiction between this file
+  and DATA-MODEL is left **unresolved and deferred** rather than settled — this design needs neither.
+
+> *Superseded original:* `RepositoryIndexDecider` + push-triggered incremental indexer; code-aware
+> chunking + embeddings + pluggable vector store (Qdrant/LanceDB); a `RagContextProvider` contributing
+> retrieved snippets. See ADR-026 for why each part was dropped.
 
 ## Phase 4 — Memory & analytics (~2–3 pw)
 - `MemoryView` (learned preferences from accepted/rejected findings) + `MemoryContextProvider`.
@@ -673,7 +699,7 @@ does not exist yet. Operator decides.
   `techdebt/spire-orchestrator/3-3-…` owns), and bot-authored-PR skip. Note that a giant PR was never
   silently mis-reviewed even before the skip existed — the diff is clipped to the token budget and the
   partial review is MARKED (dashboard note + a line on the posted summary comment).
-- Whole-repo RAG (P3), learned memory + per-author analytics (P4).
+- Repository knowledge base (P3, re-scoped by ADR-026), learned memory + per-author analytics (P4).
   (**"non-Bitbucket SCMs" is no longer deferred** — GitHub and GitLab both shipped and are live-verified
   to full parity with Bitbucket as of 2026-07-26.)
 

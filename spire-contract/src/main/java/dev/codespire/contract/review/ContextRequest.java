@@ -24,6 +24,12 @@ import java.util.Set;
  * as text rather than as something a provider retrieves because retrieval needs an SCM credential and
  * this aggregator is deliberately never given one — the same reason reference extraction runs at
  * diff-fetch. Null when the repository has no rules file.
+ *
+ * <p>{@code codeReferences} is the diff's own changed paths and identifiers (see
+ * {@link CodeReferences}), carried separately from {@code references} rather than folded into it: a
+ * code context provider works from a different vocabulary (file paths and symbols, not issue keys or
+ * page links) and at a different volume, and {@code references} is deliberately recall-favouring in a
+ * way that would flood a code-context provider fed tens to hundreds of identifiers per diff.
  */
 public record ContextRequest(String reviewId,
                              RepoRef repo,
@@ -32,10 +38,25 @@ public record ContextRequest(String reviewId,
                              Set<String> references,
                              Set<String> expectedSources,
                              ScmType scmType,
-                             String repoRules) {
+                             String repoRules,
+                             CodeReferences codeReferences) {
 
     public ContextRequest {
         references = references == null ? null : Set.copyOf(references);
         expectedSources = expectedSources == null ? null : Set.copyOf(expectedSources);
+        codeReferences = codeReferences == null ? CodeReferences.empty() : codeReferences;
+    }
+
+    // Without code references — every existing construction site and any replayed record.
+    public ContextRequest(String reviewId,
+                          RepoRef repo,
+                          long prId,
+                          String commit,
+                          Set<String> references,
+                          Set<String> expectedSources,
+                          ScmType scmType,
+                          String repoRules) {
+        this(reviewId, repo, prId, commit, references, expectedSources, scmType, repoRules,
+                CodeReferences.empty());
     }
 }

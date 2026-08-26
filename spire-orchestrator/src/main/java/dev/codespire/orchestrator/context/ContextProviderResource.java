@@ -57,16 +57,17 @@ public class ContextProviderResource {
 
     private static final Logger LOG = Logger.getLogger(ContextProviderResource.class);
     private static final Set<String> TYPES =
-            Set.of("jira", "confluence", "github-issues", "gitlab-issues");
+            Set.of("jira", "confluence", "github-issues", "gitlab-issues", "code");
     private static final Set<String> AUTH_KINDS = Set.of("basic", "bearer");
 
     /**
      * Types whose API accepts only a bearer token. GitHub's basic auth is deprecated and a GitLab
      * personal access token works on the OAuth-compliant {@code Authorization} header, so accepting
      * {@code basic} here would only let an operator save something the worker has to refuse later —
-     * failing the context step with nothing on screen to explain why.
+     * failing the context step with nothing on screen to explain why. {@code code}'s raw-content APIs
+     * are bearer-token-only on all three platforms it may read from, for the same reason.
      */
-    private static final Set<String> BEARER_ONLY_TYPES = Set.of("github-issues", "gitlab-issues");
+    private static final Set<String> BEARER_ONLY_TYPES = Set.of("github-issues", "gitlab-issues", "code");
 
     /**
      * Preview resolves one reference with no pull request behind it, so a bare {@code #123} has no

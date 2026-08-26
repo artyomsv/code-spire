@@ -59,6 +59,27 @@ Short Kafka retention (ADR-014) bounds the blast radius to in-flight records, wh
 Medium rather than High. The event store is unaffected while `DomainEvent` keeps no nested wire types of
 its own — a property nothing currently enforces, and worth asserting if this is fixed.
 
+## Correction (2026-08-26): one nested type's invisibility is total, not partial
+
+The title and the description above say the snapshot "does not recurse into nested wire types",
+which reads as partial opacity — the outermost shape is still checked, only the nesting inside is
+not. For `ContextRequest` that is too generous: it is not a permitted subtype of `ROOTS`
+(`IntegrationEvent`, `DomainEvent`, `ActionCommand`) and it is reachable only as a never-recursed
+field on `IntegrationEvent.ContextRequested(ContextRequest request)`. The renderer prints
+`request: dev.codespire.contract.review.ContextRequest` for that component and nothing else, so the
+golden file's line for `ContextRequested` is identical whether `ContextRequest` carries three fields
+or thirty.
+
+This was demonstrated again during the repository knowledge base (ADR-026, rung 1): `ContextRequest`
+gained a `codeReferences` field to carry diff-derived identifiers and changed paths through to
+`CodeContextProvider`. `ContractSchemaSnapshotTest` stayed green with `contract-schema.txt`
+byte-identical — not merely unregenerated, unchanged, because nothing in the rendering path could
+have detected the addition. A breaking change to `ContextRequest` (a rename, a removed component)
+would pass the same gate leaving no trace, exactly as `ModelUsage`'s reshape did for the general
+case this entry already documents. `ContextRequest` is not a special case of the existing issue; it
+is the sharpest illustration of it, because for this one type there is no partial signal to fall back
+on at all.
+
 ## Suggested Solutions
 
 1. **Recurse the renderer** (the intended fix). Render a component's type inline when it is a record in

@@ -62,7 +62,7 @@ Every event (integration or domain) is wrapped:
 | `PushReceived` *(P3)* | `spire-gateway` | repo, ref, commits[] |
 | `DiffFetched` | `spire-review-worker` (via `DiffSource`) | reviewId, prId, commit, changedFiles, languages[], sizeBytes, truncated — **metadata only; no diff content** (deliberate two-fetch: content is re-fetched by commit at generate time; a 404 on re-fetch means the commit was force-pushed away → treat as superseded) |
 | `ContextRequested` | `spire-context-worker` | reviewId, repo, prId, commit, **references[]**, **expectedSources[]**, **scmType** — fan-out signal each `ContextProvider` subscribes to (§8) |
-| `ContextContributed` | each `ContextProvider` | reviewId, source(`JIRA`/`CONFLUENCE`/`GITHUB_ISSUES`/`GITLAB_ISSUES`/`RULES`/`RAG`/`MEMORY`), status(`OK`/`EMPTY`/`ERROR`), items[], latencyMs |
+| `ContextContributed` | each `ContextProvider` | reviewId, source(`JIRA`/`CONFLUENCE`/`GITHUB_ISSUES`/`GITLAB_ISSUES`/`RULES`/`CODE`/`MEMORY`), status(`OK`/`EMPTY`/`ERROR`), items[], latencyMs |
 | `ContextAssembled` | aggregator | reviewId, prId, commit, contextRef, contributingSources[], missingSources[] |
 | `ReviewGenerated` | `spire-review-worker` (via `LlmProvider`) | reviewId, prId, commit, findings[] (inline `ReviewResult`, small), summary, model, tokensIn, tokensOut, costMillicents, verdicts[]? (reconciliation verdicts — ADR-019), reconcileUsage? (reconcile LLM call usage — ADR-019) |
 | `ReviewFailed` | any worker | reviewId, commit, phase, error, retryable, attempt |
@@ -200,7 +200,7 @@ interface CommentSink {                                 // scm adapter
   CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd);  // ThreadRef, not bare id
   Author     getPullRequestAuthor(RepoRef repo, long prId);
 }   // DiffRefs feeds GitLab/GitHub anchoring; ThreadRef = comment id (BB/GH/DC) or discussion_id (GitLab). See SCM-MAPPING.md
-interface ContextProvider {                             // jira, confluence (shipped) / rules / rag / memory
+interface ContextProvider {                             // jira, confluence, issues, rules (shipped) / code (P3) / memory
   String source();
   boolean supports(ContextRequest req);
   CompletionStage<ContextContribution> contribute(ContextRequest req);  // async; may return EMPTY/ERROR

@@ -536,6 +536,30 @@ class ReviewWorkerTest {
     }
 
     /**
+     * {@code CODE_SNIPPET} items render into their own {@code {{code_context}}} slot
+     * (see {@link dev.codespire.llm.ReviewPromptBuilder#renderContext}), a separate branch from
+     * the one {@link #assembledContextReachesThePromptSentToTheModel} exercises — this is the
+     * sibling proof for the repository knowledge base's retrieved code, not a duplicate of it.
+     */
+    @Test
+    void aCodeSnippetReachesThePromptSentToTheModel() throws Exception {
+        ContextItem item = new ContextItem(ContextItem.CODE_SNIPPET, "chargeFor — src/Pricer.java",
+                "public long chargeFor(long tokens) { return tokens; }", "src/Pricer.java");
+        AssembledContext assembled = new AssembledContext("ctx-1", List.of(item),
+                Set.of("CODE"), Set.of());
+        InMemoryBlobStore blobs = new InMemoryBlobStore();
+        BlobStore.BlobRef ref = blobs.put(BlobStore.Kind.CONTEXT, REVIEW_ID,
+                new ObjectMapper().writeValueAsBytes(assembled));
+        worker.blobStore = blobs;
+
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, ref.key(), 1, null, null, null));
+
+        assertEquals(1, llmCalls.size());
+        String userPrompt = llmCalls.get(0).user();
+        assertTrue(userPrompt.contains(item.body()), "code snippet body must reach the rendered prompt");
+    }
+
+    /**
      * The operator's only window onto the assembly step. It has to be handed the SAME prompt object
      * that goes to the model — a log fed from a second, separately-built render would show something
      * the model never saw, which is worse than showing nothing.

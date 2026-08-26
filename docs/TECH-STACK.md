@@ -15,7 +15,6 @@ container images.
 | `spire-orchestrator` | Domain brain: `ReviewLifecycle` decider + sagas + **owns the event store**; drives the pipeline | aggregate throughput |
 | `spire-review-worker` | Consumes `GenerateReview` → LLM (LangChain4j) → `ReviewGenerated` | LLM/CPU load |
 | `spire-context-worker` | Consumes `ContextRequested` → Jira/Confluence/rules providers → `ContextContributed` | context fan-out |
-| `spire-indexer` *(P3)* | Repo vector index; RAG `ContextProvider`; consumes `PushReceived` | embeddings/batch |
 | `spire-ui` | Operator dashboard BFF; subscribes to views; pushes over WebSockets; behind OIDC | operators |
 | `spire-contract` *(lib)* | Shared events/commands schema + hand-rolled `Decider`/`View`/`Saga` interfaces + all SPI ports | — |
 
@@ -50,7 +49,7 @@ consumers/producers. Read models are built by projectors consuming Kafka.
 | LLM providers | **LangChain4j** | `quarkus-langchain4j-{openai,anthropic,vertex-ai-gemini,ollama}` | Default impl of the `LlmProvider` port (swappable to direct SDKs). **No default provider** — operator brings provider + API key via config; fail-fast if unset. |
 | Prompt templates | **Qute** | `quarkus-qute` | Own templates; PR-Agent's Jinja/TOML studied as prior art. |
 | Diff/token processing | pure Java lib | `jtokkit` (token counting) | `spire-diff` module; PR-Agent studied as prior art. |
-| Vector store (P3) | **pgvector** default; Qdrant optional | `quarkus-langchain4j-{pgvector,qdrant}` | Reuse Postgres → one datastore; Qdrant as pluggable adapter. |
+| Repository knowledge base (P3) | No vector store — see ADR-026 | — | Definitions resolve through the repository's own import graph; rung 2 is a structural symbol table in the worker's Postgres. Embeddings are deferred until a class of miss is shown that definitions and callers do not cover. |
 
 ## 4. Security (clean-room, OSS-standard — ADR-009)
 

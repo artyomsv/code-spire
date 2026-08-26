@@ -4,6 +4,130 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-026 — The repository knowledge base is derived, structural, and confirmed at citation
+
+**Context.** ROADMAP records P3 as "whole-repo RAG": embeddings, a pluggable vector store, and a
+push-triggered incremental indexer, with `ARCHITECTURE.md` §5 offering it as the worked example of a
+capability added with zero core change. Reading that plan against the shipped code found the
+technique had been named before the need was. P3's own stated exit criterion — *reviews reference
+code elsewhere in the repo, not just the diff* — is met by resolving the definitions a diff depends
+on, which needs no vector store at all.
+
+**Only similarity search needs the apparatus, and it buys the weakest findings.** Of the four things
+whole-repo context could give a reviewer — definitions of what the diff touches, similar code
+elsewhere, call-site impact, and inferred conventions — only *similar code elsewhere* is a similarity
+problem. Definitions and callers are deterministic lookups; conventions are a one-shot summarization
+whose right delivery vehicle is a draft `.codespire` a human merges, not runtime retrieval. Similarity
+is also the only one of the four that simultaneously requires stored source, a cold crawl, staleness
+management, and embedding spend that has no `call_ref` scheme under ADR-023 and sits outside every
+cap ADR-025 built.
+
+**The repository size range rules out any crawl-based design.** Target repositories span roughly ten
+files to ten thousand. A crawl cannot complete inside the context aggregator's twenty-second budget
+at the large end and is pointless at the small end, so no single crawl-based design serves both.
+What survives the whole range is the option whose cost scales with the **diff** rather than the
+repository: a three-file pull request is a three-file pull request in either. The small end then
+needs no special case — import closure from the diff reaches most of a ten-file repository anyway, so
+near-total coverage falls out of the same mechanism, with no size threshold, no second code path, and
+no operator-visible cliff where behaviour changes.
+
+**A push-fed index is strictly worse than a review-time one, and breaks an invariant to be so.**
+CONTRACT §9 states every topic is keyed by `reviewId` and calls the keying discipline the important
+invariant; a push carries no `reviewId`, so `PushReceived` -> `RepositoryIndexDecider` would introduce
+the first non-`reviewId` message class in the system. It would also be *less* correct: the index's
+only reader is a review, and a review-time refresh keys the index to the exact commit under review,
+which a push-fed index cannot guarantee because it can lag the pull request head. The attention panel
+faced the same pressure and refused for the same reason — most of what it needed was state, not
+events, so each service answered for its own schema over a surface it already had.
+
+**Decision.** The repository knowledge base is built in two rungs, neither of which crawls, embeds,
+or consumes `PushReceived`.
+
+1. **Rung 1 stores nothing.** At diff-fetch, `DiffWorker` derives changed paths and the identifiers
+   appearing in changed lines. A new Apache-2.0 `spire-context-code` provider resolves those against
+   the changed file's own import block — read at the review commit — and contributes
+   `ContextItem{kind=CODE_SNIPPET}` through the existing `ContextProvider` SPI. For import-based
+   languages the repository already contains a hand-written, compiler-verified dependency graph;
+   reading it costs one file fetch and a parse, and is precise rather than probabilistic. Java and
+   TypeScript ship first; `LanguageSupport` makes a further language a bean, not a core edit.
+2. **Rung 2 stores structure, never content.** `worker.code_symbol` records `(repo, symbol, path,
+   role)` for every file a review reads, growing toward the part of the codebase that is actively
+   changing. It never crawls, so a ten-thousand-file monorepo never holds most of itself, and that is
+   correct rather than a limitation. Rung 2 is gated on rung 1 clearing an evidence bar fixed in
+   advance.
+
+**The index is a hint, never an answer — and that is what removes the staleness problem.** Nothing is
+cited from the table. Candidate paths are re-fetched at the review commit and the reference confirmed
+before it becomes a snippet. There is therefore no invalidation pass, no indexed-commit versus
+review-commit reconciliation, and no path by which a stale row produces a finding about code that no
+longer exists, because every citation was read moments before it was cited. An index that only
+narrows the search may be arbitrarily wrong and stay safe; an index that answers the question must be
+kept correct forever. Same rows, same table — the difference is entirely in what they are allowed to
+authorize. `last_seen_commit` is therefore diagnostic and pruning metadata only, and any read that
+compares it against the review commit has reintroduced the design this rejects.
+
+**Structure is stored; content never is, so ADR-011 stands unamended.** ADR-011's no-diff-persistence
+decision rests on minimizing stored source as a liability, and a knowledge base is the obvious place
+that erodes. It does not here: the table holds identifiers and paths, and snippet text is fetched live
+and discarded. Storing them unencrypted is consistent rather than expedient — encrypted columns cannot
+be queried server-side, and `review_finding` and `review_thread` already store `path`/`line` in clear
+for exactly that reason while their messages are encrypted. Coordinates are queryable; content is
+encrypted. The residual, recorded in SECURITY.md rather than left implicit, is that symbol names leak
+domain vocabulary into the operator's own Postgres — the same trust boundary that already holds their
+findings and paths.
+
+**Code context gets its own prompt slot.** `{{context}}` is four thousand tokens shared by tickets,
+pages, issues and rules, concatenated in list order and clipped from the tail, so which context
+survives is decided by arbitrary ordering. Snippets placed there would be silently truncated away on
+precisely the repositories with the richest context — tests green, review normal, the only trace a
+`truncated` boolean nobody reads, which is the same silent-success shape as a circuit breaker
+recording a failed future as a success. `{{code_context}}` with its own budget makes eviction
+impossible rather than unlikely, mirroring `prior_findings`, which has its own slot for the same
+reason.
+
+**Consequences.**
+
+- `ARCHITECTURE.md` §5 step 3 is **removed, not deferred**. `PushReceived` stays declared and
+  unemitted; no new topic, no non-`reviewId` message class, and no webhook re-registration by
+  operators. The section's "zero core change" claim survives for *contribution* and is corrected for
+  *acquisition*, which is honestly not free.
+- Adding a palette variable changes the built-in default templates, so an operator with a customized
+  template silently gets no code context. The mitigation already exists: the default-drift banner
+  (V33) is built to surface exactly this, and a test asserts it fires for a template lacking the new
+  slot.
+- The `SymbolIndex` port is defined in rung 1 although rung 1 never reads it. ADR-021 forbids the
+  Apache-2.0 provider depending on the FSL worker that owns the schema, so the port must exist for
+  rung 2 to be an addition rather than a refactor — the `BlobStore` arrangement, repeated.
+- Code references travel on their own wire field, not the neutral `references` set, and snippets are
+  excluded from the aggregator's level-2 reference mining. Otherwise a `PROJ-123` in a code comment is
+  fetched as a Jira ticket, and hundreds of identifiers are scanned by every registered provider — a
+  set documented as recall-favouring on the grounds that a false candidate costs nothing, which holds
+  at ticket-key volume and not at symbol volume.
+- **A deliberate, reasoned exception to ADR-011, not an unamended invariant.** Identifiers harvested
+  from a diff's changed lines are diff-derived tokens, and they ride the Kafka bus on
+  `DiffFetched.codeReferences` — `WorkerPipelineTest.fetchDiffEmitsMetadataOnly` had to be narrowed to
+  accommodate them, so this narrows something the guard previously asserted. It is accepted because
+  `DiffFetched` already carries `repoRules` — the entire text of the repository's `.codespire` file,
+  whenever one exists — so the bus already carries whole-file content by design; a set of identifiers,
+  by contrast, cannot reconstruct a diff. The line the rung 2 schema itself holds — structure stored,
+  content never — is unaffected and needs no exception of its own.
+- Partial recall must be worded as partial. A finding claiming "all three callers" when twelve exist
+  is fabrication, so snippets carry "known callers" framing and the prompt forbids claiming
+  exhaustiveness over a handed set.
+- If similarity search is ever wanted, it becomes a column on `code_symbol` rather than a new
+  subsystem.
+
+**Rejected.** *Embeddings and a vector store now* — the technique the roadmap named, deferred until a
+consistency-gap class of miss is demonstrated that definitions and callers do not cover. *Resolving
+the Qdrant-versus-pgvector contradiction* between ROADMAP and DATA-MODEL — this design needs neither,
+so the contradiction is marked unresolved rather than settled by a decision nothing yet depends on; if
+similarity is ever scheduled, pgvector wins on the one-Postgres grounds ADR-011 already states. *A
+size threshold* switching between derived and persistent modes — two code paths, two failure modes,
+and a cliff an operator can see. *Trusting the index* — every design in this space is fragile at
+exactly the point it lets a stored row speak for current code.
+
+---
+
 ## ADR-025 — Spend caps refuse before the call, and a refused review is `refused`, not `failed`
 
 **Context.** ADR-023 rebuilt LLM cost as a priced charge-line ledger precisely so that a fleet spend

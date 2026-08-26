@@ -8,14 +8,18 @@ import dev.codespire.contract.event.IntegrationEvent.ContextContributed;
 import dev.codespire.contract.event.IntegrationEvent.ContextRequested;
 import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.ContextProvider;
+import dev.codespire.contract.port.ContextResolutionSource;
+import dev.codespire.contract.port.FirstLevelOnly;
 import dev.codespire.contract.review.AssembledContext;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
+import dev.codespire.contract.review.ContextResolutionCounts;
 import dev.codespire.contract.review.ContribStatus;
 import dev.codespire.worker.adapters.PostgresBlobStore;
 import dev.codespire.worker.adapters.WorkerContextClients;
 import dev.codespire.worker.adapters.WorkerContextReferences;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -30,8 +34,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -47,13 +55,23 @@ import java.util.stream.Collectors;
  * ContextRequested / ContextContributed / ContextAssembled events still flow for
  * the dashboard timeline.
  *
- * <p><b>Bounded two-level collection.</b> Level 1 fetches the references carried on
- * the command (the Jira keys and links parsed from the PR itself). The retrieved
- * text often points further — a Jira ticket that links a Confluence page, or another
- * ticket — so level 2 mines the level-1 item bodies for NEW references and fetches
- * those once. Collection stops there ({@link #MAX_DEPTH}): this is what breaks a
- * jira→confluence→jira→… cycle. A reference already fetched at level 1 (e.g. a
- * Confluence page linked from both the PR and a ticket) is de-duplicated, not re-fetched.
+ * <p><b>Bounded two-level collection.</b> Level 1 always fans out — it is not gated on the PR
+ * carrying any reference at all, because a provider's inputs are not limited to references: the code
+ * provider reads {@code codeReferences} and the rules provider reads {@code repoRules}, and a PR with
+ * neither a ticket key nor a link must still reach them. What level 1 DOES resolve is the references
+ * carried on the command (the Jira keys and links parsed from the PR itself), when there are any. The
+ * retrieved text often points further — a Jira ticket that links a Confluence page, or another ticket
+ * — so level 2 mines the level-1 item bodies for NEW references and fetches those once, and level 2
+ * (unlike level 1) does not run at all when nothing new was discovered. Collection stops there
+ * ({@link #MAX_DEPTH}): this is what breaks a jira→confluence→jira→… cycle. A reference already
+ * fetched at level 1 (e.g. a Confluence page linked from both the PR and a ticket) is de-duplicated,
+ * not re-fetched.
+ *
+ * <p>A provider whose inputs are entirely carried on the command itself — nothing it could ever
+ * discover from level 2's mined references — implements {@link FirstLevelOnly} and is excluded from
+ * every level past the first: without that gate, {@code codeReferences} riding unchanged onto every
+ * level's request would make the code provider re-run its whole fetch-and-extract pipeline a second
+ * time whenever the PR also carries a ticket, inside the same 20s budget.
  */
 @ApplicationScoped
 public class ContextWorker {
@@ -63,6 +81,44 @@ public class ContextWorker {
     private static final long TIMEOUT_SECONDS = 20;
     /** Collection depth cap: level 1 (the PR's refs) + one hop (refs found inside level-1 content). */
     private static final int MAX_DEPTH = 2;
+    /** {@link ContextItem#kind()} for a code-context provider's contributions — see {@link #corpusOf}. */
+    private static final String CODE_SNIPPET_KIND = ContextItem.CODE_SNIPPET;
+
+    /** Threads in {@link #fanOutExecutor} — enough for every provider a command can carry, and no more. */
+    private static final int FAN_OUT_THREADS = 4;
+
+    /**
+     * The pool this class schedules its own fan-out work on, kept off {@link
+     * java.util.concurrent.ForkJoinPool#commonPool()}.
+     *
+     * <p>{@code ForkJoinPool.commonPool()}'s parallelism is {@code availableProcessors - 1} — <b>one</b>
+     * on a 2-vCPU container. A provider that holds a thread for most of the 20s budget (the code
+     * provider gives itself 18s) then runs ahead of its siblings on such a deployment: Jira or the
+     * issue providers never start, are recorded {@link ContribStatus#ERROR} at "did not contribute
+     * within the budget" through no fault of their own, and the operator sees ticket context
+     * intermittently missing on exactly the busiest deployments (M3, PR 63 review). A small dedicated
+     * pool decouples the two.
+     *
+     * <p>Threads are daemon so a pool that outlives its {@link #shutdown} — a unit test constructing
+     * this class directly, say — can never hold the JVM open, and are created on demand, so an idle
+     * instance costs nothing.
+     */
+    private final ExecutorService fanOutExecutor = Executors.newFixedThreadPool(FAN_OUT_THREADS,
+            daemonThreads("spire-context-fanout-"));
+
+    private static ThreadFactory daemonThreads(String prefix) {
+        AtomicInteger counter = new AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + counter.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
+    @PreDestroy
+    void shutdown() {
+        fanOutExecutor.shutdownNow();
+    }
 
     @Inject
     WorkerContextClients contextClients;
@@ -122,9 +178,12 @@ public class ContextWorker {
     }
 
     /**
-     * The bounded two-level fetch. Level 1 resolves the PR's own references; each subsequent level mines the
-     * text retrieved so far for NEW references and resolves those, deduped
-     * against everything already requested. Capped at {@link #MAX_DEPTH} to break reference cycles.
+     * The bounded two-level fetch. Level 1 unconditionally fans out to every provider whose
+     * {@code supports(request)} passes — including one needing no references at all, such as the code
+     * or rules provider — and additionally resolves the PR's own references when it has any. Each
+     * subsequent level mines the text retrieved so far for NEW references and resolves those, deduped
+     * against everything already requested, and runs only when the previous level actually discovered
+     * one. Capped at {@link #MAX_DEPTH} to break reference cycles.
      */
     private List<ContextContribution> collect(GatherContext command, List<ContextProvider> providers,
                                               Set<String> level1) {
@@ -133,11 +192,25 @@ public class ContextWorker {
         Set<String> next = level1;
 
         for (int level = 1; level <= MAX_DEPTH; level++) {
-            if (next.isEmpty()) {
+            // Level 1 always fans out, even when `next` (the PR's own references) is empty: a
+            // provider's inputs are not limited to `references` — the code provider reads
+            // `codeReferences` and the rules provider reads `repoRules`, both carried on every
+            // `request(...)` regardless of `next` — and `supports(request)` below already narrows to
+            // the providers that can actually act on what IS present. Level 2+ exists only to chase
+            // references DISCOVERED during collection, so an empty `next` there means there is truly
+            // nothing further to fetch.
+            if (level > 1 && next.isEmpty()) {
                 break;
             }
             ContextRequest request = request(command, next, Set.of());
-            List<ContextProvider> supported = providers.stream().filter(p -> p.supports(request)).toList();
+            boolean firstLevel = level == 1;
+            List<ContextProvider> supported = providers.stream()
+                    .filter(p -> p.supports(request))
+                    // A FirstLevelOnly provider (the code provider) has already run at level 1 and
+                    // has nothing new to resolve from references discovered since — see I1 in the
+                    // rung-1 final review and FirstLevelOnly's own javadoc.
+                    .filter(p -> firstLevel || !(p instanceof FirstLevelOnly))
+                    .toList();
             List<ContextContribution> round = fanOut(supported, request);
             all.addAll(round);
 
@@ -166,7 +239,7 @@ public class ContextWorker {
      */
     private List<ContextContribution> fanOut(List<ContextProvider> supported, ContextRequest request) {
         List<CompletableFuture<ContextContribution>> futures = supported.stream()
-                .map(p -> p.contribute(request).toCompletableFuture())
+                .map(p -> contributionFuture(p, request))
                 .toList();
         try {
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
@@ -195,6 +268,45 @@ public class ContextWorker {
         return contributions;
     }
 
+    /**
+     * {@link ContextProvider#contribute} for every provider, except one that also implements the
+     * {@link ContextResolutionSource} capability (today, only the code provider): for those, the worker
+     * calls {@link ContextResolutionSource#resolve} directly so it can log the per-invocation
+     * {@link ContextResolutionCounts} — extracted / resolved / contributed / droppedForBudget, none of
+     * which are readable off the SPI's plain {@link ContextContribution} return type — before handing
+     * back the same {@link ContextContribution} {@code contribute} would have returned. Gated on the
+     * capability interface, not a concrete provider class, the same way {@code FollowUpWorker} gates on
+     * {@code ThreadSource} rather than naming a specific {@code CommentSink} implementation: this method
+     * never needs to import a concrete provider.
+     *
+     * <p>The {@code resolve} path is scheduled on {@link #fanOutExecutor} — see that field for why.
+     * The plain {@code contribute} path cannot be: a provider returns an already-scheduled
+     * {@link CompletionStage}, so the SPI gives this class no say in where it runs. That asymmetry is
+     * the fix rather than a hole in it — the long-running provider is exactly the one reached through
+     * {@code resolve}, and moving it off the common pool is what stops it crowding out the short
+     * fetches that stay there.
+     */
+    private CompletableFuture<ContextContribution> contributionFuture(ContextProvider provider,
+            ContextRequest request) {
+        if (provider instanceof ContextResolutionSource resolutionSource) {
+            return CompletableFuture.supplyAsync(() -> resolutionSource.resolve(request), fanOutExecutor)
+                    .thenApply(resolution -> {
+                        logResolutionCounts(provider.source(), resolution.counts());
+                        return resolution.contribution();
+                    });
+        }
+        return provider.contribute(request).toCompletableFuture();
+    }
+
+    /**
+     * Counts carry no source text — safe to log, unlike a context item's title, body, or path, which
+     * may quote retrieved source (e.g. a {@code CODE_SNIPPET}) and must never appear in a log line.
+     */
+    private void logResolutionCounts(String source, ContextResolutionCounts counts) {
+        LOG.infof("Context resolution for %s: extracted=%d resolved=%d contributed=%d droppedForBudget=%d",
+                source, counts.extracted(), counts.resolved(), counts.contributed(), counts.droppedForBudget());
+    }
+
     private String persist(String reviewId, List<ContextItem> items,
                            Set<String> contributing, Set<String> missing) {
         AssembledContext assembled = new AssembledContext(null, items, contributing, missing);
@@ -210,7 +322,7 @@ public class ContextWorker {
     private static ContextRequest request(GatherContext command, Set<String> references,
                                           Set<String> expected) {
         return new ContextRequest(command.reviewId(), command.repo(), command.prId(), command.commit(),
-                references, expected, command.scmType(), command.repoRules());
+                references, expected, command.scmType(), command.repoRules(), command.codeReferences());
     }
 
     /** The address of every item retrieved this round — already in hand, so never a fresh reference. */
@@ -228,12 +340,22 @@ public class ContextWorker {
         return uris;
     }
 
-    /** All retrieved text this round (title + body + uri of OK items) — the corpus the next level mines. */
+    /**
+     * All retrieved text this round (title + body + uri of OK items) — the corpus the next level
+     * mines. {@code CODE_SNIPPET} items are excluded: their body IS source code, so a ticket-shaped
+     * string sitting inside a code comment (e.g. {@code // see PROJ-123 for background}) would
+     * otherwise be mined as a genuine reference and fetched — turning a source comment into a live
+     * context fetch against a system nobody mentioned in the PR. This line reads like an
+     * optimization (skip the bulkiest items); it is actually the fix for that hazard.
+     */
     private static String corpusOf(List<ContextContribution> contributions) {
         StringBuilder sb = new StringBuilder();
         for (ContextContribution c : contributions) {
             if (c.status() == ContribStatus.OK && c.items() != null) {
                 for (ContextItem item : c.items()) {
+                    if (CODE_SNIPPET_KIND.equals(item.kind())) {
+                        continue;
+                    }
                     sb.append(item.title()).append('\n').append(item.body()).append('\n');
                     if (item.uri() != null) {
                         sb.append(item.uri()).append('\n');

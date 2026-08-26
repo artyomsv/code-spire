@@ -165,7 +165,8 @@ Trust boundaries, authn/authz, encryption, and secrets.
 ## LLM & abuse threat model
 
 The bot ingests **attacker-influenced content** (PR title/description, the diff, and retrieved
-Jira/Confluence/RAG text) into a prompt, then posts the model's output into a shared, human-read PR
+Jira/Confluence/issue text and retrieved code snippets) into a prompt, then posts the model's output
+into a shared, human-read PR
 thread. This is a threat class distinct from the OWASP-web items above.
 
 - **Prompt injection.** Treat PR text, diff content, and ALL retrieved context as **untrusted data,
@@ -174,8 +175,18 @@ thread. This is a threat class distinct from the OWASP-web items above.
   not steer the review.
 - **Output sanitization.** The model's output is sanitized before it becomes a PR comment — no raw HTML
   injection, and **suggestions are rendered as suggestions the human accepts**, never auto-applied.
-- **Untrusted retrieved content.** Jira/Confluence/RAG snippets get the same untrusted treatment as the
-  diff — a poisoned wiki page is an injection vector.
+- **Untrusted retrieved content.** Jira/Confluence/issue text and repository code snippets get the same
+  untrusted treatment as the diff — a poisoned wiki page is an injection vector, and so is a comment in
+  a source file the knowledge base retrieved. Code snippets ride the same fenced, sentinel-neutralized
+  path in their own `{{code_context}}` slot, and are **excluded from the aggregator's level-2 reference
+  mining**: a `PROJ-123` inside a code comment must not become a Jira fetch (ADR-026).
+- **The symbol index stores structure, not source.** `worker.code_symbol` (P3 rung 2) holds identifiers
+  and paths, never file content, so ADR-011's "minimize stored source" holds unamended. They are stored
+  unencrypted because an encrypted column cannot be queried server-side — the same reason
+  `review_finding`/`review_thread` keep `path`/`line` in clear while their messages are encrypted.
+  Stated rather than left implicit: **symbol names leak domain vocabulary** (`processPatientExport` says
+  something about the business), and the exposure is the operator's own Postgres — the trust boundary
+  that already holds their findings and file paths.
 
 ## Cost / abuse controls
 

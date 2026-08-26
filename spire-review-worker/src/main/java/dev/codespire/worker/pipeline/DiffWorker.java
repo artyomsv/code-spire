@@ -4,6 +4,7 @@ import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
 import dev.codespire.contract.port.DiffSource;
+import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.worker.adapters.RulesContextProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
 import dev.codespire.contract.scm.Diff;
@@ -35,6 +36,11 @@ public class DiffWorker {
     @Inject
     dev.codespire.worker.adapters.WorkerContextReferences references;
 
+    /** Code-reference extraction runs on the parsed diff itself — the ticket-key extraction above
+     *  runs on PR metadata instead, and the two must never cross-feed (CodeReferences javadoc). */
+    @Inject
+    dev.codespire.worker.adapters.WorkerCodeReferences codeRefs;
+
     @Inject
     ResultsEmitter results;
 
@@ -58,7 +64,10 @@ public class DiffWorker {
                     // Read from the TARGET branch, never the reviewed commit: the head is written by
                     // the change under review, so taking rules from it would let a PR rewrite the
                     // reviewer's instructions in the same PR being reviewed.
-                    repoRules(diffSource, command, pr)));
+                    repoRules(diffSource, command, pr),
+                    // Metadata only, same as everything else on this event — changed paths and the
+                    // identifiers a changed line mentions, never hunk text (ADR-011).
+                    codeReferences(diff, command)));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {
@@ -115,6 +124,24 @@ public class DiffWorker {
         boolean credentialRejected = e instanceof ScmApiException api && api.isUnauthorized();
         results.emit(new ReviewFailed(command.reviewId(), command.commit(), "fetch-diff",
                 e.getMessage(), retryable, 1, credentialRejected));
+    }
+
+    /**
+     * The code references a language's {@code LanguageSupport} finds in the diff, or
+     * {@link CodeReferences#empty()} on any failure.
+     *
+     * <p>Never fails the review: code context is enrichment, same as {@link #repoRules}, and a review
+     * whose extraction failed should still get an ordinary review rather than none. A malformed patch
+     * or a bug in one language's regex must not turn a review that would otherwise succeed into a
+     * terminal failure.
+     */
+    private CodeReferences codeReferences(Diff diff, FetchDiff command) {
+        try {
+            return codeRefs.inDiff(diff);
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "Code-reference extraction failed for %s", command.reviewId());
+            return CodeReferences.empty();
+        }
     }
 
     private long approximateSize(List<FilePatch> files) {

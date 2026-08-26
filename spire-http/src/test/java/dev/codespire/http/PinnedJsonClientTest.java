@@ -18,6 +18,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -110,6 +111,84 @@ class PinnedJsonClientTest {
         assertEquals(200, thrown.status);
         assertTrue(thrown.getMessage().contains("expected JSON"));
         assertTrue(thrown.getMessage().contains("Check the base URL."));
+    }
+
+    /**
+     * The whole reason {@link PinnedJsonClient#getRaw} exists: a successful raw-file response is
+     * ordinary source text, not JSON, and must not be treated as a redirected sign-in page the way
+     * {@link PinnedJsonClient#getJson} would treat it.
+     */
+    @Test
+    void getRawReturnsANonJsonBodyVerbatim() {
+        server.stubFor(get(urlPathEqualTo("/raw-file")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/plain").withBody("class Alpha { }")));
+
+        assertEquals("class Alpha { }", client.getRaw("/raw-file"));
+    }
+
+    /**
+     * H1 (PR 63 review). A raw path returns whatever bytes the remote holds, and no caller knows that
+     * size in advance — a repository can hold a committed multi-megabyte bundle that one changed
+     * character makes worth fetching. Past the cap the transfer is aborted and the outcome is
+     * <em>absent</em>: to every caller, a file too large to read is the same non-answer as one that
+     * is not there.
+     */
+    @Test
+    void getRawReportsABodyPastTheByteCapAsAbsent() {
+        server.stubFor(get(urlPathEqualTo("/huge")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/plain")
+                .withBody("x".repeat(PinnedJsonClient.MAX_RAW_BYTES + 1))));
+
+        assertNull(client.getRaw("/huge"));
+    }
+
+    /**
+     * The other half of the cap. A response that declares no length is decided as the bytes arrive,
+     * by the buffering subscriber rather than by the {@code Content-Length} short-circuit — so this
+     * exercises the path the fast check cannot cover.
+     */
+    @Test
+    void getRawAlsoBoundsAResponseThatDeclaresNoLength() {
+        server.stubFor(get(urlPathEqualTo("/huge-chunked")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/plain")
+                .withBody("x".repeat(PinnedJsonClient.MAX_RAW_BYTES + 1))
+                .withChunkedDribbleDelay(4, 40)));
+
+        assertNull(client.getRaw("/huge-chunked"));
+    }
+
+    /** The bound is inclusive — a body exactly at the cap is a normal answer, not a refusal. */
+    @Test
+    void getRawReturnsABodyExactlyAtTheByteCap() {
+        String atCap = "y".repeat(PinnedJsonClient.MAX_RAW_BYTES);
+        server.stubFor(get(urlPathEqualTo("/at-cap")).willReturn(aResponse()
+                .withHeader("Content-Type", "text/plain").withBody(atCap)));
+
+        assertEquals(atCap, client.getRaw("/at-cap"));
+    }
+
+    /**
+     * The cap is the raw path's alone. A JSON envelope is the provider's own bounded payload, and
+     * truncating one would turn a size problem into a parse error.
+     */
+    @Test
+    void getJsonStillReadsABodyLargerThanTheRawCap() {
+        String big = "z".repeat(PinnedJsonClient.MAX_RAW_BYTES + 1);
+        server.stubFor(get(urlPathEqualTo("/big-json")).willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"value\":\"" + big + "\"}")));
+
+        assertEquals(big, client.getJson("/big-json").path("value").asText());
+    }
+
+    /** getRaw shares the same failure classification as getJson — only the success path differs. */
+    @Test
+    void getRawStillBuildsTheAdaptersOwnExceptionOnFailure() {
+        server.stubFor(get(urlPathEqualTo("/raw-missing")).willReturn(aResponse().withStatus(404)));
+
+        TestApiException thrown = assertThrows(TestApiException.class, () -> client.getRaw("/raw-missing"));
+
+        assertEquals(404, thrown.status);
     }
 
     /** Same-host redirects are followed, and the credential goes with them. */

@@ -78,7 +78,8 @@
   - GitLab Issues: parse issue/MR/epic reference → fetch via the GitLab API →
     `ContextContributed{source=GITLAB_ISSUES}`.
   - Rules: load `.codespire` repo rules → `ContextContributed{source=RULES}`.
-  - RAG (later): retrieve repo snippets → `ContextContributed{source=RAG}`.
+  - Code (P3, ADR-026): resolve the symbols a diff touches → `ContextContributed{source=CODE}`.
+    No vector store and no background index — the repository's own import graph is the lookup.
 - **Aggregator (View + completeness policy):** collects `ContextContributed` for `prId` until the
   registered-provider set responds **or** a timeout elapses → emits `ContextAssembled {prId, context}`.
   (This is the "information completeness" rule of Event Modeling, made async.)
@@ -187,7 +188,7 @@ THEN   ContextAssembled{prId=42, context={jira, rules}}
 
 - **No sync processing:** every slice is `event → saga → command → event`. Nothing blocks.
 - **Plugin-first:** S4/S5/S6 attach behavior by subscribing to events; new providers/capabilities
-  are new subscribers (S9 adds memory + RAG without editing S1–S8).
+  are new subscribers (S9 adds memory + the code knowledge base without editing S1–S8).
 - **Replayable & auditable:** the whole review history is the event log — rebuild any view,
   answer "why did the bot say X", and derive analytics after the fact.
 - **One bot, all PRs, author-agnostic:** S1 carries `author` as data; nothing gates on it.

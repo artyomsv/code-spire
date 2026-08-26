@@ -2,6 +2,7 @@ package dev.codespire.contract.event;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.FindingVerdict;
@@ -170,14 +171,28 @@ public sealed interface IntegrationEvent {
      * the context aggregator needs no SCM credential of its own. Null when the repo has no rules file,
      * which is the normal case. Nullable by design: events serialized before this field existed
      * deserialize with it absent.
+     *
+     * <p>{@code codeReferences} is the changed paths and identifiers the diff itself yields (see
+     * {@link CodeReferences}), kept apart from {@code references} for the reasons documented there.
+     * {@link CodeReferences#empty()} for events serialized before this field existed.
      */
     record DiffFetched(String reviewId, long prId, String commit, int changedFiles,
                        List<String> languages, long sizeBytes, boolean truncated,
-                       Set<String> references, String repoRules) implements IntegrationEvent {
+                       Set<String> references, String repoRules,
+                       CodeReferences codeReferences) implements IntegrationEvent {
 
         public DiffFetched {
             languages = languages == null ? null : List.copyOf(languages);
             references = references == null ? null : Set.copyOf(references);
+            codeReferences = codeReferences == null ? CodeReferences.empty() : codeReferences;
+        }
+
+        // Without code references — every existing construction site and any replayed record.
+        public DiffFetched(String reviewId, long prId, String commit, int changedFiles,
+                           List<String> languages, long sizeBytes, boolean truncated,
+                           Set<String> references, String repoRules) {
+            this(reviewId, prId, commit, changedFiles, languages, sizeBytes, truncated,
+                    references, repoRules, CodeReferences.empty());
         }
     }
 
