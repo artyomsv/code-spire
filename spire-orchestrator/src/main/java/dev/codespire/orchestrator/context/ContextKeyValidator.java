@@ -125,16 +125,34 @@ public class ContextKeyValidator {
 
     /**
      * Whether the probe proves the credential works. The raw-content types ({@link #RAW_CONTENT_TYPES})
-     * have no JSON "who am I" body to parse, so their signal is the HTTP status alone: landing on the
-     * placeholder path (2xx) or being told truthfully that it does not exist (404) both mean the token
-     * was accepted — only 401/403 (handled by the callers before this runs) mean it was refused. Every
-     * other type keeps the original signal: a 2xx body that parses into an account name.
+     * have no JSON "who am I" body to parse, so their signal is mostly the HTTP status: being told
+     * truthfully that the placeholder path does not exist (404) means the token was accepted, and
+     * 401/403 (handled by the callers before this runs) mean it was refused. Every other type keeps
+     * the original signal: a 2xx body that parses into an account name.
+     *
+     * <p>A raw-content 2xx additionally has to <em>not look like HTML</em>. Accepting any 2xx would
+     * discard the one sign-in-page defence the other branch keeps deliberately (see {@link #ping} and
+     * {@link #SIGN_IN_PAGE}): a baseUrl pointing at an SSO portal or auth proxy answers 200 HTML to
+     * any path, the placeholder probe included, so Check would go green while every real fetch at
+     * review time failed with nothing on screen explaining it. This branch cannot demand parseable
+     * JSON — the successful answer here is a source file — but "not an HTML page" is the same signal
+     * at the resolution a raw-content API allows (M4, PR 63 review).
      */
     private boolean isCredentialAccepted(String type, Probe p) {
         if (RAW_CONTENT_TYPES.contains(type)) {
-            return p.status() / 100 == 2 || p.status() == 404;
+            return p.status() == 404 || (p.status() / 100 == 2 && !looksLikeHtml(p));
         }
         return p.status() / 100 == 2 && accountFrom(p.body()) != null;
+    }
+
+    /** An HTML answer to a raw-file request is a sign-in page, never the file. */
+    private static boolean looksLikeHtml(Probe p) {
+        String contentType = p.contentType() == null ? "" : p.contentType().toLowerCase(Locale.ROOT);
+        if (contentType.contains("html")) {
+            return true;
+        }
+        String body = p.body() == null ? "" : p.body().stripLeading().toLowerCase(Locale.ROOT);
+        return body.startsWith("<!doctype html") || body.startsWith("<html");
     }
 
     /** The token owner's display name, or {@code null} for a raw-content type — there is none to report. */
@@ -211,8 +229,13 @@ public class ContextKeyValidator {
      * javadoc for why a single generic {@code code} type needs one at all. GitLab and Bitbucket both
      * conventionally publish a host containing their own name; anything else (including a self-managed
      * GitLab that does not) falls through to GitHub, the least predictable of the three hostnames.
+     *
+     * <p>Package-private so a same-package test can assert the mapping directly. It cannot be reached
+     * through {@link #check}: the branch is chosen from the base URL's <em>host</em>, and a test
+     * server answers on {@code localhost}, which is the fallback branch — the very gap this method's
+     * absence of coverage left open (PR 63 QA review).
      */
-    private static String codePlatform(String baseUrl) {
+    static String codePlatform(String baseUrl) {
         String host;
         try {
             host = URI.create(baseUrl).getHost();
@@ -229,8 +252,11 @@ public class ContextKeyValidator {
         return "github";
     }
 
-    /** The raw-content route for {@link #CODE_CHECK_REPO}/{@link #CODE_CHECK_PATH}, per platform. */
-    private static String codeCheckPath(String platform) {
+    /**
+     * The raw-content route for {@link #CODE_CHECK_REPO}/{@link #CODE_CHECK_PATH}, per platform.
+     * Package-private for the same reason as {@link #codePlatform}.
+     */
+    static String codeCheckPath(String platform) {
         return switch (platform) {
             case "gitlab" -> "/api/v4/projects/" + encode(CODE_CHECK_REPO) + "/repository/files/"
                     + encode(CODE_CHECK_PATH) + "/raw?ref=" + CODE_CHECK_REF;
