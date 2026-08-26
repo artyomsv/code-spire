@@ -2,6 +2,7 @@ package dev.codespire.context.code;
 
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextRequest;
+import dev.codespire.contract.review.ContextResolutionCounts;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Covers {@link CodeContextProvider.Counts} — the diagnostic that distinguishes a YAML-only diff
+ * Covers {@link ContextResolutionCounts} — the diagnostic that distinguishes a YAML-only diff
  * (nothing to extract, correct and uninteresting) from a systematically broken resolver (plenty
  * extracted, nothing resolved), a distinction {@link dev.codespire.contract.review.ContribStatus#EMPTY}
  * alone cannot make since both states report it identically.
@@ -48,14 +49,14 @@ class CodeContextDiagnosticsTest {
     @Test
     void countsDistinguishNothingToDoFromSystematicallyBroken() {
         // Nothing to do: no identifiers at all. Correct, and uninteresting.
-        CodeContextProvider.Counts none = provider().resolve(request(CodeReferences.empty())).counts();
+        ContextResolutionCounts none = provider().resolve(request(CodeReferences.empty())).counts();
         assertEquals(0, none.extracted());
 
         // Broken: plenty extracted, none resolved. Both states report ContribStatus.EMPTY, which is
         // why EMPTY alone cannot be an attention row and why these counts have to exist — otherwise
         // a systematically broken resolver is indistinguishable from a YAML-only diff.
         files.put("src/main/java/dev/example/Alpha.java", "package dev.example;\nclass Alpha { }\n");
-        CodeContextProvider.Counts broken = provider().resolve(request(new CodeReferences(
+        ContextResolutionCounts broken = provider().resolve(request(new CodeReferences(
                 Set.of("src/main/java/dev/example/Alpha.java"),
                 Set.of("Pricer", "chargeFor", "refundFor")))).counts();
 
@@ -85,7 +86,7 @@ class CodeContextDiagnosticsTest {
             identifiers.add(symbol);
         }
 
-        CodeContextProvider.Counts counts = provider()
+        ContextResolutionCounts counts = provider()
                 .resolve(request(new CodeReferences(changedPaths, identifiers)))
                 .counts();
 
