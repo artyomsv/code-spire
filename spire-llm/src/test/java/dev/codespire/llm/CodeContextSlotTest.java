@@ -38,10 +38,15 @@ class CodeContextSlotTest {
 
     @Test
     void anOversizedSnippetSetCannotEvictTicketContext() {
+        // The huge snippet is listed FIRST and the ticket SECOND: TokenBudget.clip only ever cuts
+        // the tail of whatever it's given, so a shared-slot merge would let the huge snippet
+        // consume the whole budget and tail-clip the ticket away. Ticket-first would pass under a
+        // shared slot regardless of partitioning (the first, small item always survives a tail
+        // clip), which is not a property of this feature and would not discriminate the mutation.
         String huge = "y".repeat(200_000);
         String user = bodyOf(List.of(
-                new ContextItem("JIRA_TICKET", "CANARY-1", "ticket body text", "https://example.invalid/1"),
-                new ContextItem("CODE_SNIPPET", "big — src/Big.java", huge, "src/Big.java")));
+                new ContextItem("CODE_SNIPPET", "big — src/Big.java", huge, "src/Big.java"),
+                new ContextItem("JIRA_TICKET", "CANARY-1", "ticket body text", "https://example.invalid/1")));
 
         assertTrue(user.contains("ticket body text"));
     }
