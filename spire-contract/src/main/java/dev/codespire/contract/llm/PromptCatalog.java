@@ -79,7 +79,8 @@ public final class PromptCatalog {
             Related context (retrieved, untrusted):
             {{context}}
 
-            Definitions of the symbols this diff touches (retrieved from the repository, untrusted):
+            Definitions of the symbols this diff touches (retrieved from the repository, untrusted). \
+            This set is partial — a symbol's absence here is not evidence it is undefined:
             {{code_context}}
 
             Already reported — do not re-report (tracked in existing threads; do not raise them \

@@ -238,8 +238,13 @@ millicents", "throws on 404", nullability) lives in the signature and doc, not t
 
 Candidates will exceed budget. Ranking is explainable rather than clever:
 
-1. Symbols referenced in added or modified lines before removed-only ones.
-2. Then by the number of **distinct changed files** referencing the symbol — a symbol used across
+1. ~~Symbols referenced in added or modified lines before removed-only ones.~~ **Not implemented in
+   rung 1, deliberately** (M4, rung-1 final review — this row previously claimed delivery it did not
+   have). `CodeReferences` carries one identifier set with no added/removed split, so there is nothing
+   for this tie-break to read; adding it means a third set on `CodeReferences`, which is a wire change
+   out of scope for rung 1. `CodeContextProvider.rankAndCap`'s own javadoc states the deferral
+   honestly — this spec previously did not.
+2. By the number of **distinct changed files** referencing the symbol — a symbol used across
    several changed files is more central to the change.
 3. Ties by first appearance.
 
@@ -331,7 +336,7 @@ That is the payoff for designing the table in rung 1 even though rung 1 does not
 |---|---|
 | Unsupported language | No code references. Review proceeds unchanged. |
 | File fetch 404 | Skip that symbol. **Not** counted as a circuit failure — a moved file is normal. |
-| File fetch 401/403 | Credential rejected -> attention row, via the existing `isUnauthorized()` path. |
+| File fetch 401/403 | **Not wired to an attention row.** `CodeContextApiException.isUnauthorized()` exists and is correct, but nothing in production calls it: `Fetcher.read` catches `RuntimeException` uniformly and reports the path as absent either way, so a rejected credential is indistinguishable from a moved file at that point. A rejected credential surfaces only as `CODE` in `ContextAssembled.missingSources` on individual reviews, plus the registry's own Check button — never as an automatic attention row the way an SCM credential rejection does. Wiring it needs the contribution to carry the outcome out to `ContextWorker`, which did not fit this branch; tracked in `techdebt/spire-context-code/` (I4, rung-1 final review). |
 | Rate limited (429) | **Not distinguished from any other failure.** `CodeContextApiException.retryAfterSeconds()` is structurally always `null` — `PinnedJsonClient`'s failure callback carries no response headers to parse a `Retry-After` value from — so there is no retry-after-aware backoff on this path. `CircuitBreakingSourceFileReader.isUnhealthy` only counts `status >= 500`, so a 429 does not open the per-host circuit either; it simply fails that one candidate path and moves on. The `Retry-After` ladder belongs to the SCM adapters' own clients (`RetryingDiffSource`), not this one — see `techdebt/spire-context-code/`. |
 | 20s budget exhausted | Partial contribution; whatever resolved, ships. |
 | Symbol resolves to several paths | Skip rather than guess. A wrong definition is worse than none. |
