@@ -32,6 +32,21 @@ final class SourceFileReaders {
     private SourceFileReaders() {
     }
 
+    /**
+     * Percent-encodes one value for a URL <em>query</em> string — the {@code ?ref=} commit GitHub and
+     * GitLab take. Unlike a path, a query is genuinely form-encoded, so {@code URLEncoder}'s
+     * {@code +}-for-space needs no correction here.
+     *
+     * <p>Both values this class encodes are registry- or SCM-derived today (a hex SHA, a registered
+     * {@code workspace/slug}) and so cannot carry anything hostile. Encoded anyway, because "the
+     * module encodes one of the three values it interpolates" is not a property anyone can rely on,
+     * and the next value interpolated here will be added by someone reading the surrounding code
+     * (L2, PR 63 review).
+     */
+    static String encodeQueryValue(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
     static String encodeSegments(String path) {
         StringBuilder out = new StringBuilder();
         String[] segments = path.split("/", -1);

@@ -36,7 +36,7 @@ public class GitLabSourceFileReader implements SourceFileReader {
     public String read(String repo, String path, String commit) {
         try {
             return http.getRaw("/api/v4/projects/" + encode(repo) + "/repository/files/"
-                    + encode(path) + "/raw?ref=" + commit);
+                    + encode(path) + "/raw?ref=" + encode(commit));
         } catch (CodeContextApiException e) {
             if (e.isNotFound()) {
                 return null; // absent or moved file — the normal case, not an error

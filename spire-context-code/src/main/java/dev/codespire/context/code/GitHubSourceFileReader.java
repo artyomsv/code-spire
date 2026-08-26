@@ -39,8 +39,9 @@ public class GitHubSourceFileReader implements SourceFileReader {
     @Override
     public String read(String repo, String path, String commit) {
         try {
-            return http.getRaw("/repos/" + repo + "/contents/" + SourceFileReaders.encodeSegments(path)
-                    + "?ref=" + commit);
+            return http.getRaw("/repos/" + SourceFileReaders.encodeSegments(repo) + "/contents/"
+                    + SourceFileReaders.encodeSegments(path)
+                    + "?ref=" + SourceFileReaders.encodeQueryValue(commit));
         } catch (CodeContextApiException e) {
             if (e.isNotFound()) {
                 return null; // absent or moved file — the normal case, not an error

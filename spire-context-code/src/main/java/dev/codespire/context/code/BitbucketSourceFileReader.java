@@ -34,7 +34,8 @@ public class BitbucketSourceFileReader implements SourceFileReader {
     @Override
     public String read(String repo, String path, String commit) {
         try {
-            return http.getRaw("/repositories/" + repo + "/src/" + commit + "/"
+            return http.getRaw("/repositories/" + SourceFileReaders.encodeSegments(repo) + "/src/"
+                    + SourceFileReaders.encodeSegments(commit) + "/"
                     + SourceFileReaders.encodeSegments(path));
         } catch (CodeContextApiException e) {
             if (e.isNotFound()) {
