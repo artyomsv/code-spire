@@ -11,9 +11,12 @@ public interface SourceFileReader {
      * @param repo   the repository identifier, in the platform's own shape ({@code owner/repo})
      * @param path   the file path within the repository
      * @param commit the commit the file is read at
-     * @return the file's content at {@code commit}, or {@code null} when it does not exist there — an
-     *         absent or moved file (a rename, a deleted dependency) is the normal case, not an error,
-     *         so implementations swallow a 404 rather than raising
+     * @return the file's content at {@code commit}, or {@code null} when there is nothing to read
+     *         there — an absent or moved file (a rename, a deleted dependency) is the normal case,
+     *         not an error, so implementations swallow a 404 rather than raising, and a file past
+     *         {@code PinnedJsonClient.MAX_RAW_BYTES} (a committed bundle, a generated blob) reports
+     *         the same way: it is no more readable as review context than an absent one, and a
+     *         caller has no better response to either
      */
     String read(String repo, String path, String commit);
 

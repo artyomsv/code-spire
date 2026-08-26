@@ -3,6 +3,7 @@ package dev.codespire.http;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetAddress;
@@ -11,8 +12,14 @@ import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
 
 /**
  * Read-only JSON over HTTP against one pinned API host — the shared transport every context adapter
@@ -32,6 +39,25 @@ public class PinnedJsonClient {
     private static final int MAX_REDIRECTS = 3;
     /** Not a real HTTP status — the status the redirect-loop guard reports through the failure factory. */
     private static final int TOO_MANY_REDIRECTS = 310;
+
+    /**
+     * Hard byte cap on a {@link #getRaw} response body, enforced while the body is still arriving.
+     *
+     * <p>A raw fetch returns whatever bytes the remote path holds, and nothing upstream of this class
+     * knows that size in advance: a repository can legitimately hold a committed 25 MB minified
+     * bundle, and one changed character in it makes the path a candidate to fetch. Without a cap the
+     * whole thing lands in a Java {@code String} (roughly twice its byte size in heap) inside a
+     * process that serves every repository in the deployment, so a one-line pull request is enough to
+     * exhaust it. The cap is generous for the thing this method is actually for — a source file a
+     * reviewer would read — and small enough that a handful of concurrent fetches cannot matter.
+     *
+     * <p>Deliberately NOT applied to {@link #getJson}: those are the providers' own bounded API
+     * envelopes, and silently truncating one would turn a size problem into a parse error.
+     */
+    public static final int MAX_RAW_BYTES = 1_048_576;
+
+    /** {@link #execute}'s "read the whole body" sentinel — the JSON path's behaviour, unchanged. */
+    private static final int UNBOUNDED = -1;
 
     private final HttpClient http;
     private final ObjectMapper mapper;
@@ -69,15 +95,23 @@ public class PinnedJsonClient {
      * ordinary source text, which routinely fails that assertion on a successful call, so this method
      * skips it and returns the body verbatim. Non-2xx statuses (404, 401, ...) are still classified
      * through the adapter's own {@link HttpFailures}, exactly as {@link #getJson} does.
+     *
+     * @return the body, or {@code null} when it exceeds {@link #MAX_RAW_BYTES} — nothing over the cap
+     *     is ever held: a body that declares an over-cap length is discarded outright, and one that
+     *     does not declare a length stops being buffered the moment it crosses. Reported as
+     *     <em>absent</em> rather than as a failure on purpose: a file too large to read is, to every
+     *     caller of this method, the same non-answer as a file that is not there, and raising instead
+     *     would let one oversized path turn into an error the caller has no better response to.
      */
     public String getRaw(String path) {
         return send("GET", path, false);
     }
 
     private String send(String method, String path, boolean requireJsonShape) {
+        int maxBytes = requireJsonShape ? UNBOUNDED : MAX_RAW_BYTES;
         URI target = URI.create(baseUri + path);
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
-            HttpResponse<String> response = execute(method, path, target);
+            HttpResponse<String> response = execute(method, path, target, maxBytes);
             int status = response.statusCode();
             if (status / 100 == 3) {
                 String location = response.headers().firstValue("Location")
@@ -91,7 +125,7 @@ public class PinnedJsonClient {
             }
             String body = response.body();
             if (!requireJsonShape) {
-                return body;
+                return body; // null when the bounded subscriber aborted past MAX_RAW_BYTES
             }
             // A 2xx must be JSON. A non-JSON 2xx (an HTML sign-in page) means the request was
             // redirected to authentication — the token was not accepted. Surface it clearly here
@@ -179,7 +213,7 @@ public class PinnedJsonClient {
         return cleaned.length() <= 500 ? cleaned : cleaned.substring(0, 500) + "...";
     }
 
-    private HttpResponse<String> execute(String method, String path, URI target) {
+    private HttpResponse<String> execute(String method, String path, URI target, int maxBytes) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(target).timeout(TIMEOUT);
         headers.forEach(builder::header);
         if (sameOrigin(target)) {
@@ -187,7 +221,7 @@ public class PinnedJsonClient {
         }
         builder.method(method, HttpRequest.BodyPublishers.noBody());
         try {
-            return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            return http.send(builder.build(), bodyHandler(maxBytes));
         } catch (IOException e) {
             throw new UncheckedIOException(apiName + " " + method + " " + path + " I/O failure", e);
         } catch (InterruptedException e) {
@@ -215,6 +249,94 @@ public class PinnedJsonClient {
             return mapper.readTree(body);
         } catch (IOException e) {
             throw new UncheckedIOException("Unparseable " + apiName + " response", e);
+        }
+    }
+
+    /**
+     * {@code maxBytes <= 0} reads the whole body, as {@link #getJson} always has.
+     *
+     * <p>A declared {@code Content-Length} over the cap short-circuits: the body is discarded without
+     * ever being assembled, which is both cheaper and the common case — the raw-content APIs this
+     * serves all declare a length for a file. A chunked response carries no length to read, so it
+     * falls to {@link BoundedStringSubscriber}, which decides as the bytes arrive.
+     */
+    private static HttpResponse.BodyHandler<String> bodyHandler(int maxBytes) {
+        if (maxBytes <= 0) {
+            return HttpResponse.BodyHandlers.ofString();
+        }
+        return responseInfo -> {
+            if (responseInfo.headers().firstValueAsLong("content-length").orElse(-1L) > maxBytes) {
+                return HttpResponse.BodySubscribers.<String>replacing(null);
+            }
+            return new BoundedStringSubscriber(maxBytes);
+        };
+    }
+
+    /**
+     * Buffers a response body up to {@code maxBytes} and <b>stops buffering</b> past that, completing
+     * with {@code null} — the sentinel {@link #getRaw} turns into "absent". Bytes over the cap are
+     * read off the connection and dropped, never held, so heap is bounded by {@code maxBytes} whatever
+     * the remote sends.
+     *
+     * <p>It reads them rather than <b>cancelling</b> the subscription on purpose, having tried that
+     * first: the JDK client reports a cancelled body subscription as {@code IOException: Stream
+     * cancelled} out of {@code HttpClient.send}, so aborting turns a bounded read into a transport
+     * failure the caller would have to distinguish from a genuine one — trading a heap problem for a
+     * correctness problem. Draining costs bandwidth on a response the {@code Content-Length}
+     * short-circuit above already handles whenever the remote declares its size, and the request
+     * timeout bounds the rest.
+     *
+     * <p>Hand-rolled rather than composed from {@code BodySubscribers}: every buffering subscriber the
+     * JDK ships assembles the whole body, which is precisely what is being bounded here, and
+     * {@code BodySubscribers.mapping} over an input-stream subscriber blocks the client's own thread
+     * to do the reading.
+     */
+    private static final class BoundedStringSubscriber implements HttpResponse.BodySubscriber<String> {
+
+        private final int maxBytes;
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        private final CompletableFuture<String> body = new CompletableFuture<>();
+        private boolean overCap;
+
+        BoundedStringSubscriber(int maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        @Override
+        public CompletionStage<String> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> items) {
+            if (overCap) {
+                return;
+            }
+            for (ByteBuffer item : items) {
+                if (buffer.size() + item.remaining() > maxBytes) {
+                    overCap = true;
+                    buffer.reset(); // nothing about an over-cap body is worth keeping
+                    return;
+                }
+                byte[] chunk = new byte[item.remaining()];
+                item.get(chunk);
+                buffer.writeBytes(chunk);
+            }
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            body.completeExceptionally(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            body.complete(overCap ? null : buffer.toString(StandardCharsets.UTF_8));
         }
     }
 }
