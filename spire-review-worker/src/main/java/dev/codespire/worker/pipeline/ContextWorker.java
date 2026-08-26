@@ -19,6 +19,7 @@ import dev.codespire.contract.review.ContribStatus;
 import dev.codespire.worker.adapters.PostgresBlobStore;
 import dev.codespire.worker.adapters.WorkerContextClients;
 import dev.codespire.worker.adapters.WorkerContextReferences;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -33,8 +34,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -77,7 +82,43 @@ public class ContextWorker {
     /** Collection depth cap: level 1 (the PR's refs) + one hop (refs found inside level-1 content). */
     private static final int MAX_DEPTH = 2;
     /** {@link ContextItem#kind()} for a code-context provider's contributions — see {@link #corpusOf}. */
-    private static final String CODE_SNIPPET_KIND = "CODE_SNIPPET";
+    private static final String CODE_SNIPPET_KIND = ContextItem.CODE_SNIPPET;
+
+    /** Threads in {@link #fanOutExecutor} — enough for every provider a command can carry, and no more. */
+    private static final int FAN_OUT_THREADS = 4;
+
+    /**
+     * The pool this class schedules its own fan-out work on, kept off {@link
+     * java.util.concurrent.ForkJoinPool#commonPool()}.
+     *
+     * <p>{@code ForkJoinPool.commonPool()}'s parallelism is {@code availableProcessors - 1} — <b>one</b>
+     * on a 2-vCPU container. A provider that holds a thread for most of the 20s budget (the code
+     * provider gives itself 18s) then runs ahead of its siblings on such a deployment: Jira or the
+     * issue providers never start, are recorded {@link ContribStatus#ERROR} at "did not contribute
+     * within the budget" through no fault of their own, and the operator sees ticket context
+     * intermittently missing on exactly the busiest deployments (M3, PR 63 review). A small dedicated
+     * pool decouples the two.
+     *
+     * <p>Threads are daemon so a pool that outlives its {@link #shutdown} — a unit test constructing
+     * this class directly, say — can never hold the JVM open, and are created on demand, so an idle
+     * instance costs nothing.
+     */
+    private final ExecutorService fanOutExecutor = Executors.newFixedThreadPool(FAN_OUT_THREADS,
+            daemonThreads("spire-context-fanout-"));
+
+    private static ThreadFactory daemonThreads(String prefix) {
+        AtomicInteger counter = new AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + counter.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
+    @PreDestroy
+    void shutdown() {
+        fanOutExecutor.shutdownNow();
+    }
 
     @Inject
     WorkerContextClients contextClients;
@@ -237,11 +278,18 @@ public class ContextWorker {
      * capability interface, not a concrete provider class, the same way {@code FollowUpWorker} gates on
      * {@code ThreadSource} rather than naming a specific {@code CommentSink} implementation: this method
      * never needs to import a concrete provider.
+     *
+     * <p>The {@code resolve} path is scheduled on {@link #fanOutExecutor} — see that field for why.
+     * The plain {@code contribute} path cannot be: a provider returns an already-scheduled
+     * {@link CompletionStage}, so the SPI gives this class no say in where it runs. That asymmetry is
+     * the fix rather than a hole in it — the long-running provider is exactly the one reached through
+     * {@code resolve}, and moving it off the common pool is what stops it crowding out the short
+     * fetches that stay there.
      */
     private CompletableFuture<ContextContribution> contributionFuture(ContextProvider provider,
             ContextRequest request) {
         if (provider instanceof ContextResolutionSource resolutionSource) {
-            return CompletableFuture.supplyAsync(() -> resolutionSource.resolve(request))
+            return CompletableFuture.supplyAsync(() -> resolutionSource.resolve(request), fanOutExecutor)
                     .thenApply(resolution -> {
                         logResolutionCounts(provider.source(), resolution.counts());
                         return resolution.contribution();
