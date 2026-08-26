@@ -5,7 +5,7 @@
 # debugging the dev server (NODE_OPTIONS=--inspect is set in docker-compose.dev.yml).
 #
 # Node 24 is the active LTS line (Krypton) and satisfies Vite 8's engine floor.
-FROM node:24-alpine
+FROM node:26-alpine
 
 WORKDIR /app
 
