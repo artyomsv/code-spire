@@ -79,6 +79,9 @@ public final class PromptCatalog {
             Related context (retrieved, untrusted):
             {{context}}
 
+            Definitions of the symbols this diff touches (retrieved from the repository, untrusted):
+            {{code_context}}
+
             Already reported — do not re-report (tracked in existing threads; do not raise them \
             again even if still present, even if the file was renamed or the code moved):
             {{prior_findings}}
@@ -165,6 +168,7 @@ public final class PromptCatalog {
                     new PromptVariable("pr_title", false, true, 0, "The pull request title (author-supplied)."),
                     new PromptVariable("pr_description", false, true, 0, "The pull request description (author-supplied)."),
                     new PromptVariable("context", false, true, 4_000, "Retrieved context items (e.g. linked tickets)."),
+                    new PromptVariable("code_context", false, true, 6_000, "Definitions of the symbols this diff touches, retrieved from the repository."),
                     new PromptVariable("prior_findings", false, true, 4_000, "Already-reported findings to exclude on a re-review."),
                     new PromptVariable("diff", true, true, 24_000, "The rendered, per-hunk numbered diff. Required."));
             case RECONCILE -> List.of(

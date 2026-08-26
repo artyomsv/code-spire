@@ -44,19 +44,26 @@ public final class ReviewPromptBuilder {
         Map<String, String> values = new HashMap<>();
         values.put("pr_title", pr.title() == null ? "" : pr.title());
         values.put("pr_description", pr.description() == null ? "" : pr.description());
-        values.put("context", renderContext(context));
+        values.put("context", renderContext(context, false));
+        values.put("code_context", renderContext(context, true));
         values.put("prior_findings", renderAlreadyReported(alreadyReported));
         values.put("diff", DiffRenderer.render(patches));
         PromptRenderer.Rendered rendered = PromptRenderer.render(effective, values);
         return new Built(rendered.prompt(), rendered.truncated());
     }
 
-    private static String renderContext(List<ContextItem> context) {
-        if (context.isEmpty()) {
-            return "";
-        }
+    /**
+     * Partitions retrieved context by kind: {@code CODE_SNIPPET} items render into their own
+     * {@code {{code_context}}} slot (its own token budget) so a chatty linked ticket in
+     * {@code {{context}}} can never squeeze retrieved code definitions out by sharing one budget.
+     */
+    private static String renderContext(List<ContextItem> context, boolean codeSnippets) {
         StringBuilder out = new StringBuilder();
         for (ContextItem item : context) {
+            boolean isCodeSnippet = "CODE_SNIPPET".equals(item.kind());
+            if (isCodeSnippet != codeSnippets) {
+                continue;
+            }
             out.append("- [").append(item.kind()).append("] ").append(item.title())
                     .append(": ").append(item.body()).append('\n');
         }

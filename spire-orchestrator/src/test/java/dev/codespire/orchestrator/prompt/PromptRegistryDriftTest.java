@@ -84,6 +84,24 @@ class PromptRegistryDriftTest {
         assertEquals("My persona", registry.effective(PromptKind.REVIEW).system());
     }
 
+    /**
+     * The reason this task exists: a stored customization predating the {@code {{code_context}}}
+     * slot must show as drifted, or an operator with a customized REVIEW template silently gets no
+     * retrieved code context — reviews would run, tests would stay green, and nothing would say why.
+     */
+    @Test
+    void aCustomizationPredatingTheCodeContextSlotReportsDrift() {
+        String baseBodyWithoutCodeContext = PromptCatalog.defaultTemplate(PromptKind.REVIEW).body()
+                .replace("{{code_context}}", "");
+        insertRowWithBase(PromptKind.REVIEW, "My persona", "Diff:\n{{diff}}",
+                "AN OLDER SHIPPED PERSONA", baseBodyWithoutCodeContext);
+
+        PromptRegistry.Drift drift = registry.drift(PromptKind.REVIEW);
+
+        assertTrue(drift.baseKnown());
+        assertTrue(drift.defaultDrifted());
+    }
+
     @Test
     void anUncustomizedKindNeverReportsDrift() {
         registry.reset(PromptKind.RECONCILE);
