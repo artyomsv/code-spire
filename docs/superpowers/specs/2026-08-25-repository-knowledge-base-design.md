@@ -101,7 +101,15 @@ directions:
   nothing but an unmatched string". That holds at ticket-key volume. A diff yields tens to hundreds of
   identifiers, scanned by every registered provider.
 
-Both fields carry **metadata only** — paths and identifiers, never hunk text. ADR-011 is untouched.
+Both fields carry **metadata only** — paths and identifiers, never hunk text. "ADR-011 is untouched"
+overstates it: identifiers harvested from a diff's changed lines are diff-derived tokens, and they now
+ride the Kafka bus on `DiffFetched.codeReferences` — a change ADR-011's no-diff-persistence intent did
+not anticipate, and `WorkerPipelineTest.fetchDiffEmitsMetadataOnly` had to be narrowed to accommodate
+it. This is a deliberate, reasoned exception rather than either an untouched invariant or a silent
+regression: `DiffFetched` already carries `repoRules` — the entire text of the repository's
+`.codespire` file, whenever one exists — so the bus already carries whole-file content by design, and
+a set of identifiers cannot reconstruct a diff the way that full-file text could. See ADR-026's
+Consequences for the same point recorded against the decision itself.
 
 ### 4.3 Module layout and licensing
 
@@ -324,7 +332,7 @@ That is the payoff for designing the table in rung 1 even though rung 1 does not
 | Unsupported language | No code references. Review proceeds unchanged. |
 | File fetch 404 | Skip that symbol. **Not** counted as a circuit failure — a moved file is normal. |
 | File fetch 401/403 | Credential rejected -> attention row, via the existing `isUnauthorized()` path. |
-| Rate limited | Existing `Retry-After` ladder; shares the per-host circuit. |
+| Rate limited (429) | **Not distinguished from any other failure.** `CodeContextApiException.retryAfterSeconds()` is structurally always `null` — `PinnedJsonClient`'s failure callback carries no response headers to parse a `Retry-After` value from — so there is no retry-after-aware backoff on this path. `CircuitBreakingSourceFileReader.isUnhealthy` only counts `status >= 500`, so a 429 does not open the per-host circuit either; it simply fails that one candidate path and moves on. The `Retry-After` ladder belongs to the SCM adapters' own clients (`RetryingDiffSource`), not this one — see `techdebt/spire-context-code/`. |
 | 20s budget exhausted | Partial contribution; whatever resolved, ships. |
 | Symbol resolves to several paths | Skip rather than guess. A wrong definition is worse than none. |
 | Index query fails (rung 2) | Degrade to rung 1. Callers absent. |

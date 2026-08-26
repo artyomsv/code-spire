@@ -820,6 +820,23 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Measured, not estimated: **1399 Java tests across 181 suites** (`testFast` 520/64 + `testServices` —
   gateway 68/11, orchestrator 644/86, worker 167/20); **368 `spire-ui` vitest tests across 51 files**;
   `tsc --noEmit` silent.
+- **Repository knowledge base rung 1 delivered (ADR-026, 2026-08-26):** `spire-context-code` (new
+  Apache-2.0 module) resolves the identifiers a diff's changed lines introduce against the changed
+  file's own import block, read at the review commit, and contributes them as
+  `ContextItem{kind=CODE_SNIPPET}` through the existing `ContextProvider` SPI — no crawl, no
+  embeddings, no vector store, no `PushReceived` consumer. `LanguageSupport` covers Java and
+  TypeScript at launch; a further language is a bean, not a core edit. Snippets render into their own
+  `{{code_context}}` prompt slot (its own token budget, mirroring `prior_findings`) so a chatty ticket
+  in `{{context}}` can never evict retrieved code by sharing one budget — proven by a seam test
+  (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) that fakes the assembled context and
+  asserts the snippet body reaches the `Prompt` object actually sent to the model, confirmed to
+  discriminate (fails when `ReviewPromptBuilder` is made to render `code_context` empty). **Rung 2**
+  (`worker.code_symbol`, a grown symbol index for call-site impact) is **not authorized by rung 1
+  shipping** — ADR-026 gates it on the evidence measurement in spec §9: re-run real reviewed PRs with
+  and without code context and diff the findings; it ships only if at least one new finding is judged
+  correct by the operator and false positives do not increase. Measured, not estimated: **1504 Java
+  tests across 197 suites** (`testFast` 581/75 + `testServices` — gateway 68/11, orchestrator 669/87,
+  worker 186/24); **375 `spire-ui` vitest tests across 51 files**; `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-25)
+## Current status & next-up backlog (updated 2026-08-26)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
@@ -543,7 +543,7 @@ Open, by nature of the work rather than by section:
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P3** | Repository knowledge base | M (rung 1) | The stated differentiator, and **re-scoped by ADR-026** — the technique was named before the need was. Rung 1 resolves the definitions a diff touches through the repository's own import graph and stores nothing; rung 2 adds a grown symbol index, gated on evidence. No embeddings, no vector store, no crawl, no push-fed indexer. Adds a `CodeContextProvider` with zero change to the review flow — true of *contribution*; acquisition costs a wire field and a prompt slot. |
+| **P3** | Repository knowledge base, rung 2 | S–M | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) is **not authorized by rung 1 shipping** — it starts only after the evidence measurement fixed in spec §9: re-run reviewed PRs with and without code context and diff the findings; ships only if at least one new finding is judged correct and false positives do not increase. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
@@ -633,12 +633,22 @@ does not exist yet. Operator decides.
 
 ## Phase 3 — Repository knowledge base (the differentiator) (~2–3 pw for rung 1)
 **Re-scoped by ADR-026** (2026-08-25); the original plan is kept below the rule for the record.
-- **Rung 1, stores nothing:** diff-derived symbols + changed paths on their own wire field; a
-  `spire-context-code` provider resolving them against the changed file's import block at the review
-  commit; `CODE_SNIPPET` items in a dedicated `{{code_context}}` prompt slot. Java + TypeScript.
-- **Rung 2, gated on evidence:** `worker.code_symbol` — structure only, never content — answering
-  call-site impact. A hint confirmed at citation, never an answer.
-- **Exit:** reviews reference code elsewhere in the repo, not just the diff.
+- ✅ **Rung 1, stores nothing — delivered 2026-08-26.** Diff-derived symbols + changed paths on their
+  own wire field; a `spire-context-code` provider resolving them against the changed file's import
+  block at the review commit; `CODE_SNIPPET` items in a dedicated `{{code_context}}` prompt slot. Java
+  + TypeScript. Proven by a worker seam test
+  (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) asserting a retrieved snippet's body
+  reaches the `Prompt` object actually sent to the model, confirmed to discriminate. 1504 Java tests
+  across 197 suites; 375 `spire-ui` vitest tests across 51 files.
+- **Rung 2, gated on evidence — not started.** `worker.code_symbol` — structure only, never content —
+  answering call-site impact. A hint confirmed at citation, never an answer. **Rung 1 shipping does
+  not authorize rung 2**: it begins only after the measurement fixed in spec §9 — re-run reviewed PRs
+  with and without code context and diff the findings; ships only if at least one new finding is
+  judged correct by the operator and false positives do not increase. Failing that bar stops P3 here.
+- **Exit:** reviews reference code elsewhere in the repo, not just the diff. Mechanically true of
+  rung 1 — a `CODE_SNIPPET` item can name a file the diff never touched. Whether that reference makes
+  a review *better* is a separate, unproven claim, which is exactly what the evidence gate above tests
+  before rung 2 is allowed to start.
 - **Not built:** embeddings, a vector store, a repository crawl, a `PushReceived` consumer,
   `spire-indexer` as a deployable. The Qdrant/LanceDB-versus-pgvector contradiction between this file
   and DATA-MODEL is left **unresolved and deferred** rather than settled — this design needs neither.

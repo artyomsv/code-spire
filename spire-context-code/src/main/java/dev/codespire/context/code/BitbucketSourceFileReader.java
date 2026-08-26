@@ -10,8 +10,10 @@ import java.util.Map;
 /**
  * Reads a repository file at a specific commit from the Bitbucket Cloud REST API.
  *
- * <p>Unlike GitHub and GitLab, Bitbucket's {@code src} browse endpoint takes the repository and file
- * path as literal path segments — no percent-encoding of the slashes.
+ * <p>Unlike GitLab, Bitbucket's {@code src} browse endpoint takes the repository and file path as
+ * literal path segments — no percent-encoding of the slashes. GitHub matches Bitbucket in this
+ * respect ({@link GitHubSourceFileReader} builds its URL the same literal-path way); GitLab is the
+ * one that requires {@code encode(repo)}/{@code encode(path)}.
  */
 public class BitbucketSourceFileReader implements SourceFileReader {
 

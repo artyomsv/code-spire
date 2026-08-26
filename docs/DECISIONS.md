@@ -103,6 +103,14 @@ reason.
   fetched as a Jira ticket, and hundreds of identifiers are scanned by every registered provider — a
   set documented as recall-favouring on the grounds that a false candidate costs nothing, which holds
   at ticket-key volume and not at symbol volume.
+- **A deliberate, reasoned exception to ADR-011, not an unamended invariant.** Identifiers harvested
+  from a diff's changed lines are diff-derived tokens, and they ride the Kafka bus on
+  `DiffFetched.codeReferences` — `WorkerPipelineTest.fetchDiffEmitsMetadataOnly` had to be narrowed to
+  accommodate them, so this narrows something the guard previously asserted. It is accepted because
+  `DiffFetched` already carries `repoRules` — the entire text of the repository's `.codespire` file,
+  whenever one exists — so the bus already carries whole-file content by design; a set of identifiers,
+  by contrast, cannot reconstruct a diff. The line the rung 2 schema itself holds — structure stored,
+  content never — is unaffected and needs no exception of its own.
 - Partial recall must be worded as partial. A finding claiming "all three callers" when twelve exist
   is fabrication, so snippets carry "known callers" framing and the prompt forbids claiming
   exhaustiveness over a handed set.
