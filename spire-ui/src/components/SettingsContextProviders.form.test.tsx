@@ -92,4 +92,57 @@ describe('SettingsContextProviders — add-provider form', () => {
 
     expect(screen.getByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/basic/i);
   });
+
+  it('offers the repository code provider type and forces bearer auth', async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
+
+    fireEvent.click(screen.getByRole('combobox', { name: /^type$/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Repository code' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/bearer/i),
+    );
+    // Bearer-only types must not offer the account-email field — sending one would be silently
+    // ignored by the API and mislead the operator into thinking it mattered.
+    expect(screen.queryByLabelText(/account email/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The blank-secret-on-edit rule: sending secret: '' on save would wipe the stored token. This must
+   * hold for every type, including a brand-new one — confirm 'code' goes through the same path rather
+   * than around it.
+   */
+  it('does not send an empty secret when editing an existing code provider', async () => {
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
+      {
+        id: 'ctx-code-1',
+        name: 'Acme repository code',
+        type: 'code',
+        baseUrl: 'https://api.github.com',
+        authKind: 'bearer',
+        username: null,
+        projectKeys: 'src/main/',
+        enabled: true,
+        isDefault: false,
+        hasSecret: true,
+        createdAt: '2026-08-01T00:00:00Z',
+        lastCheckAt: null,
+        lastCheckOk: null,
+        lastCheckError: null,
+      },
+    ] as never);
+    const update = vi.spyOn(api, 'updateContextProvider').mockResolvedValue(undefined as never);
+
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
+
+    const baseUrl = await screen.findByDisplayValue('https://api.github.com');
+    fireEvent.change(baseUrl, { target: { value: 'https://github.example.invalid' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1].secret).toBeUndefined();
+    expect(update.mock.calls[0][1]).toMatchObject({ baseUrl: 'https://github.example.invalid' });
+  });
 });

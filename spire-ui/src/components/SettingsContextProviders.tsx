@@ -19,10 +19,13 @@ import Tooltip from './Tooltip';
 import Select from './Select';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
-export const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence', 'github-issues', 'gitlab-issues'];
+export const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence', 'github-issues', 'gitlab-issues', 'code'];
 
 /** Per-type form and preview copy — Jira resolves ticket keys, Confluence resolves page links. */
 interface TypeCopy {
+  // The type picker's option text. Usually just the type itself, except 'code' — a bare "code" option
+  // reads as meaningless in a dropdown, so this type gets a descriptive label instead.
+  label: string;
   namePlaceholder: string;
   baseUrlPlaceholder: string;
   baseUrlHint: string;
@@ -39,6 +42,7 @@ interface TypeCopy {
 
 export const TYPE_COPY: Record<ContextType, TypeCopy> = {
   jira: {
+    label: 'jira',
     namePlaceholder: 'Acme Jira',
     baseUrlPlaceholder: 'https://acme.atlassian.net',
     baseUrlHint: 'Your Jira site root — the client appends the REST paths.',
@@ -57,6 +61,7 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     authKinds: ['basic', 'bearer'],
   },
   confluence: {
+    label: 'confluence',
     namePlaceholder: 'Acme Confluence',
     baseUrlPlaceholder: 'https://acme.atlassian.net/wiki',
     baseUrlHint: 'Your Confluence wiki root (…/wiki on Cloud) — the client appends the REST paths.',
@@ -71,6 +76,7 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     authKinds: ['basic', 'bearer'],
   },
   'github-issues': {
+    label: 'github-issues',
     namePlaceholder: 'Acme GitHub issues',
     baseUrlPlaceholder: 'https://api.github.com',
     baseUrlHint:
@@ -89,6 +95,7 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     authKinds: ['bearer'],
   },
   'gitlab-issues': {
+    label: 'gitlab-issues',
     namePlaceholder: 'Acme GitLab issues',
     baseUrlPlaceholder: 'https://gitlab.com',
     baseUrlHint:
@@ -104,6 +111,27 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     previewHint:
       'Resolves issues (#12), merge requests (!34) and epics (&7). A bare reference needs the project ' +
       'named here, since the test box has no merge request behind it.',
+    authKinds: ['bearer'],
+  },
+  code: {
+    label: 'Repository code',
+    namePlaceholder: 'Acme repository code',
+    baseUrlPlaceholder: 'https://api.github.com',
+    baseUrlHint:
+      'The API root of the platform hosting the repository — https://api.github.com for GitHub ' +
+      '(…/api/v3 on Enterprise Server), https://gitlab.com for GitLab (no /api/v4 suffix), or ' +
+      'https://api.bitbucket.org/2.0 for Bitbucket Cloud. The platform is inferred from this host, so ' +
+      'a self-managed GitLab whose hostname does not contain "gitlab" is read as GitHub. Needs a token ' +
+      'that can read repository contents.',
+    narrowLabel: 'Path allow-list',
+    narrowPlaceholder: 'src/main/, src/allowed/',
+    narrowHint:
+      'Optional: only files under these repository-relative path prefixes are read. This is a prefix ' +
+      'match — src/foo also matches src/foobar/ — so add a trailing slash (src/foo/) when you mean a ' +
+      'directory only. Leave blank to read from anywhere in the repository.',
+    previewLabel: 'Preview',
+    previewPlaceholder: () => '',
+    previewHint: 'Live preview is not available for this type yet — use Check above to verify connectivity.',
     authKinds: ['bearer'],
   },
 };
@@ -386,7 +414,7 @@ function ContextProviderForm({
               <Select
                 ariaLabel="Type"
                 value={type}
-                options={CONTEXT_TYPES.map((t) => ({ value: t, label: t }))}
+                options={CONTEXT_TYPES.map((t) => ({ value: t, label: TYPE_COPY[t].label }))}
                 onChange={(v) => {
                   const nextType = v as ContextType;
                   setType(nextType);
