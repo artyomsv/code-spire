@@ -106,13 +106,37 @@ public class OperatorAuthorization extends AuthorizationController {
     }
 
     static final String FORWARDING_REFUSAL =
-            "quarkus.http.proxy.proxy-address-forwarding=true with no quarkus.http.proxy.trusted-proxies: "
-                    + "forwarded client addresses and schemes would be trusted from ANY source that can "
-                    + "reach this port. Set SPIRE_TRUSTED_PROXIES to the network the dashboard proxy runs "
-                    + "on (the pod or bridge CIDR), or turn forwarding off.";
+            "quarkus.http.proxy.proxy-address-forwarding=true with no usable "
+                    + "quarkus.http.proxy.trusted-proxies: forwarded client addresses, schemes and hosts "
+                    + "would be trusted from ANY source that can reach this port. Set SPIRE_TRUSTED_PROXIES "
+                    + "to the network the dashboard proxy runs on (the pod or bridge CIDR), or turn "
+                    + "forwarding off. A zero-length prefix (0.0.0.0/0, ::/0) is refused for the same "
+                    + "reason as an empty value: it excludes nothing.";
 
-    /** Pure so it can be tested directly, like {@link #isPermitted}. */
+    /**
+     * Pure so it can be tested directly, like {@link #isPermitted}.
+     *
+     * <p>Presence is not width. A list only restricts anything if it excludes something, and a
+     * zero-length prefix matches every address — so {@code SPIRE_TRUSTED_PROXIES=0.0.0.0/0} satisfied
+     * a not-blank check while re-opening precisely what the pairing exists to close. That matters
+     * more since the services began honouring {@code X-Forwarded-Host}: the trust check is the only
+     * thing standing between a forged Host and the OIDC redirect_uri built from it.
+     *
+     * <p>Judged by prefix length rather than by the two well-known spellings, because
+     * {@code 10.0.0.0/0} matches everything just as thoroughly.
+     */
     static boolean isForwardingSafe(boolean forwarding, String trustedProxies) {
-        return !forwarding || !trustedProxies.isBlank();
+        if (!forwarding) {
+            return true;
+        }
+        if (trustedProxies.isBlank()) {
+            return false;
+        }
+        for (String entry : trustedProxies.split(",")) {
+            if (entry.trim().endsWith("/0")) {
+                return false;
+            }
+        }
+        return true;
     }
 }

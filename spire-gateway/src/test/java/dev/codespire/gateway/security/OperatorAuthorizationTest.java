@@ -58,11 +58,49 @@ class OperatorAuthorizationTest {
     @Test
     void forwardingWithATrustedProxyIsFine() {
         assertTrue(OperatorAuthorization.isForwardingSafe(true, "10.244.0.0/16"));
+        assertTrue(OperatorAuthorization.isForwardingSafe(true, "10.244.0.0/16,192.168.0.0/16"));
+        assertTrue(OperatorAuthorization.isForwardingSafe(true, " 10.244.0.0/16 , 172.17.0.0/16 "));
+    }
+
+    /**
+     * Presence was never the property worth checking — width is. A zero-length prefix matches every
+     * address, so this value satisfies a not-blank check while restricting nothing, and the service
+     * would start looking correctly configured with forwarded addresses, schemes and hosts believed
+     * from anywhere that can reach the port.
+     */
+    @Test
+    void forwardingTrustedFromEverywhereIsRefused() {
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "0.0.0.0/0"));
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "::/0"));
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, " 0.0.0.0/0 "));
+    }
+
+    /** Any prefix length of zero, not the two well-known spellings: 10.0.0.0/0 is just as wide. */
+    @Test
+    void anyZeroLengthPrefixIsRefusedWhicheverAddressCarriesIt() {
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "10.0.0.0/0"));
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "::1/0"));
+    }
+
+    /** One wide entry defeats the whole list, so the list is only as narrow as its widest member. */
+    @Test
+    void oneWideEntryAmongNarrowOnesIsRefused() {
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "10.244.0.0/16,0.0.0.0/0"));
+        assertFalse(OperatorAuthorization.isForwardingSafe(true, "0.0.0.0/0, 10.244.0.0/16"));
+    }
+
+    /** A /0 inside a longer prefix length is not one: /10 and /30 are ordinary networks. */
+    @Test
+    void aPrefixLengthEndingInAZeroDigitIsNotAZeroPrefix() {
+        assertTrue(OperatorAuthorization.isForwardingSafe(true, "10.0.0.0/10"));
+        assertTrue(OperatorAuthorization.isForwardingSafe(true, "10.244.0.0/30"));
+        assertTrue(OperatorAuthorization.isForwardingSafe(true, "2001:db8::/40"));
     }
 
     /** Nothing to spoof when the service does not believe forwarded headers in the first place. */
     @Test
     void notForwardingNeedsNoTrustedProxies() {
         assertTrue(OperatorAuthorization.isForwardingSafe(false, ""));
+        assertTrue(OperatorAuthorization.isForwardingSafe(false, "0.0.0.0/0"));
     }
 }
