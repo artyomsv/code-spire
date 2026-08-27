@@ -48,6 +48,17 @@ server {
     proxy_set_header X-Forwarded-Proto $spire_fwd_proto;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
 
+    # The OIDC callback returns the operator session as several large Set-Cookie headers --
+    # Quarkus chunks the encrypted JWT, and a Keycloak token carrying roles does not fit one
+    # cookie. nginx buffers a response's headers before forwarding them, and its 4k/8k default
+    # is smaller than that, so the callback failed with "upstream sent too big header" and the
+    # browser saw a bare 502 on /api/auth/callback while the service itself logged nothing at
+    # all -- it had answered correctly. Sized for the chunked session, not measured from one
+    # deployment: a realm with more roles produces a larger cookie.
+    proxy_buffer_size       16k;
+    proxy_buffers         8 16k;
+    proxy_busy_buffers_size 32k;
+
     # SCM ingress. MUST precede the SPA fallback: a delivery that fell through to try_files would be
     # answered 200 with index.html, so the SCM records a successful delivery, never retries, and the
     # review is lost with nothing logged anywhere. The gateway's own policy makes /webhooks/* public
