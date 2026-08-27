@@ -837,6 +837,54 @@ The design is fully specified in `docs/` — **treat those files as the source o
   correct by the operator and false positives do not increase. Measured, not estimated: **1504 Java
   tests across 197 suites** (`testFast` 581/75 + `testServices` — gateway 68/11, orchestrator 669/87,
   worker 186/24); **375 `spire-ui` vitest tests across 51 files**; `tsc --noEmit` silent.
+- **Browser login to the packaged stack fixed, and the guard that missed it rewritten (2026-08-27):**
+  nobody could sign in to a packaged deployment on any port but 80, and three separate causes had to
+  be found before one login worked. **nginx inherits `proxy_set_header` from an outer level only when
+  the inner level defines none of its own** — so the two WebSocket locations, which set
+  `Upgrade`/`Connection`, silently discarded all four forwarded headers from the server block; `Host`
+  fell back to `$proxy_host`, the upstream NAME, and OIDC built `redirect_uri` as
+  `http://orchestrator:8080/...`, which no realm can match. `$host` then dropped the port, and
+  Quarkus was not honouring `X-Forwarded-Host` at all (`enable-forwarded-host: true`, which
+  `proxy-address-forwarding` does **not** imply). The callback that finally reached the service
+  answered a bare **502**: an operator session is several large `Set-Cookie` headers and nginx's
+  4k/8k default is smaller, so the service logged nothing because it had answered correctly — and the
+  same session returns on ONE `Cookie:` request header, which needed `large_client_header_buffers`
+  raised with it or the fix held in one direction only.
+  - **The template no longer re-states the headers per location; no location sets any header at all.**
+    `Connection` comes from a `map $http_upgrade` (a literal `upgrade` on the server block would be
+    sent to every `/webhooks` and `/wk` request), so all six headers can live on the server block and
+    the inheritance trap cannot fire. Re-stating the list per location also works and is what shipped
+    first — it leaves the trap armed for the next location someone adds.
+  - **The invariant that was supposed to catch this passed the regression it was written for.**
+    Neither half was scope-anchored: a file-wide grep for `$http_host` was satisfied by a location,
+    and an awk block-scanner asked only whether a location *mentioned* `Host`, not its value — so
+    deleting `X-Forwarded-Proto` from `location /api` left it green, and that regression breaks
+    **only** behind a TLS-terminating Ingress where a plaintext compose run stays green. It is now
+    two assertions with no brace counting: the server block must carry all six headers **with their
+    exact values**, and nothing from the first `location` onwards may carry a `proxy_set_header` at
+    all. Both are mutation-verified by `--self-test` breaks 4 and 5, whose absence is why the
+    rewritten check shipped unverified by the very mechanism `render.sh` exists to provide.
+  - **`enable-forwarded-host` made the client's `Host` reach `redirect_uri` for the first time**, and
+    the proxy is the default server, so it forwards any `Host` sent. The realm's registered-URI list
+    was the only thing rejecting a spoofed one — load-bearing, exact-match in the shipped realm, and
+    documented nowhere. `SPIRE_PUBLIC_HOST` now pins it. **Pinning by rewrite, not by rejection:** a
+    444 on mismatch would take out the kubelet probe (which addresses the pod IP), the container's own
+    health check and any operator reaching the stack by another name. Matching is an exact,
+    case-insensitive map key rather than a regex — a regex needs its dots escaped to pin anything, and
+    the escaped pattern is then what gets forwarded on the mismatch path, which is not a hostname.
+    Empty (the default, and what every deploy artifact renders) forwards the request's own `Host`, so
+    the chart's rendered manifests are byte-identical with the value unset.
+  - **`isForwardingSafe` checked presence, not width** — `SPIRE_TRUSTED_PROXIES=0.0.0.0/0` started
+    cleanly and re-opened everything the trust gate protects, which matters more now that a forged
+    `Host` is one of the things that gate stops. Refused by prefix length, because `10.0.0.0/0` is
+    just as wide as the two well-known spellings.
+  - `deploy/e2e.sh`'s new redirect check prefix-matched the origin, so `http://localhost:34700.evil.example/...`
+    passed — the same "does the expected string appear" shape as the nginx guard it was written
+    alongside. It now compares the whole callback URL, anchors the extraction to `[?&]redirect_uri=`
+    (`post_logout_redirect_uri` was also matching) and decodes lower-case percent escapes.
+  - **The proxy buffer sizes are asserted by nothing, deliberately and now on the record** —
+    reproducing them needs a real chunked session from a live IdP, which neither script has;
+    `techdebt/global/4-3-proxy-buffer-sizing-is-unverified-by-any-check.md`.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
