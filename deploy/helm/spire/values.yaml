@@ -81,6 +81,15 @@ oidc:
 # its apparent client address. Nothing else is exposed, which is what makes this meaningful.
 trustedProxies: ""
 
+# The host[:port] the browser addresses the dashboard on — normally ingress.host. Empty means
+# unpinned, which is the shipped default because nothing in a chart can know the name an operator
+# will use. Set, it stops a spoofed Host header reaching the OIDC redirect_uri the services build
+# from it: the proxy forwards this value instead of the request's own. Rejecting the request was the
+# alternative and would have taken the pod's own liveness probe with it, since a kubelet probe
+# addresses the pod IP. The realm's registered-URI list is the only other thing standing there, so
+# this matters most on a realm that was given a wildcard redirect URI.
+publicHost: ""
+
 ingress:
   enabled: true
   className: ""

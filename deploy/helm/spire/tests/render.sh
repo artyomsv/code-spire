@@ -116,8 +116,15 @@ check_manifests() {
 check_repo_config() {
     local conf; conf="$(cat "$NGINX")"
 
-    # 6 — the nginx template: every prefix routed, /webhooks before the SPA fallback, both sockets
-    # upgrading, Host preserved, and X-Forwarded-Proto NOT derived from $scheme.
+    # 6 — the nginx template: every prefix routed, /webhooks before the SPA fallback, the six proxied
+    # headers set on the server block with the right values and set NOWHERE else, an unpinned Host
+    # forwarded with its port, Connection answered per request, and X-Forwarded-Proto NOT derived
+    # from $scheme.
+    #
+    # Not covered here, deliberately: the proxy buffer sizes. They only manifest against a real
+    # chunked OIDC session cookie, which needs a completed login round-trip through a live identity
+    # provider — neither this script nor deploy/e2e.sh performs one. Tracked in techdebt/global/,
+    # not silently omitted.
     local prefix
     for prefix in '/webhooks' '/api' '/gw' '/wk'; do
         if printf '%s' "$conf" | grep -q "location $prefix"; then
@@ -133,18 +140,69 @@ check_repo_config() {
         pass 'X-Forwarded-Proto passes an upstream value through'
     fi
 
-    if printf '%s' "$conf" | grep -qE 'proxy_set_header +Host +\$host'; then
-        pass 'Host is preserved'
+    # The six proxied headers, asserted BY VALUE and BY SCOPE — and the scope half is the point.
+    #
+    # nginx inherits proxy_set_header from an outer level only when the inner level defines none of
+    # its own, so a single proxy_set_header inside a location silently discards all six at once:
+    # Host falls back to $proxy_host, the upstream NAME, and redirect_uri points at a backend port
+    # no realm can match. That is what shipped. The rule the template keeps is therefore "the server
+    # block sets all six, no location sets any", and these are its two halves — everything before
+    # the first location must carry each header with its exact value, and nothing from the first
+    # location onwards may carry a proxy_set_header at all.
+    #
+    # By value, because names alone let the regression through: an earlier form asked only whether a
+    # location mentioned Host, so dropping X-Forwarded-Proto passed — and a service then derives the
+    # scheme from its own connection, minting an http:// redirect_uri behind a TLS Ingress and
+    # breaking ONLY there. Neither half is a file-wide grep either: with the scope unanchored, the
+    # right value anywhere in the file satisfied a check about the server block.
+    local server_scope after_locations set_here header
+    server_scope="$(printf '%s' "$conf" | sed -n '/^server {/,/^[[:space:]]*location[[:space:]]/p')"
+    after_locations="$(printf '%s' "$conf" | sed -n '/^[[:space:]]*location[[:space:]]/,$p')"
+    set_here="$(printf '%s' "$server_scope" | grep -E '^[[:space:]]*proxy_set_header' \
+        | sed 's/;[[:space:]]*$//; s/^[[:space:]]*//; s/[[:space:]][[:space:]]*/ /g')"
+    for header in \
+        'Host $spire_host' \
+        'X-Forwarded-Host $spire_host' \
+        'X-Forwarded-Proto $spire_fwd_proto' \
+        'X-Forwarded-For $proxy_add_x_forwarded_for' \
+        'Upgrade $http_upgrade' \
+        'Connection $spire_conn'; do
+        if printf '%s\n' "$set_here" | grep -qxF "proxy_set_header $header"; then
+            pass "the server block sets $header"
+        else
+            fail "the server block does not set '$header' — every location inherits that gap"
+        fi
+    done
+
+    local leaked
+    leaked="$(printf '%s' "$after_locations" | grep -E '^[[:space:]]*proxy_set_header' \
+        | sed 's/^[[:space:]]*//' | tr '\n' ' ')"
+    if [ -z "$leaked" ]; then
+        pass 'no location sets a header of its own, so all six inherit everywhere'
     else
-        fail 'Host is not preserved — redirect_uri would point at a backend port'
+        fail "a location sets its own header, which discards all six from the server block: $leaked"
     fi
 
-    local upgrades
-    upgrades="$(printf '%s' "$conf" | grep -c 'proxy_set_header Upgrade')"
-    if [ "$upgrades" -ge 2 ]; then
-        pass "WebSocket upgrade on both socket prefixes ($upgrades)"
+    # $host drops the port, so a dashboard on any port but 80 would produce a callback the realm
+    # cannot match; $http_host carries it. That value now reaches Host through the pinning maps, so
+    # this reads the fallback arm — the one every deployment that does not set SPIRE_PUBLIC_HOST
+    # takes. Passing this with $host is how the packaged stack shipped a login that worked on port
+    # 80 alone.
+    local host_map conn_map
+    host_map="$(printf '%s' "$conf" | sed -n '/^map \$spire_pinned_host \$spire_host {/,/^}/p')"
+    if printf '%s' "$host_map" | grep -qF '$http_host;'; then
+        pass 'an unpinned Host is forwarded with its port'
     else
-        fail "expected upgrade headers on /api and /gw, found $upgrades"
+        fail 'an unpinned Host is not forwarded with its port — the callback would drop it'
+    fi
+
+    # Connection is answered per request. A literal "upgrade" on the server block would be sent on
+    # EVERY request, /webhooks and /wk included, telling them to switch protocols for nothing.
+    conn_map="$(printf '%s' "$conf" | sed -n '/^map \$http_upgrade \$spire_conn {/,/^}/p')"
+    if printf '%s' "$conn_map" | grep -q 'default upgrade;' && printf '%s' "$conn_map" | grep -q 'close;'; then
+        pass 'Connection upgrades only when the request does'
+    else
+        fail 'Connection is not mapped from $http_upgrade — a literal would reach every request'
     fi
 
     local webhook_line spa_line
@@ -218,6 +276,35 @@ self_test() {
         pass 'self-test: a $scheme-derived X-Forwarded-Proto is caught'
     else
         fail 'self-test: a $scheme-derived X-Forwarded-Proto was NOT caught'
+        broken=1
+    fi
+    cp "$saved" "$NGINX"
+
+    # Break 4: a location acquires a header of its own — the exact shape that shipped, since a
+    # WebSocket location is where Upgrade wants to live. It must fail the SCOPE half, because the
+    # server block's other five headers stop reaching that location the moment this one line exists.
+    cp "$NGINX" "$saved"
+    awk '{ print; if ($0 ~ /proxy_pass \$spire_worker;/) print "        proxy_set_header Upgrade $http_upgrade;" }' \
+        "$saved" > "$NGINX"
+    FAILED=0; check_repo_config >/dev/null 2>&1
+    if [ "$FAILED" -ne 0 ]; then
+        pass 'self-test: a location setting a header of its own is caught'
+    else
+        fail 'self-test: a location setting a header of its own was NOT caught'
+        broken=1
+    fi
+    cp "$saved" "$NGINX"
+
+    # Break 5: the server block keeps Host and loses X-Forwarded-Proto. The VALUE half must fail —
+    # the previous form of this check tracked Host alone, so this regression passed it, and it
+    # breaks only behind a TLS-terminating Ingress where a plaintext compose run stays green.
+    cp "$NGINX" "$saved"
+    grep -v 'proxy_set_header X-Forwarded-Proto' "$saved" > "$NGINX"
+    FAILED=0; check_repo_config >/dev/null 2>&1
+    if [ "$FAILED" -ne 0 ]; then
+        pass 'self-test: dropping one of the four forwarded headers is caught'
+    else
+        fail 'self-test: dropping X-Forwarded-Proto was NOT caught'
         broken=1
     fi
     cp "$saved" "$NGINX"

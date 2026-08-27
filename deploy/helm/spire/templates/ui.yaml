@@ -44,6 +44,13 @@ spec:
               value: http://spire-gateway:8080
             - name: SPIRE_WORKER_URL
               value: http://spire-worker:8080
+            {{- with .Values.publicHost }}
+            # Pins the Host the proxy forwards, which is what OIDC builds redirect_uri from. Omitted
+            # entirely when unset, so the image's own empty default applies and every Host is
+            # forwarded as sent — including the pod IP a kubelet probe addresses.
+            - name: SPIRE_PUBLIC_HOST
+              value: {{ . | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

@@ -204,6 +204,10 @@ spire:
         # Without this the service sees the proxy's address rather than the client's, and OIDC derives
         # redirect_uri from the wrong host. Nothing in dev needed it: Vite forwards no X-Forwarded-*.
         proxy-address-forwarding: true
+        # Paired with the line above and equally required: proxy-address-forwarding alone honours
+        # X-Forwarded-For and -Proto but NOT -Host, so OIDC still derived redirect_uri from this
+        # service's own bind address (http://orchestrator:8080/...) and no realm could match it.
+        enable-forwarded-host: true
         # Paired deliberately. docs/D10-AUTH-PLAN.md records the setting above as a header-spoofing
         # vector while service ports stay directly reachable — unpaired, anything that can reach this
         # port forges X-Forwarded-For and -Proto. No deploy artifact publishes a service port, and
