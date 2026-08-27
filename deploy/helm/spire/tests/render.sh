@@ -133,10 +133,34 @@ check_repo_config() {
         pass 'X-Forwarded-Proto passes an upstream value through'
     fi
 
-    if printf '%s' "$conf" | grep -qE 'proxy_set_header +Host +\$host'; then
-        pass 'Host is preserved'
+    # $host drops the port, so a dashboard on any port but 80 would produce a callback the realm
+    # cannot match; $http_host carries it. Checked as a rejection too: passing this with $host is
+    # how the packaged stack shipped a login that only worked on port 80.
+    if printf '%s' "$conf" | grep -qE 'proxy_set_header +Host +\$http_host'; then
+        pass 'Host is preserved with its port'
     else
-        fail 'Host is not preserved — redirect_uri would point at a backend port'
+        fail 'Host is not preserved with its port — the callback would drop it'
+    fi
+
+    # And it must be set in EVERY location that sets any header of its own. nginx inherits
+    # proxy_set_header from an outer level only when the inner level defines none, so a location
+    # adding Upgrade/Connection for a WebSocket silently discards Host, X-Forwarded-Proto and
+    # -For — Host then falls back to $proxy_host, the upstream NAME, and redirect_uri points at a
+    # backend port. That is precisely what shipped: the previous form of this assertion passed
+    # because it only asked whether the directive existed somewhere in the file.
+    missing="$(printf '%s' "$conf" | awk '
+        /^[[:space:]]*location[[:space:]]/ { loc = $0; sub(/^[[:space:]]*/, "", loc); sets = 0; host = 0; depth = 1; next }
+        loc != "" {
+            if ($0 ~ /proxy_set_header/) { sets = 1 }
+            if ($0 ~ /proxy_set_header[[:space:]]+Host[[:space:]]/) { host = 1 }
+            n = gsub(/\{/, "{"); m = gsub(/\}/, "}"); depth += n - m
+            if (depth <= 0) { if (sets && !host) print loc; loc = "" }
+        }
+    ')"
+    if [ -z "$missing" ]; then
+        pass 'every header-setting location re-states Host'
+    else
+        fail "a location sets headers but not Host, so it inherits none: $(printf '%s' "$missing" | tr '\n' ' ')"
     fi
 
     local upgrades
