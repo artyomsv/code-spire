@@ -18,6 +18,23 @@ pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; FAILED=1; }
 
 # check <name> <expected> <curl args...>
+# The login redirect is only useful if the redirect_uri inside it is reachable by the browser and
+# registered with the realm. Asserting the 302 alone passed for months while every service sent its
+# own container address (http://orchestrator:8080/...), because nginx locations that set any
+# proxy_set_header stop inheriting the ones on the server block and Host falls back to $proxy_host.
+check_redirect_origin() {
+    local name="$1" url="$2" want="$3"
+    local location redirect
+    location="$(curl -s -o /dev/null -D - --max-time 20 "$url" | tr -d "\r" | sed -n "s/^[Ll]ocation: //p")"
+    redirect="$(printf "%s" "$location" | sed -n "s/.*redirect_uri=\([^&]*\).*/\1/p" \
+                 | sed "s/%3A/:/g; s/%2F/\//g")"
+    case "$redirect" in
+        "$want"*) pass "$name ($redirect)" ;;
+        "")       fail "$name — no redirect_uri in the login redirect" ;;
+        *)        fail "$name — redirect_uri is $redirect, not on $want" ;;
+    esac
+}
+
 check() {
     local name="$1" expected="$2"; shift 2
     local actual
@@ -54,6 +71,9 @@ check "health is public"             200 "$BASE/q/health"
 check "api needs a session"          302 "$BASE/api/reviews"
 check "gateway login endpoint"       302 "$BASE/gw/auth/login"
 check "worker login endpoint"        302 "$BASE/wk/auth/login"
+check_redirect_origin "api callback is on the public origin"     "$BASE/api/auth/login" "$BASE"
+check_redirect_origin "gateway callback is on the public origin" "$BASE/gw/auth/login"  "$BASE"
+check_redirect_origin "worker callback is on the public origin"  "$BASE/wk/auth/login"  "$BASE"
 
 echo "== tokens =="
 API_V="$(token spire-orchestrator  "${SPIRE_OIDC_ORCHESTRATOR_SECRET:?required}" dev-viewer   "${DEV_VIEWER_PASSWORD:?required}")"
