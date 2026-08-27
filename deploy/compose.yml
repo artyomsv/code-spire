@@ -181,6 +181,10 @@ services:
       SPIRE_ORCHESTRATOR_URL: http://orchestrator:8080
       SPIRE_GATEWAY_URL: http://gateway:8080
       SPIRE_WORKER_URL: http://worker:8080
+      # Empty means unpinned: the Host the browser sent is forwarded as-is, which is how this stack
+      # answers on localhost, a LAN address and a container name alike. Set it to the host[:port]
+      # operators actually use and a spoofed Host can no longer reach the OIDC redirect_uri.
+      SPIRE_PUBLIC_HOST: ${SPIRE_PUBLIC_HOST:-}
     ports:
       - "${SPIRE_UI_PORT:-34700}:8080"
     restart: unless-stopped

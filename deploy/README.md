@@ -48,7 +48,8 @@ To build from a checkout instead of pulling published images, use `deploy/compos
 
 **No service port is published, deliberately.** The services trust `X-Forwarded-For` and `-Proto` in
 production, so anything able to reach one directly could forge its apparent client address. They
-refuse to start unless `SPIRE_TRUSTED_PROXIES` names who may be believed.
+refuse to start unless `SPIRE_TRUSTED_PROXIES` names who may be believed — and a zero-length prefix
+(`0.0.0.0/0`, `::/0`) is refused alongside an empty value, since naming everyone is not an answer.
 
 ### Why the dashboard is also the proxy
 
@@ -61,6 +62,14 @@ origin. Two consequences worth knowing before changing anything:
   cookie paths are absolute. There is no sub-path deployment.
 - **`/webhooks` must route to the gateway.** Without that route an SCM delivery reaches the SPA
   fallback instead, every delivery fails, and no review ever starts.
+- **The Host header decides where login goes.** The services derive their OIDC `redirect_uri` from
+  it, and the proxy answers to any Host it is sent, so a request carrying a forged one produces a
+  login redirect pointing at the forger's origin. Set **`SPIRE_PUBLIC_HOST`** to the `host[:port]`
+  operators actually use (`spire.example.com`, `localhost:34700`) and the proxy forwards that instead
+  of what arrived. It is optional and empty by default — nothing shipped here can know the name you
+  will use — and setting it breaks nothing that reaches the stack under another name: those requests
+  are served, with the pinned host forwarded, rather than rejected. In Kubernetes it is the chart's
+  `publicHost` value, normally the same as `ingress.host`.
 
 ## The four secrets
 
@@ -109,7 +118,11 @@ Point `SPIRE_OIDC_AUTH_SERVER_URL` at it and drop the `keycloak` service. The re
 
 - **Three confidential clients** — `spire-orchestrator`, `spire-gateway`, `spire-review-worker` —
   each with an **audience mapper**, or login fails with *"No Audience (aud) claim present"*.
-- Redirect URIs `<origin>/api/auth/callback`, `<origin>/gw/auth/callback`, `<origin>/wk/auth/callback`.
+- Redirect URIs `<origin>/api/auth/callback`, `<origin>/gw/auth/callback`, `<origin>/wk/auth/callback`
+  — **exact hosts, never a wildcard.** That list is load-bearing, not paperwork: `redirect_uri` is
+  built from the request's Host header, so an entry like `https://*.example.com/*` accepts one built
+  from a forged Host and hands the authorization code — an operator session — to whoever forged it.
+  Pin `SPIRE_PUBLIC_HOST` as well and the forged Host never reaches the service in the first place.
 - **Two realm roles**, `spire-viewer` and `spire-admin`, readable from the **access** token. Reading
   them from the ID token yields an operator with no roles, and every endpoint then denies.
 

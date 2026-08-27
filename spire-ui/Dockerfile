@@ -30,11 +30,19 @@ LABEL org.opencontainers.image.title="spire-ui" \
 # environment-specific URLs — and every deploy artifact overrides them.
 # NGINX_ENTRYPOINT_LOCAL_RESOLVERS is the opt-in switch for 15-local-resolvers.envsh, which returns
 # early without it; only when set does it export NGINX_LOCAL_RESOLVERS for the filter to pick up.
+#
+# SPIRE_PUBLIC_HOST pins the origin OIDC builds redirect_uri from. Empty means unpinned, which is
+# what every deploy artifact here relies on — a compose stack answers on localhost, a LAN address and
+# a container name alike, and a Kubernetes probe addresses the pod IP. Set it to the host[:port] the
+# browser uses to stop a spoofed Host reaching the login redirect. Declared even though it is empty:
+# the entrypoint substitutes only variables that are DEFINED, so leaving it out would put the literal
+# ${SPIRE_PUBLIC_HOST} into the config and nginx would refuse to start. See nginx/default.conf.template.
 ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
     NGINX_ENVSUBST_FILTER='^(SPIRE_|NGINX_LOCAL_RESOLVERS)' \
     SPIRE_ORCHESTRATOR_URL=http://orchestrator:8080 \
     SPIRE_GATEWAY_URL=http://gateway:8080 \
-    SPIRE_WORKER_URL=http://worker:8080
+    SPIRE_WORKER_URL=http://worker:8080 \
+    SPIRE_PUBLIC_HOST=
 
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html

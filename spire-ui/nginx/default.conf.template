@@ -18,6 +18,43 @@ map $http_x_forwarded_proto $spire_fwd_proto {
     ''      $scheme;
 }
 
+# Connection is a per-request answer, never a literal. The upgrade pair is set on the server block
+# (see below), so a literal "upgrade" there would be sent on EVERY request — /webhooks and /wk
+# included, which never upgrade and would be told to switch protocols for nothing.
+map $http_upgrade $spire_conn {
+    default upgrade;
+    ''      close;
+}
+
+# The public origin, pinned.
+#
+# This is the default server, so nginx accepts ANY Host, forwards it, and the services — which honour
+# X-Forwarded-Host in prod — build redirect_uri from it. The only thing then rejecting a spoofed Host
+# is the realm's registered-URI list. That list is exact-match in the shipped realm, but one operator
+# writing the common https://*.example.com/* shortcut turns a spoofed Host into an authorization code
+# delivered to an attacker's origin, which is an operator session.
+#
+# SPIRE_PUBLIC_HOST is that origin's host[:port] exactly as the browser addresses it. A request whose
+# Host does not match it is not rejected — it is proxied with the PINNED host instead, so nothing
+# that legitimately reaches this port under another name breaks: a Kubernetes probe addressing the
+# pod IP, a compose stack reached over the LAN, an operator on localhost. Rejecting would have broken
+# all three to close the same sink, and would have taken the container's own health check with it.
+#
+# Empty is the default and means unpinned — every deploy artifact here relies on that, because none
+# of them can know the name an operator will use. Matching is exact and case-insensitive rather than
+# a regex: a regex needs its dots escaped to be a pin at all (spire.example.com otherwise matches
+# spireXexampleXcom), and the escaped form is then what gets forwarded on the mismatch path, which is
+# not a hostname. The two maps are one decision: the first names the pin and blanks it on a match,
+# the second reads that blank as "forward what the browser sent".
+map $http_host $spire_pinned_host {
+    default                "${SPIRE_PUBLIC_HOST}";
+    "${SPIRE_PUBLIC_HOST}" "";
+}
+map $spire_pinned_host $spire_host {
+    default $spire_pinned_host;
+    ''      $http_host;
+}
+
 server {
     listen 8080;
     server_name _;
@@ -41,10 +78,26 @@ server {
     # An SCM webhook body for a large pull request.
     client_max_body_size 25m;
 
-    # Host is NEVER rewritten: OIDC derives redirect_uri from it, so rewriting sends the login
-    # round-trip to a backend port instead of this origin. vite.config.ts documents the same trap.
-    proxy_set_header Host              $http_host;
-    proxy_set_header X-Forwarded-Host  $http_host;
+    # EVERY proxied header lives here, and NO location below sets one of its own.
+    #
+    # That is the rule, not a formatting preference: nginx inherits proxy_set_header from an outer
+    # level ONLY when the inner level defines none. A single proxy_set_header inside a location
+    # therefore discards all six of these at once — which is exactly what shipped. The two socket
+    # locations set Upgrade/Connection, so Host fell back to $proxy_host, the upstream NAME, OIDC
+    # built redirect_uri as http://orchestrator:8080/... which no realm can match, and neither
+    # X-Forwarded-Proto nor -For reached the service at all. Re-stating the list inside each location
+    # fixes that but leaves the trap armed for the next one; setting nothing per location disarms it.
+    # tests/render.sh asserts both halves — these values here, and no proxy_set_header below.
+    #
+    # Host carries the ORIGIN THE BROWSER USED, with its port: OIDC derives redirect_uri from it, so
+    # $host (which drops the port) would produce a callback no realm entry matches on any port but
+    # 80, and $proxy_host would send the login round-trip to a backend. vite.config.ts documents the
+    # same trap. $spire_host is that Host, pinned to SPIRE_PUBLIC_HOST when one is set — map above.
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade           $http_upgrade;
+    proxy_set_header Connection        $spire_conn;
+    proxy_set_header Host              $spire_host;
+    proxy_set_header X-Forwarded-Host  $spire_host;
     proxy_set_header X-Forwarded-Proto $spire_fwd_proto;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
 
@@ -78,19 +131,6 @@ server {
     # prefix, one cookie-path and one policy rule cover the whole service.
     location /api {
         proxy_pass $spire_orchestrator;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        # nginx inherits proxy_set_header from an outer level ONLY when the inner level defines
-        # none of its own. The two lines above therefore discard every header set on the server
-        # block, and Host silently falls back to $proxy_host -- the upstream NAME -- so OIDC built
-        # redirect_uri as http://orchestrator:8080/... which no realm can match, and neither
-        # X-Forwarded-Proto nor -For reached the service at all. Re-stated here, not relocated:
-        # the server block still serves the locations that set no headers of their own.
-        proxy_set_header Host              $http_host;
-        proxy_set_header X-Forwarded-Host  $http_host;
-        proxy_set_header X-Forwarded-Proto $spire_fwd_proto;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         # nginx defaults to 60s, which would cut the idle timeline and attention sockets and produce
         # reconnect churn the dashboard reports as an outage.
         proxy_read_timeout 3600s;
@@ -99,19 +139,6 @@ server {
     # The gateway owns /gw — its webhook-repo registry API and its attention socket.
     location /gw {
         proxy_pass $spire_gateway;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        # nginx inherits proxy_set_header from an outer level ONLY when the inner level defines
-        # none of its own. The two lines above therefore discard every header set on the server
-        # block, and Host silently falls back to $proxy_host -- the upstream NAME -- so OIDC built
-        # redirect_uri as http://orchestrator:8080/... which no realm can match, and neither
-        # X-Forwarded-Proto nor -For reached the service at all. Re-stated here, not relocated:
-        # the server block still serves the locations that set no headers of their own.
-        proxy_set_header Host              $http_host;
-        proxy_set_header X-Forwarded-Host  $http_host;
-        proxy_set_header X-Forwarded-Proto $spire_fwd_proto;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_read_timeout 3600s;
     }
 
