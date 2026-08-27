@@ -59,6 +59,13 @@ server {
     proxy_buffers         8 16k;
     proxy_busy_buffers_size 32k;
 
+    # The same session on the way back, and the same silence if it does not fit. A browser
+    # concatenates every q_session_chunk_* cookie into ONE Cookie: request header, so the session
+    # sized above returns on a line the 4k/8k default caps at 8k -- nginx then answers a bare 400
+    # before the request reaches any service, and the service logs nothing because it never saw it.
+    # Both directions have to be raised together or the fix only holds on one of them.
+    large_client_header_buffers 4 32k;
+
     # SCM ingress. MUST precede the SPA fallback: a delivery that fell through to try_files would be
     # answered 200 with index.html, so the SCM records a successful delivery, never retries, and the
     # review is lost with nothing logged anywhere. The gateway's own policy makes /webhooks/* public
