@@ -7,12 +7,22 @@
 #
 # --auto merges only once required checks pass, so ci.yml still gates every one of these.
 #
-# **The approval is not optional, and its absence is silent.** Branch protection requires an
-# approving review, and --auto does not supply one: a PR with auto-merge armed and no approval waits
-# forever, reporting mergeStateStatus BLOCKED rather than any kind of failure. An earlier version of
-# this file carried a step *named* "Approve and enable auto-merge" that only enabled auto-merge, and
-# the result was eleven dependabot PRs sitting green and unmerged with nothing anywhere saying why.
-# The two halves belong in one step so they cannot drift apart again.
+# **Approval cannot come from GITHUB_TOKEN, and the platform refuses it outright:**
+#
+#     GraphQL: GitHub Actions is not permitted to approve pull requests. (addPullRequestReview)
+#
+# That is not a permissions setting to widen — it is a rule about the default token, and no value of
+# `permissions:` changes it. It matters because branch protection requires an approving review and
+# `gh pr merge --auto` does not supply one, so an armed PR waits forever reporting BLOCKED rather
+# than any kind of failure. An earlier version of this file carried a step *named* "Approve and
+# enable auto-merge" that only enabled auto-merge, and eleven dependabot PRs duly accumulated green
+# and unmerged with nothing anywhere saying why.
+#
+# So approval needs a token belonging to a person: an optional repository secret,
+# DEPENDABOT_APPROVE_TOKEN — a fine-grained PAT scoped to this repository with Pull requests: write.
+# Without it this job still arms auto-merge and the PR merges the moment a human approves; the only
+# thing lost is the last manual step. Absence is reported as a notice, never as a failure, because a
+# red check on every dependabot PR is worse than the silent wait it replaced.
 name: dependabot-auto-merge
 
 on: pull_request_target
@@ -39,13 +49,19 @@ jobs:
              steps.meta.outputs.update-type == 'version-update:semver-minor') ||
             steps.meta.outputs.update-type == 'version-update:semver-patch'
           )
-        # Approve first: --auto is a no-op on a PR that is already mergeable, so approving second
-        # would leave the PR waiting for the next check event to re-evaluate. Both commands are
-        # idempotent, so a re-run on a synchronize event is harmless.
+        # One step, one `if`. Splitting approve and arm into two steps would duplicate that condition,
+        # and two copies of an admission rule are free to drift — which is the whole failure this file
+        # already documents once. Approve runs first because --auto is a no-op on a PR that is already
+        # mergeable, so the reverse order would leave it waiting for the next check event.
         run: |
-          gh pr review --approve "$PR_URL" \
-            --body "Auto-approved: ${{ steps.meta.outputs.package-ecosystem }} ${{ steps.meta.outputs.update-type }}, within the maintenance classes dependabot-auto-merge.yml admits."
+          if [ -n "$APPROVE_TOKEN" ]; then
+            GH_TOKEN="$APPROVE_TOKEN" gh pr review --approve "$PR_URL" \
+              --body "Auto-approved: ${{ steps.meta.outputs.package-ecosystem }} ${{ steps.meta.outputs.update-type }}, within the maintenance classes dependabot-auto-merge.yml admits."
+          else
+            echo "::notice::DEPENDABOT_APPROVE_TOKEN is not set. Auto-merge is armed, but branch protection will hold this PR until a human approves it."
+          fi
           gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPROVE_TOKEN: ${{ secrets.DEPENDABOT_APPROVE_TOKEN }}
