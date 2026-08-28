@@ -650,6 +650,14 @@ does not exist yet. Operator decides.
   not authorize rung 2**: it begins only after the measurement fixed in spec §9 — re-run reviewed PRs
   with and without code context and diff the findings; ships only if at least one new finding is
   judged correct by the operator and false positives do not increase. Failing that bar stops P3 here.
+
+  **First attempt, 2026-08-28: not run, and the reason was not the corpus.** Reviewing four real
+  merged PRs found that the deployment could not produce a review of any of them — a reasoning model
+  spent the whole 4096-token output default on thinking and returned nothing, twice, on two different
+  models. Both arms would have reported zero findings, which under the rule above is a **null result
+  that stops rung 2** — a measurement whose real subject was a token cap. The four defects behind it
+  are fixed (see CLAUDE.md, 2026-08-28); the gate itself still has to be run, and the harness that
+  runs it is unchanged. Nothing here is evidence for or against rung 2 yet.
 - **Exit:** reviews reference code elsewhere in the repo, not just the diff. Mechanically true of
   rung 1 — a `CODE_SNIPPET` item can name a file the diff never touched. Whether that reference makes
   a review *better* is a separate, unproven claim, which is exactly what the evidence gate above tests

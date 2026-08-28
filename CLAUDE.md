@@ -885,6 +885,52 @@ The design is fully specified in `docs/` — **treat those files as the source o
   - **The proxy buffer sizes are asserted by nothing, deliberately and now on the record** —
     reproducing them needs a real chunked session from a live IdP, which neither script has;
     `techdebt/global/4-3-proxy-buffer-sizing-is-unverified-by-any-check.md`.
+- **The review output budget, and the ack threshold coupled to it (2026-08-28):** an attempt to run
+  ADR-026 §9's evidence measurement — re-review real PRs with and without code context — found that
+  the deployment could not review a real pull request at all, so the gate is **still unrun**. Four
+  defects, each verified live before being fixed:
+  - **A reasoning model spent its whole output budget thinking and returned nothing.**
+    `DEFAULT_MAX_OUTPUT_TOKENS` was 4096 and bounds *thinking plus reply together*, so on a
+    17k-input-token diff `claude-opus-5` and `claude-sonnet-5` each emitted exactly 4096 tokens and
+    produced no parseable review — charged 18.6¢ and 11.4¢ respectively. A 1.9k-token diff used 2106
+    by comparison, so the new 16384 is what a large diff needs rather than a guess; an operator who
+    wants another number still sets `max_tokens` on their provider.
+  - **Raising the cap only moved the failure onto a hardcoded 60s timeout** (`LangChain4jLlmProvider`,
+    three call sites, not configurable). It is now `spire.llm.timeout-seconds`, default 180, carried
+    on `LlmConfig` — the one field there that defaults, because it is an operational bound rather
+    than something only the operator can know.
+  - **That timeout equalled SmallRye's ack threshold, so a slow review killed the worker.** The
+    `commands-in` channel fails when one record goes unacknowledged for longer than
+    `throttled.unprocessed-record-max-age.ms`, whose default is *also* 60000: the slow call the LLM
+    budget explicitly permitted was the call that stalled the consumer, and because the record was
+    never acked it was **redelivered on every restart and stalled it again** — a poison pill that
+    survived restarts and needed a manual `rpk group seek` to clear, while the worker logged nothing
+    and the review sat in `reviewing`. The threshold is now 900000ms, and `LlmTimeoutBudget` **refuses
+    to start** when it does not exceed what one command may spend on its model calls. ADR-019 makes
+    that **two** calls per `GenerateReview` (reconcile then review), so a budget sized for one looks
+    generous and still stalls. The check declares the SmallRye default itself, so deleting the line
+    from `application.yml` is a refusal rather than a silent regression.
+  - **A review that produced nothing was indistinguishable from a clean one.** Zero findings is what
+    both write. `ReviewResult.degraded` (set by `FindingsParser` for an empty *or* unparseable
+    response) now rides to the orchestrator, which notes it and persists `review_status.degraded`
+    (**V35**) for a new `REVIEW_DEGRADED` attention row. Written on *every* outcome, not only when
+    true, so a later good run clears it — the panel's contract is that fixing the cause removes the
+    row, and a flag only ever set would have been its first permanently-lit one.
+
+  Two things worth carrying forward. **Adding a component to a wire record silently drops it at every
+  rebuild site**: both `ReviewWorker` sites re-listed components and still compiled, because the
+  shorter convenience constructors stayed valid — hence `withTruncated`/`withFindings` withers, which
+  enumerate the components once, next to the record. And **the contract snapshot did not notice the
+  change at all**, exactly as `techdebt/spire-contract/3-2-…` predicts: `ReviewResult` is nested
+  inside `ReviewGenerated`, and the golden never described its shape. Safe here (Jackson defaults a
+  missing boolean to false, and Kafka retention is short per ADR-014), but approved by nothing.
+  All six guards mutation-verified — break the production line, confirm exactly one test fails; the
+  first attempt at the reconcile-path guard **passed against its own mutation** because
+  `dropAnchorCollisions` returns early when no verdict is still open, so the test never reached the
+  rebuild it was written to protect.
+  Measured, not estimated: **1580 Java tests across 199 suites** (`testFast` + `testServices`);
+  `spire-ui` is untouched — the attention panel renders rows by `code: string` with no per-code
+  branch, so a new row needed no UI change.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
