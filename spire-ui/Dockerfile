@@ -3,7 +3,9 @@
 # The dashboard image: static assets AND the reverse proxy that puts all four services on one origin.
 # That proxy is what makes ADR-022's cookie-path scoping real in a packaged run — see
 # nginx/default.conf.template for why each rule is the way it is.
-FROM node:24-alpine AS build
+# Build stage only — nothing from this line survives into the shipped image, but ci.yml's dashboard
+# job pins the same major so the tsc/vitest/vite run that gates a PR uses the runtime that builds it.
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

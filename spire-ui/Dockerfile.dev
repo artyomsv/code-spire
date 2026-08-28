@@ -4,8 +4,11 @@
 # `docker compose watch` streams src changes in. Node's inspector is exposed for
 # debugging the dev server (NODE_OPTIONS=--inspect is set in docker-compose.dev.yml).
 #
-# Node 24 is the active LTS line (Krypton) and satisfies Vite 8's engine floor.
-FROM node:24-alpine
+# Node 26 satisfies Vite 8's engine floor. It is the Current line until 2026-10-28, when it enters
+# LTS; Node 24 (Krypton) is supported until 2028-04-30, so this moved early rather than out of
+# necessity. ci.yml's dashboard job pins the same major on purpose — CI has to test the runtime the
+# image actually ships, and the docker ecosystem only rewrites FROM lines.
+FROM node:26-alpine
 
 WORKDIR /app
 
