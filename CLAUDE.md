@@ -967,8 +967,41 @@ The design is fully specified in `docs/` — **treat those files as the source o
   turned an un-overridden `setNote` on a saga test fake into a live `DataSource` call — the exact
   shape that fake's own `recordCharges` comment already warned about.
 
-  Measured, not estimated: **1607 Java tests across 202 suites** (`testFast` 622/77 + `testServices`
-  — gateway 73/11, orchestrator 704/89, worker 208/25); **383 `spire-ui` vitest tests across 52
+
+  **Then run against real GitHub before merge, which found three more — every one of them in the UI,
+  and none reachable from a test suite.** The headline fix was confirmed first: the same pull request
+  that twice returned nothing now reviews at `out=5201` for two real findings, so the old 4096 cap was
+  cutting it off about 1100 tokens short of an answer. The consumer also stayed Stable with lag 0 and
+  an empty DLQ across several calls far longer than the old 60s ceiling — the workload that used to
+  kill the channel. Forcing a real cut-off (a low `max_tokens` against a live model) then lit the whole
+  chain: `finish_reason` → `outputCapped` → `degraded` → `V35` → note → attention row → list.
+  - **The outcome badge still said "Passed", in green, beside "no output".** `outcomeBadge` keys on
+    `findings === 0`, which is what a clean pass writes too. The most prominent cell on the row
+    asserted a successful outcome for a review that never happened. The findings cell now renders
+    `—` and the badge says *No result*, matching how `failed` / `cancelled` / `refused` already
+    split that job between the two columns.
+  - **The chip counts stopped adding up** — `Completed 32 + Needs attention 2` against 33 rows. Each
+    count was its own predicate rather than `matchesChip`, so they drifted the moment a status
+    stopped mapping to one chip. All five now derive from the filter itself. The invariant test
+    written alongside caught a second, subtler one: `needsAttention` was ungated, so a review being
+    re-reviewed *right now* was claimed by both Reviewing and Needs attention. It is gated on
+    `completed`, mirroring what the `REVIEW_DEGRADED` query already had to do for the same reason.
+  - **The detail page said "✓ clean — No issues found in this diff."** This is the `refused` incident
+    exactly, recurring for its structural cause: `STATUS_EXPLANATIONS` is keyed by status, so it
+    cannot see a condition that is not one — and the note explaining the run is rendered ONLY inside
+    the branch that lookup selects, so it was written, stored, sent over the wire and shown nowhere.
+    What made it invisible to `tsc` is worth keeping: the dashboard's `ReviewDetail` type DERIVES
+    from its `ReviewSummary` type, while the Java side is two independent records — so adding the
+    field to only one type-checks on both sides and arrives `undefined` at runtime, defaulting into
+    the reassuring branch. **A type system asserting a relationship the wire does not have.**
+
+  Also worth keeping for the runbook: the dev images BAKE their source, so `up -d` without `--build`
+  silently runs the old tree — the first startup check passed against code that did not contain the
+  guard being tested. And a hash-route navigation does not reload an SPA, so a screenshot after a
+  redeploy can be reporting the previous bundle.
+
+  Measured, not estimated: **1608 Java tests across 202 suites** (`testFast` 622/77 + `testServices`
+  — gateway 73/11, orchestrator 705/89, worker 208/25); **396 `spire-ui` vitest tests across 52
   files**; `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
