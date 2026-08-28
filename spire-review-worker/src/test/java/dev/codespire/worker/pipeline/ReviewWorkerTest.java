@@ -120,6 +120,8 @@ class ReviewWorkerTest {
     private int compareDiffFetches;
     private String reconcileResponse;
     private String reviewResponse;
+    /** Whether the fake provider reports having stopped at its output limit. */
+    private boolean reviewOutputCapped;
 
     @BeforeEach
     void setUp() {
@@ -134,6 +136,7 @@ class ReviewWorkerTest {
         compareDiffFetches = 0;
         reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"fixed\"}]}";
         reviewResponse = "{\"summary\":\"s\",\"findings\":[]}";
+        reviewOutputCapped = false;
 
         worker = new ReviewWorker();
         loggedPrompts = new CapturingPromptLog();
@@ -204,7 +207,8 @@ class ReviewWorkerTest {
                 llmCalls.add(prompt);
                 boolean isReconcile = prompt.user().contains("Prior findings");
                 String text = isReconcile ? reconcileResponse : reviewResponse;
-                return CompletableFuture.completedFuture(new Completion(text, ModelUsage.of("m", 1, 1)));
+                return CompletableFuture.completedFuture(new Completion(text, ModelUsage.of("m", 1, 1),
+                        !isReconcile && reviewOutputCapped));
             }
         });
     }
@@ -271,7 +275,7 @@ class ReviewWorkerTest {
     @Test
     void truncatedReviewMarksThePostedSummary() {
         var review = new ReviewResult(List.of(finding("src/A.java", 2)), "ok",
-                ModelUsage.of("m", 1, 1), true);
+                ModelUsage.of("m", 1, 1)).withTruncated(true);
         worker.postComments(new PostComments(REVIEW_ID, REPO, 9, COMMIT, review, null));
         assertInstanceOf(CommentsPosted.class, emitted.getLast());
         assertTrue(sink.summaryBody.contains("Partial review"),
@@ -874,6 +878,26 @@ class ReviewWorkerTest {
         reviewResponse = "";
         worker.generateReview(generateCommand(priorStillOpenAtDemo5()));
         assertTrue(lastReviewGenerated().result().degraded());
+    }
+    /**
+     * A response cut off at the output limit that STILL PARSES is the case raising the cap makes more
+     * likely, not less: a model with room to start answering gets cut off part-way rather than before
+     * it begins. Nothing about the JSON says it is incomplete — only the provider does.
+     */
+    @Test
+    void aResponseCutOffAtItsOutputLimitIsDegradedEvenThoughItParsed() {
+        reviewOutputCapped = true;
+        reviewResponse = """
+                {"summary":"s","findings":[
+                  {"path":"src/Demo.java","line":5,"endLine":5,"severity":"MAJOR","message":"real","suggestion":null}
+                ]}
+                """;
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
+
+        ReviewGenerated generated = lastReviewGenerated();
+        assertEquals(1, generated.result().findings().size(), "the findings it did produce are kept");
+        assertTrue(generated.result().degraded(),
+                "a partial finding set must not reach the orchestrator looking like a finished review");
     }
     private GenerateReview generateCommand(PriorRun prior) {
         return new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null, prior);

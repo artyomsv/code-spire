@@ -108,9 +108,12 @@ public class ReviewWorker {
     @ConfigProperty(name = "spire.scm.rate-limit-retry-cap-seconds", defaultValue = "120")
     long rateLimitRetryCapSeconds;
 
-    /** Ceiling on TOTAL inline-retry sleep across every finding in one postComments message —
-     *  keeps cumulative backoff comfortably under Kafka's max.poll.interval.ms (default 300s)
-     *  so a run of rate-limited findings can never trigger a consumer rebalance. */
+    /** Ceiling on TOTAL inline-retry sleep across every finding in one postComments message.
+     *  Budgeted against the ack threshold, NOT max.poll.interval.ms: SmallRye pauses fetching
+     *  rather than polling, so a long hold cannot trip the poll interval or cause a rebalance —
+     *  what it can do is age the record past throttled.unprocessed-record-max-age.ms and fail the
+     *  channel. LlmTimeoutBudget.NON_LLM_OVERHEAD_MS covers this sleep and refuses a pairing that
+     *  does not leave room for it. */
     @ConfigProperty(name = "spire.scm.rate-limit-budget-seconds", defaultValue = "180")
     long rateLimitBudgetSeconds;
 
@@ -194,7 +197,7 @@ public class ReviewWorker {
                 .complete(built.prompt(), client.params())
                 .toCompletableFuture().join();
 
-        ReviewResult parsed = FindingsParser.parse(completion.text(), completion.usage());
+        ReviewResult parsed = FindingsParser.parse(completion);
         // Carry the "diff was clipped to fit the budget" flag so a partial review is
         // marked on the dashboard and the posted summary comment (not silent).
         ReviewResult truncatedAware = built.truncated()

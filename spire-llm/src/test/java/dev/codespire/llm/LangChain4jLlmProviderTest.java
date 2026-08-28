@@ -287,4 +287,11 @@ class LangChain4jLlmProviderTest {
         assertThrows(CompletionException.class,
                 () -> provider.complete(PROMPT, PARAMS).toCompletableFuture().join());
     }
+    @Test
+    void theDefaultOutputCapLeavesRoomForAReasoningModelToAnswer() {
+        // Pinned to the literal on purpose. Every other test compares against the constant, so a
+        // revert to 4096 — the exact regression this exists to prevent, where two models each spent
+        // the whole budget thinking and returned nothing — would leave them all green.
+        assertEquals(16384, LangChain4jLlmProvider.DEFAULT_MAX_OUTPUT_TOKENS);
+    }
 }

@@ -22,17 +22,21 @@ public record ReviewResult(List<Finding> findings, String summary, ModelUsage us
         findings = findings == null ? null : List.copyOf(findings);
     }
 
-    /**
-     * Convenience: a result whose findings were parsed normally — the common case, whether or not the
-     * diff had to be clipped.
-     */
-    public ReviewResult(List<Finding> findings, String summary, ModelUsage usage, boolean truncated) {
-        this(findings, summary, usage, truncated, false);
-    }
 
     /** Convenience: a complete (non-truncated) result — the common case. */
     public ReviewResult(List<Finding> findings, String summary, ModelUsage usage) {
         this(findings, summary, usage, false, false);
+    }
+
+    /**
+     * A run that produced no usable findings, carrying only the explanation.
+     *
+     * <p>Named rather than {@code new ReviewResult(List.of(), summary, usage, false, true)}: two
+     * adjacent positional booleans at a call site cannot be read without the constructor open
+     * beside them, and transposing them would report the absence of a review as a clipped diff.
+     */
+    public static ReviewResult degraded(String summary, ModelUsage usage) {
+        return new ReviewResult(List.of(), summary, usage, false, true);
     }
 
     /**

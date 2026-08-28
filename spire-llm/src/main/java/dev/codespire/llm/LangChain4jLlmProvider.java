@@ -12,6 +12,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
@@ -147,9 +148,13 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .parameters(paramFactory.apply(params))
                 .build();
         ChatResponse response = model.chat(request);
+        // FinishReason.LENGTH is the provider saying it stopped at max_tokens. Carried rather than
+        // inferred: a response cut off after some complete findings still parses, so without this the
+        // review reports a partial finding set and looks finished.
         return new Completion(
                 response.aiMessage().text(),
-                TokenUsageMapper.map(params.model(), response.tokenUsage()));
+                TokenUsageMapper.map(params.model(), response.tokenUsage()),
+                response.finishReason() == FinishReason.LENGTH);
     }
 
     /** The same params with temperature suppressed (profile.supportsTemperature = false). */
