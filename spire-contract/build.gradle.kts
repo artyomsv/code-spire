@@ -20,7 +20,7 @@ dependencies {
     // the wire contract, so the polymorphic type ids live with them.
     api("com.fasterxml.jackson.core:jackson-annotations:2.22")
 
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

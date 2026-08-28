@@ -23,7 +23,7 @@ dependencies {
     implementation("dev.langchain4j:langchain4j-open-ai:1.19.0")
     implementation("dev.langchain4j:langchain4j-anthropic:1.19.0")
     implementation("dev.langchain4j:langchain4j-google-ai-gemini:1.19.0")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")

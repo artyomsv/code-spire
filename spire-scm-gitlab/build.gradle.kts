@@ -20,7 +20,7 @@ repositories {
 dependencies {
     api(project(":spire-contract"))
     implementation(project(":spire-diff"))
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
