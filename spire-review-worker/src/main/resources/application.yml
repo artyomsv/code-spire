@@ -76,6 +76,10 @@ spire:
     # registry uses the per-command brokered credential from the LLM provider
     # registry (Settings -> LLM, ADR-018). No SPIRE_LLM_BASE_URL/API_KEY/MODEL.
     provider: ${SPIRE_LLM_PROVIDER:registry}   # stub | registry
+    # How long one model call may take. Not a credential, so unlike everything else under spire.llm
+    # it defaults. Coupled to the commands-in ack threshold below and validated against it at
+    # startup by LlmTimeoutBudget — raising this without raising that stalls the whole worker.
+    timeout-seconds: ${SPIRE_LLM_TIMEOUT_SECONDS:180}
   review:
     # Writes the fully rendered prompt (system + user, including the fenced context slot) to the log
     # before each model call. OFF by default, and that is a security decision: a rendered prompt
@@ -104,6 +108,18 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
+        # A review's LLM call legitimately takes minutes, and SmallRye fails the WHOLE channel when
+        # one record goes unacknowledged for longer than this. Its default is 60s -- exactly the
+        # LLM request timeout this worker used to hardcode -- so the slow path the LLM budget
+        # explicitly permits was the path that killed the consumer: the record was never acked, the
+        # connector could not commit, cs.commands stopped, and the worker silently processed nothing
+        # while the review sat in `reviewing`. The unacked record was then redelivered on every
+        # restart and stalled it again, a poison pill that survived restarts and needed a manual
+        # consumer-group seek to clear. Must stay comfortably ABOVE spire.llm.timeout-seconds;
+        # LlmTimeoutBudget refuses to start when it does not.
+        throttled:
+          unprocessed-record-max-age:
+            ms: ${SPIRE_KAFKA_ACK_MAX_AGE_MS:900000}
     outgoing:
       results-out:
         connector: smallrye-kafka

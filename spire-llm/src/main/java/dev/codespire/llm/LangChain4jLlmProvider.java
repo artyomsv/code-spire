@@ -18,7 +18,6 @@ import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
@@ -45,8 +44,15 @@ public class LangChain4jLlmProvider implements LlmProvider {
     /**
      * Output cap applied when the caller leaves {@link ModelParams#maxTokens()}
      * unset — the paid call must never run without a bound (cost control).
+     *
+     * <p>Was 4096, which a reasoning model exhausts before it answers: this cap bounds the model's
+     * thinking AND its reply together, so on a 17k-input-token diff two different models each
+     * emitted exactly 4096 tokens and produced no parseable review at all, were charged for it, and
+     * reported the run as clean. A small diff used 2106 by comparison, so the headroom here is what
+     * a large one actually needs rather than a guess. Still a hard bound, and still only the
+     * fallback: an operator who wants a different one sets max_tokens on their LLM provider.
      */
-    static final int DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+    static final int DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
     private final ChatModel model;
     private final String id;
@@ -73,7 +79,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .baseUrl(config.baseUrl())
                 .apiKey(config.apiKey())
                 .modelName(config.model())
-                .timeout(Duration.ofSeconds(60)) // ADR-013 LLM budget
+                .timeout(config.timeout()) // ADR-013 LLM budget, operator-tunable
                 .build();
         return new LangChain4jLlmProvider(chatModel, "openai-compatible/" + config.model());
     }
@@ -88,7 +94,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .apiKey(config.apiKey())
                 .modelName(config.model())
                 .maxTokens(DEFAULT_MAX_OUTPUT_TOKENS)
-                .timeout(Duration.ofSeconds(60)) // ADR-013 LLM budget
+                .timeout(config.timeout()) // ADR-013 LLM budget, operator-tunable
                 .build();
         return new LangChain4jLlmProvider(chatModel, "anthropic/" + config.model(),
                 LangChain4jLlmProvider::nativeParameters);
@@ -100,7 +106,7 @@ public class LangChain4jLlmProvider implements LlmProvider {
                 .baseUrl(config.baseUrl())
                 .apiKey(config.apiKey())
                 .modelName(config.model())
-                .timeout(Duration.ofSeconds(60)) // ADR-013 LLM budget
+                .timeout(config.timeout()) // ADR-013 LLM budget, operator-tunable
                 .build();
         return new LangChain4jLlmProvider(chatModel, "gemini/" + config.model(),
                 LangChain4jLlmProvider::nativeParameters);

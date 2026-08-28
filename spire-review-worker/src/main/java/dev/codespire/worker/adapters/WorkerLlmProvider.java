@@ -18,6 +18,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -43,6 +44,9 @@ public class WorkerLlmProvider {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    LlmTimeoutBudget budget;
+
     private final LlmClient stub = new LlmClient(new StubLlmProvider(),
             new ModelParams("stub-model", 0.2, null));
 
@@ -54,7 +58,7 @@ public class WorkerLlmProvider {
         if (cred == null) {
             return stub; // no credential brokered — safe fallback (shouldn't happen in active mode)
         }
-        return clientFor(cred);
+        return clientFor(cred, budget.timeout());
     }
 
     public LlmClient forCommand(AnswerFollowUp command) {
@@ -65,7 +69,7 @@ public class WorkerLlmProvider {
         if (cred == null) {
             return stub;
         }
-        return clientFor(cred);
+        return clientFor(cred, budget.timeout());
     }
 
     /**
@@ -77,7 +81,17 @@ public class WorkerLlmProvider {
      * which is the only scope at which it sees enough failures to open.
      */
     static LlmClient clientFor(LlmCredential cred) {
-        LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(), cred.temperature());
+        return clientFor(cred, LlmConfig.DEFAULT_TIMEOUT);
+    }
+
+    /**
+     * @param timeout the deployment's request budget, which {@link LlmTimeoutBudget} has already
+     *                validated against the Kafka ack threshold. The overload above is for callers
+     *                that have no budget bean to ask.
+     */
+    static LlmClient clientFor(LlmCredential cred, Duration timeout) {
+        LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(),
+                cred.temperature(), timeout);
         LlmProvider provider = switch (cred.type()) {
             case "openai" -> LangChain4jLlmProvider.openAiCompatible(config);
             case "anthropic" -> LangChain4jLlmProvider.anthropic(config);
