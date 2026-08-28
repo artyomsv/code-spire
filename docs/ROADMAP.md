@@ -559,7 +559,7 @@ change** for cert-manager; the gap was that nothing said so. Also the **contract
 bump + upcaster, ADR-013) shipped in `5bc593b` and had a vacuity hole closed on 2026-08-02 — it
 iterated event types and skipped an empty list, so zero types read as zero failures.
 
-Also open and tracked outside this file: **24 techdebt items** in `techdebt/` — 12 medium, 12 low,
+Also open and tracked outside this file: **23 techdebt items** in `techdebt/` — 11 medium, 12 low,
 nothing high or critical. Count them rather than trusting this line: `ls techdebt/*/3-*.md` and
 `ls techdebt/*/4-*.md`. The previous version of this paragraph said 8 (1 medium, 7 low) and was wrong
 by more than double, because a transcribed count is stale the moment the next entry lands — the same

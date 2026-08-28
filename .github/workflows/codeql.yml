@@ -16,6 +16,14 @@ permissions:
   contents: read
   security-events: write
 
+# A superseded run is noise, not evidence. Two merges landing seconds apart — the shape a bump split
+# across two PRs produces — otherwise leave one run analysing a tree that is no longer master's head.
+# Cancelling is safe: results are uploaded per run, so the survivor re-uploads for the newer commit.
+# Matches docker.yml, which already groups this way.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: ${{ matrix.language }}

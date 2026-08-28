@@ -34,6 +34,16 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # github/codeql-action/* must move as one commit. `init` writes a config file stamped with its own
+    # version and `analyze` refuses to load a config from a different one — "Loaded a configuration
+    # file for version 'X', but running version 'Y'" — so a bump split across one PR per sub-action is
+    # red on every one of them individually and green only once all have landed. Four references live
+    # across codeql.yml, docker.yml and semgrep.yml. Grouping is the fix; nothing else in the file has
+    # this property, so the group is deliberately narrow rather than one PR for every action.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Two docker directories: the service image at the root, the dashboard's in spire-ui.
   - package-ecosystem: docker

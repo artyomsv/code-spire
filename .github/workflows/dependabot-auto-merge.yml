@@ -5,9 +5,14 @@
 # bumps unreviewed — setup-node 4→7, build-push-action 6→7, gitleaks-action 2→3. Those happened to be
 # fine; the rule that let them through was not. A major bump is a decision by definition.
 #
-# --auto merges only once required checks pass, so ci.yml still gates every one of these. Note that
-# with no branch protection configured there are no *required* checks, which is why the update-type
-# guard has to carry the weight on its own.
+# --auto merges only once required checks pass, so ci.yml still gates every one of these.
+#
+# **The approval is not optional, and its absence is silent.** Branch protection requires an
+# approving review, and --auto does not supply one: a PR with auto-merge armed and no approval waits
+# forever, reporting mergeStateStatus BLOCKED rather than any kind of failure. An earlier version of
+# this file carried a step *named* "Approve and enable auto-merge" that only enabled auto-merge, and
+# the result was eleven dependabot PRs sitting green and unmerged with nothing anywhere saying why.
+# The two halves belong in one step so they cannot drift apart again.
 name: dependabot-auto-merge
 
 on: pull_request_target
@@ -34,7 +39,13 @@ jobs:
              steps.meta.outputs.update-type == 'version-update:semver-minor') ||
             steps.meta.outputs.update-type == 'version-update:semver-patch'
           )
-        run: gh pr merge --auto --squash "$PR_URL"
+        # Approve first: --auto is a no-op on a PR that is already mergeable, so approving second
+        # would leave the PR waiting for the next check event to re-evaluate. Both commands are
+        # idempotent, so a re-run on a synchronize event is harmless.
+        run: |
+          gh pr review --approve "$PR_URL" \
+            --body "Auto-approved: ${{ steps.meta.outputs.package-ecosystem }} ${{ steps.meta.outputs.update-type }}, within the maintenance classes dependabot-auto-merge.yml admits."
+          gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
