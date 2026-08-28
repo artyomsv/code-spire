@@ -50,6 +50,7 @@ const summary = (over: Partial<ReviewSummary> = {}): ReviewSummary => ({
   updatedAt: '2026-08-09T00:00:00Z',
   unpricedCalls: 0,
   archivedAt: null,
+  degraded: false,
   ...over,
 });
 
@@ -190,6 +191,7 @@ const refusedDetail = (over: Partial<ReviewDetailData> = {}): ReviewDetailData =
   // `errorDetail` unset, so the card must carry the note on its own.
   errorDetail: null,
   archivedAt: null,
+  degraded: false,
   events: [],
   ...over,
 });

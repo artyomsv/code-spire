@@ -32,6 +32,7 @@ const summary = (over: Partial<ReviewSummary> = {}): ReviewSummary => ({
   updatedAt: '2026-08-07T00:00:00Z',
   unpricedCalls: 0,
   archivedAt: null,
+  degraded: false,
   ...over,
 });
 

@@ -359,7 +359,7 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
  * rendered when something actually is carried over, so an ordinary first review still shows a plain
  * number rather than paying for a distinction that does not apply to it.
  */
-export function findCell(status: ReviewStatus, findings: number, carriedOver = 0) {
+export function findCell(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
   // While a review is still running the running tally is noise (and "0 so far"
   // reads as a result). Show a neutral placeholder until the review completes.
   if (status === 'reviewing') return <span className="time">—</span>;
@@ -367,6 +367,14 @@ export function findCell(status: ReviewStatus, findings: number, carriedOver = 0
   // review at all, so a `0` would be a findings count for a diff no model ever saw.
   if (status === 'failed' || status === 'cancelled' || status === 'refused')
     return <span className="time">—</span>;
+  // A degraded run also reports zero findings, and a plain `0` is exactly how it used to pass for a
+  // clean review on this screen. Warn, not crit: nothing is broken, but the run did not review.
+  if (degraded)
+    return (
+      <span className="pill pill--warn" title="The model returned no usable result — re-run this review">
+        no output
+      </span>
+    );
   if (findings === 0) return <span className="findcount zero tnum">0</span>;
   if (carriedOver <= 0) return <span className="findcount some tnum">{findings}</span>;
   return (

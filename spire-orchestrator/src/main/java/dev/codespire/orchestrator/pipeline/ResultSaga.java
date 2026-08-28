@@ -374,16 +374,7 @@ public class ResultSaga {
         // findings in that case).
         projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
                 prior.map(PriorRun::findings).orElse(List.of()));
-        // Both conditions share the single note field, so the more severe one wins: a degraded run
-        // produced no findings at all, which already subsumes "part of the diff went unreviewed".
-        if (e.result().degraded()) {
-            projection.setNote(e.reviewId(), "The model returned no usable review — no findings could "
-                    + "be parsed from its response, so this run reviewed nothing. It was still charged. "
-                    + "Re-run it; if it repeats, raise the model's output cap.");
-        } else if (e.result().truncated()) {
-            projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
-                    + "(changes beyond the token limit were not reviewed).");
-        }
+        projection.setNote(e.reviewId(), noteFor(e.result()));
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), e.result().findings().size(),
                 Integer.toHexString(e.result().summary().hashCode())));
@@ -392,6 +383,36 @@ public class ResultSaga {
                 e.verdicts(), priorSummaryRef));
     }
 
+    /**
+     * The single note field, from the most severe thing true of this run — or null, which CLEARS it.
+     *
+     * <p>Always writing it is the point. {@code degraded} is written on every outcome so the
+     * attention row can clear; the note was not, so a round-2 run that parsed cleanly left round 1's
+     * "this run reviewed nothing" text sitting on a row whose flag was now false, whose findings were
+     * populated, and which raised no row. The two halves of the same fact disagreed, and the note is
+     * the half an operator actually reads.
+     */
+    static String noteFor(ReviewResult result) {
+        if (result.degraded() && result.findings().isEmpty()) {
+            return "The model returned no usable review — no findings could be parsed from its "
+                    + "response, so this run reviewed nothing. It was still charged. Re-run it; if it "
+                    + "repeats, raise the model's output cap.";
+        }
+        if (result.degraded()) {
+            // Parsed, but the provider stopped at its output limit. Some findings exist and an
+            // unknown number do not, which is a different fact from "nothing came back" and needs a
+            // different sentence — telling an operator their review is empty when it is merely
+            // partial sends them looking for the wrong problem.
+            return "The model's response was cut off at its output limit, so this review is partial "
+                    + "— findings beyond the cut were never produced. Re-run it; if it repeats, raise "
+                    + "the model's output cap.";
+        }
+        if (result.truncated()) {
+            return "Diff exceeded the review budget — partial review "
+                    + "(changes beyond the token limit were not reviewed).";
+        }
+        return null;
+    }
     /**
      * Bounded auto-retry (C8). A retryable failure with budget left restarts the
      * pipeline from FetchDiff (same as a manual re-push, but automatic and

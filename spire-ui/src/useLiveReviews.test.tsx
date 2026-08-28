@@ -79,6 +79,7 @@ function summary(id: string, updatedAt: string, over: Partial<ReviewSummary> = {
     updatedAt,
     unpricedCalls: 0,
     archivedAt: null,
+  degraded: false,
     ...over,
   };
 }

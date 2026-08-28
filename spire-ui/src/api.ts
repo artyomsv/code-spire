@@ -52,6 +52,10 @@ export interface ReviewSummary {
   // and `prState`, not a value of either: an archived review still reports that it completed or
   // failed, which is the statistic the row is retained for.
   archivedAt: string | null;
+  // The model produced no usable result — unparseable, or cut off at its output limit. On the LIST
+  // row and not only the detail page, because the list is where the symptom shows: a run that
+  // reviewed nothing renders as done with no findings, byte-identical to a clean pass.
+  degraded: boolean;
 }
 
 export interface Finding {

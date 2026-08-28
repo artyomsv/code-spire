@@ -31,6 +31,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -47,6 +48,7 @@ class ResultSagaRetryTest {
     private static final String COMMIT = "cafe123";
 
     private final List<ActionCommand> emitted = new ArrayList<>();
+    private final List<String> notes = new ArrayList<>();
     private final List<RecordCommand> recorded = new ArrayList<>();
     private final List<String> retryNotes = new ArrayList<>();
     private final List<Integer> retryAttempts = new ArrayList<>();
@@ -309,6 +311,8 @@ class ResultSagaRetryTest {
         assertNotNull(postComments.priorSummaryRef(),
                 "priorSummaryRef must resolve from priorRunFor even when verdicts are empty");
         assertEquals("sum-prior-1", postComments.priorSummaryRef());
+        assertEquals(1, notes.size(), "the note is written on every outcome, not only on a bad one");
+        assertNull(notes.get(0), "a clean run writes null, which is what CLEARS an earlier run text");
     }
 
     /** Minimal ResultSaga wired for the ReviewGenerated -> PostComments path (no ReviewFailed fakery needed). */
@@ -345,6 +349,14 @@ class ResultSagaRetryTest {
 
             @Override
             public void recordOutcome(String reviewId, ReviewResult result, int stage) {
+            }
+
+            // Same reason as recordCharges below. The saga now writes the note on EVERY outcome, so
+            // that a clean run CLEARS a previous run's text instead of leaving it to contradict the
+            // row; that turned an un-overridden concrete method into a live DataSource call.
+            @Override
+            public void setNote(String reviewId, String note) {
+                notes.add(note);
             }
 
             @Override

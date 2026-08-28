@@ -66,7 +66,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
   const summary = useMemo(() => {
     const inFlight = reviews.filter((r) => r.status === 'reviewing').length;
     const completedToday = reviews.filter((r) => r.status === 'completed' && isSameDay(r.updatedAt, now)).length;
-    const needsAttention = reviews.filter((r) => wantsAttention(r.status)).length;
+    const needsAttention = reviews.filter((r) => wantsAttention(r.status, r.degraded)).length;
     return { inFlight, completedToday, needsAttention };
   }, [reviews, now]);
 
@@ -75,7 +75,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
       all: reviews.length,
       reviewing: reviews.filter((r) => r.status === 'reviewing').length,
       completed: reviews.filter((r) => r.status === 'completed').length,
-      failed: reviews.filter((r) => wantsAttention(r.status)).length,
+      failed: reviews.filter((r) => wantsAttention(r.status, r.degraded)).length,
       closed: reviews.filter((r) => r.status === 'cancelled' || r.status === 'superseded').length,
     }),
     [reviews],
@@ -84,7 +84,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return reviews.filter((r) => {
-      if (!matchesChip(r.status, filter)) return false;
+      if (!matchesChip(r.status, filter, r.degraded)) return false;
       if (!q) return true;
       return (
         r.repo.toLowerCase().includes(q) ||
@@ -197,7 +197,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                     <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
                   </div>
                   <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
-                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings)}</div>
+                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings, r.degraded)}</div>
                   <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                   <div className="cell-r">
                     <span className="mono" title={cost.title}>{cost.text}</span>

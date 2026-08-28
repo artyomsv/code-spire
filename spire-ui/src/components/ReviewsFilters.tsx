@@ -27,19 +27,23 @@ const CHIPS: { f: ChipFilter; label: string }[] = [
  * be found, so both refusal kinds go there and the list agrees with the panel rather than
  * contradicting it.
  */
-export function needsAttention(status: ReviewStatus): boolean {
-  return status === 'failed' || status === 'refused';
+export function needsAttention(status: ReviewStatus, degraded = false): boolean {
+  // A degraded run belongs here for the same reason a refused one does: it completed, so no other
+  // chip would surface it, and it leaves the operator a decision (re-run, or raise the output cap).
+  return status === 'failed' || status === 'refused' || degraded;
 }
 
 /**
  * Which chip a status falls under. Every status must fall under exactly one besides All, or a row
  * exists that no chip can reach — which is what a refused review did before it was listed here.
  */
-export function matchesChip(status: ReviewStatus, f: ChipFilter): boolean {
+export function matchesChip(status: ReviewStatus, f: ChipFilter, degraded = false): boolean {
   if (f === 'all') return true;
   if (f === 'reviewing') return status === 'reviewing';
-  if (f === 'completed') return status === 'completed';
-  if (f === 'failed') return needsAttention(status);
+  // A degraded run is `completed` but produced nothing, so it answers to Needs attention rather
+  // than Completed — otherwise the two chips would both claim it and the counts would not add up.
+  if (f === 'completed') return status === 'completed' && !degraded;
+  if (f === 'failed') return needsAttention(status, degraded);
   return status === 'cancelled' || status === 'superseded';
 }
 

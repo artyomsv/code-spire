@@ -475,6 +475,30 @@ class ReviewProjectionTest {
         assertFalse(degradedFlag(id), "a later parseable run clears the flag");
     }
 
+    /**
+     * The flag has to reach the LIST row, not just the column. That is the surface the symptom was
+     * observed on — a run that reviewed nothing rendered as done with no findings — so a projection
+     * that stored it and never carried it forward would fix the database and not the screen.
+     */
+    @Test
+    void theListRowCarriesTheDegradedFlag() {
+        long pr = 4113L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        projection.recordOutcome(id, degradedResult(), ReviewProjection.STAGE_COMMENTS);
+
+        ReviewSummary row = projection.listSummaries(true).stream()
+                .filter(r -> r.id().equals(id)).findFirst().orElseThrow();
+        assertTrue(row.degraded(), "the list row must be able to tell this apart from a clean pass");
+
+        projection.recordOutcome(id, new ReviewResult(List.of(), "clean", ModelUsage.of("m", 1, 1)),
+                ReviewProjection.STAGE_COMMENTS);
+        ReviewSummary after = projection.listSummaries(true).stream()
+                .filter(r -> r.id().equals(id)).findFirst().orElseThrow();
+        assertFalse(after.degraded(), "a later good run clears it on the list too");
+    }
+
     @Test
     void aCleanOutcomeIsNeverMarkedDegraded() {
         long pr = 4112L;
