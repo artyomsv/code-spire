@@ -928,9 +928,48 @@ The design is fully specified in `docs/` — **treat those files as the source o
   first attempt at the reconcile-path guard **passed against its own mutation** because
   `dropAnchorCollisions` returns early when no verdict is still open, so the test never reached the
   rebuild it was written to protect.
-  Measured, not estimated: **1580 Java tests across 199 suites** (`testFast` + `testServices`);
-  `spire-ui` is untouched — the attention panel renders rows by `code: string` with no per-code
-  branch, so a new row needed no UI change.
+
+  **A four-lens review round then found five more defects in the fix itself**, each reproduced
+  before being changed:
+  - **The ack guard measured a quantity SmallRye does not measure.** A record's age is stamped when
+    it is **polled**, not when processing starts, and the connector prefetches (`max.poll.records`
+    500 over a queue factor of 2) — so a burst ages out however generous the threshold looks. The
+    channel now pins both to 1 (the dispatcher is ordered and blocking, so prefetch only ever built
+    a backlog) and the check *reads* them rather than assuming them. Its non-LLM allowance also had
+    to rise 120s → 300s: the posting path is already permitted to sleep 180s backing off a
+    rate-limited SCM, so the smaller allowance called a pairing safe that one throttled posting run
+    outran unaided.
+  - **The direct "the model hit its cap" signal was being thrown away.** `ChatResponse.finishReason()`
+    returns `LENGTH` for exactly this condition, and the parser inferred it instead from a *total*
+    parse failure. A response cut off **after** some complete findings still parses — so it reported
+    a partial finding set and looked finished. Raising the output cap does not remove that case; it
+    makes it the likely one, because a model with room to start answering is cut off part-way rather
+    than before it begins. `Completion.outputCapped` carries it as a neutral boolean, since
+    `spire-contract` is framework-free and every provider spells the fact differently.
+  - **The degraded note never cleared.** The flag was written on every outcome so the attention row
+    could clear; the note was not, so a clean round 2 left round 1's "this run reviewed nothing" on a
+    row whose flag was now false and whose findings were populated — the two halves of one fact
+    disagreeing, and the note is the half an operator reads.
+  - **`REVIEW_DEGRADED` had no `status` predicate**, so it fired about a review being re-reviewed
+    right now, doubled up with `REVIEW_FAILED` carrying stale advice, and told a `refused` run — which
+    was never charged — that it had been.
+  - **The reviews list still could not tell it from a clean pass**, which is the surface the symptom
+    was observed on: the fix had reached the bell and the detail note only. `ReviewSummary.degraded`
+    now drives a *no output* pill in `findCell` and joins the `needsAttention` predicate. Same class
+    as the ADR-025 `refused` incident, minus its UI-union half — attention rows render generically
+    from `code: string`, so the panel needed nothing.
+
+  Two traps worth keeping. The timeout-less `clientFor` overload was invisible **because**
+  `LlmConfig.DEFAULT_TIMEOUT` equals the shipped `spire.llm.timeout-seconds` default: a call site
+  using the wrong one behaves identically on every deployment except the one that raised the timeout,
+  which is the deployment that raised it because it needed to. It is deleted, and both `forCommand`
+  paths are now tested against a budget that matches nothing else. And making the note always write
+  turned an un-overridden `setNote` on a saga test fake into a live `DataSource` call — the exact
+  shape that fake's own `recordCharges` comment already warned about.
+
+  Measured, not estimated: **1607 Java tests across 202 suites** (`testFast` 622/77 + `testServices`
+  — gateway 73/11, orchestrator 704/89, worker 208/25); **383 `spire-ui` vitest tests across 52
+  files**; `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
