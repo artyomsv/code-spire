@@ -1,4 +1,4 @@
-# Builds all four images on master, scans them, and publishes :edge.
+# Builds all four images, scans them, and publishes :edge.
 #
 # It publishes on purpose. The prior analysis copied a build-but-do-not-push precedent, but e2e.yml
 # consumes GHCR images: with releases as the only publisher, the topology check could not run until
@@ -7,11 +7,28 @@
 #
 # amd64 only here. arm64 goes through QEMU and costs tens of minutes on a JVM image, which is why it
 # belongs in release.yml and not on any path that runs per merge.
+#
+# **On a pull request it builds only, and that trigger is the point.** This was for a long time the
+# only workflow that opens a Dockerfile, and it ran on master alone — so a PR changing nothing but a
+# base image collected fourteen green checks from jobs that never read the file it changed, and the
+# image was first built in the run that also publishes :edge. A node:22-alpine to node:26-alpine PR
+# demonstrated it exactly; had that base been broken rather than merely premature, the checks would
+# have looked identical. The path filter keeps the cost where the risk is — nothing here runs on a PR
+# touching no Dockerfile. Login, scan, SARIF upload and push stay master-only, which is what the
+# tracked design asked for: the Trivy scan runs with exit-code 0 and so gates nothing, and its findings
+# are a statement about the published image, so uploading them per PR adds alerts nobody acts on. The
+# PR run exists to answer one question — does this Dockerfile still build — and answers it in the only
+# place that can, before the change is on master.
 name: docker
 
 on:
   push:
     branches: [master]
+  pull_request:
+    paths:
+      - '**/Dockerfile*'
+      - 'spire-ui/nginx/**'
+      - '.github/workflows/docker.yml'
   workflow_dispatch:
 
 permissions:
@@ -50,7 +67,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -66,13 +84,16 @@ jobs:
           load: true
           tags: ghcr.io/artyomsv/${{ matrix.name }}:edge
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+          # Cache writes from a PR ref land in a scope the master build never reads, so exporting there
+          # costs storage and buys nothing. Same conditional idiom as build-args above.
+          cache-to: ${{ github.event_name == 'push' && format('type=gha,scope={0},mode=max', matrix.name) || '' }}
 
       # Report-only, and the reasoning is recorded rather than assumed: the residual HIGH/CRITICALs on
       # a fully patched image are language-stdlib CVEs fixed only in unreleased toolchain versions — an
       # advisory treadmill no bump can clear. Fixable module and OS CVEs are bumped promptly and
       # triaged from the Security tab, which is what the SARIF upload is for.
       - name: Scan
+        if: github.event_name == 'push'
         # This action's tags are v-prefixed, so the trailing comment reads v0.36.0 rather than the
         # 0.36.0 its own README uses. The comment is what Dependabot matches against; the SHA is
         # what actually runs, which is why the distinction no longer breaks the job at setup.
@@ -84,12 +105,14 @@ jobs:
           exit-code: '0'
           severity: HIGH,CRITICAL
       - name: Report
+        if: github.event_name == 'push'
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-${{ matrix.name }}
 
       - name: Push
+        if: github.event_name == 'push'
         run: |
           short="${GITHUB_SHA::7}"
           docker tag "ghcr.io/artyomsv/${{ matrix.name }}:edge" \
