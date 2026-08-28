@@ -23,7 +23,15 @@ public record LlmConfig(String baseUrl, String apiKey, String model, double temp
      * the value that must stay below the Kafka ack threshold — see the worker's {@code commands-in}
      * channel, where the two were equal and a slow call killed the consumer.
      */
-    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(180);
+    public static final String DEFAULT_TIMEOUT_SECONDS = "180";
+
+    /**
+     * The same value as a {@link Duration}. Derived from the string rather than written twice: the
+     * annotation form has to be a compile-time constant, and the number had already begun to spread
+     * across the config property, this class and the deployment descriptor.
+     */
+    public static final Duration DEFAULT_TIMEOUT =
+            Duration.ofSeconds(Long.parseLong(DEFAULT_TIMEOUT_SECONDS));
 
     public LlmConfig {
         require(baseUrl, "baseUrl");

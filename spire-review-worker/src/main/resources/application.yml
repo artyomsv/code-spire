@@ -120,6 +120,17 @@ mp:
         throttled:
           unprocessed-record-max-age:
             ms: ${SPIRE_KAFKA_ACK_MAX_AGE_MS:900000}
+        # A record ages from when it is POLLED, not from when processing starts, so the threshold
+        # above is only sound if the number of records the connector may hold ahead of the ordered,
+        # blocking dispatcher is bounded. At the defaults (500 per poll, doubled for the queue) a
+        # burst of reviews would age out however generous that threshold looked. One at a time costs
+        # nothing here: the dispatcher processes a partition serially anyway, so prefetching only
+        # ever built a backlog. LlmTimeoutBudget reads both and refuses to start if they stop adding
+        # up.
+        max-queue-size-factor: 1
+        max:
+          poll:
+            records: 1
     outgoing:
       results-out:
         connector: smallrye-kafka

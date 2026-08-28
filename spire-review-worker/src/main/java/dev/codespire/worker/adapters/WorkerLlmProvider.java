@@ -80,16 +80,18 @@ public class WorkerLlmProvider {
      * here, so one wrap covers both; the breaker's state is per API host and shared across commands,
      * which is the only scope at which it sees enough failures to open.
      */
-    static LlmClient clientFor(LlmCredential cred) {
-        return clientFor(cred, LlmConfig.DEFAULT_TIMEOUT);
-    }
-
     /**
+     * Deliberately has no timeout-less overload. One existed for the tests, and it was the same trap
+     * as the four-arg {@code ReviewResult} constructor that silently absorbed a new component: a
+     * future production call site would compile clean and quietly use the library default instead of
+     * the operator's configured budget. That bug is invisible on any deployment still on the default,
+     * because the two numbers coincide — it would surface only on the deployment that raised the
+     * timeout, which is the deployment that raised it because it needed to. Tests name the value.
+     *
      * @param timeout the deployment's request budget, which {@link LlmTimeoutBudget} has already
-     *                validated against the Kafka ack threshold. The overload above is for callers
-     *                that have no budget bean to ask.
+     *                validated against the Kafka ack threshold.
      */
-    static LlmClient clientFor(LlmCredential cred, Duration timeout) {
+    LlmClient clientFor(LlmCredential cred, Duration timeout) {
         LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(),
                 cred.temperature(), timeout);
         LlmProvider provider = switch (cred.type()) {
@@ -104,7 +106,10 @@ public class WorkerLlmProvider {
                 new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()));
     }
 
-    private LlmCredential unpack(String reviewId, String llmCredential) {
+    // Package-private, not private, so a test can supply a credential without standing up Tink:
+    // what needs proving is which TIMEOUT the two forCommand paths hand to clientFor, and that was
+    // unreachable behind decryption.
+    LlmCredential unpack(String reviewId, String llmCredential) {
         if (llmCredential == null || llmCredential.isBlank()) {
             return null;
         }
