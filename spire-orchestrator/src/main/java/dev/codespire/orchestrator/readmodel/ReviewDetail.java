@@ -57,7 +57,15 @@ public record ReviewDetail(
         /** When this review was archived, or null while it is live — see {@link ReviewSummary}. An
          *  archived review keeps a fully working detail page, so this qualifies the page rather
          *  than replacing anything on it. */
-        Instant archivedAt) {
+        Instant archivedAt,
+        /** The model produced no usable result — see {@link ReviewSummary}.
+         *
+         *  <p>Carried here as well as on the summary, and that is not redundancy: these are two
+         *  independent records over one wire, and the dashboard's type for this page DERIVES from
+         *  its type for the summary. So omitting it here type-checks on both sides and simply
+         *  arrives undefined, which renders the detail page as a clean pass — with the note that
+         *  explains the run shown nowhere, because that note lives in the branch this flag selects. */
+        boolean degraded) {
 
     /**
      * A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM

@@ -499,6 +499,28 @@ class ReviewProjectionTest {
         assertFalse(after.degraded(), "a later good run clears it on the list too");
     }
 
+    /**
+     * And onto the DETAIL payload, which is a separate record over the same wire.
+     *
+     * <p>The dashboard derives its detail type from its summary type, so a field present on one and
+     * absent from the other type-checks on both sides and simply arrives undefined — rendering the
+     * page as a clean pass, with the note that explains the run shown nowhere, because that note
+     * lives in the branch this flag selects.
+     */
+    @Test
+    void theDetailPayloadCarriesTheDegradedFlag() {
+        long pr = 4114L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        projection.recordOutcome(id, degradedResult(), ReviewProjection.STAGE_COMMENTS);
+        assertTrue(projection.loadDetail(REPO.workspace(), REPO.slug(), pr).orElseThrow().degraded());
+
+        projection.recordOutcome(id, new ReviewResult(List.of(), "clean", ModelUsage.of("m", 1, 1)),
+                ReviewProjection.STAGE_COMMENTS);
+        assertFalse(projection.loadDetail(REPO.workspace(), REPO.slug(), pr).orElseThrow().degraded());
+    }
+
     @Test
     void aCleanOutcomeIsNeverMarkedDegraded() {
         long pr = 4112L;

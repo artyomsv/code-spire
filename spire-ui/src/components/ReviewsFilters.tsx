@@ -30,7 +30,11 @@ const CHIPS: { f: ChipFilter; label: string }[] = [
 export function needsAttention(status: ReviewStatus, degraded = false): boolean {
   // A degraded run belongs here for the same reason a refused one does: it completed, so no other
   // chip would surface it, and it leaves the operator a decision (re-run, or raise the output cap).
-  return status === 'failed' || status === 'refused' || degraded;
+  //
+  // Gated on `completed`, mirroring the REVIEW_DEGRADED attention query. The flag outlives the run
+  // that set it, so an unqualified test claimed a review being re-reviewed right now for BOTH
+  // Reviewing and Needs attention — two chips for one row, and the counts stopped adding up.
+  return status === 'failed' || status === 'refused' || (status === 'completed' && degraded);
 }
 
 /**

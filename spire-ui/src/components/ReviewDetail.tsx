@@ -105,6 +105,7 @@ export default function ReviewDetail({ reviews }: Props) {
               findings: r.openFindings,
               blockerCount: r.openBlockers,
               answering: r.answering,
+              degraded: r.degraded,
             })}
             {prStateBadge(r.prState)}
             {archivedBadge(r.archivedAt)}
