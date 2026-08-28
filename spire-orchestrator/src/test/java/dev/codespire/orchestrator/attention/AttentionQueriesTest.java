@@ -526,6 +526,78 @@ class AttentionQueriesTest {
      * review id so separate reviews get distinct subjects and detail routes — rows are per-review
      * now, so two fixtures sharing a PR would be indistinguishable in an assertion.
      */
+    /**
+     * A run that reached the end of the pipeline having reviewed nothing.
+     *
+     * <p>Neither of the rows above can see it: its status is {@code completed} and it is not stalled.
+     * It is money spent for no review, so it needs a row of its own — and it needs the discriminator
+     * below, because zero findings is also what a clean review writes.
+     */
+    @Test
+    void aDegradedReviewRaisesItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        assertTrue(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    @Test
+    void aCleanCompletedReviewRaisesNoDegradedRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "completed", "OPEN", "1 hour");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    /**
+     * The panel's contract: fixing the cause removes the row. recordOutcome writes the flag on every
+     * outcome, so a later good run clears it — a flag that were only ever set would make this the
+     * first permanently-lit row here.
+     */
+    @Test
+    void aLaterGoodRunClearsTheDegradedRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        assertTrue(codes().contains("REVIEW_DEGRADED"), codes().toString());
+
+        sql("UPDATE review_status SET degraded = FALSE WHERE review_id = 'TEST-r1'");
+
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    @Test
+    void anArchivedDegradedReviewStopsRaisingItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        sql("UPDATE review_status SET archived_at = now() WHERE review_id = 'TEST-r1'");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    @Test
+    void anAcknowledgedDegradedReviewStopsRaisingItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        acknowledge("TEST-r1");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    /** Completed, so it is neither stalled nor failed — only the new row should speak for it. */
+    @Test
+    void aDegradedReviewIsNotAlsoReportedAsStuckOrFailed() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+        assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
+    }
+
+    private void insertDegradedReview(String reviewId) {
+        insertReview(reviewId, "completed", "OPEN", "1 hour");
+        sql("UPDATE review_status SET degraded = TRUE WHERE review_id = '" + reviewId + "'");
+    }
     private void insertReview(String reviewId, String status, String prState, String age) {
         sql("INSERT INTO review_status (review_id, workspace, slug, pr_id, status, pr_state, "
                 + "created_at, updated_at) VALUES ('" + reviewId + "', 'TEST-WS', 'TEST-REPO', "

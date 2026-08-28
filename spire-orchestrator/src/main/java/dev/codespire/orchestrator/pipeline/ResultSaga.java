@@ -374,7 +374,13 @@ public class ResultSaga {
         // findings in that case).
         projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
                 prior.map(PriorRun::findings).orElse(List.of()));
-        if (e.result().truncated()) {
+        // Both conditions share the single note field, so the more severe one wins: a degraded run
+        // produced no findings at all, which already subsumes "part of the diff went unreviewed".
+        if (e.result().degraded()) {
+            projection.setNote(e.reviewId(), "The model returned no usable review — no findings could "
+                    + "be parsed from its response, so this run reviewed nothing. It was still charged. "
+                    + "Re-run it; if it repeats, raise the model's output cap.");
+        } else if (e.result().truncated()) {
             projection.setNote(e.reviewId(), "Diff exceeded the review budget — partial review "
                     + "(changes beyond the token limit were not reviewed).");
         }

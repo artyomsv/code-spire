@@ -186,7 +186,7 @@ public class AttentionQueries {
      * so is {@code refused} — a review a spend cap declined to run has reached its end state, and
      * reporting it here would blame a delivery path for a deliberate policy decision.
      *
-     * <p>BOTH queries exclude archived reviews, not just the stuck one. Nothing an operator does makes
+     * <p>EVERY query here excludes archived reviews, not just the stuck one. Nothing an operator does makes
      * a failed review un-fail, so archiving it IS the resolution — and a {@code REVIEW_FAILED} row
      * that survived it would be this panel's first permanently-lit row, against the contract that
      * fixing the cause removes the row.
@@ -214,6 +214,21 @@ public class AttentionQueries {
                 """, null, "REVIEW_FAILED",
                 "This review failed. Open it for the reason, then re-run it or dismiss this.",
                 "review(s) failed"));
+
+        // Not derivable from findings_count = 0, which a genuinely clean review writes too — hence
+        // the dedicated column. Neither query above sees this one: the run reached the end of the
+        // pipeline, so its status is completed and it is not stalled. It is nonetheless money spent
+        // for no review, which is exactly what an operator needs told.
+        rows.addAll(perReviewRows(c, """
+                SELECT workspace, slug, pr_id FROM review_status
+                 WHERE degraded
+                   AND archived_at IS NULL
+                   AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
+                 ORDER BY updated_at DESC
+                """, null, "REVIEW_DEGRADED",
+                "This review was charged but reviewed nothing: no findings could be parsed from the "
+                        + "model's response. Re-run it, and if it repeats raise the model's output cap.",
+                "review(s) produced no usable output"));
     }
 
     /**

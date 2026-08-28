@@ -53,7 +53,7 @@ public final class FindingsParser {
         String summary = raw.isEmpty()
                 ? "Note: the model returned no output — the review could not be produced."
                 : DEGRADED_PREFIX + TokenBudget.clip(raw, DEGRADED_SUMMARY_MAX_TOKENS);
-        return new ReviewResult(List.of(), summary, usage);
+        return new ReviewResult(List.of(), summary, usage, false, true);
     }
 
     private static List<Finding> findings(JsonNode array) {

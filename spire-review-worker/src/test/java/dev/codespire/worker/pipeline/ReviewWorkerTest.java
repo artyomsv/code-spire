@@ -838,6 +838,43 @@ class ReviewWorkerTest {
         assertNull(emitted.reconcileUsage());
     }
 
+    /**
+     * A model that returns nothing must not emit a result indistinguishable from a clean review.
+     *
+     * <p>This is the whole path, not the parser alone: the flag has to survive being carried out of
+     * {@link dev.codespire.llm.FindingsParser} and onto the emitted event, and it is the emitted
+     * event that the orchestrator projects and the attention panel reads.
+     */
+    @Test
+    void aModelThatReturnsNothingEmitsADegradedResult() {
+        reviewResponse = "";
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
+        ReviewGenerated generated = lastReviewGenerated();
+        assertTrue(generated.result().degraded(),
+                "an empty model response is the absence of a review, not a review with no findings");
+        assertEquals(0, generated.result().findings().size());
+    }
+
+    @Test
+    void aCleanReviewIsNotMarkedDegraded() {
+        // The discriminator: zero findings from a response that PARSED must stay an ordinary pass,
+        // or every clean review would raise an attention row.
+        worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null));
+        assertFalse(lastReviewGenerated().result().degraded());
+    }
+
+    @Test
+    void theReconcilePathAlsoCarriesTheDegradedFlag() {
+        // The reconcile branch rebuilds the result to drop anchor collisions, and rebuilding by
+        // re-listing components is what dropped this flag in the first place — hence a test on that
+        // branch too. The verdict must be STILL_OPEN: dropAnchorCollisions returns the result
+        // untouched when nothing is still present, which skips the rebuild and makes this test pass
+        // whether or not the rebuild preserves anything.
+        reconcileResponse = "{\"verdicts\":[{\"id\":1,\"status\":\"still-open\",\"note\":\"not fixed\"}]}";
+        reviewResponse = "";
+        worker.generateReview(generateCommand(priorStillOpenAtDemo5()));
+        assertTrue(lastReviewGenerated().result().degraded());
+    }
     private GenerateReview generateCommand(PriorRun prior) {
         return new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, null, 1, null, null, null, prior);
     }

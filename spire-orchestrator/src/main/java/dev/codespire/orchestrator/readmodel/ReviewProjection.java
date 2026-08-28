@@ -422,13 +422,17 @@ public class ReviewProjection {
         // Findings quote the source under review — encrypt at rest (AAD = reviewId).
         String findingsJson = encryption.encryptString(toFindingsJson(result.findings()), reviewId);
         update("""
-                UPDATE review_status SET findings_count = ?, findings_json = ?, stage = ?, updated_at = now()
+                UPDATE review_status SET findings_count = ?, findings_json = ?, degraded = ?, stage = ?,
+                       updated_at = now()
                 WHERE review_id = ?
                 """, ps -> {
             ps.setInt(1, result.findings().size());
             ps.setString(2, findingsJson);
-            ps.setInt(3, stage);
-            ps.setString(4, reviewId);
+            // Written on every outcome, not only when true: a later good run has to be able to clear
+            // it, or the attention row it drives becomes permanent.
+            ps.setBoolean(3, result.degraded());
+            ps.setInt(4, stage);
+            ps.setString(5, reviewId);
         });
         broadcast(reviewId);
     }

@@ -6,6 +6,7 @@ import dev.codespire.contract.review.Severity;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -127,5 +128,42 @@ class FindingsParserTest {
                     { "path": "a.java", "line": 9, "endLine": 3, "severity": "INFO", "message": "m" } ] }
                 """, USAGE);
         assertEquals(9, result.findings().getFirst().range().endLine());
+    }
+
+    @Test
+    void aParsedResponseIsNotDegraded() {
+        ReviewResult result = FindingsParser.parse("""
+                { "summary": "all good", "findings": [] }
+                """, USAGE);
+        assertFalse(result.degraded(), "a clean review with nothing to report is not degraded");
+    }
+
+    @Test
+    void anEmptyResponseIsDegraded() {
+        // The case that shipped: the model spent its whole output budget and returned nothing. Zero
+        // findings is also what a clean review reports, so without this flag the two are the same row.
+        ReviewResult result = FindingsParser.parse("", USAGE);
+        assertTrue(result.degraded());
+        assertEquals(0, result.findings().size());
+    }
+
+    @Test
+    void aNullResponseIsDegraded() {
+        assertTrue(FindingsParser.parse(null, USAGE).degraded());
+    }
+
+    @Test
+    void anUnparseableRambleIsDegradedToo() {
+        // Also zero findings, and also not a pass: the model said something, none of it structured.
+        ReviewResult result = FindingsParser.parse("I would rather talk about something else.", USAGE);
+        assertTrue(result.degraded());
+        assertTrue(result.summary().startsWith(FindingsParser.DEGRADED_PREFIX));
+    }
+
+    @Test
+    void degradedSurvivesBeingMarkedTruncated() {
+        // ReviewWorker re-marks a clipped diff on the way out; a rebuild that dropped the flag there
+        // would restore the exact silence this fixes.
+        assertTrue(FindingsParser.parse("", USAGE).withTruncated(true).degraded());
     }
 }

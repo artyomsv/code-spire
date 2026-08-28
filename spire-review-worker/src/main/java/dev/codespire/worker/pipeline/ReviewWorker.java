@@ -198,7 +198,7 @@ public class ReviewWorker {
         // Carry the "diff was clipped to fit the budget" flag so a partial review is
         // marked on the dashboard and the posted summary comment (not silent).
         ReviewResult truncatedAware = built.truncated()
-                ? new ReviewResult(parsed.findings(), parsed.summary(), parsed.usage(), true)
+                ? parsed.withTruncated(true)
                 : parsed;
         ReconcileOutcome reconcile = reconciliation.outcome();
         ReviewResult result = reconcile == null
@@ -457,7 +457,7 @@ public class ReviewWorker {
         List<Finding> kept = result.findings().stream()
                 .filter(f -> !stillPresent.contains(f.path() + ":" + f.range().startLine()))
                 .toList();
-        return new ReviewResult(kept, result.summary(), result.usage(), result.truncated());
+        return result.withFindings(kept);
     }
 
     /**
