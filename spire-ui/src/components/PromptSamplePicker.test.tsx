@@ -34,6 +34,7 @@ const reviewRow = (over: Partial<api.ReviewSummary> = {}): api.ReviewSummary => 
   updatedAt: '2026-08-09T00:00:00Z',
   unpricedCalls: 0,
   archivedAt: null,
+  degraded: false,
   ...over,
 });
 

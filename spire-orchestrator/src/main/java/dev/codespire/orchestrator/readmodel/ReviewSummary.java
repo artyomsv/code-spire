@@ -39,5 +39,11 @@ public record ReviewSummary(
         /** When this review was archived, or null while it is live. A third dimension beside
          *  {@code status} and {@code prState}: archiving must not overwrite whether the run
          *  completed or failed, which is the very statistic the row is retained for. */
-        Instant archivedAt) {
+        Instant archivedAt,
+        /** The model produced no usable result — unparseable, or cut off at its output limit.
+         *  Carried on the LIST row, not just the detail page, because the list is where the
+         *  symptom was observed: a run that reviewed nothing rendered as done with no findings,
+         *  byte-identical to a clean pass. An attention row and a detail note do not fix the
+         *  surface the operator was actually looking at. */
+        boolean degraded) {
 }

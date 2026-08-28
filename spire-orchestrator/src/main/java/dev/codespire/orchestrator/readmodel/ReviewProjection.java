@@ -422,13 +422,17 @@ public class ReviewProjection {
         // Findings quote the source under review — encrypt at rest (AAD = reviewId).
         String findingsJson = encryption.encryptString(toFindingsJson(result.findings()), reviewId);
         update("""
-                UPDATE review_status SET findings_count = ?, findings_json = ?, stage = ?, updated_at = now()
+                UPDATE review_status SET findings_count = ?, findings_json = ?, degraded = ?, stage = ?,
+                       updated_at = now()
                 WHERE review_id = ?
                 """, ps -> {
             ps.setInt(1, result.findings().size());
             ps.setString(2, findingsJson);
-            ps.setInt(3, stage);
-            ps.setString(4, reviewId);
+            // Written on every outcome, not only when true: a later good run has to be able to clear
+            // it, or the attention row it drives becomes permanent.
+            ps.setBoolean(3, result.degraded());
+            ps.setInt(4, stage);
+            ps.setString(5, reviewId);
         });
         broadcast(reviewId);
     }
@@ -1972,14 +1976,15 @@ public class ReviewProjection {
                              String providerType, String status, boolean answering, int stage, int findings,
                              String findingsJson, String openFindingsJson, String reconciliationJson,
                              String note, String errorDetail, int attempt, Instant createdAt,
-                             Instant updatedAt, String prState, Instant archivedAt) {
+                             Instant updatedAt, String prState, Instant archivedAt,
+                             boolean degraded) {
         ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
                     openCounts.carriedOver(), ledger.totalCostMillicents(),
                     ledger.model() == null ? "" : ledger.model(),
                     ledger.llmType() == null ? "" : ledger.llmType(), updatedAt, answering, prState,
-                    ledger.unpricedCalls(), archivedAt);
+                    ledger.unpricedCalls(), archivedAt, degraded);
         }
     }
 
@@ -2187,7 +2192,8 @@ public class ReviewProjection {
                 rs.getString("reconciliation_json"), rs.getString("note"),
                 rs.getString("error_detail"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
-                rs.getString("pr_state"), instantOrNull(rs.getTimestamp("archived_at")));
+                rs.getString("pr_state"), instantOrNull(rs.getTimestamp("archived_at")),
+                rs.getBoolean("degraded"));
     }
 
     /** NULL means live, so it must stay null — {@code getTimestamp} yields null and only the
@@ -2222,7 +2228,7 @@ public class ReviewProjection {
                 computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation,
                 charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState, r.archivedAt);
+                events, r.prState, r.archivedAt, r.degraded);
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */

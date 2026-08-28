@@ -520,7 +520,114 @@ class AttentionQueriesTest {
                 + "'TEST-REASON', '{}', '" + status + "')");
     }
 
-    /** {@code age} is a Postgres interval literal, e.g. "2 hours". */
+    /**
+     * A run that reached the end of the pipeline having reviewed nothing.
+     *
+     * <p>Neither of the rows above can see it: its status is {@code completed} and it is not stalled.
+     * It is money spent for no review, so it needs a row of its own — and it needs the discriminator
+     * below, because zero findings is also what a clean review writes.
+     */
+    @Test
+    void aDegradedReviewRaisesItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        assertTrue(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    @Test
+    void aCleanCompletedReviewRaisesNoDegradedRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertReview("TEST-r1", "completed", "OPEN", "1 hour");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    /**
+     * The panel's contract: fixing the cause removes the row. recordOutcome writes the flag on every
+     * outcome, so a later good run clears it — a flag that were only ever set would make this the
+     * first permanently-lit row here.
+     */
+    @Test
+    void aLaterGoodRunClearsTheDegradedRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        assertTrue(codes().contains("REVIEW_DEGRADED"), codes().toString());
+
+        sql("UPDATE review_status SET degraded = FALSE WHERE review_id = 'TEST-r1'");
+
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    @Test
+    void anArchivedDegradedReviewStopsRaisingItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        sql("UPDATE review_status SET archived_at = now() WHERE review_id = 'TEST-r1'");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    @Test
+    void anAcknowledgedDegradedReviewStopsRaisingItsRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        acknowledge("TEST-r1");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    /** Completed, so it is neither stalled nor failed — only the new row should speak for it. */
+    @Test
+    void aDegradedReviewIsNotAlsoReportedAsStuckOrFailed() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        assertFalse(codes().contains("REVIEW_STUCK"), codes().toString());
+        assertFalse(codes().contains("REVIEW_FAILED"), codes().toString());
+    }
+
+    /**
+     * The flag outlives the run that set it — only the outcome projection writes it — so the row has
+     * to be scoped to a review that has actually finished. Round 2 in flight would otherwise be told
+     * it "was charged but did not produce a usable result" about a run happening right now.
+     */
+    @Test
+    void aDegradedReviewBeingReviewedAgainDoesNotRaiseTheRow() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        sql("UPDATE review_status SET status = 'reviewing', updated_at = now() WHERE review_id = 'TEST-r1'");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    /** One row per review, not two: a later terminal failure is the fact that matters, and the
+     *  degraded row's "re-run it" advice would be stale beside it. */
+    @Test
+    void aDegradedReviewThatLaterFailedIsReportedOnlyAsFailed() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        sql("UPDATE review_status SET status = 'failed', updated_at = now() WHERE review_id = 'TEST-r1'");
+        assertTrue(codes().contains("REVIEW_FAILED"), codes().toString());
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+
+    /** A spend cap declined to run it, so no model was paid — telling the operator it was charged
+     *  would be false, and the remedy it suggests is the wrong one. */
+    @Test
+    void aRefusedReviewIsNotReportedAsHavingBeenCharged() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        insertDegradedReview("TEST-r1");
+        sql("UPDATE review_status SET status = 'refused', updated_at = now() WHERE review_id = 'TEST-r1'");
+        assertFalse(codes().contains("REVIEW_DEGRADED"), codes().toString());
+    }
+    private void insertDegradedReview(String reviewId) {
+        insertReview(reviewId, "completed", "OPEN", "1 hour");
+        sql("UPDATE review_status SET degraded = TRUE WHERE review_id = '" + reviewId + "'");
+    }
     /**
      * {@code age} is a Postgres interval literal, e.g. "2 hours". The PR number is derived from the
      * review id so separate reviews get distinct subjects and detail routes — rows are per-review

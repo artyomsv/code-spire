@@ -242,8 +242,13 @@ export function pill(status: ReviewStatus) {
  * blocker read as "Changes requested"; lower-severity-only findings read as "Suggestions".
  * Non-terminal states (reviewing/failed/…) fall back to the plain status pill.
  */
-export function outcomeBadge(status: ReviewStatus, findings: number, blockerCount: number) {
+export function outcomeBadge(status: ReviewStatus, findings: number, blockerCount: number,
+                             degraded = false) {
   if (status === 'completed') {
+    // A run that produced nothing has no outcome to report. Zero findings is also what a clean
+    // pass writes, so without this the most prominent cell on the row asserts "Passed" about a
+    // review that never happened — the same false-success rendering the `refused` status hit.
+    if (degraded) return <span className="pill pill--warn">No result</span>;
     const [cls, label] =
       findings === 0
         ? ['passed', 'Passed']
@@ -275,10 +280,11 @@ export function respondingPill() {
  * is mid-reply. Shared by the reviews-list row and the detail header so both stay
  * in sync with the same gating logic.
  */
-export function statusCell(r: { status: ReviewStatus; findings: number; blockerCount: number; answering?: boolean }) {
+export function statusCell(r: { status: ReviewStatus; findings: number; blockerCount: number;
+                                answering?: boolean; degraded?: boolean }) {
   return (
     <>
-      {outcomeBadge(r.status, r.findings, r.blockerCount)}
+      {outcomeBadge(r.status, r.findings, r.blockerCount, r.degraded)}
       {r.answering && respondingPill()}
     </>
   );
@@ -359,7 +365,7 @@ export function miniPipeline(status: ReviewStatus, stage: number) {
  * rendered when something actually is carried over, so an ordinary first review still shows a plain
  * number rather than paying for a distinction that does not apply to it.
  */
-export function findCell(status: ReviewStatus, findings: number, carriedOver = 0) {
+export function findCell(status: ReviewStatus, findings: number, carriedOver = 0, degraded = false) {
   // While a review is still running the running tally is noise (and "0 so far"
   // reads as a result). Show a neutral placeholder until the review completes.
   if (status === 'reviewing') return <span className="time">—</span>;
@@ -367,6 +373,11 @@ export function findCell(status: ReviewStatus, findings: number, carriedOver = 0
   // review at all, so a `0` would be a findings count for a diff no model ever saw.
   if (status === 'failed' || status === 'cancelled' || status === 'refused')
     return <span className="time">—</span>;
+  // A degraded run reports zero findings, and a plain `0` is exactly how it used to pass for a clean
+  // review here. The placeholder rather than a second pill: the outcome badge already carries the
+  // state, and a count for a review that produced nothing is not a count — which is why `failed`,
+  // `cancelled` and `refused` above render the same way.
+  if (degraded) return <span className="time">—</span>;
   if (findings === 0) return <span className="findcount zero tnum">0</span>;
   if (carriedOver <= 0) return <span className="findcount some tnum">{findings}</span>;
   return (
@@ -575,6 +586,9 @@ const STATUS_EXPLANATIONS: Partial<Record<ReviewStatus, StatusExplanation>> = {
   refused: { heading: 'Why it was refused', tone: 'warning' },
 };
 
+/** Not a status, so it cannot live in the record above — see {@link findingsCard}. */
+const DEGRADED_EXPLANATION: StatusExplanation = { heading: 'Why there is no result', tone: 'warning' };
+
 /** Shown when a status that owes an explanation carries no note — an empty card reads as
  *  "nothing to see here", which is the reassurance these branches exist to withhold. */
 const NO_NOTE_RECORDED = 'No explanation was recorded.';
@@ -586,7 +600,15 @@ const NO_NOTE_RECORDED = 'No explanation was recorded.';
  * bottom so a multi-round review reads as one place to look, not two near-empty cards.
  */
 export function findingsCard(r: ReviewDetail) {
-  const explanation = STATUS_EXPLANATIONS[r.status];
+  // Keyed by status, so it can only ever describe a condition that IS one. `degraded` is a separate
+  // dimension on purpose (like `truncated` and `archivedAt`), which means a run that produced
+  // nothing fell straight past this to the empty-findings branch and told the operator the diff was
+  // reviewed and clean — the identical failure `refused` had, for the identical reason. The note is
+  // rendered ONLY inside this branch, so it was also written, stored, sent over the wire and shown
+  // nowhere.
+  const explanation = r.degraded && r.status === 'completed'
+    ? DEGRADED_EXPLANATION
+    : STATUS_EXPLANATIONS[r.status];
   if (explanation) {
     return (
       <div className="card">

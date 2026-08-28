@@ -1,0 +1,11 @@
+-- A review whose model response yielded no structured findings.
+--
+-- Deliberately its own column rather than an inference from findings_count = 0, which is exactly
+-- what a genuinely clean review writes too. Two different models were charged for a large diff,
+-- returned nothing parseable, and produced rows the dashboard rendered as done with no findings;
+-- the posted summary comment said what had happened and nothing in the deployment did.
+--
+-- recordOutcome writes it on EVERY outcome, not only when true, so a later successful run clears
+-- it and the derived attention row disappears by itself -- the attention panel's contract is that
+-- fixing the cause removes the row, and a flag only ever set would be its first permanent one.
+ALTER TABLE review_status ADD COLUMN degraded BOOLEAN NOT NULL DEFAULT FALSE;

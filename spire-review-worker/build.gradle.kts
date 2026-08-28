@@ -51,6 +51,10 @@ dependencies {
     testImplementation("io.rest-assured:rest-assured")
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
     testImplementation("org.wiremock:wiremock:3.13.2")
+    // Declared explicitly rather than leaned on transitively via quarkus-config-yaml:
+    // LlmTimeoutBudgetTest reads the real application.yml, and a platform bump that swapped the
+    // YAML parser would turn that guard into a compile error at best and remove it at worst.
+    testImplementation("org.yaml:snakeyaml")
     testImplementation("org.mockito:mockito-core") // version managed by the Quarkus platform BOM
 }
 

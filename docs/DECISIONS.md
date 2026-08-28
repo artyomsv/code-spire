@@ -234,6 +234,14 @@ which is disproportionate here. Stating it is the point: a cap documented as exa
 to overshoot destroys trust in the number, whereas a cap documented as soft with a bounded overshoot
 is simply true.
 
+> **The bound moved on 2026-08-28.** `DEFAULT_MAX_OUTPUT_TOKENS` went 4096 → 16384, because at 4096 a
+> reasoning model spent its whole budget thinking and returned nothing on a real diff. That default is
+> the fallback for every provider whose operator has not set a per-model `max_tokens`, so the *per-review
+> cost* term above rose by up to 4× on the output axis — typically the more expensive one. The cap is no
+> less soft than it was and nothing about the mechanism changed, but the number a deployment can
+> overshoot by is larger, and a bound stated once and then quietly moved is the failure this ADR
+> already warns about. An operator who wants the old ceiling sets `max_tokens` on their LLM provider.
+
 **Rolling window, not a fixed bucket.** A fixed bucket's only advantage is predictability, and it is a
 false one. With charge timestamps in the ledger, the earliest instant capacity *can* return is
 computable — oldest in-window charge plus the window length — so the attention row can name it

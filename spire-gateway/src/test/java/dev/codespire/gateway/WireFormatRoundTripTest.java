@@ -55,6 +55,29 @@ class WireFormatRoundTripTest {
         assertEquals(original, back);
     }
 
+    /**
+     * The quality flags on a nested result must survive the wire, asserted with both set TRUE.
+     *
+     * <p>Their whole value is reaching the orchestrator, and nothing else checks that they do:
+     * {@code ContractSchemaSnapshotTest} renders a nested component as {@code result: ReviewResult}
+     * without recursing into it, so the golden has never described this record's shape
+     * (techdebt/spire-contract/3-2-…). Asserting them false would pass against a field that was
+     * dropped in serialization, since false is also what a missing boolean deserializes to.
+     */
+    @Test
+    void theQualityFlagsOnAResultSurviveTheWire() throws Exception {
+        ReviewResult flagged = new ReviewResult(List.of(), "summary", ModelUsage.of("m", 1, 1), true, true);
+        IntegrationEvent original = new IntegrationEvent.ReviewGenerated(
+                "review::sandbox/demo-repo#42", 42, "abc123", flagged);
+
+        String json = mapper.writerFor(IntegrationEvent.class).writeValueAsString(original);
+        IntegrationEvent back = mapper.readValue(json, IntegrationEvent.class);
+
+        ReviewResult result = ((IntegrationEvent.ReviewGenerated) back).result();
+        assertTrue(result.truncated(), json);
+        assertTrue(result.degraded(), json);
+    }
+
     @Test
     void actionCommandRoundTripsWithTypeDiscriminator() throws Exception {
         ActionCommand original = new ActionCommand.GenerateReview(

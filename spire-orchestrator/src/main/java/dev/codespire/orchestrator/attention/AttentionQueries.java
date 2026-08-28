@@ -75,6 +75,7 @@ public class AttentionQueries {
             llmProviderRows(c, rows);
             scmProviderRows(c, rows);
             reviewRows(c, rows);
+            degradedReviewRows(c, rows);
             credentialRows(c, rows);
             costRows(c, rows);
         } catch (SQLException e) {
@@ -186,7 +187,7 @@ public class AttentionQueries {
      * so is {@code refused} — a review a spend cap declined to run has reached its end state, and
      * reporting it here would blame a delivery path for a deliberate policy decision.
      *
-     * <p>BOTH queries exclude archived reviews, not just the stuck one. Nothing an operator does makes
+     * <p>EVERY query here excludes archived reviews, not just the stuck one. Nothing an operator does makes
      * a failed review un-fail, so archiving it IS the resolution — and a {@code REVIEW_FAILED} row
      * that survived it would be this panel's first permanently-lit row, against the contract that
      * fixing the cause removes the row.
@@ -214,8 +215,37 @@ public class AttentionQueries {
                 """, null, "REVIEW_FAILED",
                 "This review failed. Open it for the reason, then re-run it or dismiss this.",
                 "review(s) failed"));
+
     }
 
+    /**
+     * A run that reached the end of the pipeline having reviewed nothing, or having been cut off
+     * part-way through its answer.
+     *
+     * <p>Not derivable from {@code findings_count = 0}, which a genuinely clean review writes too —
+     * hence the dedicated column. Neither query in {@link #reviewRows} sees it: the run completed,
+     * so it is neither stalled nor failed.
+     *
+     * <p>The {@code status} predicate is load-bearing, not decoration. {@code degraded} is written
+     * by the outcome projection alone, so it outlives the run that set it: round 2 in flight would
+     * otherwise raise this row about a review happening right now, a round that later failed would
+     * raise it alongside {@code REVIEW_FAILED} with stale advice, and a {@code refused} review —
+     * which was never charged this round — would be told it had been.
+     */
+    private void degradedReviewRows(Connection c, List<AttentionView> rows) throws SQLException {
+        rows.addAll(perReviewRows(c, """
+                SELECT workspace, slug, pr_id FROM review_status
+                 WHERE degraded
+                   AND lower(status) = 'completed'
+                   AND archived_at IS NULL
+                   AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
+                 ORDER BY updated_at DESC
+                """, null, "REVIEW_DEGRADED",
+                "This review was charged but did not produce a usable result: the model's response "
+                        + "was unparseable or cut off at its output limit. Re-run it, and if it "
+                        + "repeats raise the model's output cap.",
+                "review(s) produced no usable output"));
+    }
     /**
      * One row per affected review, named and linked to its own detail page.
      *

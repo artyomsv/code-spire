@@ -27,6 +27,9 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    // Serves a deliberately slow endpoint so the request timeout can be OBSERVED. LangChain4j
+    // exposes no getter for it, so a client built with the wrong value is otherwise invisible.
+    testImplementation("org.wiremock:wiremock:3.13.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

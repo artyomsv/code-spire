@@ -18,6 +18,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -43,6 +44,9 @@ public class WorkerLlmProvider {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    LlmTimeoutBudget budget;
+
     private final LlmClient stub = new LlmClient(new StubLlmProvider(),
             new ModelParams("stub-model", 0.2, null));
 
@@ -54,7 +58,7 @@ public class WorkerLlmProvider {
         if (cred == null) {
             return stub; // no credential brokered — safe fallback (shouldn't happen in active mode)
         }
-        return clientFor(cred);
+        return clientFor(cred, budget.timeout());
     }
 
     public LlmClient forCommand(AnswerFollowUp command) {
@@ -65,7 +69,7 @@ public class WorkerLlmProvider {
         if (cred == null) {
             return stub;
         }
-        return clientFor(cred);
+        return clientFor(cred, budget.timeout());
     }
 
     /**
@@ -76,8 +80,20 @@ public class WorkerLlmProvider {
      * here, so one wrap covers both; the breaker's state is per API host and shared across commands,
      * which is the only scope at which it sees enough failures to open.
      */
-    static LlmClient clientFor(LlmCredential cred) {
-        LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(), cred.temperature());
+    /**
+     * Deliberately has no timeout-less overload. One existed for the tests, and it was the same trap
+     * as the four-arg {@code ReviewResult} constructor that silently absorbed a new component: a
+     * future production call site would compile clean and quietly use the library default instead of
+     * the operator's configured budget. That bug is invisible on any deployment still on the default,
+     * because the two numbers coincide — it would surface only on the deployment that raised the
+     * timeout, which is the deployment that raised it because it needed to. Tests name the value.
+     *
+     * @param timeout the deployment's request budget, which {@link LlmTimeoutBudget} has already
+     *                validated against the Kafka ack threshold.
+     */
+    LlmClient clientFor(LlmCredential cred, Duration timeout) {
+        LlmConfig config = new LlmConfig(cred.baseUrl(), cred.apiKey(), cred.model(),
+                cred.temperature(), timeout);
         LlmProvider provider = switch (cred.type()) {
             case "openai" -> LangChain4jLlmProvider.openAiCompatible(config);
             case "anthropic" -> LangChain4jLlmProvider.anthropic(config);
@@ -90,7 +106,10 @@ public class WorkerLlmProvider {
                 new ModelParams(cred.model(), cred.temperature(), cred.maxTokens(), cred.profile()));
     }
 
-    private LlmCredential unpack(String reviewId, String llmCredential) {
+    // Package-private, not private, so a test can supply a credential without standing up Tink:
+    // what needs proving is which TIMEOUT the two forCommand paths hand to clientFor, and that was
+    // unreachable behind decryption.
+    LlmCredential unpack(String reviewId, String llmCredential) {
         if (llmCredential == null || llmCredential.isBlank()) {
             return null;
         }

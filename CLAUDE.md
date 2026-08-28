@@ -885,6 +885,124 @@ The design is fully specified in `docs/` — **treat those files as the source o
   - **The proxy buffer sizes are asserted by nothing, deliberately and now on the record** —
     reproducing them needs a real chunked session from a live IdP, which neither script has;
     `techdebt/global/4-3-proxy-buffer-sizing-is-unverified-by-any-check.md`.
+- **The review output budget, and the ack threshold coupled to it (2026-08-28):** an attempt to run
+  ADR-026 §9's evidence measurement — re-review real PRs with and without code context — found that
+  the deployment could not review a real pull request at all, so the gate is **still unrun**. Four
+  defects, each verified live before being fixed:
+  - **A reasoning model spent its whole output budget thinking and returned nothing.**
+    `DEFAULT_MAX_OUTPUT_TOKENS` was 4096 and bounds *thinking plus reply together*, so on a
+    17k-input-token diff `claude-opus-5` and `claude-sonnet-5` each emitted exactly 4096 tokens and
+    produced no parseable review — charged 18.6¢ and 11.4¢ respectively. A 1.9k-token diff used 2106
+    by comparison, so the new 16384 is what a large diff needs rather than a guess; an operator who
+    wants another number still sets `max_tokens` on their provider.
+  - **Raising the cap only moved the failure onto a hardcoded 60s timeout** (`LangChain4jLlmProvider`,
+    three call sites, not configurable). It is now `spire.llm.timeout-seconds`, default 180, carried
+    on `LlmConfig` — the one field there that defaults, because it is an operational bound rather
+    than something only the operator can know.
+  - **That timeout equalled SmallRye's ack threshold, so a slow review killed the worker.** The
+    `commands-in` channel fails when one record goes unacknowledged for longer than
+    `throttled.unprocessed-record-max-age.ms`, whose default is *also* 60000: the slow call the LLM
+    budget explicitly permitted was the call that stalled the consumer, and because the record was
+    never acked it was **redelivered on every restart and stalled it again** — a poison pill that
+    survived restarts and needed a manual `rpk group seek` to clear, while the worker logged nothing
+    and the review sat in `reviewing`. The threshold is now 900000ms, and `LlmTimeoutBudget` **refuses
+    to start** when it does not exceed what one command may spend on its model calls. ADR-019 makes
+    that **two** calls per `GenerateReview` (reconcile then review), so a budget sized for one looks
+    generous and still stalls. The check declares the SmallRye default itself, so deleting the line
+    from `application.yml` is a refusal rather than a silent regression.
+  - **A review that produced nothing was indistinguishable from a clean one.** Zero findings is what
+    both write. `ReviewResult.degraded` (set by `FindingsParser` for an empty *or* unparseable
+    response) now rides to the orchestrator, which notes it and persists `review_status.degraded`
+    (**V35**) for a new `REVIEW_DEGRADED` attention row. Written on *every* outcome, not only when
+    true, so a later good run clears it — the panel's contract is that fixing the cause removes the
+    row, and a flag only ever set would have been its first permanently-lit one.
+
+  Two things worth carrying forward. **Adding a component to a wire record silently drops it at every
+  rebuild site**: both `ReviewWorker` sites re-listed components and still compiled, because the
+  shorter convenience constructors stayed valid — hence `withTruncated`/`withFindings` withers, which
+  enumerate the components once, next to the record. And **the contract snapshot did not notice the
+  change at all**, exactly as `techdebt/spire-contract/3-2-…` predicts: `ReviewResult` is nested
+  inside `ReviewGenerated`, and the golden never described its shape. Safe here (Jackson defaults a
+  missing boolean to false, and Kafka retention is short per ADR-014), but approved by nothing.
+  All six guards mutation-verified — break the production line, confirm exactly one test fails; the
+  first attempt at the reconcile-path guard **passed against its own mutation** because
+  `dropAnchorCollisions` returns early when no verdict is still open, so the test never reached the
+  rebuild it was written to protect.
+
+  **A four-lens review round then found five more defects in the fix itself**, each reproduced
+  before being changed:
+  - **The ack guard measured a quantity SmallRye does not measure.** A record's age is stamped when
+    it is **polled**, not when processing starts, and the connector prefetches (`max.poll.records`
+    500 over a queue factor of 2) — so a burst ages out however generous the threshold looks. The
+    channel now pins both to 1 (the dispatcher is ordered and blocking, so prefetch only ever built
+    a backlog) and the check *reads* them rather than assuming them. Its non-LLM allowance also had
+    to rise 120s → 300s: the posting path is already permitted to sleep 180s backing off a
+    rate-limited SCM, so the smaller allowance called a pairing safe that one throttled posting run
+    outran unaided.
+  - **The direct "the model hit its cap" signal was being thrown away.** `ChatResponse.finishReason()`
+    returns `LENGTH` for exactly this condition, and the parser inferred it instead from a *total*
+    parse failure. A response cut off **after** some complete findings still parses — so it reported
+    a partial finding set and looked finished. Raising the output cap does not remove that case; it
+    makes it the likely one, because a model with room to start answering is cut off part-way rather
+    than before it begins. `Completion.outputCapped` carries it as a neutral boolean, since
+    `spire-contract` is framework-free and every provider spells the fact differently.
+  - **The degraded note never cleared.** The flag was written on every outcome so the attention row
+    could clear; the note was not, so a clean round 2 left round 1's "this run reviewed nothing" on a
+    row whose flag was now false and whose findings were populated — the two halves of one fact
+    disagreeing, and the note is the half an operator reads.
+  - **`REVIEW_DEGRADED` had no `status` predicate**, so it fired about a review being re-reviewed
+    right now, doubled up with `REVIEW_FAILED` carrying stale advice, and told a `refused` run — which
+    was never charged — that it had been.
+  - **The reviews list still could not tell it from a clean pass**, which is the surface the symptom
+    was observed on: the fix had reached the bell and the detail note only. `ReviewSummary.degraded`
+    now drives a *no output* pill in `findCell` and joins the `needsAttention` predicate. Same class
+    as the ADR-025 `refused` incident, minus its UI-union half — attention rows render generically
+    from `code: string`, so the panel needed nothing.
+
+  Two traps worth keeping. The timeout-less `clientFor` overload was invisible **because**
+  `LlmConfig.DEFAULT_TIMEOUT` equals the shipped `spire.llm.timeout-seconds` default: a call site
+  using the wrong one behaves identically on every deployment except the one that raised the timeout,
+  which is the deployment that raised it because it needed to. It is deleted, and both `forCommand`
+  paths are now tested against a budget that matches nothing else. And making the note always write
+  turned an un-overridden `setNote` on a saga test fake into a live `DataSource` call — the exact
+  shape that fake's own `recordCharges` comment already warned about.
+
+
+  **Then run against real GitHub before merge, which found three more — every one of them in the UI,
+  and none reachable from a test suite.** The headline fix was confirmed first: the same pull request
+  that twice returned nothing now reviews at `out=5201` for two real findings, so the old 4096 cap was
+  cutting it off about 1100 tokens short of an answer. The consumer also stayed Stable with lag 0 and
+  an empty DLQ across several calls far longer than the old 60s ceiling — the workload that used to
+  kill the channel. Forcing a real cut-off (a low `max_tokens` against a live model) then lit the whole
+  chain: `finish_reason` → `outputCapped` → `degraded` → `V35` → note → attention row → list.
+  - **The outcome badge still said "Passed", in green, beside "no output".** `outcomeBadge` keys on
+    `findings === 0`, which is what a clean pass writes too. The most prominent cell on the row
+    asserted a successful outcome for a review that never happened. The findings cell now renders
+    `—` and the badge says *No result*, matching how `failed` / `cancelled` / `refused` already
+    split that job between the two columns.
+  - **The chip counts stopped adding up** — `Completed 32 + Needs attention 2` against 33 rows. Each
+    count was its own predicate rather than `matchesChip`, so they drifted the moment a status
+    stopped mapping to one chip. All five now derive from the filter itself. The invariant test
+    written alongside caught a second, subtler one: `needsAttention` was ungated, so a review being
+    re-reviewed *right now* was claimed by both Reviewing and Needs attention. It is gated on
+    `completed`, mirroring what the `REVIEW_DEGRADED` query already had to do for the same reason.
+  - **The detail page said "✓ clean — No issues found in this diff."** This is the `refused` incident
+    exactly, recurring for its structural cause: `STATUS_EXPLANATIONS` is keyed by status, so it
+    cannot see a condition that is not one — and the note explaining the run is rendered ONLY inside
+    the branch that lookup selects, so it was written, stored, sent over the wire and shown nowhere.
+    What made it invisible to `tsc` is worth keeping: the dashboard's `ReviewDetail` type DERIVES
+    from its `ReviewSummary` type, while the Java side is two independent records — so adding the
+    field to only one type-checks on both sides and arrives `undefined` at runtime, defaulting into
+    the reassuring branch. **A type system asserting a relationship the wire does not have.**
+
+  Also worth keeping for the runbook: the dev images BAKE their source, so `up -d` without `--build`
+  silently runs the old tree — the first startup check passed against code that did not contain the
+  guard being tested. And a hash-route navigation does not reload an SPA, so a screenshot after a
+  redeploy can be reporting the previous bundle.
+
+  Measured, not estimated: **1608 Java tests across 202 suites** (`testFast` 622/77 + `testServices`
+  — gateway 73/11, orchestrator 705/89, worker 208/25); **396 `spire-ui` vitest tests across 52
+  files**; `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

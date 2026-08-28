@@ -17,6 +17,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -452,5 +453,101 @@ class ReviewProjectionTest {
                 "a human's inline thread reports where it is, so it need not look general");
         assertEquals("src/App.java:9", locOf(d, "bot-1"), "a finding's own thread reports it too");
         assertNull(locOf(d, "sum-1"), "a summary thread sits nowhere in the diff");
+    }
+    /**
+     * The column the {@code REVIEW_DEGRADED} attention row reads. Asserted here because the query and
+     * the writer are in different classes: a row keyed on a column nothing ever sets would pass its
+     * own test forever and never fire in production.
+     */
+    @Test
+    void aDegradedOutcomeIsPersistedAndALaterGoodOneClearsIt() {
+        long pr = 4111L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
+
+        projection.recordOutcome(id, degradedResult(), ReviewProjection.STAGE_COMMENTS);
+        assertTrue(degradedFlag(id), "a model response that parsed to nothing is recorded as degraded");
+
+        // Written on every outcome, not only when true — this is what lets the attention row clear.
+        projection.recordOutcome(id, new ReviewResult(List.of(), "clean", ModelUsage.of("m", 1, 1)),
+                ReviewProjection.STAGE_COMMENTS);
+        assertFalse(degradedFlag(id), "a later parseable run clears the flag");
+    }
+
+    /**
+     * The flag has to reach the LIST row, not just the column. That is the surface the symptom was
+     * observed on — a run that reviewed nothing rendered as done with no findings — so a projection
+     * that stored it and never carried it forward would fix the database and not the screen.
+     */
+    @Test
+    void theListRowCarriesTheDegradedFlag() {
+        long pr = 4113L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        projection.recordOutcome(id, degradedResult(), ReviewProjection.STAGE_COMMENTS);
+
+        ReviewSummary row = projection.listSummaries(true).stream()
+                .filter(r -> r.id().equals(id)).findFirst().orElseThrow();
+        assertTrue(row.degraded(), "the list row must be able to tell this apart from a clean pass");
+
+        projection.recordOutcome(id, new ReviewResult(List.of(), "clean", ModelUsage.of("m", 1, 1)),
+                ReviewProjection.STAGE_COMMENTS);
+        ReviewSummary after = projection.listSummaries(true).stream()
+                .filter(r -> r.id().equals(id)).findFirst().orElseThrow();
+        assertFalse(after.degraded(), "a later good run clears it on the list too");
+    }
+
+    /**
+     * And onto the DETAIL payload, which is a separate record over the same wire.
+     *
+     * <p>The dashboard derives its detail type from its summary type, so a field present on one and
+     * absent from the other type-checks on both sides and simply arrives undefined — rendering the
+     * page as a clean pass, with the note that explains the run shown nowhere, because that note
+     * lives in the branch this flag selects.
+     */
+    @Test
+    void theDetailPayloadCarriesTheDegradedFlag() {
+        long pr = 4114L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        projection.recordOutcome(id, degradedResult(), ReviewProjection.STAGE_COMMENTS);
+        assertTrue(projection.loadDetail(REPO.workspace(), REPO.slug(), pr).orElseThrow().degraded());
+
+        projection.recordOutcome(id, new ReviewResult(List.of(), "clean", ModelUsage.of("m", 1, 1)),
+                ReviewProjection.STAGE_COMMENTS);
+        assertFalse(projection.loadDetail(REPO.workspace(), REPO.slug(), pr).orElseThrow().degraded());
+    }
+
+    @Test
+    void aCleanOutcomeIsNeverMarkedDegraded() {
+        long pr = 4112L;
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "t", "a", "aid", "s", "d", "sha", "url",
+                "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        projection.recordOutcome(id, new ReviewResult(List.of(), "nothing to report", ModelUsage.of("m", 1, 1)),
+                ReviewProjection.STAGE_COMMENTS);
+        assertFalse(degradedFlag(id), "zero findings from a parsed response is an ordinary pass");
+    }
+
+    private static ReviewResult degradedResult() {
+        return new ReviewResult(List.of(), "Note: the model returned no output.",
+                ModelUsage.of("m", 1, 1), false, true);
+    }
+
+    private boolean degradedFlag(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT degraded FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "review row must exist");
+                return rs.getBoolean("degraded");
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the degraded flag", e);
+        }
     }
 }

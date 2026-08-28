@@ -65,26 +65,38 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
 
   const summary = useMemo(() => {
     const inFlight = reviews.filter((r) => r.status === 'reviewing').length;
-    const completedToday = reviews.filter((r) => r.status === 'completed' && isSameDay(r.updatedAt, now)).length;
-    const needsAttention = reviews.filter((r) => wantsAttention(r.status)).length;
+    // Through the same predicate as the chip: a run that produced nothing did not review anything
+    // today, and counting it here while the Completed chip excludes it makes one tile disagree with
+    // the chip directly beneath it.
+    const completedToday = reviews.filter(
+      (r) => matchesChip(r.status, 'completed', r.degraded) && isSameDay(r.updatedAt, now),
+    ).length;
+    const needsAttention = reviews.filter((r) => wantsAttention(r.status, r.degraded)).length;
     return { inFlight, completedToday, needsAttention };
   }, [reviews, now]);
 
-  const chipCounts = useMemo<Record<ChipFilter, number>>(
-    () => ({
-      all: reviews.length,
-      reviewing: reviews.filter((r) => r.status === 'reviewing').length,
-      completed: reviews.filter((r) => r.status === 'completed').length,
-      failed: reviews.filter((r) => wantsAttention(r.status)).length,
-      closed: reviews.filter((r) => r.status === 'cancelled' || r.status === 'superseded').length,
-    }),
-    [reviews],
-  );
+  /**
+   * Every count goes through {@link matchesChip}, the same predicate the rows are filtered by.
+   *
+   * <p>They used to be independent one-liners, and they drifted the moment a status stopped mapping
+   * to exactly one chip: a degraded review is `completed` but answers to Needs attention, so it was
+   * counted by both and the chips summed to more rows than the list held.
+   */
+  const chipCounts = useMemo<Record<ChipFilter, number>>(() => {
+    const count = (f: ChipFilter) => reviews.filter((r) => matchesChip(r.status, f, r.degraded)).length;
+    return {
+      all: count('all'),
+      reviewing: count('reviewing'),
+      completed: count('completed'),
+      failed: count('failed'),
+      closed: count('closed'),
+    };
+  }, [reviews]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return reviews.filter((r) => {
-      if (!matchesChip(r.status, filter)) return false;
+      if (!matchesChip(r.status, filter, r.degraded)) return false;
       if (!q) return true;
       return (
         r.repo.toLowerCase().includes(q) ||
@@ -197,7 +209,7 @@ export default function ReviewsList({ reviews, loading, error, showArchived, onS
                     <CopyableValue text={r.sha} display={shortSha(r.sha)} mono copyTitle="Copy commit hash" />
                   </div>
                   <div className="cell-mini">{miniPipeline(r.status, r.stage)}</div>
-                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings)}</div>
+                  <div className="cell-r">{findCell(r.status, r.findings, r.carriedOverFindings, r.degraded)}</div>
                   <div className="model-cell">{llmIcon(r.model, r.llmType)}</div>
                   <div className="cell-r">
                     <span className="mono" title={cost.title}>{cost.text}</span>

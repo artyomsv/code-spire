@@ -23,12 +23,13 @@ import java.util.function.Supplier;
  * <p><b>Reads only, and that is the whole reason this decorates {@code DiffSource}.</b> Every method
  * here is a GET, so a retry is safe by construction and needs no idempotency key. Posting is not
  * wrapped: comment writes already carry their own claim in {@code comment_idempotency} plus a
- * Retry-After-aware backoff with a budget tuned against Kafka's {@code max.poll.interval.ms}, and a
- * second retry layer underneath that would silently double the sleep it is bounded by.
+ * Retry-After-aware backoff whose budget is accounted for by {@code LlmTimeoutBudget} against the
+ * commands channel's ack threshold, and a second retry layer underneath that would silently double
+ * the sleep it is bounded by.
  *
  * <p>The delays are deliberately tiny for the same reason: worst case here is roughly
- * {@code 100 + 200 = 300ms} of sleep plus jitter, on a consumer thread whose poll interval the
- * posting path is already carefully budgeting against.
+ * {@code 100 + 200 = 300ms} of sleep plus jitter, on a consumer thread whose record is already
+ * ageing against the channel's ack threshold from the moment it was polled.
  *
  * <p><b>Every port method must be delegated here, including the defaulted ones.</b> A method left
  * unoverridden does not fall through to the delegate — it resolves to {@link DiffSource}'s own
