@@ -140,10 +140,37 @@ Built by consuming `cs.events` / `cs.results`; **no FK to the event store** (dec
 `review_thread` (per conversation): `thread_id` TEXT PK (a `ThreadRef` value), `review_id` TEXT, `pr_id` BIGINT,
 `status` TEXT, `last_comment_id` TEXT, `updated_at`.
 
-`review_finding` (the review output — persisted for dashboard / analytics / memory; also posted to
-Bitbucket as the durable copy): `id` BIGINT PK, `review_id` TEXT, `pr_id` BIGINT, `commit` TEXT,
-`path` TEXT, `start_line` INT, `end_line` INT, `severity` TEXT, `message` BYTEA (**encrypted** — may
-quote source), `suggestion` BYTEA (**encrypted**, nullable), `comment_id` TEXT, `created_at`.
+`review_finding` (the review output — the durable corpus analytics and learned memory read, P4 /
+ADR-027, **V36**): `id` BIGSERIAL PK, `review_id` TEXT, `round` INT, `commit_sha` TEXT, `path` TEXT,
+`start_line` INT, `end_line` INT, `severity` TEXT, `category` TEXT (nullable), `origin` TEXT
+(`review` | `conversation`), `message` TEXT (**Tink-encrypted**, AAD = `review_id` — may quote
+source), `suggestion` TEXT (**encrypted**, nullable), `thread_ref` TEXT (nullable), `verdict` TEXT
+(nullable), `verdict_at` TIMESTAMPTZ, `suppressed_by` BIGINT (nullable), `created_at`.
+
+Four of those columns carry decisions rather than data, and this file is where they are recorded.
+**`round`** is in the row because `review_status` overwrites per round, and a corpus with the same
+amnesia cannot answer "did this get fixed". **`category`** is nullable for real rather than in
+theory: prompts are operator-customizable per repository (E16), so a customized `REVIEW` template
+never asks for it. **`verdict` null means NOT YET JUDGED**, which is a different fact from "judged
+and unchanged" — conflating them would count every unreconciled finding as a dismissal.
+**`thread_ref` null means generated but never posted**, which happens on a degraded run or a
+per-finding post failure.
+
+There is deliberately **no unique constraint**: `category` is nullable, Postgres treats NULLs as
+distinct, so a key would fail to deduplicate exactly the uncategorized rows — and it would
+simultaneously drop two legitimate findings of one category on one line. Redelivery idempotency is
+delete-then-insert per `(review_id, round)` instead.
+
+**No backfill.** Rows accrue from the day V36 shipped. Findings had only ever lived inline on Kafka
+integration events (short retention, ADR-014) and in one overwritten `review_status` column, so
+there was no history to recover — the same honest shape as the symbol index.
+
+`operator_identity` (which SCM account an operator is, P4 / FR-11, **V37**): `oidc_subject` TEXT,
+`provider_type` TEXT, `author_id` TEXT, `created_at` — PK `(oidc_subject, provider_type)`. Keyed
+with the platform because a bare `providerUserId` is not a person: the same id on two SCMs belongs
+to two unrelated humans. Admin-managed; inferring the link by matching usernames is refused, since
+a coincidental match shows one person another person's performance data with nothing on screen
+looking wrong.
 
 `review_event` (flattened timeline for the dashboard): `id` BIGINT PK, `review_id`, `type`,
 `at`, `summary` — non-sensitive projection of the log for the UI (no payloads).

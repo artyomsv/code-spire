@@ -28,11 +28,13 @@ public final class PromptCatalog {
                   "line": <line number on the NEW side as shown in the diff>,
                   "endLine": <same as line for single-line findings>,
                   "severity": "BLOCKER|MAJOR|MINOR|INFO|NIT",
+                  "category": "NAMING|ERROR_HANDLING|TEST_COVERAGE|PERFORMANCE|SECURITY|CORRECTNESS|STYLE|DOCS|COMPLEXITY|OTHER",
                   "message": "what is wrong and why it matters",
                   "suggestion": "replacement code, or null"
                 }
               ]
             }
+            Use exactly one of the listed category values -- OTHER when none fits. \
             Cite ONLY line numbers that appear in the provided diff hunks. An empty findings \
             array is a valid and welcome answer for a clean diff.""";
 

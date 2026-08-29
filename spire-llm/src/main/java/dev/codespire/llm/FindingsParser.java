@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingCategory;
 import dev.codespire.diff.TokenBudget;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
@@ -80,6 +81,10 @@ public final class FindingsParser {
             String suggestion = node.path("suggestion").isNull() ? null : node.path("suggestion").asText(null);
             findings.add(new Finding(path, new LineRange(line, endLine),
                     severity(node.path("severity").asText("")),
+                    // Unrecognised or absent -> null, never OTHER: OTHER is an answer the model gave,
+                    // an unparseable label is unknown, and ADR-023 is the standing lesson about
+                    // collapsing those two into one value.
+                    FindingCategory.parse(node.path("category").asText(null)),
                     node.path("message").asText("").trim(),
                     suggestion));
         }

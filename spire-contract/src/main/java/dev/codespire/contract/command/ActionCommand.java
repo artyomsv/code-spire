@@ -149,7 +149,8 @@ public sealed interface ActionCommand {
      */
     record PostComments(String reviewId, RepoRef repo, long prId, String commit,
                         ReviewResult findings, String scmCredential,
-                        List<FindingVerdict> verdicts, String priorSummaryRef) implements ActionCommand {
+                        List<FindingVerdict> verdicts, String priorSummaryRef,
+                        int suppressedCount) implements ActionCommand {
 
         public PostComments {
             verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
@@ -157,7 +158,34 @@ public sealed interface ActionCommand {
 
         public PostComments(String reviewId, RepoRef repo, long prId, String commit,
                             ReviewResult findings, String scmCredential) {
-            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null);
+            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null, 0);
+        }
+
+        public PostComments(String reviewId, RepoRef repo, long prId, String commit,
+                            ReviewResult findings, String scmCredential,
+                            List<FindingVerdict> verdicts, String priorSummaryRef) {
+            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef, 0);
+        }
+
+        /**
+         * Same command, carrying how many findings a learned preference hid (P4 / ADR-027).
+         *
+         * <p>A wither rather than a re-listing at the call site, for the reason the 2026-08-28 work
+         * recorded: adding a component to a wire record compiles everywhere, because the shorter
+         * convenience constructors above stay valid, and the new field is silently dropped. The
+         * components are enumerated once, here, so there is one place to update.
+         *
+         * <p><b>The contract snapshot DID catch this component</b>, which is worth recording because
+         * the design predicted it would not: the golden file lists each command's own components, so
+         * adding one failed the gate until the snapshot was updated. What it cannot see is a change a
+         * level down — {@code Finding} gaining a component sits inside {@code ReviewResult} inside
+         * {@code ReviewGenerated}, and the golden never described that shape. Both halves of
+         * {@code techdebt/spire-contract/3-2} showed up in one milestone: the gate holding at the top
+         * level, and blind one level in.
+         */
+        public PostComments withSuppressedCount(int replacement) {
+            return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
+                    priorSummaryRef, replacement);
         }
     }
 

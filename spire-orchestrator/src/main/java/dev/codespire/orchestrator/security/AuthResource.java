@@ -38,8 +38,10 @@ public class AuthResource {
      * @param authenticated whether THIS caller is signed in
      * @param user the signed-in operator, or empty
      * @param roles the operator's spire roles, or empty
+     * @param subject the caller's own OIDC subject, or empty
      */
-    public record Me(boolean authEnabled, boolean authenticated, String user, List<String> roles) {
+    public record Me(boolean authEnabled, boolean authenticated, String user, List<String> roles,
+                     String subject) {
     }
 
     /**
@@ -58,8 +60,10 @@ public class AuthResource {
                 authEnabled,
                 signedIn,
                 signedIn ? identity.getPrincipal().getName() : "",
-                signedIn ? spireRoles(identity.getRoles()) : List.of());
+                signedIn ? spireRoles(identity.getRoles()) : List.of(),
+                signedIn ? OidcSubjects.of(identity) : "");
     }
+
 
     /** Only this application's own roles; an operator's other realm roles are not our business. */
     private static List<String> spireRoles(Set<String> roles) {

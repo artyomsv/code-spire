@@ -71,6 +71,12 @@ public class ResultSaga {
     ReviewProjection projection;
 
     @Inject
+    dev.codespire.orchestrator.readmodel.FindingProjection findings;
+
+    @Inject
+    dev.codespire.orchestrator.memory.PreferenceFilter preferenceFilter;
+
+    @Inject
     dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
 
     @Inject
@@ -228,6 +234,10 @@ public class ResultSaga {
                     threads.markFindingThread(e.reviewId(), new ThreadRef(inline.threadRef()),
                             inline.path(), inline.line());
                 }
+                // P4/ADR-027: a finding's thread ref is born here, not at generation, so the rows
+                // that keep a null one are exactly those generated and never posted -- a degraded
+                // run's partial list, or a per-finding post failure. That distinction is the point.
+                findings.recordThreadRefs(e.reviewId(), e.inline());
                 // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
                 threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryThreadRef()));
                 // ADR-019: a reconciled thread's outcome lands on the timeline and, when the finding
@@ -360,7 +370,12 @@ public class ResultSaga {
     private void onReviewGenerated(ReviewGenerated e) {
         projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                 e.result().findings().size() + " findings");
-        projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+        int round = runs.roundOrUnknown(e.reviewId());
+        var repo = ReviewIds.parse(e.reviewId()).repo();
+        var filtered = recordCorpusThenHide(e, round, repo);
+        ReviewResult visible = filtered.result();
+
+        projection.recordOutcome(e.reviewId(), visible, ReviewProjection.STAGE_COMMENTS);
         java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
         String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
         if (!e.verdicts().isEmpty()) {
@@ -372,15 +387,61 @@ public class ResultSaga {
         // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
         // posted_findings_json semantics unchanged since the two columns hold the same
         // findings in that case).
-        projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
+        projection.recordOpenFindings(e.reviewId(), visible, e.verdicts(),
                 prior.map(PriorRun::findings).orElse(List.of()));
-        projection.setNote(e.reviewId(), noteFor(e.result()));
+        projection.setNote(e.reviewId(), noteFor(visible));
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
-                e.commit(), e.result().findings().size(),
-                Integer.toHexString(e.result().summary().hashCode())));
+                e.commit(), visible.findings().size(),
+                Integer.toHexString(visible.summary().hashCode())));
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
-                e.verdicts(), priorSummaryRef));
+                e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
+                e.verdicts(), priorSummaryRef, filtered.suppressedCount()));
+    }
+
+    /**
+     * Writes the durable corpus, then applies the approved preferences to what the reviewer posts.
+     *
+     * <p><b>The order of these two is load-bearing, which is why they live together.</b>
+     *
+     * <p>{@code recordGenerated} is the ONE write that sees the UNFILTERED set: the corpus has to
+     * hold what the model actually said, including what a preference then hid, or a wrong preference
+     * could never be counted. Its round comes from {@code ReviewRuns} (which counts
+     * {@code ReviewRequested}) rather than {@code review_status.attempt}, the auto-retry counter that
+     * would give one paid review several round numbers.
+     *
+     * <p>The filter then runs ABOVE every other write in the caller. {@code recordOpenFindings}
+     * builds the carry-forward that becomes the next round's {@code PriorRun}, and the worker turns
+     * every prior finding into the review prompt's EXCLUSION list. Filtering after it put suppressed
+     * findings into that list, so the next round told the model not to raise them — and revoking the
+     * preference could not bring them back, because the filter had nothing left to un-hide. That is
+     * exactly the property making a counted filter better than prompt injection, so losing it left
+     * the feature with the failure mode it was designed to avoid.
+     *
+     * <p>Verdicts ride the same event (empty on a first review) and judge findings from ANY earlier
+     * round — {@code priorRun} is the carried-forward open set, not the previous round.
+     */
+    private dev.codespire.orchestrator.memory.PreferenceFilter.Filtered recordCorpusThenHide(
+            ReviewGenerated e, int round, dev.codespire.contract.scm.RepoRef repo) {
+        findings.recordGenerated(e.reviewId(), round, e.commit(), e.result().findings());
+        findings.recordVerdicts(e.reviewId(), round, e.verdicts());
+        var filtered = preferenceFilter.apply(repo, e.result());
+        recordSuppressions(e.reviewId(), round, filtered);
+        return filtered;
+    }
+
+    /** Groups the hidden findings by the preference responsible, so each batch names its cause. */
+    private void recordSuppressions(String reviewId, int round,
+            dev.codespire.orchestrator.memory.PreferenceFilter.Filtered filtered) {
+        if (filtered.suppressed().isEmpty()) {
+            return;
+        }
+        var byPreference = filtered.suppressed().stream().collect(java.util.stream.Collectors
+                .groupingBy(dev.codespire.orchestrator.memory.PreferenceFilter.Suppression::preferenceId));
+        byPreference.forEach((preferenceId, hidden) -> findings.markSuppressed(reviewId, round,
+                new dev.codespire.orchestrator.readmodel.SuppressionBatch(preferenceId,
+                        hidden.stream().map(h -> new dev.codespire.orchestrator.readmodel
+                                .SuppressionBatch.Location(
+                                        h.finding().path(), h.finding().range().startLine())).toList())));
     }
 
     /**

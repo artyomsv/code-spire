@@ -60,6 +60,12 @@ public class IntegrationSaga {
     ReviewProjection projection;
 
     @Inject
+    dev.codespire.orchestrator.readmodel.FindingProjection findings;
+
+    @Inject
+    dev.codespire.orchestrator.llm.ReviewRuns runs;
+
+    @Inject
     ReviewThreadView threads;
 
     @Inject
@@ -400,6 +406,15 @@ public class IntegrationSaga {
         // The message goes to the encrypted read model and is never logged (DATA-MODEL §5).
         projection.addConversationFinding(reviewId, root.value(), f.path(), f.line(), f.severity(),
                 f.message());
+        // ...and into the P4 corpus, which is the half that was missing. review_finding carries an
+        // origin column and V36 documents 'conversation' as one of its two values, but nothing wrote
+        // such a row: analytics under-counted against review_status.findings_count, and a finding a
+        // human filed by hand -- the most deliberate signal the system receives -- was the one kind
+        // it never learned from.
+        findings.recordConversationFinding(reviewId, runs.roundOrUnknown(reviewId),
+                new dev.codespire.orchestrator.readmodel.ConversationFinding(
+                        lifecycle.currentState(reviewId).currentCommit(), f.path(), f.line(),
+                        f.severity().name(), root.value()));
         List<DomainEvent> appended = lifecycle.handle(reviewId,
                 new RecordCommand.RaiseConversationFinding(root, f.path(), f.line(), f.severity(),
                         f.message(), e.commentId()));

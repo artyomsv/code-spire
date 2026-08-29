@@ -1107,6 +1107,161 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
   Measured, not estimated: **1658 Java tests across 207 suites** (`testFast` 657/80 + `testServices`
   — gateway 73/11, orchestrator 705/89, worker 223/27); `spire-ui` untouched.
+- **P4 delivered — learned memory and review analytics (ADR-027, 2026-08-29):** the roadmap scheduled
+  P4 on the assumption that a corpus of accepted and rejected findings existed to learn from.
+  **It did not, in two layers.** `DATA-MODEL.md` had specified `review_finding` since the beginning —
+  *"persisted for dashboard / analytics / memory"* — and no migration ever created it; ADR-026 and
+  `V5__code_symbol.sql` both cited it as an existing precedent for the coordinates-clear/
+  content-encrypted split. And the findings themselves were being **discarded continuously**: the
+  persisted domain stream carries `ReviewOutcomeRecorded(commit, findingsCount, summaryDigest)` — a
+  count and a digest — while the findings ride inline on integration events under ADR-014's short bus
+  retention, and `review_status.posted_findings_json` holds one overwritten round. That is ADR-011
+  working exactly as designed; nobody had drawn the consequence. (A third, smaller find:
+  `projection_checkpoint` is declared in V1 and referenced by zero Java, so the read model's
+  "rebuildable" is an intention rather than a mechanism. Recorded, not built — a replay could not
+  have recovered historical findings anyway, since the log never carried them.)
+
+  **`review_finding` (V36) is the durable record**, one row per finding per round, with no backfill —
+  the corpus accrues from here, the same honest shape as the symbol index, and a salvage from
+  `posted_findings_json` would have produced exactly one unrepresentative round per review with no
+  verdicts. `Finding` gains a **nullable, closed `category`**: closed because free-text categories
+  from a model produce a long tail of near-duplicate labels that group nothing, nullable because a
+  customized `REVIEW` template (E16) never asks for it. An unrecognised label parses to **null, not
+  `OTHER`** — `OTHER` is an answer the model gave, an unparseable label is unknown.
+
+  **Three write rules are not the obvious ones, and each obvious version fails silently.**
+  - **Verdicts do not judge the previous round.** `priorRun` is built from the carried-forward OPEN
+    set (V20), spanning every earlier round, so a finding raised in round 1 and fixed in round 4 still
+    has its row at round 1. A `round - 1` rule updates round 3, matches nothing, and throws nothing —
+    a missed `UPDATE` affects zero rows. "Median rounds to resolved" and every dismissal rate would
+    have been quietly, systematically wrong. Matching is the newest **not-yet-judged** row for the
+    location across all rounds, preferring the verdict's own thread ref.
+  - **Thread-ref attachment is not scoped to a round**, because a push between generation and posting
+    appends a new `ReviewRequested` and the current round has already moved on.
+  - **Idempotency is delete-then-insert, not a unique key.** A redelivered `ReviewGenerated` re-runs
+    the handler inside the `isReviewing` window — the one the V30 double-charge lived in — and a
+    unique key cannot help: `category` is nullable and Postgres treats NULLs as distinct, so it would
+    fail on exactly the uncategorized rows while also dropping two legitimate findings of one category
+    on one line. (Verified against the deployment's own Postgres 18.4 before the design changed.)
+
+  **Analytics (FR-11) ships with the projection, not after it** — reading a projection back is the
+  only way to tell a correct one from a wrong one, which is ADR-023's sequence exactly. A dismissal
+  rate is **null rather than 0** until something has been judged: zero asserts "this team dismisses
+  nothing", which is a claim about them. **Per-author is self-visible** and its authorization is
+  row-level, so it lives in code — `@RolesAllowed` cannot express "a viewer may read their own row" —
+  keyed on `(provider_type, author_id)` because the same id on two SCMs is two unrelated people.
+  `operator_identity` (V37) is **admin-managed and never inferred**: matching an OIDC username against
+  an SCM handle would, on a coincidental match, show one person another person's performance data with
+  nothing on screen looking wrong. `/api/me` gained a `subject` so an admin has a value to link.
+
+  **Learned memory (FR-10) filters after generation and counts what it removed** (`learned_preference`,
+  V38). Prompt injection was rejected: it might produce better findings rather than merely fewer, but
+  nothing can tell whether the model honoured the instruction, and a finding it silently skipped leaves
+  no trace — the shape of both the circuit breaker recording a failed future as a success and ADR-023's
+  `0` that meant *unknown*. The count appears on the pull request and the dashboard, suppressed rows
+  stay in `review_finding` naming the preference that hid them, and revoking restores them next review.
+  `PathGlobs` is a **fixed ladder** rather than judgement, because "a rejected proposal is not
+  regenerated" depends on group identity being recognisable tomorrow.
+
+  **Two lessons from the round itself.** An adversarial spec review (fable-5) checked seven claims the
+  spec made about the codebase — all seven held — and then found the spec's claims about what the
+  *pipeline produces* were wrong: three exit criteria asserted the impossible, since observe mode never
+  starts the pipeline, a refused review stops before `GenerateReview`, and anchor collisions are dropped
+  in the worker before the event is emitted. And **the contract snapshot demonstrated both halves of
+  `techdebt/spire-contract/3-2` in one milestone**: it caught `PostComments.suppressedCount` (a
+  top-level component) and passed `Finding.category` in silence (nested inside `ReviewResult`). The
+  spec had predicted the opposite for the first of those and is corrected.
+
+  Three tests were found vacuous by mutation and rewritten: a verdict-redelivery case that held with
+  its guard deleted because the newest row was also the unjudged one, and two preference-state cases
+  that could not fail because the upsert never writes `state` — the guard actually protects the
+  *evidence* on a decided row, which is what the replacement asserts.
+
+  **Reviewed on four lenses, and the two worst defects were in the new code (2026-08-29).** Both
+  were silent, and both were about ORDER rather than logic — the class this feature was designed to
+  avoid, arriving in its own implementation.
+  - **A hidden finding was hidden forever.** The suppression filter ran eleven lines after
+    `recordOpenFindings`, so a suppressed finding entered the carry-forward, became the next round's
+    `PriorRun`, and the worker turned it into the review prompt's EXCLUSION list — telling the model
+    never to raise it again. Revoking the preference could not restore it, because the filter had
+    nothing left to un-hide. That is exactly the property ADR-027 names as the reason a counted
+    filter beats prompt injection, and four places promised it in prose while the code did the
+    opposite. `LearnedMemoryTest.revokingStopsTheHidingOnTheNextReview` passed throughout, because a
+    unit test of the filter cannot see the seam; the fix is a saga-level test.
+  - **A read failure would have deleted history.** `ReviewRuns.currentRun` answers `FIRST_RUN` when
+    it cannot read — right for the ledger, where a charge under run 1 is harmless and refusing loses
+    money. Wrong for a round-KEYED write: `recordGenerated` replaces every row for
+    `(review_id, round)`, so a transient fault during round 5 resolved to 1, deleted round 1's real
+    rows, and filed round 5's findings there. The `round <= 0` guard was unreachable from production,
+    so the test covering it tested nothing. `roundOrUnknown` returns a sentinel instead.
+
+  Eight more, each verified before being changed: a preference could hide a **SECURITY** finding and
+  the evidence for it is **manufacturable** (an `ACKNOWLEDGED` verdict comes from the model reading
+  the author's own reply, so ten "won't fix" answers on one PR qualified a group — now a
+  never-suppressed floor enforced at both ends, plus a two-review minimum shown on the card); the
+  Memory screen showed **"threshold: 0 findings, 0% dismissed"** because the thresholds were read as
+  FIELDS off an `@ApplicationScoped` bean and a CDI proxy delegates methods, not fields; **"median
+  rounds to fix" was the median round RAISED** (`ORDER BY round`), so it read 1.0 forever on a
+  healthy repository — V39 records `verdict_round`; `markSuppressed` **stamped every row on the**
+  **line**; `/finding` findings **never entered the corpus** (`recordConversationFinding` had zero
+  callers, so the `origin='conversation'` V36 documents described rows that could not exist); the PR
+  comment **pointed at a page that does not exist**; and identity resolution leaned on an **internal**
+  **Quarkus class**, whose silent failure would key analytics on a reassignable username.
+
+  **One trap recurred four times in this milestone**, which is worth more than any single fix: an
+  un-overridden method on a saga test fake opens a real database connection from a plain unit test.
+  `roundOrUnknown`, `markSuppressed`, `recordVerdicts` and `recordConversationFinding` each hit it.
+  The lesson was already recorded for `setNote` and `recordCharges`; the fakes now override every
+  method the new paths reach, deliberately and with a comment saying why.
+
+  **Every finding was closed in-round, including the ones a first pass had deferred.** Two of those
+  were the sharpest remaining edges, and both only reachable on a REDELIVERY — which is why an
+  ordinary run never showed them:
+  - **A verdict could land on the finding its own event had just inserted.** The thread rule could not
+    tell "no such thread" from "that thread is already judged" — an `UPDATE` touching no rows cannot
+    say why — so a redelivered batch fell past a settled thread into the location rule and stamped the
+    current round's fresh finding with an old verdict. A stray `ACKNOWLEDGED` then counts as a
+    dismissal in the proposal scan, the number deciding whether the reviewer starts hiding findings.
+    Verdicts are now bounded to earlier rounds, and the thread path probes and reads the verdict.
+  - **A redelivered `CommentsPosted` stamped the wrong row.** That handler has no idempotency guard,
+    and "newest row still awaiting a ref" is not stable across two deliveries: once the posted row is
+    stamped it stops being a candidate, so the second delivery walked down onto an earlier round's
+    never-posted finding — falsifying that fact AND handing the verdict rule a ref pointing at the
+    wrong finding. A row already carrying the ref now wins over the newest unattached one.
+
+  **Both needed their tests sharpened twice**, and the reason generalises: a first version of each
+  passed with the guard deleted. The verdict test used round 2, where the round bound alone already
+  excluded the row, so it proved the bound rather than the probe — round 3 separates them. The
+  thread-ref test had the posted row as the newest one, where `ORDER BY id DESC` picks it anyway;
+  the discriminating case needs the EARLIER round to be the posted one.
+
+  Also closed rather than carried: a database outage reported itself as "your identity is not
+  linked" (sending an operator to request a mapping they already had — authorization still fails
+  closed, but the READ now reports the fault); the JWT identity branch was untested because
+  `@TestSecurity` yields a `QuarkusPrincipal`, so only the fallback ever ran; `/rescan` was an
+  unbounded aggregate; the analytics arithmetic had no test of its own; and the size and parameter
+  rules — verdict logic to `FindingVerdicts`, suppression to `FindingSuppressions`, plumbing to
+  `FindingRows`, two parameter objects, SQL lifted to constants.
+
+  **Checking the shipped code against the spec's own exit criteria then found three gaps — and one
+  of them was a defect that made the feature inert.** `PreferenceProposals.scan()` was package-private
+  with a javadoc saying "so a test can drive it", and nothing did: everything deciding WHICH groups
+  become proposals lives in its SQL, and none of it was exercised. Driving it end to end showed the
+  distinct-review floor counted `count(DISTINCT review_id)` per PATH and then took a `Math.max` across
+  the paths a glob covers. A glob usually covers many paths that each appear in one pull request, so
+  the answer was 1, the `reviews >= 2` floor never held, and **no proposal would ever have been
+  generated on a real corpus.** Learned memory would have looked installed and quietly done nothing —
+  the exact failure shape this feature was designed to avoid, one level up. The union of the actual
+  ids is the only number the floor is about.
+
+  The other two were coverage, not behaviour: "a rejected proposal does not reappear" was asserted
+  against the upsert rather than **across two consecutive scans**, which is where the guarantee
+  actually rests (it depends on `path_glob` being derived identically each night); and the dashboard's
+  suppression tile was unasserted while the summary comment's count was.
+
+  Measured, not estimated: **1732 Java tests across 217 suites** (`testFast` 666/81 + `testServices` —
+  gateway 73/11, orchestrator 767/98, worker 226/27); **415 `spire-ui` vitest tests across 55 files**;
+  `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

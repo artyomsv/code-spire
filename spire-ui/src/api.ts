@@ -1104,3 +1104,168 @@ export async function fetchPrDescription(
   const body: DescriptionResponse = await res.json();
   return body.description ?? null;
 }
+
+// --- Analytics (P4 / FR-11) -------------------------------------------------
+
+/**
+ * Headline numbers for one lens.
+ *
+ * `dismissalRate` and `medianRoundsToResolve` are nullable on purpose: a rate of 0
+ * asserts "this team dismisses nothing", which is a claim about them, while null says
+ * nothing has been judged yet. The same distinction the nullable verdict rests on.
+ */
+export interface AnalyticsTotals {
+  findings: number;
+  judged: number;
+  dismissed: number;
+  resolved: number;
+  dismissalRate: number | null;
+  medianRoundsToResolve: number | null;
+  reviews: number;
+  suppressed: number;
+}
+
+/** One severity/category cell. `category` is null for findings the model did not label. */
+export interface AnalyticsBreakdown {
+  severity: string;
+  category: string | null;
+  raised: number;
+  dismissed: number;
+  resolved: number;
+  unjudged: number;
+}
+
+export interface AnalyticsLens {
+  totals: AnalyticsTotals;
+  breakdown: AnalyticsBreakdown[];
+}
+
+/**
+ * The caller's own activity.
+ *
+ * `linked: false` is a THIRD state beside empty and error — "we do not know who you
+ * are", not "you have done nothing". Rendering it as an empty chart would be the
+ * ADR-025 `refused` incident again, where a missing case defaulted into the
+ * reassuring branch.
+ */
+export interface MyActivity {
+  linked: boolean;
+  providerType: string | null;
+  authorId: string | null;
+  totals: AnalyticsTotals | null;
+  breakdown: AnalyticsBreakdown[];
+}
+
+export interface OperatorIdentityLink {
+  oidcSubject: string;
+  providerType: string;
+  authorId: string;
+}
+
+export async function fetchAnalyticsOverview(): Promise<AnalyticsLens> {
+  const res = await apiFetch('/api/analytics/overview');
+  if (!res.ok) throw new Error(`Analytics overview failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAnalyticsRepos(): Promise<string[]> {
+  const res = await apiFetch('/api/analytics/repos');
+  if (!res.ok) throw new Error(`Analytics repositories failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAnalyticsRepo(workspace: string, slug: string): Promise<AnalyticsLens> {
+  const res = await apiFetch(
+    `/api/analytics/repos/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`,
+  );
+  if (!res.ok) throw new Error(`Analytics repository failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMyActivity(): Promise<MyActivity> {
+  const res = await apiFetch('/api/analytics/me');
+  if (!res.ok) throw new Error(`My activity failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchOperatorIdentities(): Promise<OperatorIdentityLink[]> {
+  const res = await apiFetch('/api/operator-identities');
+  if (!res.ok) throw new Error(`Operator identities failed: ${res.status}`);
+  return res.json();
+}
+
+export async function linkOperatorIdentity(link: OperatorIdentityLink): Promise<void> {
+  const res = await apiFetch('/api/operator-identities', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(link),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Link failed: ${res.status}`);
+}
+
+export async function unlinkOperatorIdentity(
+  oidcSubject: string,
+  providerType: string,
+): Promise<void> {
+  const res = await apiFetch(
+    `/api/operator-identities/${encodeURIComponent(oidcSubject)}/${encodeURIComponent(providerType)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error(`Unlink failed: ${res.status}`);
+}
+
+// --- Learned memory (P4 / FR-10) --------------------------------------------
+
+export interface LearnedPreference {
+  id: number;
+  scopeType: string;
+  scopeValue: string;
+  category: string;
+  pathGlob: string;
+  severity: string;
+  state: 'PROPOSED' | 'APPROVED' | 'REJECTED';
+  evidenceTotal: number;
+  evidenceDismissed: number;
+  /**
+   * How many distinct reviews the evidence spans. Ten dismissals by one author on one
+   * pull request look identical to ten across ten teams without it -- and an ACKNOWLEDGED
+   * verdict comes from the model reading that author's own reply, so the evidence is
+   * manufacturable by the person it would benefit.
+   */
+  evidenceReviews: number;
+}
+
+/**
+ * The bar a proposal had to clear, carried so the card can show it beside the score.
+ * A proposal whose threshold is invisible is a conclusion nobody can weigh — the rung-2
+ * gate's failure, where a null from a corpus too thin to speak looked like a result.
+ */
+export interface MemoryThresholds {
+  minEvidence: number;
+  minDismissedPercent: number;
+}
+
+export interface MemoryView {
+  preferences: LearnedPreference[];
+  thresholds: MemoryThresholds;
+}
+
+export async function fetchMemory(): Promise<MemoryView> {
+  const res = await apiFetch('/api/memory/preferences');
+  if (!res.ok) throw new Error(`Learned memory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function decidePreference(
+  id: number,
+  action: 'approve' | 'reject' | 'revoke',
+): Promise<void> {
+  const res = await apiFetch(`/api/memory/preferences/${id}/${action}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Could not ${action} the preference: ${res.status}`);
+}
+
+export async function rescanMemory(): Promise<number> {
+  const res = await apiFetch('/api/memory/preferences/rescan', { method: 'POST' });
+  if (!res.ok) throw new Error(`Rescan failed: ${res.status}`);
+  return (await res.json()).proposed as number;
+}
