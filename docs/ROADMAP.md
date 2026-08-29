@@ -563,7 +563,7 @@ Open, by nature of the work rather than by section:
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P3** | Repository knowledge base | ✅ **rung 2 delivered (2026-08-29)** | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) was **never started and is not authorized**: the §9 measurement ran on 2026-08-29 and returned a null, so P3 closes here. The null is corpus-limited rather than a verdict on the feature — see the rung 2 bullet below and spec §9. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
+| **P3** | Repository knowledge base | ✅ **rung 2 delivered (2026-08-29)** | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) **is delivered**: the §9 measurement ran on 2026-08-29 and returned a corpus-limited null, P3 briefly closed at rung 1, and rung 2 was then built on operator judgement — a deliberate override recorded in ADR-026 and verified deterministically instead (precision 6/6 on this repository). See the rung 2 bullet below and spec §9. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
@@ -665,12 +665,11 @@ does not exist yet. Operator decides.
   (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) asserting a retrieved snippet's body
   reaches the `Prompt` object actually sent to the model, confirmed to discriminate. 1504 Java tests
   across 197 suites; 375 `spire-ui` vitest tests across 51 files.
-- **Rung 2 — never started, and now not authorized.** `worker.code_symbol` — structure only, never content —
-  answering call-site impact. A hint confirmed at citation, never an answer. **Rung 1 shipping does
-  not authorize rung 2**: it begins only after the measurement fixed in spec §9 — re-run reviewed PRs
-  with and without code context and diff the findings; ships only if at least one new finding is
-  judged correct by the operator and false positives do not increase. Failing that bar stops P3 here,
-  and it did.
+- ✅ **Rung 2, structure only — delivered 2026-08-29, on an override rather than the gate.**
+  `worker.code_symbol` (V5) answers call-site impact: a hint confirmed at citation, never an answer.
+  The gate below is left standing in full, because the sequence is the point — rung 1 shipping did not
+  authorize rung 2, the §9 measurement was run, it returned a null, and rung 2 was then built anyway
+  on the operator's judgement. Read the two attempts first, then the override at the end.
 
   **First attempt, 2026-08-28 — not run at all.** Reviewing four real
   merged PRs found that the deployment could not produce a review of any of them — a reasoning model
@@ -699,11 +698,23 @@ does not exist yet. Operator decides.
   with cross-file dependencies), a mandatory noise-floor run, and the corpus criterion §9 lacked.
   The harness, its three controls and the one it was still missing are in
   `docs/superpowers/gates/`.
+  **Override and delivery, 2026-08-29.** Rung 2 was built without the gate having been cleared. That
+  is recorded in ADR-026 rather than left as a contradiction between doc and code, and it rests on a
+  distinction the gate's own framing missed: rung 1's value needed an operator to judge whether
+  findings improved — subjective, and swamped by model variance — while rung 2's core claim is a
+  fact. `callersOf` either names files that really reference a symbol or it does not.
+
+  So it was verified that way instead. One real review populated 679 rows over 10 files; asked for the
+  callers of `authEnabled`, the index named six files and every one genuinely contains it — **precision
+  6/6, zero false positives**. The repository holds thirteen, so **recall was 46% after one review**,
+  which is the partial recall the design specifies rather than a defect, and precisely why every
+  citation reads *"a known caller … others may exist"*: seven real callers were absent, so an item
+  reading as *"the callers"* would have been a fabrication about completeness.
 - **Exit — met.** Reviews reference code elsewhere in the repo, not just the diff: a `CODE_SNIPPET`
-  item can name a file the diff never touched, and does. Whether that reference makes a review
-  *better* stayed a separate claim, and the gate above could not settle it on this corpus — so P3
-  closes on the criterion it was written against, with the stronger claim explicitly unproven rather
-  than quietly assumed.
+  item can name a file the diff never touched, and does. Rung 2 adds the reverse edge. What stays
+  **explicitly unproven** is the stronger claim — that such a reference makes a review *better*. The
+  gate could not settle it on this corpus, and building rung 2 did not settle it either; it is
+  recorded as unproven rather than quietly assumed.
 - **Not built:** embeddings, a vector store, a repository crawl, a `PushReceived` consumer,
   `spire-indexer` as a deployable. The Qdrant/LanceDB-versus-pgvector contradiction between this file
   and DATA-MODEL is left **unresolved and deferred** rather than settled — this design needs neither.
