@@ -43,13 +43,18 @@ services:
     environment:
       GITLAB_ROOT_PASSWORD: ${E2E_GITLAB_ROOT_PASSWORD:?set in deploy/.env}
       # Trim everything this suite does not use. The default image also starts a container registry,
-      # a Prometheus stack, Grafana, Mattermost and the agent server; on a shared 4-vCPU CI runner
-      # they are the difference between a five-minute boot and a job that times out.
+      # a Prometheus stack, Mattermost and the agent server; on a shared 4-vCPU CI runner they are
+      # the difference between a five-minute boot and a job that times out.
+      #
+      # This list is COUPLED TO THE PINNED VERSION, and getting it wrong is not a warning: an unknown
+      # key aborts `gitlab-ctl reconfigure`, so the container restart-loops and the only symptom
+      # outside its logs is a readiness probe that never turns green. `grafana['enable']` was here
+      # first and had to be removed — Omnibus dropped Grafana in 16.3. Re-check this block whenever
+      # the image tag above is bumped.
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://gitlab'
         registry['enable'] = false
         prometheus_monitoring['enable'] = false
-        grafana['enable'] = false
         mattermost['enable'] = false
         gitlab_kas['enable'] = false
         puma['worker_processes'] = 2

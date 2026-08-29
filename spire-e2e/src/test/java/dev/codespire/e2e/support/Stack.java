@@ -19,7 +19,18 @@ import java.util.Map;
  */
 public final class Stack {
 
+    /**
+     * Pinned to HTTP/1.1 on purpose.
+     *
+     * <p>Java's HttpClient defaults to HTTP/2 and, on a plaintext origin, opens with an h2c upgrade.
+     * The dashboard's nginx does not answer one, and the request then hangs until its own timeout
+     * rather than failing — so every call through the proxy took exactly 60 seconds and surfaced as a
+     * generic I/O error, while the identical request from curl returned in 60 milliseconds. WireMock
+     * (Jetty) negotiates h2c happily, which is why only the proxied calls were affected and the mock's
+     * own tests passed throughout.
+     */
     private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(30))
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
