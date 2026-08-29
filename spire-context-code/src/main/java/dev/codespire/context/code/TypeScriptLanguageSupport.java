@@ -36,10 +36,24 @@ import java.util.regex.Pattern;
  */
 public final class TypeScriptLanguageSupport implements LanguageSupport {
 
+    /**
+     * Reserved words and built-in type names, which are never repository symbols.
+     *
+     * <p>The type-level half was added after a live run: scanning whole files put {@code string},
+     * {@code void} and {@code as} among the most-referenced "symbols" in the index. They are pure
+     * noise, and expensive noise — a symbol referenced by every file fills the candidate cap and
+     * crowds out the domain names the index exists to answer for. Diff-line scanning never surfaced
+     * this because a hunk carries far less type vocabulary than a file does.
+     */
     private static final Set<String> KEYWORDS = Set.of(
             "const", "let", "var", "function", "class", "return", "if", "else", "import", "from",
             "export", "default", "async", "await", "new", "this", "null", "true", "false",
-            "interface", "type");
+            "interface", "type", "as", "void", "string", "number", "boolean", "any", "unknown",
+            "never", "undefined", "object", "symbol", "bigint", "readonly", "keyof", "typeof",
+            "extends", "implements", "public", "private", "protected", "static", "abstract",
+            "enum", "namespace", "declare", "satisfies", "infer", "is", "in", "of", "for", "while",
+            "switch", "case", "break", "continue", "throw", "try", "catch", "finally", "yield",
+            "super", "instanceof", "delete", "do", "with", "get", "set");
 
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
@@ -64,6 +78,16 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
     // A statement's first line: "import" followed by at least one space, then more content — this
     // excludes both an unrelated identifier prefix ("importantValue") and "import.meta", neither of
     // which is an import statement.
+
+    /** A declared value or type: function, class, interface, type, enum, const/let/var. */
+    private static final Pattern DECLARATION = Pattern.compile(
+            "\\b(?:function|class|interface|type|enum|const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)");
+
+    /** Words taking an argument list without declaring anything — a call, not a declaration. */
+    private static final Set<String> NOT_DECLARATIONS = Set.of(
+            "if", "for", "while", "switch", "catch", "return", "new", "typeof", "await", "throw",
+            "do", "else", "try", "case", "delete", "void", "in", "of");
+
     private static final Pattern IMPORT_START = Pattern.compile("^\\s*import\\s+\\S");
 
     // The statement is complete once a `from` clause closes its quote — the specifier itself never
@@ -111,6 +135,80 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
     private static String stripCommentsAndStrings(String content) {
         String withoutLiterals = QUOTED_LITERAL.matcher(content).replaceAll(" ");
         return LINE_COMMENT.matcher(withoutLiterals).replaceAll(" ");
+    }
+
+    /**
+     * A module's declarations and the identifiers it mentions — rung 2's index input (ADR-026 §7).
+     *
+     * <p>Mirrors {@code JavaLanguageSupport}: imported names are excluded from references, because
+     * an import says what the module COULD use and rung 1 already resolves imports in the other
+     * direction. Regex rather than a parser for the same reason as the rest of this class — the
+     * index yields candidates that are confirmed at citation, so imprecision costs a fetch.
+     */
+    @Override
+    public Symbols symbolsIn(String fileContent) {
+        if (fileContent == null || fileContent.isBlank()) {
+            return Symbols.NONE;
+        }
+        if (SourceText.tooLargeToScan(fileContent)) {
+            return Symbols.NONE;
+        }
+        Set<String> defines = new LinkedHashSet<>();
+        Set<String> references = new LinkedHashSet<>();
+        boolean insideImport = false;
+        for (String rawLine : SourceText.stripBlockComments(fileContent).split("\\R")) {
+            // Tracked on the RAW line, and across the whole statement rather than its first line.
+            // A braced import wraps, and stripCommentsAndStrings removes the quoted specifier that
+            // ends it -- so the terminator has to be looked for before stripping. Skipping the whole
+            // span is the guard the removed imported-name filter was standing in for.
+            if (!insideImport && IMPORT_START.matcher(rawLine).find()) {
+                insideImport = true;
+            }
+            if (insideImport) {
+                insideImport = rawLine.indexOf('\'') < 0 && rawLine.indexOf('"') < 0
+                        && rawLine.indexOf(';') < 0;
+                continue;
+            }
+            scanLine(stripCommentsAndStrings(rawLine), defines, references);
+        }
+        references.removeAll(defines);
+        return new Symbols(defines, references);
+    }
+
+    /**
+     * One line's declarations and references.
+     *
+     * <p><b>Imported names stay as references</b>, because an ES module imports the callable itself
+     * — {@code import { chargeFor } … chargeFor(rate)}. Excluding them, as an earlier version did,
+     * left this language contributing no caller edge at all: the index recorded prop names and
+     * destructured locals and never a component or hook, so {@code callersOf("Button")} could never
+     * return anything.
+     *
+     * <p>Only top-level or exported {@code const}/{@code let}/{@code var} count as declarations. A
+     * function-local is not something another file can call, and counting them let a handful of
+     * local variable names consume the whole caller-lookup budget.
+     */
+    private void scanLine(String line, Set<String> defines, Set<String> references) {
+        Matcher declaration = DECLARATION.matcher(line);
+        if (declaration.find() && isTopLevelOrExported(line)) {
+            defines.add(declaration.group(1));
+        }
+        String callable = SourceText.declaredCallableName(line, NOT_DECLARATIONS);
+        if (callable != null && !KEYWORDS.contains(callable)) {
+            defines.add(callable);
+        }
+        Matcher identifier = IDENTIFIER.matcher(line);
+        while (identifier.find()) {
+            String candidate = identifier.group();
+            if (!KEYWORDS.contains(candidate)) {
+                references.add(candidate);
+            }
+        }
+    }
+
+    /** Column-zero or {@code export} — the two shapes another module can actually reach. */
+    private static boolean isTopLevelOrExported(String line) {
+        return !line.isEmpty() && (!Character.isWhitespace(line.charAt(0)) || line.contains("export "));
     }
 
     @Override

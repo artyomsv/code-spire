@@ -831,7 +831,10 @@ The design is fully specified in `docs/` — **treat those files as the source o
   (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) that fakes the assembled context and
   asserts the snippet body reaches the `Prompt` object actually sent to the model, confirmed to
   discriminate (fails when `ReviewPromptBuilder` is made to render `code_context` empty).
-  **Rung 2 (`worker.code_symbol`) was never started, and P3 closed at rung 1 on 2026-08-29** when the
+  **Rung 2 (`worker.code_symbol`) was never started, and P3 closed at rung 1 on 2026-08-29** — then
+  reopened and delivered the same day on an operator override; the rung 2 entry near the end of this
+  file is the current state, and what follows is the gate that preceded it, kept because the sequence
+  is the point. P3 closed at rung 1 when the
   §9 evidence measurement returned a null: 10 findings shared between the arms, 7 only with code
   context, 8 only without — against a noise floor, measured by running the *identical* arm twice, of
   five differing findings on a pull request where nothing changed at all. The toggle moved findings no
@@ -1016,6 +1019,94 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Measured, not estimated: **1608 Java tests across 202 suites** (`testFast` 622/77 + `testServices`
   — gateway 73/11, orchestrator 705/89, worker 208/25); **396 `spire-ui` vitest tests across 52
   files**; `tsc --noEmit` silent.
+- **Repository knowledge base rung 2 delivered (ADR-026 §7, 2026-08-29):** `worker.code_symbol` (V5)
+  answers the question rung 1 structurally cannot — **what depends on this diff**, not only what it
+  needs. Imports point one way, so call-site impact needs memory, and memory means a table. Every file
+  a review reads has its declared and referenced identifiers recorded, so the index grows toward the
+  actively-changing part of the repository and never crawls.
+
+  **Built on operator judgement, with the §9 gate not cleared** — recorded in ADR-026 rather than left
+  as a contradiction between doc and code. The reasoning holds better than the gate's framing allowed:
+  rung 1's value needed an operator to judge whether findings improved, which model variance swamped,
+  while rung 2's core claim is a fact. `callersOf` either names files that really reference a symbol or
+  it does not. What stays unproven is the downstream claim that a cited caller makes a review better.
+
+  **Verified deterministically against this repository, no LLM involved.** One real review of PR #38
+  populated 679 rows over 10 files (122 declared symbols, 319 referenced). Asked for the callers of
+  `authEnabled`, the index named six files; every one genuinely contains it — **precision 6/6, zero
+  false positives**. The repository actually holds thirteen, so **recall was 46% after a single**
+  **review**, which is the design behaving as specified rather than a defect: the index only knows what
+  reviews have read, and recall grows with traffic. It is also why every citation is framed as *"a known
+  caller … others may exist"* — seven real callers were genuinely absent, so an item reading as *"the*
+  *callers"* would have been a fabrication about completeness.
+
+  **The index is a hint, never an answer**, and that is what removes staleness as a category rather
+  than managing it: `callersOf` returns candidates, each is re-fetched at the review commit and the
+  reference confirmed before anything is quoted. There is no invalidation pass, and `last_seen_commit`
+  is compared against nothing — a read that filtered on it would have reintroduced exactly what the
+  design avoids. Structure only (identifiers and paths, never a line of source), so ADR-011 needs no
+  carve-out and the table stays unencrypted and therefore queryable — the same split `review_finding`
+  already makes between its location columns and its message. A null index is rung 1 exactly.
+
+  **Three things live scanning exposed that diff-line scanning never had to face.** A caller snippet
+  cannot reuse `SnippetExtractor`, which finds a *declaration* — a caller by definition only *uses* the
+  symbol, so every caller would have been silently dropped as unconfirmed. Whole files need block
+  comments stripped, or every javadoc sentence enters the index as a reference. And the TypeScript
+  keyword set was too small: a first live run put `string`, `void` and `as` among the most-referenced
+  "symbols", which is expensive noise because a symbol referenced everywhere fills the candidate cap and
+  crowds out the domain names the index exists for.
+
+  **A mutation caught a vacuous test written minutes earlier.** "Does not cite a candidate whose
+  reference is gone" passed with the confirmation check *deleted*, because when the symbol is absent
+  entirely the snippet extractor fails too — two guards covering one case, so neither was proven. The
+  discriminating case is a symbol still present but no longer a reference (mentioned only in a comment),
+  which confirmation rejects and text-matching does not.
+
+  **Reviewed on four lenses and hardened (2026-08-29).** Two defects were live, and both were the
+  same shape — a scan written for *diff lines* meeting a *whole file*:
+  - **The index recorded almost no callers.** `JavaLanguageSupport` excluded imported names from a
+    file's references, reasoning that an import says what a file *could* use. To call
+    `Pricer.chargeFor()` a file must import `Pricer` — so the filter removed the name precisely from
+    the files that are callers, and `callersOf("Pricer")` returned nothing. The whole feature was
+    inert while every test stayed green, because no test crossed the seam from *scanning* to
+    *retrieving*. `SymbolIndexSeamTest` is that test, and it fails without the fix.
+  - **Two regexes were quadratic on a file a pull request author chooses.** A reluctant
+    `/\*.*?\*/` over a file with no closing delimiter measured **21.6s at 96 KB**, and a
+    member-declaration pattern whose reluctant span overlapped its own capture class measured
+    **28.2s at 32 KB** — on the four-thread fan-out pool whose 20s timeout does not interrupt, so
+    one pull request stalled the context stage for every review. Replaced by `SourceText`: index
+    scans, no backtracking, plus a 256 KB skip.
+
+  Everything else the review surfaced is a bound that did not exist. Each costs recall only, and the
+  three worth knowing are the ones no obvious reading catches: **confirmation fetches** (20/review)
+  bound the work *between* an index read and a citation, which neither the read cap nor the citation
+  cap touches — a common identifier otherwise spent one content GET per candidate against the SCM
+  rate limit every adapter shares; **files recorded** (100/review) is what makes the per-file row cap
+  mean anything, since a thousand-file pull request wrote that cap a thousand times in one pass; and
+  **caller snippets are trimmed against the same `MAX_SNIPPETS` total as definitions**, because that
+  number is derived from the `{{code_context}}` slot's token budget, so appending to a full list
+  overflows the very slot the cap protects — silently, by tail-clipping, dropping the callers just
+  appended. Also: the per-file row budget is now **per role**, since spending it DEFINES-first
+  starved the only role `callersOf` reads (a file declaring 400 symbols wrote zero reference rows and
+  could never be a candidate — and large files are the likeliest callers); a **confirmed caller is
+  re-recorded**, because the write phase runs before the caller phase and so could only ever record
+  files fetched *before* confirmation, leaving the rows a review just proved correct the first the
+  retention sweep deleted; the index key carries the **platform** (`scmType:workspace/slug`), the
+  collision this project has already been bitten by twice; and `SPIRE_SYMBOL_INDEX_ENABLED=false`
+  degrades to rung 1 exactly, which a feature shipping on an override with its first persistent store
+  ought to have.
+
+  **Two lessons about the tests themselves, both found by mutation rather than by reading.**
+  `symbolsIn` subtracts a file's own declarations from its references, so a file can never confirm as
+  a caller of a symbol it declares — which made the self-caller test vacuous in its obvious
+  one-file form: it held with the skip set deleted. Only a *second* changed file that genuinely calls
+  the symbol exercises it. And the dedup test needed a file that is really both — resolved through an
+  import (rung 1) *and* named by the index (rung 2) — since a fixture with no imports resolves no
+  definitions, so there was nothing for a caller to duplicate. Every guard added here was
+  mutation-verified: break the production line, confirm exactly the intended test fails.
+
+  Measured, not estimated: **1658 Java tests across 207 suites** (`testFast` 657/80 + `testServices`
+  — gateway 73/11, orchestrator 705/89, worker 223/27); `spire-ui` untouched.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

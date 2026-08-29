@@ -4,6 +4,7 @@ import dev.codespire.contract.port.ContextProvider;
 import dev.codespire.contract.port.ContextResolutionSource;
 import dev.codespire.contract.port.FirstLevelOnly;
 import dev.codespire.contract.port.LanguageSupport;
+import dev.codespire.contract.port.SymbolIndex;
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
@@ -149,6 +150,18 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     private final SourceFileReader reader;
     private final List<LanguageSupport> languages;
     private final Set<String> pathAllowList;
+
+    /**
+     * Rung 2 (ADR-026 §7), or null. Null is rung 1 exactly: nothing is recorded and no caller is
+     * cited. Nullable rather than a second provider because the two rungs share every fetch — the
+     * index is filled from files this provider already reads, and asking for callers reuses the same
+     * budget, deadline and allow-list.
+     */
+    private final SymbolIndex symbolIndex;
+
+    /** Rung 2 behind one collaborator; a no-op throughout when {@link #symbolIndex} is null. */
+    private final CallerLookup callerLookup;
+
     private final long deadlineMillis;
     private final long extractionBudgetMillis;
 
@@ -191,11 +204,33 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
             Set<String> pathAllowList, long deadlineMillis, long extractionBudgetMillis) {
+        this(reader, languages, pathAllowList, deadlineMillis, extractionBudgetMillis, null);
+    }
+
+    /**
+     * The canonical constructor, with rung 2's index (ADR-026 §7).
+     *
+     * <p>A null {@code symbolIndex} is rung 1 exactly — nothing recorded, no caller cited — so every
+     * constructor above stays valid and a deployment that has not wired the index behaves as it did
+     * before. The index is a collaborator rather than a second provider because both rungs share the
+     * same fetches, budget, deadline and allow-list.
+     */
+    public CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
+            Set<String> pathAllowList, long deadlineMillis, long extractionBudgetMillis,
+            SymbolIndex symbolIndex) {
         this.reader = reader;
         this.languages = List.copyOf(languages);
         this.pathAllowList = pathAllowList == null ? Set.of() : Set.copyOf(pathAllowList);
         this.deadlineMillis = deadlineMillis;
         this.extractionBudgetMillis = extractionBudgetMillis;
+        this.symbolIndex = symbolIndex;
+        this.callerLookup = new CallerLookup(symbolIndex, this::languageFor);
+    }
+
+    /** The three-argument form plus rung 2's index — what the worker's composition root builds. */
+    public CodeContextProvider(SourceFileReader reader, List<LanguageSupport> languages,
+            Set<String> pathAllowList, SymbolIndex symbolIndex) {
+        this(reader, languages, pathAllowList, DEADLINE_MILLIS, EXTRACTION_BUDGET_MILLIS, symbolIndex);
     }
 
     /**
@@ -206,6 +241,15 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     public Set<String> pathAllowList() {
         return pathAllowList;
+    }
+
+    /**
+     * Whether rung 2 is wired, for the same reason {@link #pathAllowList()} is exposed: a composition
+     * root that compiles proves nothing about what it passed. Without this, nothing could distinguish
+     * "the worker wired the index" from "the code branch silently built a rung-1 provider".
+     */
+    public boolean hasSymbolIndex() {
+        return callerLookup.enabled();
     }
 
     /**
@@ -264,6 +308,13 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
                 extractCandidates(filesByDefinitionPath, refs.identifiers(), fetcher);
         List<ContextItem> items = rankAndCap(candidates);
 
+        // Rung 2. Recording comes first so a repository being reviewed for the first time still
+        // contributes to the index, even though it can have no callers to cite yet.
+        String indexKey = indexKey(request);
+        callerLookup.recordObserved(indexKey, request.commit(), fetcher.fetched(), deadlineNanos);
+        items = withCallers(items, callerLookup.callers(indexKey, request.commit(), refs, fetcher,
+                items, deadlineNanos));
+
         // A real per-file error (5xx, rate limit) never sinks the whole contribution by itself — it
         // only surfaces as ERROR when it leaves this contribution with literally nothing to say;
         // that is what distinguishes "broken" from an ordinary, error-free EMPTY.
@@ -271,13 +322,21 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
                 ? (fetcher.hadError() ? ContribStatus.ERROR : ContribStatus.EMPTY)
                 : ContribStatus.OK;
         ContextContribution contribution = new ContextContribution(SOURCE, status, items, latencyMs(start));
-        // extracted: identifiers the diff-side extraction handed this request — zero means nothing to
-        // look up (e.g. a YAML-only diff), correct and uninteresting. resolved: candidates found before
-        // the MAX_SNIPPETS budget is applied — zero while extracted is positive is the broken case:
-        // plenty to look up, none of it resolved. droppedForBudget: resolved candidates the cap cut.
-        ContextResolutionCounts counts = new ContextResolutionCounts(refs.identifiers().size(),
-                candidates.size(), items.size(), candidates.size() - items.size());
-        return new Resolution(contribution, counts);
+        return new Resolution(contribution, countsFor(refs, candidates, items));
+    }
+
+    /**
+     * The diagnostic counts {@code ContextWorker} logs beside the contribution.
+     *
+     * <p>extracted: identifiers the diff-side extraction handed this request — zero means nothing to
+     * look up (e.g. a YAML-only diff), correct and uninteresting. resolved: candidates found before
+     * the {@link #MAX_SNIPPETS} budget is applied — zero while extracted is positive is the broken
+     * case: plenty to look up, none of it resolved. droppedForBudget: resolved candidates the cap cut.
+     */
+    private static ContextResolutionCounts countsFor(CodeReferences refs,
+            List<DefinitionCandidate> candidates, List<ContextItem> items) {
+        return new ContextResolutionCounts(refs.identifiers().size(), candidates.size(), items.size(),
+                candidates.size() - items.size());
     }
 
     /**
@@ -401,6 +460,45 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     }
 
     /**
+     * Appends caller snippets, trimming the lowest-ranked definitions so the two together never
+     * exceed {@link #MAX_SNIPPETS}.
+     *
+     * <p>{@code MAX_SNIPPETS} is derived from the {@code code_context} slot's 6,000-token budget, so
+     * appending callers on top of a full definition list overflows the very slot the cap exists to
+     * protect — and {@code PromptRenderer} resolves that overflow by silently tail-clipping, which
+     * would drop the callers just appended. Definitions are already ranked, so the trim comes off the
+     * tail: the weakest definition yields to a caller rather than the strongest one.
+     *
+     * <p>The substitution is 1:1 and conservative — a call site is {@code 2 ×
+     * CALL_SITE_CONTEXT_LINES + 1} lines where a definition runs to {@link #MAX_BODY_LINES} plus its
+     * signature — so this leaves headroom rather than consuming it.
+     */
+    private static List<ContextItem> withCallers(List<ContextItem> definitions, List<ContextItem> callers) {
+        if (callers.isEmpty()) {
+            return definitions;
+        }
+        int room = Math.max(0, MAX_SNIPPETS - callers.size());
+        List<ContextItem> combined = new ArrayList<>(
+                definitions.subList(0, Math.min(room, definitions.size())));
+        combined.addAll(callers);
+        return combined;
+    }
+
+    /**
+     * The index key, which must name the PLATFORM as well as the repository.
+     *
+     * <p>{@code workspace/slug} alone is shared: the same name routinely exists on two SCMs, and this
+     * project has already been bitten by that collision twice. Without the platform, one org's rows
+     * would name candidate paths that another org's review then fetches from ITS repository with ITS
+     * credential — confirmation stops forged content being quoted, but not an outsider choosing which
+     * of your files get read. The sibling issue providers gate on {@code scmType} for the same reason.
+     */
+    private static String indexKey(ContextRequest request) {
+        String scm = request.scmType() == null ? "" : request.scmType().name();
+        return scm + ":" + request.repo().full();
+    }
+
+    /**
      * Ranks by the number of distinct changed files whose imports brought the definition file in
      * (descending), then by first appearance ({@code List.sort} is stable, so ties keep the discovery
      * order {@link #extractCandidates} produced them in), and caps at {@link #MAX_SNIPPETS}.
@@ -457,7 +555,12 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * Per-request fetch cache, allow-list gate, and error tracking — one instance per {@link #fetch}
      * call, never held as provider state, so one provider instance safely serves concurrent requests.
      */
-    private static final class Fetcher {
+    /**
+     * Package-private rather than private: {@link CallerLookup} confirms every index candidate
+     * through this same fetcher, so the caller path inherits its cache, its deadline, its allow-list
+     * and its traversal guards instead of growing a second, unguarded read path.
+     */
+    static final class Fetcher {
         private final SourceFileReader reader;
         private final String repo;
         private final String commit;
@@ -512,13 +615,18 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
          * non-empty allow-list does not match — the enforcement point requirement 1 (see the
          * constructor javadoc) exists for.
          */
-        private String readCandidate(String path) {
+        String readCandidate(String path) {
             return isAllowed(path) ? read(path) : null;
         }
 
         /** The content already fetched for {@code path}, with no further I/O. */
         String content(String path) {
             return cache.get(path);
+        }
+
+        /** Every path this review actually read, with its content — the write side of the index. */
+        Map<String, String> fetched() {
+            return cache;
         }
 
         /**

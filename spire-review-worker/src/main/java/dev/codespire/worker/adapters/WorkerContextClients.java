@@ -27,6 +27,7 @@ import dev.codespire.context.jira.JiraTicketKeys;
 import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.net.URI;
 import java.util.List;
@@ -63,6 +64,24 @@ public class WorkerContextClients {
     @Inject
     WorkerCodeReferences codeReferences;
 
+    /**
+     * Rung 2 (ADR-026 §7). Injected here rather than constructed by the provider because the schema is
+     * worker-owned and ADR-021 forbids the Apache-2.0 provider module depending on this one — the same
+     * arrangement as {@code BlobStore}.
+     */
+    @Inject
+    PostgresSymbolIndex symbolIndex;
+
+    /**
+     * Turns rung 2 off without turning code context off.
+     *
+     * <p>This is the feature's first persistent store, it is unencrypted by necessity, and ADR-026
+     * records it as shipping without its evidence gate cleared — so an operator needs a lever short
+     * of redeploying. Off passes a null index, which is rung 1 exactly and already tested.
+     */
+    @ConfigProperty(name = "spire.symbol-index.enabled", defaultValue = "true")
+    boolean symbolIndexEnabled;
+
     public List<ContextProvider> forCommand(GatherContext command) {
         List<ContextProvider> providers = new java.util.ArrayList<>();
         for (ContextCredential cred : unpack(command)) {
@@ -74,7 +93,8 @@ public class WorkerContextClients {
                 case "gitlab-issues" ->
                         providers.add(new GitLabIssueContextProvider(gitLabIssueConfig(cred), mapper));
                 case "code" -> providers.add(new CodeContextProvider(readerFor(cred), codeReferences.all(),
-                        CodeContextConfig.parsePathAllowList(cred.projectKeys())));
+                        CodeContextConfig.parsePathAllowList(cred.projectKeys()),
+                        symbolIndexEnabled ? symbolIndex : null));
                 default -> throw new IllegalStateException("Unsupported context provider type: " + cred.type());
             }
         }

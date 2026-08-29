@@ -17,7 +17,9 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The {@code code} branch of {@link WorkerContextClients#forCommand} is the one place a credential's
@@ -40,6 +42,8 @@ class WorkerContextClientsTest {
         wc.encryption = ENCRYPTION;
         wc.mapper = new ObjectMapper();
         wc.codeReferences = new WorkerCodeReferences();
+        wc.symbolIndex = new PostgresSymbolIndex();
+        wc.symbolIndexEnabled = true;
         return wc;
     }
 
@@ -81,6 +85,51 @@ class WorkerContextClientsTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("forCommand did not construct a CodeContextProvider"));
         assertEquals(Set.of(), code.pathAllowList());
+    }
+
+    /**
+     * Rung 2 index must actually REACH the provider, and nothing proved it did.
+     *
+     * <p>{@link CodeContextProvider} has a three-argument constructor that leaves the index null —
+     * which is rung 1 exactly, and passes every rung-1 test. So a wiring that silently dropped the
+     * index would compile, stay green, and quietly ship a feature that never ran: no caller
+     * candidates cited, and no rows written for the next review either. The same argument that
+     * exposed {@link CodeContextProvider#pathAllowList()} applies here.
+     */
+    @Test
+    void theSymbolIndexReachesTheConstructedProvider() throws Exception {
+        ContextCredential cred = new ContextCredential("code", "https://api.github.com", "bearer",
+                null, "gh-token", null);
+
+        assertTrue(providerFor(clients(), cred).hasSymbolIndex(),
+                "rung 2 is enabled, so the provider must have been handed the index");
+    }
+
+    /**
+     * The kill switch turns rung 2 off without turning code context off.
+     *
+     * <p>Off must degrade to rung 1 — a provider with no index — rather than to no provider at all:
+     * an operator disabling the index is declining the caller lookups and the writes, not the
+     * import-resolved snippets that shipped before them.
+     */
+    @Test
+    void turningTheIndexOffLeavesARungOneProvider() throws Exception {
+        ContextCredential cred = new ContextCredential("code", "https://api.github.com", "bearer",
+                null, "gh-token", null);
+        WorkerContextClients off = clients();
+        off.symbolIndexEnabled = false;
+
+        assertFalse(providerFor(off, cred).hasSymbolIndex(),
+                "with the switch off the provider must be rung 1, not rung 2");
+    }
+
+    private static CodeContextProvider providerFor(WorkerContextClients clients, ContextCredential cred)
+            throws Exception {
+        return clients.forCommand(command(pack(cred))).stream()
+                .filter(CodeContextProvider.class::isInstance)
+                .map(CodeContextProvider.class::cast)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("forCommand did not construct a CodeContextProvider"));
     }
 
     /**

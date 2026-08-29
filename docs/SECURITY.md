@@ -184,9 +184,24 @@ thread. This is a threat class distinct from the OWASP-web items above.
   and paths, never file content, so ADR-011's "minimize stored source" holds unamended. They are stored
   unencrypted because an encrypted column cannot be queried server-side — the same reason
   `review_finding`/`review_thread` keep `path`/`line` in clear while their messages are encrypted.
-  Stated rather than left implicit: **symbol names leak domain vocabulary** (`processPatientExport` says
-  something about the business), and the exposure is the operator's own Postgres — the trust boundary
-  that already holds their findings and file paths.
+
+  **What that adds up to is more than the individual rows suggest, so it is stated plainly rather than
+  left to be inferred.** Over many reviews the table accumulates, for every file those reviews read:
+  a near-complete **identifier inventory** of the repository — every class, method and function name
+  in the parts of the tree that change — and, because each row carries a role, a **file-level
+  dependency map**: which file declares a name and which files mention it. Individually a symbol name
+  leaks domain vocabulary (`processPatientExport` says something about the business); together they
+  approximate the shape of the codebase — its module boundaries, its internal API surface, and which
+  components depend on which — without a line of its source. Two consequences worth planning for: the
+  table is a **cross-repository** store keyed by `scmType:workspace/slug`, so it holds this for every
+  repository the deployment has reviewed; and it is the one place where a repository's structure
+  outlives the review that read it, since diffs are never persisted (ADR-011) and context blobs are
+  deleted with their review.
+
+  The exposure is the operator's own Postgres — the same trust boundary that already holds their
+  findings and file paths — and the mitigations available to an operator are: `SPIRE_SYMBOL_INDEX_ENABLED=false`
+  turns rung 2 off entirely (code context degrades to rung 1, which stores nothing), and
+  `spire.symbol-index.retention-days` bounds how long a row survives without being re-observed.
 
 ## Cost / abuse controls
 

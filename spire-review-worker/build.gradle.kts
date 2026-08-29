@@ -37,6 +37,7 @@ dependencies {
     implementation(project(":spire-llm"))
 
     implementation("io.quarkus:quarkus-jackson")
+    implementation("io.quarkus:quarkus-scheduler") // symbol-index retention sweep (ADR-026 §7.4)
     implementation("io.quarkus:quarkus-rest-jackson") // read-only context endpoint for the review detail page
     implementation("io.quarkus:quarkus-oidc") // operator auth (D10)
     implementation("io.quarkus:quarkus-messaging-kafka")

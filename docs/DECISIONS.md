@@ -72,6 +72,23 @@ or consumes `PushReceived`.
    limitation into a false fact about the product. Reopening needs a majority-code corpus with
    cross-file dependencies, and the noise-floor run the criterion originally lacked.
 
+   **Reopened and built on operator judgement, 2026-08-29.** Rung 2 ships without the gate having
+   been cleared. That is a deliberate override, recorded here rather than left as a contradiction
+   between this ADR and the code: the gate is a discipline the operator adopted and may set aside,
+   and the reason given was that the feature can be verified on this repository afterwards.
+
+   That reasoning is sounder than the gate's own framing allowed for. Rung 1's value needed an
+   operator to judge whether findings improved — subjective, and swamped by model variance at the
+   corpus sizes available. Rung 2's core claim is not subjective: `callersOf` either returns
+   the files that reference a symbol in this repository or it does not, and confirmation-at-citation
+   either drops a stale candidate or it does not. Both are facts, checkable without an LLM. The
+   evidence bar for rung 2 is therefore a different instrument from the one rung 1 failed, and this
+   ADR should not be read as rung 2 having evaded a test it could have passed.
+
+   What remains genuinely unproven is the downstream claim — that a cited caller makes a review
+   better. That is the same question the corpus could not answer for rung 1, and building rung 2 does
+   not answer it either.
+
 **The index is a hint, never an answer — and that is what removes the staleness problem.** Nothing is
 cited from the table. Candidate paths are re-fetched at the review commit and the reference confirmed
 before it becomes a snippet. There is therefore no invalidation pass, no indexed-commit versus
@@ -88,9 +105,12 @@ that erodes. It does not here: the table holds identifiers and paths, and snippe
 and discarded. Storing them unencrypted is consistent rather than expedient — encrypted columns cannot
 be queried server-side, and `review_finding` and `review_thread` already store `path`/`line` in clear
 for exactly that reason while their messages are encrypted. Coordinates are queryable; content is
-encrypted. The residual, recorded in SECURITY.md rather than left implicit, is that symbol names leak
-domain vocabulary into the operator's own Postgres — the same trust boundary that already holds their
-findings and paths.
+encrypted. The residual is recorded in SECURITY.md rather than left implicit, and it is larger than any
+single row suggests: individually a symbol name leaks domain vocabulary, but the table accumulates an
+identifier inventory and a file-level dependency map across every repository the deployment reviews —
+the shape of the codebase without a line of its source. The trust boundary is the operator's own
+Postgres, the one that already holds their findings and paths, and the levers are
+`SPIRE_SYMBOL_INDEX_ENABLED=false` (degrades to rung 1, which stores nothing) and the retention window.
 
 **Code context gets its own prompt slot.** `{{context}}` is four thousand tokens shared by tickets,
 pages, issues and rules, concatenated in list order and clipped from the tail, so which context
@@ -130,6 +150,25 @@ reason.
 - Partial recall must be worded as partial. A finding claiming "all three callers" when twelve exist
   is fabrication, so snippets carry "known callers" framing and the prompt forbids claiming
   exhaustiveness over a handed set.
+- **Every rung-2 loop is bounded, and each bound costs recall only.** Citations (3), index reads per
+  review (8), confirmation fetches per review (20), rows per file per role, files recorded per review
+  (100), and a per-review wall-clock deadline shared with the fetch phase. The three that matter most
+  are the least obvious: the confirmation budget bounds the work *between* an index read and a citation,
+  which neither of the other two touches — a common identifier could otherwise spend one content GET per
+  candidate against the SCM rate limit every adapter shares; the per-review file cap is what makes the
+  per-file row cap mean anything, since a thousand-file pull request would otherwise write the per-file
+  cap a thousand times in one pass; and caller snippets are trimmed against the same `MAX_SNIPPETS`
+  total as definitions, because that number is derived from the `{{code_context}}` slot's token budget
+  and appending to a full list overflows the very slot the cap exists to protect — silently, by
+  tail-clipping, dropping the callers just appended.
+- **A confirmed caller is re-recorded.** The write phase can only record what has been fetched by the
+  time it runs, which never includes a caller — a caller is fetched *to confirm it*, afterwards. So the
+  rows this feature depends on most, the ones a review has just proved still correct, kept the timestamp
+  of whichever review first saw them and were the first the retention sweep deleted.
+- **`SPIRE_SYMBOL_INDEX_ENABLED` turns rung 2 off without turning code context off.** Off passes a null
+  index, which is rung 1 exactly and already tested — this is the feature's first persistent store, it
+  is unencrypted by necessity, and it shipped on an override rather than the gate, so an operator needs
+  a lever short of redeploying.
 - If similarity search is ever wanted, it becomes a column on `code_symbol` rather than a new
   subsystem.
 
