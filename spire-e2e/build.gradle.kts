@@ -51,4 +51,28 @@ tasks.test {
         events("passed", "skipped", "failed")
         showStandardStreams = true
     }
+
+    // Captured at configuration time: Gradle 9 forbids reaching for `project` inside a task action.
+    val repoRoot = rootProject.projectDir
+    val diagnosticsDir = layout.buildDirectory.dir("e2e-diagnostics").get().asFile
+
+    // On failure only. A passing run has nothing worth keeping, and writing an hour of logs every
+    // time would bury the one run that matters. Without this a nightly failure is a red square:
+    // the containers keep running, but a CI runner is gone by the time anyone looks.
+    doLast {
+        if (state.failure == null) {
+            return@doLast
+        }
+        try {
+            ProcessBuilder("bash", "deploy/e2e-diagnostics.sh", diagnosticsDir.absolutePath)
+                .directory(repoRoot)
+                .redirectErrorStream(true)
+                .start()
+                .waitFor()
+            logger.lifecycle("e2e diagnostics written to $diagnosticsDir")
+        } catch (e: Exception) {
+            // Never mask the test failure with a diagnostics failure — the test result is the report.
+            logger.warn("could not capture e2e diagnostics: $e")
+        }
+    }
 }

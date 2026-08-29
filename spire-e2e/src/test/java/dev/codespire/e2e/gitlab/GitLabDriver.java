@@ -27,7 +27,17 @@ import java.util.Map;
 public final class GitLabDriver {
 
     /** Fixed and obviously synthetic, so a run is reproducible and nothing is scraped out of a log. */
-    private static final String ROOT_TOKEN = "TEST-e2e-root-token-000000000000";
+    public static final String ADMIN_USERNAME = "e2e-admin";
+
+    public static final String ADMIN_TOKEN = "TEST-e2e-admin-token-00000000000";
+
+    /**
+     * GitLab rejects a password containing a common sequence — "12345" alone is enough to fail
+     * validation — so this is structured noise rather than anything readable. It is never used to log
+     * in; every call in this harness is token-authenticated. An account simply cannot be created
+     * without one.
+     */
+    private static final String PASSWORD = "Zx9Qv-Kp3Rw-Ln7Bd-Tq2Ms";
 
     private final String token;
 
@@ -35,47 +45,93 @@ public final class GitLabDriver {
         this.token = token;
     }
 
-    public static GitLabDriver asRoot() {
-        Rails.run("""
-                user = User.find_by_username('root')
-                user.personal_access_tokens.where(name: 'e2e-root').delete_all
-                token = user.personal_access_tokens.create!(
-                  scopes: ['api', 'sudo'], name: 'e2e-root', expires_at: 1.day.from_now)
-                token.set_token('%s')
-                token.save!
-                """.formatted(ROOT_TOKEN));
-        return new GitLabDriver(ROOT_TOKEN);
-    }
-
     public static GitLabDriver as(String token) {
         return new GitLabDriver(token);
     }
 
-    // --- users -----------------------------------------------------------------------------------
-
-    public long ensureUser(String username, String email, String password) {
-        String output = Rails.run("""
-                user = User.find_by_username('%s')
-                if user.nil?
-                  user = User.new(username: '%s', email: '%s', name: '%s',
-                                  password: '%s', password_confirmation: '%s')
-                  user.skip_confirmation!
-                  user.save!
-                end
-                puts user.id
-                """.formatted(username, username, email, username, password, password));
-        return Long.parseLong(lastLine(output));
+    public static GitLabDriver asAdmin() {
+        return new GitLabDriver(ADMIN_TOKEN);
     }
 
-    public void mintToken(String username, String tokenValue) {
-        Rails.run("""
-                user = User.find_by_username('%s')
-                user.personal_access_tokens.where(name: 'e2e').delete_all
-                token = user.personal_access_tokens.create!(
-                  scopes: ['api'], name: 'e2e', expires_at: 1.day.from_now)
-                token.set_token('%s')
-                token.save!
-                """.formatted(username, tokenValue));
+    // --- bootstrap -------------------------------------------------------------------------------
+
+    /**
+     * Creates every account this suite needs and mints their tokens, in ONE Rails call.
+     *
+     * <p>Batched deliberately: each {@code gitlab-rails runner} boots a Rails environment and takes
+     * the better part of a minute, so doing this per user cost five boots for one setup.
+     *
+     * <p>It also does not rely on GitLab's own {@code root} seeding, which did not run at all on a
+     * first boot here and left the instance with ZERO users — an instance that serves every page
+     * normally and fails only when something tries to authenticate. Creating our own administrator
+     * makes the harness independent of whether that seeding happened.
+     *
+     * <p>Three GitLab 17 details are load-bearing, each found by failing on it: a new user's namespace
+     * needs an {@code organization_id}; {@code Users::CreateService} silently ignores an {@code admin}
+     * key, so admin must be set on the returned user afterwards; and a token's VALUE can only be
+     * chosen through {@code set_token}, which is the entire reason this path is not the REST API.
+     *
+     * @param admins   usernames that must be administrators
+     * @param members  usernames that must exist as ordinary users
+     * @param tokens   username to the exact token value to mint for it
+     * @return each username's numeric id
+     */
+    public static Map<String, Long> bootstrap(List<String> admins, List<String> members,
+                                              Map<String, String> tokens) {
+        StringBuilder script = new StringBuilder(
+                "org = Organizations::Organization.default_organization; ");
+        for (String admin : admins) {
+            script.append(ensureUserScript(admin, true));
+        }
+        for (String member : members) {
+            script.append(ensureUserScript(member, false));
+        }
+        for (Map.Entry<String, String> entry : tokens.entrySet()) {
+            script.append(mintTokenScript(entry.getKey(), entry.getValue()));
+        }
+
+        Map<String, Long> ids = new LinkedHashMap<>();
+        for (String line : Rails.run(script.toString()).split("\\R")) {
+            String trimmed = line.strip();
+            if (trimmed.startsWith(USER_ID_MARKER)) {
+                String[] parts = trimmed.substring(USER_ID_MARKER.length()).split("=");
+                ids.put(parts[0], Long.parseLong(parts[1]));
+            }
+        }
+        List<String> wanted = new ArrayList<>(admins);
+        wanted.addAll(members);
+        if (!ids.keySet().containsAll(wanted)) {
+            throw new IllegalStateException("gitlab-rails did not report an id for every user. Wanted "
+                    + wanted + ", got " + ids.keySet() + ". Run the same script by hand with "
+                    + "`docker compose ... exec -T gitlab gitlab-rails runner '<script>'` to see why.");
+        }
+        return ids;
+    }
+
+    /** Rails prints plenty of its own noise; the ids are found by this marker, not by position. */
+    private static final String USER_ID_MARKER = "E2E-USER ";
+
+    private static String ensureUserScript(String username, boolean admin) {
+        return ("u = User.find_by_username('%s'); "
+                + "if u.nil?; "
+                + "u = Users::CreateService.new(nil, username: '%s', email: '%s@example.invalid', "
+                + "name: '%s', password: '%s', password_confirmation: '%s', "
+                + "skip_confirmation: true, organization_id: org.id).execute.payload[:user]; "
+                + "end; "
+                // Not redundant: Users::CreateService ignores an `admin:` key in its params.
+                + "u.admin = %s; u.save! if u.changed?; "
+                + "puts '%s%s=' + u.id.to_s; ")
+                .formatted(username, username, username, username, PASSWORD, PASSWORD, admin,
+                        USER_ID_MARKER, username);
+    }
+
+    private static String mintTokenScript(String username, String tokenValue) {
+        return ("t = User.find_by_username('%s'); "
+                + "t.personal_access_tokens.where(name: 'e2e').delete_all; "
+                + "pat = t.personal_access_tokens.create!(scopes: ['api'], name: 'e2e', "
+                + "expires_at: 1.day.from_now); "
+                + "pat.set_token('%s'); pat.save!; ")
+                .formatted(username, tokenValue);
     }
 
     // --- instance settings -----------------------------------------------------------------------
@@ -280,8 +336,4 @@ public final class GitLabDriver {
         }
     }
 
-    private static String lastLine(String output) {
-        String[] lines = output.strip().split("\\R");
-        return lines[lines.length - 1].strip();
-    }
 }

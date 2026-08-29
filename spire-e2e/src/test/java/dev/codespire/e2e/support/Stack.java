@@ -83,7 +83,13 @@ public final class Stack {
         // answers THROUGH nginx without needing a token — which is the thing that actually breaks.
         probes.put("orchestrator API", uiBaseUrl() + "/api/me");
         probes.put("keycloak", keycloakBaseUrl() + "/realms/spire/.well-known/openid-configuration");
-        probes.put("gitlab (deploy/compose.e2e.yml)", gitlabBaseUrl() + "/-/readiness");
+        // NOT /-/readiness. GitLab restricts its health endpoints to monitoring_whitelist, which
+        // defaults to 127.0.0.0/8 — so from the host they answer 404 whether the app is up or not,
+        // and a probe that cannot distinguish those two states is worse than no probe. The compose
+        // healthcheck still uses /-/readiness because it runs INSIDE the container, where it is 200.
+        // /users/sign_in returning 200 means Rails is serving requests, which is what the harness
+        // actually needs to know.
+        probes.put("gitlab (deploy/compose.e2e.yml)", gitlabBaseUrl() + "/users/sign_in");
         probes.put("llm-mock (deploy/compose.e2e.yml)", llmMockAdminUrl() + "/mappings");
 
         StringBuilder down = new StringBuilder();

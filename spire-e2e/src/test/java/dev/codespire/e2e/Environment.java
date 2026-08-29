@@ -4,6 +4,9 @@ import dev.codespire.e2e.gitlab.GitLabDriver;
 import dev.codespire.e2e.spire.SpireDriver;
 import dev.codespire.e2e.support.Stack;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * The setup phase, and itself a test: if provider or webhook registration regresses, nothing
  * downstream can start, and this is where that shows rather than as a scenario timing out.
@@ -51,25 +54,27 @@ public final class Environment {
     public static Environment provision(String projectPrefix) {
         Stack.requireUp();
 
-        GitLabDriver root = GitLabDriver.asRoot();
-        allowLocalWebhooks(root);
+        // One Rails call for every account and token. Two users, and therefore two tokens: the
+        // self-loop guard means the bot must not answer its own comments, so a one-user setup makes
+        // every conversation scenario assert nothing.
+        Map<String, Long> ids = GitLabDriver.bootstrap(
+                List.of(GitLabDriver.ADMIN_USERNAME),
+                List.of(BOT_USERNAME, HUMAN_USERNAME),
+                Map.of(GitLabDriver.ADMIN_USERNAME, GitLabDriver.ADMIN_TOKEN,
+                        BOT_USERNAME, BOT_TOKEN,
+                        HUMAN_USERNAME, HUMAN_TOKEN));
 
-        long botId = root.ensureUser(BOT_USERNAME, BOT_USERNAME + "@example.invalid", "TEST-bot-pw-12345");
-        long humanId = root.ensureUser(HUMAN_USERNAME, HUMAN_USERNAME + "@example.invalid",
-                "TEST-human-pw-12345");
-        // Two users, and therefore two tokens. The self-loop guard means the bot must not answer its
-        // own comments, so a one-user setup makes every conversation scenario assert nothing.
-        root.mintToken(BOT_USERNAME, BOT_TOKEN);
-        root.mintToken(HUMAN_USERNAME, HUMAN_TOKEN);
+        GitLabDriver admin = GitLabDriver.asAdmin();
+        allowLocalWebhooks(admin);
 
         // Also cleans up after runs that crashed before their own cleanup.
-        root.deleteProjectsNamed(projectPrefix);
+        admin.deleteProjectsNamed(projectPrefix);
 
         String slug = projectPrefix + "-" + System.currentTimeMillis();
-        long projectId = root.createProject(slug);
-        root.addMember(projectId, botId);
-        root.addMember(projectId, humanId);
-        String workspace = root.get("/projects/" + projectId).get("namespace").get("path").asText();
+        long projectId = admin.createProject(slug);
+        admin.addMember(projectId, ids.get(BOT_USERNAME));
+        admin.addMember(projectId, ids.get(HUMAN_USERNAME));
+        String workspace = admin.get("/projects/" + projectId).get("namespace").get("path").asText();
 
         SpireDriver spire = new SpireDriver();
         spire.registerScmProvider("e2e-gitlab", "http://gitlab/api/v4", workspace, BOT_TOKEN);
@@ -81,7 +86,7 @@ public final class Environment {
         SpireDriver.Webhook hook = spire.registerWebhook("gitlab", workspace + "/" + slug);
         // The service name and CONTAINER port, not the published host port: GitLab reaches the
         // dashboard's nginx across the compose network, and nginx is what routes /webhooks.
-        root.createWebhook(projectId, "http://ui:8080/webhooks/gitlab/" + hook.key(), hook.secret());
+        admin.createWebhook(projectId, "http://ui:8080/webhooks/gitlab/" + hook.key(), hook.secret());
 
         spire.setReviewMode("active");
 
@@ -93,9 +98,9 @@ public final class Environment {
      * Asserted, not assumed. GitLab refuses webhook deliveries to private networks by default, and a
      * setting that did not take produces no error anywhere on our side.
      */
-    private static void allowLocalWebhooks(GitLabDriver root) {
-        root.allowLocalWebhooks();
-        boolean allowed = root.get("/application/settings")
+    private static void allowLocalWebhooks(GitLabDriver admin) {
+        admin.allowLocalWebhooks();
+        boolean allowed = admin.get("/application/settings")
                 .get("allow_local_requests_from_web_hooks_and_services").asBoolean();
         if (!allowed) {
             throw new IllegalStateException("GitLab still refuses private-network webhook targets, so "
