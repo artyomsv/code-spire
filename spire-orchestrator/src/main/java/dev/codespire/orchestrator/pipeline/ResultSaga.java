@@ -370,16 +370,37 @@ public class ResultSaga {
     private void onReviewGenerated(ReviewGenerated e) {
         projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                 e.result().findings().size() + " findings");
-        projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
         // P4/ADR-027: the durable per-finding record. review_status holds one overwritten round,
         // so without this the corpus a dismissal rate is computed over does not exist. The round
         // comes from ReviewRuns (which counts ReviewRequested) rather than review_status.attempt,
         // the auto-retry counter that would give one paid review several round numbers.
-        findings.recordGenerated(e.reviewId(), runs.currentRun(e.reviewId()), e.commit(),
-                e.result().findings());
+        //
+        // This is the ONE write that sees the unfiltered set: the corpus has to hold what the model
+        // actually said, including what a preference then hid, or a wrong preference could never be
+        // counted. Everything below works from the FILTERED result.
+        int round = runs.roundOrUnknown(e.reviewId());
+        findings.recordGenerated(e.reviewId(), round, e.commit(), e.result().findings());
         // Verdicts ride this same event (empty on a first review), and they judge findings from
         // ANY earlier round -- priorRun is the carried-forward open set, not the previous round.
         findings.recordVerdicts(e.reviewId(), e.verdicts());
+
+        // Learned memory hides what an operator approved hiding -- AFTER the model has reviewed,
+        // never by steering the prompt.
+        //
+        // The filter runs HERE, above every other write, and the ordering is load-bearing rather
+        // than tidy. recordOpenFindings builds the carry-forward that becomes the next round's
+        // PriorRun, and the worker turns every prior finding into the review prompt's EXCLUSION
+        // list. Filtering after it would put suppressed findings into that list, so the next round
+        // would tell the model not to raise them -- and revoking the preference could not bring
+        // them back, because the filter would have nothing left to un-hide. That is precisely the
+        // property that makes a counted filter better than prompt injection, so losing it would
+        // have left the feature with the failure mode it was designed to avoid.
+        var repo = ReviewIds.parse(e.reviewId()).repo();
+        var filtered = preferenceFilter.apply(repo, e.result());
+        recordSuppressions(e.reviewId(), round, filtered);
+        ReviewResult visible = filtered.result();
+
+        projection.recordOutcome(e.reviewId(), visible, ReviewProjection.STAGE_COMMENTS);
         java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
         String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
         if (!e.verdicts().isEmpty()) {
@@ -391,31 +412,23 @@ public class ResultSaga {
         // priming carry-forward for round 2 (recordPosted's COALESCE keeps first-review
         // posted_findings_json semantics unchanged since the two columns hold the same
         // findings in that case).
-        projection.recordOpenFindings(e.reviewId(), e.result(), e.verdicts(),
+        projection.recordOpenFindings(e.reviewId(), visible, e.verdicts(),
                 prior.map(PriorRun::findings).orElse(List.of()));
-        projection.setNote(e.reviewId(), noteFor(e.result()));
+        projection.setNote(e.reviewId(), noteFor(visible));
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
-                e.commit(), e.result().findings().size(),
-                Integer.toHexString(e.result().summary().hashCode())));
-        // P4/ADR-027: learned memory hides what an operator approved hiding -- AFTER the model has
-        // reviewed, never by steering the prompt. The rows stay in review_finding marked with the
-        // preference that hid them, so a wrong preference is countable and revoking it restores the
-        // findings on the next review.
-        var repo = ReviewIds.parse(e.reviewId()).repo();
-        var filtered = preferenceFilter.apply(repo, e.result());
-        recordSuppressions(e.reviewId(), filtered);
+                e.commit(), visible.findings().size(),
+                Integer.toHexString(visible.summary().hashCode())));
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                e.reviewId(), repo, e.prId(), e.commit(), filtered.result(), cred,
+                e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
                 e.verdicts(), priorSummaryRef, filtered.suppressedCount()));
     }
 
     /** Groups the hidden findings by the preference responsible, so each batch names its cause. */
-    private void recordSuppressions(String reviewId,
+    private void recordSuppressions(String reviewId, int round,
             dev.codespire.orchestrator.memory.PreferenceFilter.Filtered filtered) {
         if (filtered.suppressed().isEmpty()) {
             return;
         }
-        int round = runs.currentRun(reviewId);
         var byPreference = filtered.suppressed().stream().collect(java.util.stream.Collectors
                 .groupingBy(dev.codespire.orchestrator.memory.PreferenceFilter.Suppression::preferenceId));
         byPreference.forEach((preferenceId, hidden) -> findings.markSuppressed(reviewId, round,

@@ -93,6 +93,11 @@ class ResultSagaPricingTest {
                 public void recordVerdicts(String reviewId,
                         java.util.List<dev.codespire.contract.review.FindingVerdict> verdicts) {
                 }
+
+                @Override
+                public void markSuppressed(String reviewId, int round, java.util.List<String> paths,
+                        java.util.List<Integer> lines, long preferenceId) {
+                }
             };
 
     @Test
@@ -416,6 +421,14 @@ class ResultSagaPricingTest {
         saga.runs = new ReviewRuns() {
             @Override
             public int currentRun(String reviewId) {
+                return run;
+            }
+
+            // Overridden too, and not by accident: the real one opens a connection, so leaving it
+            // alone turns this fake into a live database call -- the trap already recorded for
+            // setNote and recordCharges.
+            @Override
+            public int roundOrUnknown(String reviewId) {
                 return run;
             }
         };
