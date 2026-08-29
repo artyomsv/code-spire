@@ -5,12 +5,26 @@ sizing, not commitments.
 
 ---
 
-## Current status & next-up backlog (updated 2026-08-26)
+## Current status & next-up backlog (updated 2026-08-28)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further
 down is the original design-time roadmap (kept for reference).
 
 ### Delivered
+- **Browser login to a packaged deployment** (#76, 2026-08-27): nobody could sign in on any port but
+  80. Three causes — nginx drops inherited `proxy_set_header`s in a location that sets any of its own,
+  `$host` loses the port, and Quarkus needs `enable-forwarded-host` separately from
+  `proxy-address-forwarding` — plus a 502 on the callback from proxy buffers too small for a chunked
+  OIDC session. The invariant that should have caught it passed the regression it was written for and
+  was rewritten to be scope-anchored and mutation-verified.
+- **A review call can finish, and says so when it did not** (#77, 2026-08-28): the output default was
+  4096, which bounds a reasoning model's thinking AND its reply together — two models each spent the
+  whole budget and returned nothing on a real diff, while being charged. Now 16384, with the request
+  timeout operator-settable (`spire.llm.timeout-seconds`, was 60s hardcoded at three call sites) and
+  `LlmTimeoutBudget` refusing to start unless the Kafka ack threshold clears what a record may cost.
+  A run that produced nothing is no longer indistinguishable from a clean pass: `ReviewResult.degraded`
+  → `review_status.degraded` (V35) → note → `REVIEW_DEGRADED` attention row → list badge and detail
+  card. Verified against real GitHub before merge.
 - **P0 + P1**: event backbone, 3 services over Redpanda, real Bitbucket adapter set, event store,
   idempotent posting + stale-run guard, live operator UI (`spire-ui`).
 - **Encryption at rest** (ADR-009): `EncryptionService`/Tink in the shared `spire-encryption` module.
@@ -656,8 +670,15 @@ does not exist yet. Operator decides.
   spent the whole 4096-token output default on thinking and returned nothing, twice, on two different
   models. Both arms would have reported zero findings, which under the rule above is a **null result
   that stops rung 2** — a measurement whose real subject was a token cap. The four defects behind it
-  are fixed (see CLAUDE.md, 2026-08-28); the gate itself still has to be run, and the harness that
-  runs it is unchanged. Nothing here is evidence for or against rung 2 yet.
+  are fixed and merged (#77, 2026-08-28) — twelve in the end, not four: the review round found five
+  more in the fix itself and running it against real GitHub found three more, every one of those in
+  the UI and none reachable from a test suite. The gate itself still has to be run, and the harness
+  that runs it is unchanged. Nothing here is evidence for or against rung 2 yet.
+
+  **Before it is run again, §9 needs a positive control.** As written the gate cannot fail safely: it
+  stops rung 2 on a null result, while having no way to tell "code context did not help" from "the
+  pipeline produced nothing" — which is exactly what happened. Asserting that each arm came back
+  parseable (`degraded = false`) is now cheap, because #77 added the field that check needs.
 - **Exit:** reviews reference code elsewhere in the repo, not just the diff. Mechanically true of
   rung 1 — a `CODE_SNIPPET` item can name a file the diff never touched. Whether that reference makes
   a review *better* is a separate, unproven claim, which is exactly what the evidence gate above tests
