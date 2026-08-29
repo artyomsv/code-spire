@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -92,6 +93,85 @@ class ReviewChainTest {
                 "S1 — three inline findings plus one summary, present on GitLab itself");
 
         assertTrue(LlmMock.prompts().size() >= 1, "S1 — the worker actually called the model");
+    }
+
+    @Test
+    @Order(2)
+    void s3_aReplyUnderAFindingIsAnsweredInThatThreadWithFencedCode() {
+        String discussionId = firstFindingDiscussionId();
+        long before = botNotesIn(discussionId);
+
+        env.human().replyToDiscussion(env.projectId(), mrIid, discussionId,
+                "Why is this a problem when the denominator is validated upstream?");
+
+        long expected = before + 1;
+        Await.until("S3 the bot answered in the finding thread",
+                () -> botNotesIn(discussionId) >= expected ? Optional.of(true) : Optional.empty());
+
+        String answer = lastBotNoteIn(discussionId);
+        assertTrue(answer.contains("```"),
+                "S3 — the locked FOLLOWUP contract requires a fence. Indented code renders as prose on "
+                        + "the SCM, which this project shipped once: " + answer);
+    }
+
+    /**
+     * Runs AFTER S3 on purpose: there is nothing to expand until a conversation exists, and the
+     * findings card shows a finding's own text in full with no expander.
+     */
+    @Test
+    @Order(3)
+    void s2_theThreadEndpointReturnsTheFullConversationNotThePreview() {
+        String discussionId = firstFindingDiscussionId();
+
+        String thread = env.spire().get("/api/reviews/" + env.workspace() + "/" + env.slug()
+                + "/" + mrIid + "/threads/" + discussionId).toString();
+
+        assertTrue(thread.contains("E2E fixture reply"),
+                "S2 — the endpoint must return the bot's full answer, not the <=160-char preview the "
+                        + "card used to show: " + thread);
+    }
+
+    /** The first inline (position-anchored) discussion the bot opened. */
+    private static String firstFindingDiscussionId() {
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            JsonNode note = discussion.get("notes").get(0);
+            boolean ours = Environment.BOT_USERNAME.equals(note.get("author").get("username").asText());
+            if (ours && note.hasNonNull("position")) {
+                return discussion.get("id").asText();
+            }
+        }
+        throw new AssertionError("no inline finding discussion found on the merge request");
+    }
+
+    private static long botNotesIn(String discussionId) {
+        long count = 0;
+        for (JsonNode note : notesIn(discussionId)) {
+            if (Environment.BOT_USERNAME.equals(note.get("author").get("username").asText())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static String lastBotNoteIn(String discussionId) {
+        String last = "";
+        for (JsonNode note : notesIn(discussionId)) {
+            if (Environment.BOT_USERNAME.equals(note.get("author").get("username").asText())) {
+                last = note.get("body").asText();
+            }
+        }
+        return last;
+    }
+
+    private static List<JsonNode> notesIn(String discussionId) {
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            if (discussionId.equals(discussion.get("id").asText())) {
+                List<JsonNode> notes = new ArrayList<>();
+                discussion.get("notes").forEach(notes::add);
+                return notes;
+            }
+        }
+        return List.of();
     }
 
     /** Discussions whose opening note the bot wrote. */

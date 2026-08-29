@@ -114,6 +114,11 @@ public final class SpireDriver {
         // Empty means everyone. An allowlist step would otherwise have to name the fixture users, and
         // IntegrationSaga treats an empty list as "review every author".
         body.put("authors", List.of());
+        // Without this the bot posts findings and ignores every reply, so S3-S7 assert nothing. The
+        // default is REPORT_ONLY and that is the right default — ConversationLevel.parse falls back to
+        // it for null AND for an unrecognised value, so conversation is opt-in rather than something a
+        // typo can switch on. The suite opts in exactly as an operator would.
+        body.put("conversationLevel", "EXPLAIN");
         return post("/api/providers", body).get("id").asText();
     }
 
