@@ -71,6 +71,9 @@ public class ResultSaga {
     ReviewProjection projection;
 
     @Inject
+    dev.codespire.orchestrator.readmodel.FindingProjection findings;
+
+    @Inject
     dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
 
     @Inject
@@ -228,6 +231,10 @@ public class ResultSaga {
                     threads.markFindingThread(e.reviewId(), new ThreadRef(inline.threadRef()),
                             inline.path(), inline.line());
                 }
+                // P4/ADR-027: a finding's thread ref is born here, not at generation, so the rows
+                // that keep a null one are exactly those generated and never posted -- a degraded
+                // run's partial list, or a per-finding post failure. That distinction is the point.
+                findings.recordThreadRefs(e.reviewId(), e.inline());
                 // Flag the summary thread so its replies classify as "general" (not a finding). is_ours unchanged.
                 threads.markSummaryThread(e.reviewId(), new ThreadRef(e.summaryThreadRef()));
                 // ADR-019: a reconciled thread's outcome lands on the timeline and, when the finding
@@ -361,6 +368,15 @@ public class ResultSaga {
         projection.appendEvent(e.reviewId(), "result", "ReviewGenerated",
                 e.result().findings().size() + " findings");
         projection.recordOutcome(e.reviewId(), e.result(), ReviewProjection.STAGE_COMMENTS);
+        // P4/ADR-027: the durable per-finding record. review_status holds one overwritten round,
+        // so without this the corpus a dismissal rate is computed over does not exist. The round
+        // comes from ReviewRuns (which counts ReviewRequested) rather than review_status.attempt,
+        // the auto-retry counter that would give one paid review several round numbers.
+        findings.recordGenerated(e.reviewId(), runs.currentRun(e.reviewId()), e.commit(),
+                e.result().findings());
+        // Verdicts ride this same event (empty on a first review), and they judge findings from
+        // ANY earlier round -- priorRun is the carried-forward open set, not the previous round.
+        findings.recordVerdicts(e.reviewId(), e.verdicts());
         java.util.Optional<PriorRun> prior = projection.priorRunFor(e.reviewId());
         String priorSummaryRef = prior.map(PriorRun::summaryThreadRef).orElse(null);
         if (!e.verdicts().isEmpty()) {

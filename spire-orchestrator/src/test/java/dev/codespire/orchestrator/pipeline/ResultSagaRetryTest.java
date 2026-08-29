@@ -59,6 +59,7 @@ class ResultSagaRetryTest {
 
     private ResultSaga sagaWith(int storedAttempt, int maxAttempts, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         // The budget is read from the policy on each failure, so Settings changes it without a restart.
         saga.reviewPolicy = new dev.codespire.orchestrator.policy.ReviewPolicy() {
             @Override
@@ -177,6 +178,31 @@ class ResultSagaRetryTest {
         return new ReviewFailed(REVIEW_ID, COMMIT, "generate", "boom", retryable, 1);
     }
 
+    /**
+     * A {@link dev.codespire.orchestrator.readmodel.FindingProjection} that writes nothing.
+     *
+     * <p>Every method is overridden deliberately. These are plain unit tests with no datasource, so
+     * an un-overridden one would open a real connection -- the exact trap recorded when making
+     * {@code setNote} always write turned a saga fake into a live database call.
+     */
+    private static final dev.codespire.orchestrator.readmodel.FindingProjection SILENT_FINDINGS =
+            new dev.codespire.orchestrator.readmodel.FindingProjection() {
+                @Override
+                public void recordGenerated(String reviewId, int round, String commit,
+                        java.util.List<dev.codespire.contract.review.Finding> findings) {
+                }
+
+                @Override
+                public void recordThreadRefs(String reviewId,
+                        java.util.List<dev.codespire.contract.event.IntegrationEvent.CommentsPosted.PostedInline> posted) {
+                }
+
+                @Override
+                public void recordVerdicts(String reviewId,
+                        java.util.List<dev.codespire.contract.review.FindingVerdict> verdicts) {
+                }
+            };
+
     @Test
     void retryableWithBudget_schedulesTheNextAttemptInsteadOfDispatchingIt() {
         // The delay cannot be awaited here: this consumer is @Blocking and ordered per partition, so
@@ -204,6 +230,7 @@ class ResultSagaRetryTest {
         // ("threadIsOurs=false") and stay silent — invisible on GitHub/Bitbucket, where they coincide.
         List<String> ownedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -318,6 +345,7 @@ class ResultSagaRetryTest {
     /** Minimal ResultSaga wired for the ReviewGenerated -> PostComments path (no ReviewFailed fakery needed). */
     private ResultSaga sagaForReviewGenerated(PriorRun priorRun, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
@@ -420,6 +448,7 @@ class ResultSagaRetryTest {
     void followUpGenerated_touchesTheProjectionForLiveUpdate() {
         List<String> touched = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -455,6 +484,7 @@ class ResultSagaRetryTest {
         // @-mentioned again — once the bot has spoken, the conversation is its own.
         List<String> ownedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -511,6 +541,7 @@ class ResultSagaRetryTest {
         List<String> markedOwned = new ArrayList<>();
         List<String> bumpedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {

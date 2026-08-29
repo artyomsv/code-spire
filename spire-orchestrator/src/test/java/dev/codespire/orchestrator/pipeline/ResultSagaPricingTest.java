@@ -55,6 +55,31 @@ class ResultSagaPricingTest {
     /** Which run the fake {@link ReviewRuns} reports; a test bumps it to stand for a re-run. */
     private int run = ReviewRuns.FIRST_RUN;
 
+    /**
+     * A {@link dev.codespire.orchestrator.readmodel.FindingProjection} that writes nothing.
+     *
+     * <p>Every method is overridden deliberately. These are plain unit tests with no datasource, so
+     * an un-overridden one would open a real connection -- the exact trap recorded when making
+     * {@code setNote} always write turned a saga fake into a live database call.
+     */
+    private static final dev.codespire.orchestrator.readmodel.FindingProjection SILENT_FINDINGS =
+            new dev.codespire.orchestrator.readmodel.FindingProjection() {
+                @Override
+                public void recordGenerated(String reviewId, int round, String commit,
+                        java.util.List<dev.codespire.contract.review.Finding> findings) {
+                }
+
+                @Override
+                public void recordThreadRefs(String reviewId,
+                        java.util.List<dev.codespire.contract.event.IntegrationEvent.CommentsPosted.PostedInline> posted) {
+                }
+
+                @Override
+                public void recordVerdicts(String reviewId,
+                        java.util.List<dev.codespire.contract.review.FindingVerdict> verdicts) {
+                }
+            };
+
     @Test
     void contextAssembledDoesNotGenerateAReviewWhenTheModelCannotBePriced() {
         ResultSaga saga = sagaFor("TEST-UNPRICEABLE", false);
@@ -318,6 +343,7 @@ class ResultSagaPricingTest {
      *  registry's priceability fixed to {@code priceable} and its default model to {@code model}. */
     private ResultSaga sagaFor(String model, boolean priceable) {
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
