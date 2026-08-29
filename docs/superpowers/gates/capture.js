@@ -15,11 +15,12 @@ function codeContribution(dir, arm, pr) {
   if (!fs.existsSync(p)) return null;
   const line = fs.readFileSync(p, 'utf8').split('\n').filter((l) => l.includes('for CODE')).pop();
   if (!line) return { extracted: 0, resolved: 0, contributed: 0, sawLine: false };
-  const num = (k) => Number((line.match(new RegExp(k + '=(\\d+)')) || [])[1] ?? 0);
-  return {
-    extracted: num('extracted'), resolved: num('resolved'), contributed: num('contributed'),
-    sawLine: true,
-  };
+  // One literal pattern rather than three built from a variable. The variable form is a ReDoS
+  // shape even when every caller passes a constant, and the line format is fixed anyway:
+  //   Context resolution for CODE: extracted=N resolved=N contributed=N droppedForBudget=N
+  const m = line.match(/extracted=(\d+) resolved=(\d+) contributed=(\d+)/);
+  if (!m) return { extracted: 0, resolved: 0, contributed: 0, sawLine: false };
+  return { extracted: Number(m[1]), resolved: Number(m[2]), contributed: Number(m[3]), sawLine: true };
 }
 
 fetch(url).then((r) => r.json()).then((d) => {
