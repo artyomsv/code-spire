@@ -8,7 +8,9 @@ import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,7 +35,7 @@ class PostgresSymbolIndexTest {
 
     @BeforeEach
     void clean() {
-        sql("DELETE FROM code_symbol WHERE repo LIKE 'TEST-%'");
+        deleteTestRows();
     }
 
     @Test
@@ -127,8 +129,7 @@ class PostgresSymbolIndexTest {
     void prunesRowsOlderThanTheRetentionWindowAndKeepsTheRest() {
         index.record(REPO, "src/Fresh.java", COMMIT, List.of(), List.of("Pricer"));
         index.record(REPO, "src/Stale.java", COMMIT, List.of(), List.of("Pricer"));
-        sql("UPDATE code_symbol SET last_seen_at = now() - interval '400 days' "
-                + "WHERE repo = '" + REPO + "' AND path = 'src/Stale.java'");
+        age("src/Stale.java");
 
         index.prune();
 
@@ -136,21 +137,84 @@ class PostgresSymbolIndexTest {
         assertEquals(List.of("src/Fresh.java"), index.callersOf(REPO, "Pricer"));
     }
 
+    /**
+     * Each role gets its own half of the per-file budget.
+     *
+     * <p>Spending it DEFINES-first starved the only role {@code callersOf} reads, so a file
+     * declaring more symbols than the budget wrote no reference rows at all and could never be a
+     * caller candidate — and the largest files are the likeliest callers. Nothing asserted the cap
+     * before, so the starvation was invisible.
+     */
+    @Test
+    void neitherRoleCanConsumeTheOtherHalfOfThePerFileBudget() {
+        List<String> manyDefines = new ArrayList<>();
+        for (int i = 0; i < PostgresSymbolIndex.MAX_ROWS_PER_FILE * 2; i++) {
+            manyDefines.add("Define" + i);
+        }
+        index.record(REPO, "src/Huge.java", COMMIT, manyDefines, List.of("StillRecorded"));
+
+        assertEquals(List.of("src/Huge.java"), index.callersOf(REPO, "StillRecorded"),
+                "a reference must survive however many symbols the file declares");
+        assertTrue(rowCount("src/Huge.java", "DEFINES") <= PostgresSymbolIndex.MAX_ROWS_PER_ROLE);
+    }
+
+    /**
+     * One oversized identifier used to fail the batch, and the catch discarded every row for the
+     * file — silently, and easy to trigger from generated code.
+     */
+    @Test
+    void oneOverlongSymbolDoesNotDiscardTheWholeFile() {
+        index.record(REPO, "src/Mixed.java", COMMIT, List.of(), List.of("a".repeat(300), "Usable"));
+
+        assertEquals(List.of("src/Mixed.java"), index.callersOf(REPO, "Usable"));
+    }
+
+    private int rowCount(String path, String role) {
+        String sql = "SELECT count(*) FROM code_symbol WHERE repo = ? AND path = ? AND role = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, REPO);
+            ps.setString(2, path);
+            ps.setString(3, role);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not count rows", e);
+        }
+    }
     private String lastSeenCommit(String path) {
-        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement();
-             var rs = s.executeQuery("SELECT last_seen_commit FROM code_symbol WHERE repo = '"
-                     + REPO + "' AND path = '" + path + "' LIMIT 1")) {
-            return rs.next() ? rs.getString(1) : null;
+        String sql = "SELECT last_seen_commit FROM code_symbol WHERE repo = ? AND path = ? LIMIT 1";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, REPO);
+            ps.setString(2, path);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("could not read last_seen_commit", e);
         }
     }
 
-    private void sql(String statement) {
-        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
-            s.executeUpdate(statement);
+    /** Ages one path past the retention window. Bound, not concatenated — test SQL is still SQL. */
+    private void age(String path) {
+        String sql = "UPDATE code_symbol SET last_seen_at = now() - interval '400 days'"
+                + " WHERE repo = ? AND path = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, REPO);
+            ps.setString(2, path);
+            ps.executeUpdate();
         } catch (SQLException e) {
-            throw new IllegalStateException("setup failed: " + statement, e);
+            throw new IllegalStateException("could not age " + path, e);
+        }
+    }
+
+    private void deleteTestRows() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("DELETE FROM code_symbol WHERE repo LIKE ?")) {
+            ps.setString(1, "TEST-%");
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("cleanup failed", e);
         }
     }
 }

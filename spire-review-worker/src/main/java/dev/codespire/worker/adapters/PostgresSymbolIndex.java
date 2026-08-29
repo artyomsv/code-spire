@@ -12,6 +12,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -34,6 +35,14 @@ public class PostgresSymbolIndex implements SymbolIndex {
 
     private static final Logger LOG = Logger.getLogger(PostgresSymbolIndex.class);
 
+    /** Candidates for one symbol, newest observation first. See {@link #MAX_CANDIDATES}. */
+    private static final String CALLERS_SQL = """
+            SELECT path FROM code_symbol
+             WHERE repo = ? AND symbol = ? AND role = ?
+             ORDER BY last_seen_at DESC
+             LIMIT ?
+            """;
+
     static final String DEFINES = "DEFINES";
     static final String REFERENCES = "REFERENCES";
 
@@ -54,6 +63,20 @@ public class PostgresSymbolIndex implements SymbolIndex {
      */
     static final int MAX_ROWS_PER_FILE = 400;
 
+    /**
+     * Half the per-file budget, reserved for each role.
+     *
+     * <p>Spending the budget DEFINES-first starved the only role {@link #callersOf} reads: a file
+     * declaring 400 symbols wrote zero reference rows and could never be a caller candidate — and
+     * large files are exactly the ones most likely to be callers.
+     */
+    static final int MAX_ROWS_PER_ROLE = MAX_ROWS_PER_FILE / 2;
+
+    /** Column widths from V5. A value over these fails the batch and discards the whole file. */
+    private static final int MAX_SYMBOL_CHARS = 255;
+
+    private static final int MAX_PATH_CHARS = 1024;
+
     @Inject
     DataSource dataSource;
 
@@ -65,15 +88,9 @@ public class PostgresSymbolIndex implements SymbolIndex {
         if (isBlank(repo) || isBlank(symbol)) {
             return List.of();
         }
-        String sql = """
-                SELECT path FROM code_symbol
-                 WHERE repo = ? AND symbol = ? AND role = ?
-                 ORDER BY last_seen_at DESC
-                 LIMIT ?
-                """;
         List<String> paths = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
+             PreparedStatement ps = c.prepareStatement(CALLERS_SQL)) {
             ps.setString(1, repo);
             ps.setString(2, symbol);
             ps.setString(3, REFERENCES);
@@ -87,7 +104,10 @@ public class PostgresSymbolIndex implements SymbolIndex {
             // Never fail a review because the index is unavailable. It only narrows a search, so an
             // empty answer costs recall — the caller simply cites nothing about callers, which is
             // exactly what rung 1 did.
-            LOG.warnf(e, "Symbol index unavailable for %s/%s — continuing without caller candidates",
+            // Debug, not warn: callersOf is called once per looked-up symbol, so a database blip
+            // produced a stack trace per symbol per review. The condition is already visible from
+            // the connection pool and costs recall only.
+            LOG.debugf(e, "Symbol index unavailable for %s/%s — continuing without caller candidates",
                     repo, symbol);
             return List.of();
         }
@@ -109,9 +129,8 @@ public class PostgresSymbolIndex implements SymbolIndex {
                 """;
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
-            int written = 0;
-            written += batch(ps, repo, path, commit, defines, DEFINES, written);
-            written += batch(ps, repo, path, commit, references, REFERENCES, written);
+            int written = batch(ps, repo, path, commit, defines, DEFINES)
+                    + batch(ps, repo, path, commit, references, REFERENCES);
             if (written > 0) {
                 ps.executeBatch();
             }
@@ -141,16 +160,22 @@ public class PostgresSymbolIndex implements SymbolIndex {
     }
 
     private static int batch(PreparedStatement ps, String repo, String path, String commit,
-                             List<String> symbols, String role, int alreadyWritten) throws SQLException {
-        if (symbols == null) {
+                             List<String> symbols, String role) throws SQLException {
+        if (symbols == null || path.length() > MAX_PATH_CHARS) {
             return 0;
         }
         int added = 0;
-        for (String symbol : symbols) {
-            if (alreadyWritten + added >= MAX_ROWS_PER_FILE) {
+        // Sorted, because this list is CUT by the budget and Set.copyOf iteration order is salted
+        // per JVM — so which symbols survived truncation changed between runs of the same review.
+        List<String> ordered = new ArrayList<>(symbols);
+        Collections.sort(ordered);
+        for (String symbol : ordered) {
+            if (added >= MAX_ROWS_PER_ROLE) {
                 break;
             }
-            if (isBlank(symbol)) {
+            // Skipped rather than allowed to fail: an over-length identifier made executeBatch throw
+            // and the catch below discarded all 400 rows for the file, silently.
+            if (isBlank(symbol) || symbol.length() > MAX_SYMBOL_CHARS) {
                 continue;
             }
             ps.setString(1, repo);

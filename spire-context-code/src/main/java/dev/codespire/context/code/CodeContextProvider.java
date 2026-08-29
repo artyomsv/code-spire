@@ -80,26 +80,6 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     public static final int MAX_SNIPPETS = 12;
 
-    /**
-     * Caller snippets one review may cite, on top of {@link #MAX_SNIPPETS} definitions.
-     *
-     * <p>Deliberately small. A definition answers "what does this diff depend on" and is nearly
-     * always relevant; a caller answers "what might this break" and is speculative until the model
-     * judges it. Letting callers compete for the definition budget would trade a certain signal for
-     * an uncertain one, and each caller also costs a confirmation fetch.
-     */
-    public static final int MAX_CALLER_SNIPPETS = 3;
-
-    /**
-     * Symbols per review whose callers are looked up. A changed file can declare dozens; without a
-     * bound, a wide refactor turns into dozens of index reads and fetches for a budget that can only
-     * cite three of them anyway.
-     */
-    static final int MAX_CALLER_LOOKUPS = 8;
-
-    /** Lines of context either side of a call site — enough to see the call in its method. */
-    static final int CALL_SITE_CONTEXT_LINES = 4;
-
     /** Body lines kept per snippet, beyond the always-kept signature and doc comment (SnippetExtractor). */
     private static final int MAX_BODY_LINES = 40;
 
@@ -179,6 +159,9 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     private final SymbolIndex symbolIndex;
 
+    /** Rung 2 behind one collaborator; a no-op throughout when {@link #symbolIndex} is null. */
+    private final CallerLookup callerLookup;
+
     private final long deadlineMillis;
     private final long extractionBudgetMillis;
 
@@ -241,6 +224,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
         this.deadlineMillis = deadlineMillis;
         this.extractionBudgetMillis = extractionBudgetMillis;
         this.symbolIndex = symbolIndex;
+        this.callerLookup = new CallerLookup(symbolIndex, this::languageFor);
     }
 
     /** The three-argument form plus rung 2's index — what the worker's composition root builds. */
@@ -257,6 +241,15 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      */
     public Set<String> pathAllowList() {
         return pathAllowList;
+    }
+
+    /**
+     * Whether rung 2 is wired, for the same reason {@link #pathAllowList()} is exposed: a composition
+     * root that compiles proves nothing about what it passed. Without this, nothing could distinguish
+     * "the worker wired the index" from "the code branch silently built a rung-1 provider".
+     */
+    public boolean hasSymbolIndex() {
+        return callerLookup.enabled();
     }
 
     /**
@@ -317,12 +310,10 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
 
         // Rung 2. Recording comes first so a repository being reviewed for the first time still
         // contributes to the index, even though it can have no callers to cite yet.
-        recordObservedSymbols(request, fetcher);
-        List<ContextItem> callers = callerItems(request, refs, fetcher, items);
-        if (!callers.isEmpty()) {
-            items = new ArrayList<>(items);
-            items.addAll(callers);
-        }
+        String indexKey = indexKey(request);
+        callerLookup.recordObserved(indexKey, request.commit(), fetcher.fetched(), deadlineNanos);
+        items = withCallers(items, callerLookup.callers(indexKey, request.commit(), refs, fetcher,
+                items, deadlineNanos));
 
         // A real per-file error (5xx, rate limit) never sinks the whole contribution by itself — it
         // only surfaces as ERROR when it leaves this contribution with literally nothing to say;
@@ -331,13 +322,21 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
                 ? (fetcher.hadError() ? ContribStatus.ERROR : ContribStatus.EMPTY)
                 : ContribStatus.OK;
         ContextContribution contribution = new ContextContribution(SOURCE, status, items, latencyMs(start));
-        // extracted: identifiers the diff-side extraction handed this request — zero means nothing to
-        // look up (e.g. a YAML-only diff), correct and uninteresting. resolved: candidates found before
-        // the MAX_SNIPPETS budget is applied — zero while extracted is positive is the broken case:
-        // plenty to look up, none of it resolved. droppedForBudget: resolved candidates the cap cut.
-        ContextResolutionCounts counts = new ContextResolutionCounts(refs.identifiers().size(),
-                candidates.size(), items.size(), candidates.size() - items.size());
-        return new Resolution(contribution, counts);
+        return new Resolution(contribution, countsFor(refs, candidates, items));
+    }
+
+    /**
+     * The diagnostic counts {@code ContextWorker} logs beside the contribution.
+     *
+     * <p>extracted: identifiers the diff-side extraction handed this request — zero means nothing to
+     * look up (e.g. a YAML-only diff), correct and uninteresting. resolved: candidates found before
+     * the {@link #MAX_SNIPPETS} budget is applied — zero while extracted is positive is the broken
+     * case: plenty to look up, none of it resolved. droppedForBudget: resolved candidates the cap cut.
+     */
+    private static ContextResolutionCounts countsFor(CodeReferences refs,
+            List<DefinitionCandidate> candidates, List<ContextItem> items) {
+        return new ContextResolutionCounts(refs.identifiers().size(), candidates.size(), items.size(),
+                candidates.size() - items.size());
     }
 
     /**
@@ -461,6 +460,45 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
     }
 
     /**
+     * Appends caller snippets, trimming the lowest-ranked definitions so the two together never
+     * exceed {@link #MAX_SNIPPETS}.
+     *
+     * <p>{@code MAX_SNIPPETS} is derived from the {@code code_context} slot's 6,000-token budget, so
+     * appending callers on top of a full definition list overflows the very slot the cap exists to
+     * protect — and {@code PromptRenderer} resolves that overflow by silently tail-clipping, which
+     * would drop the callers just appended. Definitions are already ranked, so the trim comes off the
+     * tail: the weakest definition yields to a caller rather than the strongest one.
+     *
+     * <p>The substitution is 1:1 and conservative — a call site is {@code 2 ×
+     * CALL_SITE_CONTEXT_LINES + 1} lines where a definition runs to {@link #MAX_BODY_LINES} plus its
+     * signature — so this leaves headroom rather than consuming it.
+     */
+    private static List<ContextItem> withCallers(List<ContextItem> definitions, List<ContextItem> callers) {
+        if (callers.isEmpty()) {
+            return definitions;
+        }
+        int room = Math.max(0, MAX_SNIPPETS - callers.size());
+        List<ContextItem> combined = new ArrayList<>(
+                definitions.subList(0, Math.min(room, definitions.size())));
+        combined.addAll(callers);
+        return combined;
+    }
+
+    /**
+     * The index key, which must name the PLATFORM as well as the repository.
+     *
+     * <p>{@code workspace/slug} alone is shared: the same name routinely exists on two SCMs, and this
+     * project has already been bitten by that collision twice. Without the platform, one org's rows
+     * would name candidate paths that another org's review then fetches from ITS repository with ITS
+     * credential — confirmation stops forged content being quoted, but not an outsider choosing which
+     * of your files get read. The sibling issue providers gate on {@code scmType} for the same reason.
+     */
+    private static String indexKey(ContextRequest request) {
+        String scm = request.scmType() == null ? "" : request.scmType().name();
+        return scm + ":" + request.repo().full();
+    }
+
+    /**
      * Ranks by the number of distinct changed files whose imports brought the definition file in
      * (descending), then by first appearance ({@code List.sort} is stable, so ties keep the discovery
      * order {@link #extractCandidates} produced them in), and caps at {@link #MAX_SNIPPETS}.
@@ -480,153 +518,6 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * ({@code ContextResolutionCounts.contributed}) reporting the pre-collapse count as if nothing
      * were wrong. The uri is also the UI's link target, and {@code path#symbol} still names it.
      */
-    /**
-     * Records what every file this review READ was observed to declare and mention (ADR-026 §7.4).
-     *
-     * <p>The index therefore grows toward the part of the repository that is actively changing,
-     * which is the set this feature needs — it never crawls, so a ten-thousand-file monorepo never
-     * holds most of itself, and that is correct rather than a limitation.
-     *
-     * <p>Structure only: names and paths, never a line of source.
-     */
-    private void recordObservedSymbols(ContextRequest request, Fetcher fetcher) {
-        if (symbolIndex == null) {
-            return;
-        }
-        String repo = request.repo().full();
-        for (Map.Entry<String, String> file : fetcher.fetched().entrySet()) {
-            LanguageSupport support = languageFor(file.getKey());
-            if (support == null) {
-                continue;
-            }
-            LanguageSupport.Symbols symbols = support.symbolsIn(file.getValue());
-            if (symbols.defines().isEmpty() && symbols.references().isEmpty()) {
-                continue;
-            }
-            symbolIndex.record(repo, file.getKey(), request.commit(),
-                    List.copyOf(symbols.defines()), List.copyOf(symbols.references()));
-        }
-    }
-
-    /**
-     * Files known to call something this diff declares — rung 2's question, which rung 1
-     * structurally cannot answer because imports point only one way.
-     *
-     * <p><b>Every candidate is re-fetched at the review commit and confirmed before it is cited</b>
-     * (ADR-026 §7.1). That is what removes staleness as a category: there is no invalidation pass and
-     * no stored row speaks for current code, because the file was read moments before it was quoted.
-     * A candidate whose reference has since been deleted simply drops out here.
-     */
-    private List<ContextItem> callerItems(ContextRequest request, CodeReferences refs, Fetcher fetcher,
-                                          List<ContextItem> alreadyCited) {
-        if (symbolIndex == null) {
-            return List.of();
-        }
-        String repo = request.repo().full();
-        Set<String> changed = new LinkedHashSet<>(refs.changedPaths());
-        Set<String> seen = new LinkedHashSet<>();
-        List<ContextItem> items = new ArrayList<>();
-        int lookups = 0;
-
-        List<String> changedPaths = new ArrayList<>(refs.changedPaths());
-        Collections.sort(changedPaths);
-        for (String changedPath : changedPaths) {
-            LanguageSupport support = languageFor(changedPath);
-            String content = support == null ? null : fetcher.content(changedPath);
-            if (content == null) {
-                continue;
-            }
-            for (String symbol : support.symbolsIn(content).defines()) {
-                if (items.size() >= MAX_CALLER_SNIPPETS || lookups >= MAX_CALLER_LOOKUPS) {
-                    return items;
-                }
-                lookups++;
-                for (String candidatePath : symbolIndex.callersOf(repo, symbol)) {
-                    if (items.size() >= MAX_CALLER_SNIPPETS) {
-                        return items;
-                    }
-                    // A file under review is not news, and a path already cited as a definition would
-                    // appear twice in the same prompt.
-                    if (changed.contains(candidatePath) || !seen.add(candidatePath)) {
-                        continue;
-                    }
-                    String callerBody = confirmedCaller(fetcher, candidatePath, symbol);
-                    if (callerBody != null) {
-                        items.add(new ContextItem(KIND, callerTitle(symbol, candidatePath), callerBody,
-                                candidatePath + "#" + symbol));
-                    }
-                }
-            }
-        }
-        return items;
-    }
-
-    /**
-     * Re-reads a candidate at the review commit and returns its snippet only if the reference is
-     * still there. Null means the index was out of date and this candidate is silently dropped — the
-     * whole reason a stale row is harmless.
-     */
-    private String confirmedCaller(Fetcher fetcher, String candidatePath, String symbol) {
-        String content = fetcher.readCandidate(candidatePath);
-        if (content == null) {
-            return null;
-        }
-        LanguageSupport support = languageFor(candidatePath);
-        if (support == null || !support.symbolsIn(content).references().contains(symbol)) {
-            return null;
-        }
-        return callSiteSnippet(content, symbol);
-    }
-
-    /**
-     * The lines around where a caller actually uses the symbol.
-     *
-     * <p>Deliberately not {@link SnippetExtractor}, which finds a DECLARATION — the right thing for
-     * rung 1, where the fetched file is the one that defines the symbol, and the wrong thing here,
-     * where the whole point is that this file only uses it. Asking the declaration extractor for a
-     * call site returns nothing, so every caller would be silently dropped as unconfirmed.
-     */
-    static String callSiteSnippet(String content, String symbol) {
-        String[] lines = content.split("\\R");
-        for (int i = 0; i < lines.length; i++) {
-            if (!mentions(lines[i], symbol)) {
-                continue;
-            }
-            int from = Math.max(0, i - CALL_SITE_CONTEXT_LINES);
-            int to = Math.min(lines.length, i + CALL_SITE_CONTEXT_LINES + 1);
-            return String.join("\n", java.util.Arrays.copyOfRange(lines, from, to));
-        }
-        return null;
-    }
-
-    /** Whole-word match, so {@code Pricer} is not found inside {@code PricerFactory}. */
-    private static boolean mentions(String line, String symbol) {
-        int at = line.indexOf(symbol);
-        while (at >= 0) {
-            boolean leftClear = at == 0 || !Character.isJavaIdentifierPart(line.charAt(at - 1));
-            int after = at + symbol.length();
-            boolean rightClear = after >= line.length() || !Character.isJavaIdentifierPart(line.charAt(after));
-            if (leftClear && rightClear) {
-                return true;
-            }
-            at = line.indexOf(symbol, at + 1);
-        }
-        return false;
-    }
-
-    /**
-     * States partial recall in the item itself (ADR-026 §7.5).
-     *
-     * <p>The index is deliberately incomplete — it only holds what reviews have already read — so a
-     * finding claiming "this breaks all three callers" when twelve exist would be a fabrication: the
-     * no-synthetic-data rule applied to completeness. "A known caller" is a claim the handed set can
-     * actually support; "the callers" is not.
-     */
-    private static String callerTitle(String symbol, String path) {
-        return "A known caller of " + symbol + " — " + path
-                + " (known callers only; others may exist that were not retrieved)";
-    }
-
     private List<ContextItem> rankAndCap(List<DefinitionCandidate> candidates) {
         List<DefinitionCandidate> ranked = new ArrayList<>(candidates);
         ranked.sort(Comparator.comparingInt((DefinitionCandidate c) -> c.changedFiles.size()).reversed());
@@ -664,7 +555,12 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
      * Per-request fetch cache, allow-list gate, and error tracking — one instance per {@link #fetch}
      * call, never held as provider state, so one provider instance safely serves concurrent requests.
      */
-    private static final class Fetcher {
+    /**
+     * Package-private rather than private: {@link CallerLookup} confirms every index candidate
+     * through this same fetcher, so the caller path inherits its cache, its deadline, its allow-list
+     * and its traversal guards instead of growing a second, unguarded read path.
+     */
+    static final class Fetcher {
         private final SourceFileReader reader;
         private final String repo;
         private final String commit;
@@ -719,7 +615,7 @@ public class CodeContextProvider implements ContextProvider, ContextResolutionSo
          * non-empty allow-list does not match — the enforcement point requirement 1 (see the
          * constructor javadoc) exists for.
          */
-        private String readCandidate(String path) {
+        String readCandidate(String path) {
             return isAllowed(path) ? read(path) : null;
         }
 
