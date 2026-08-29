@@ -1,5 +1,5 @@
 {
-  "priority": 5,
+  "priority": 6,
   "request": {
     "method": "POST",
     "urlPath": "/v1/chat/completions",
@@ -9,7 +9,7 @@
     "status": 200,
     "headers": { "Content-Type": "application/json" },
     "jsonBody": {
-      "id": "chatcmpl-e2e-reconcile-resolved",
+      "id": "chatcmpl-e2e-reconcile-unchanged",
       "object": "chat.completion",
       "model": "e2e-mock-model",
       "choices": [
@@ -18,7 +18,7 @@
           "finish_reason": "stop",
           "message": {
             "role": "assistant",
-            "content": "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"E2E: addressed by this round.\"},{\"id\":2,\"status\":\"resolved\",\"note\":\"E2E: addressed by this round.\"},{\"id\":3,\"status\":\"resolved\",\"note\":\"E2E: addressed by this round.\"}]}"
+            "content": "{\"verdicts\":[{\"id\":1,\"status\":\"unchanged\",\"note\":\"E2E: untouched by this round.\"},{\"id\":2,\"status\":\"unchanged\",\"note\":\"E2E: untouched by this round.\"},{\"id\":3,\"status\":\"unchanged\",\"note\":\"E2E: untouched by this round.\"}]}"
           }
         }
       ],

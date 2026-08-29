@@ -108,11 +108,30 @@ class LlmMockContractTest {
                         + "fail if the incremental diff parses to zero files: " + content);
     }
 
+    /**
+     * The fallback says UNCHANGED, not RESOLVED, and that distinction is load-bearing.
+     *
+     * <p>A {@code /review} re-run happens on the SAME commit, so nothing was fixed — but it still
+     * takes the reconcile path. While the fallback said "resolved", that re-run closed every finding
+     * and posted "Fixed in &lt;sha&gt;" against code nobody had touched, which then left the later
+     * partial-fix scenario with nothing open to reconcile.
+     */
     @Test
-    void aLaterReconcileResolvesEverything() {
+    void aReconcileWithNothingRemovedSaysUnchanged() {
         String content = completion(RECONCILE + "\nnothing removed here");
 
         assertTrue(content.contains("\"verdicts\""), content);
+        assertTrue(content.contains("unchanged"), content);
+        assertFalse(content.contains("resolved"),
+                "nothing was removed, so nothing was fixed: " + content);
+        assertFalse(content.contains("still-open"), content);
+    }
+
+    @Test
+    void aReconcileSeeingTheSecondMarkerRemovedResolvesEverything() {
+        String content = completion(RECONCILE + "\n11 -        return values[index];  // E2E-DEFECT-B");
+
+        assertTrue(content.contains("resolved"), content);
         assertFalse(content.contains("still-open"), content);
     }
 
