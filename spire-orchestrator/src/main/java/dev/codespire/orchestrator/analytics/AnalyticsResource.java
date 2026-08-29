@@ -86,14 +86,11 @@ public class AnalyticsResource {
     @GET
     @Path("/me")
     public MyActivity myActivity() {
-        Optional<OperatorIdentities.Link> link = identities.firstFor(callerSubject());
-        if (link.isEmpty()) {
-            return MyActivity.unlinked();
-        }
-        OperatorIdentities.Link owned = link.get();
-        return new MyActivity(true, owned.providerType(), owned.authorId(),
-                queries.totalsForAuthor(owned.providerType(), owned.authorId()),
-                queries.breakdownForAuthor(owned.providerType(), owned.authorId()));
+        return identities.firstFor(callerSubject())
+                .map(owned -> new MyActivity(true, owned.providerType(), owned.authorId(),
+                        queries.totalsForAuthor(owned.providerType(), owned.authorId()),
+                        queries.breakdownForAuthor(owned.providerType(), owned.authorId())))
+                .orElseGet(MyActivity::unlinked);
     }
 
     /**
@@ -116,21 +113,13 @@ public class AnalyticsResource {
     }
 
     /**
-     * The caller's OIDC subject, matching what {@code /api/me} reports.
+     * The caller's OIDC subject — the same resolution {@code /api/me} reports.
      *
-     * <p>Falls back to the principal name for the same reason that endpoint does — the {@code %dev}
-     * profile runs unauthenticated and carries no JWT — so the two never disagree about who the
-     * caller is, which would make a mapping created from one unusable by the other.
+     * <p>Shared rather than copied, because the two must agree: a mapping created from one
+     * spelling of "who is this" and authorized against another leaves every operator unlinked, and
+     * nothing on screen would explain why.
      */
     private String callerSubject() {
-        if (identity.isAnonymous()) {
-            return "";
-        }
-        Object principal = identity.getPrincipal();
-        if (principal instanceof io.quarkus.oidc.runtime.OidcJwtCallerPrincipal jwt
-                && jwt.getSubject() != null && !jwt.getSubject().isBlank()) {
-            return jwt.getSubject();
-        }
-        return identity.getPrincipal().getName();
+        return dev.codespire.orchestrator.security.OidcSubjects.of(identity);
     }
 }

@@ -298,6 +298,10 @@ class ReviewWorkerTest {
 
         assertTrue(sink.summaryBody.contains("3 findings were hidden by a learned preference"),
                 "the count must reach the pull request: " + sink.summaryBody);
+        // And it must say WHERE to act. An earlier wording sent the reader to a per-review list of
+        // hidden findings that does not exist — suppressed_by is read only by an aggregate count,
+        // so the comment promised a page nobody could open.
+        assertTrue(sink.summaryBody.contains("Settings -> Memory"), sink.summaryBody);
     }
 
     /** Singular reads as a sentence rather than as a template someone forgot to finish. */

@@ -170,7 +170,7 @@ class LearnedMemoryTest {
 
         preferences.propose(new LearnedPreferences.Preference(0, LearnedPreferences.SCOPE_REPO,
                 REPO.workspace() + "/" + REPO.slug(), FindingCategory.NAMING.name(), "**/test/**",
-                Severity.NIT.name(), LearnedPreferences.PROPOSED, 999, 998));
+                Severity.NIT.name(), LearnedPreferences.PROPOSED, 999, 998, 9));
 
         LearnedPreferences.Preference stored = preferences.all().stream()
                 .filter(p -> p.id() == id).findFirst().orElseThrow();
@@ -206,7 +206,7 @@ class LearnedMemoryTest {
     private long propose(FindingCategory category, String glob, Severity severity) {
         preferences.propose(new LearnedPreferences.Preference(0, LearnedPreferences.SCOPE_REPO,
                 REPO.workspace() + "/" + REPO.slug(), category.name(), glob, severity.name(),
-                LearnedPreferences.PROPOSED, 16, 14));
+                LearnedPreferences.PROPOSED, 16, 14, 3));
         return preferences.all().stream()
                 .filter(p -> p.category().equals(category.name()) && p.pathGlob().equals(glob))
                 .findFirst().orElseThrow().id();

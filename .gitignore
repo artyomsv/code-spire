@@ -29,3 +29,6 @@ Thumbs.db
 # Private cross-PC handoff bundle — DB dump + notes with keyset-decryptable
 # ciphertext and plaintext infra metadata. NEVER commit; move via a secure channel.
 .handoff/
+
+# Local debugging scratch, repeatedly swept in by `git add -A`.
+oidcutils.txt

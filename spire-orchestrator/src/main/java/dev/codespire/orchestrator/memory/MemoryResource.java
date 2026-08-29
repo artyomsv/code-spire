@@ -43,7 +43,7 @@ public class MemoryResource {
     @GET
     public MemoryView list() {
         return new MemoryView(preferences.all(),
-                new Thresholds(proposals.minEvidence, proposals.minDismissedPercent));
+                new Thresholds(proposals.minEvidence(), proposals.minDismissedPercent()));
     }
 
     @POST

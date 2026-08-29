@@ -584,6 +584,21 @@ class ConversationFindingSagaTest {
     /** Real aggregate, read model and thread view; faked edges, so nothing is posted anywhere. */
     private IntegrationSaga sagaFor(Optional<ScmProvider> provider) {
         IntegrationSaga saga = new IntegrationSaga();
+        // Both overridden on purpose. The real ones open a connection, so an un-overridden method
+        // here turns this unit test into a live database call -- the trap already recorded for
+        // setNote and recordCharges, and hit four times in this milestone alone.
+        saga.findings = new dev.codespire.orchestrator.readmodel.FindingProjection() {
+            @Override
+            public void recordConversationFinding(String reviewId, int round, String commit,
+                    String path, int line, String severity, String threadRef) {
+            }
+        };
+        saga.runs = new dev.codespire.orchestrator.llm.ReviewRuns() {
+            @Override
+            public int roundOrUnknown(String reviewId) {
+                return FIRST_RUN;
+            }
+        };
         saga.projection = projection;
         saga.threads = threads;
         saga.lifecycle = lifecycle;

@@ -41,18 +41,32 @@ public class LearnedPreferences {
      */
     public record Preference(long id, String scopeType, String scopeValue, String category,
                              String pathGlob, String severity, String state,
-                             int evidenceTotal, int evidenceDismissed) {
+                             int evidenceTotal, int evidenceDismissed, int evidenceReviews) {
 
         /** Whether this preference speaks for the repository under review. */
         public boolean appliesTo(String workspace, String slug) {
             return SCOPE_GLOBAL.equals(scopeType) || scopeValue.equals(workspace + "/" + slug);
         }
 
-        /** Whether it covers this finding. A finding with no category can never match. */
+        /**
+         * Whether it covers this finding. A finding with no category can never match.
+         *
+         * <p>The never-suppressed floor is re-checked HERE as well as in the proposal engine, and
+         * the duplication is deliberate. The engine stops such a group being proposed; this stops
+         * an already-{@code APPROVED} row from acting — which is what a row created before the
+         * floor existed, or written directly in SQL, would otherwise do. A control that exists only
+         * at the point of creation protects nothing that predates it.
+         */
         public boolean covers(Finding finding) {
-            return finding.category() != null
-                    && finding.category().name().equals(category)
-                    && finding.severity() != null
+            if (finding.category() == null || finding.severity() == null) {
+                return false;
+            }
+            if (PreferenceProposals.NEVER_SUPPRESSED_CATEGORIES.contains(finding.category().name())
+                    || PreferenceProposals.NEVER_SUPPRESSED_SEVERITIES.contains(
+                            finding.severity().name())) {
+                return false;
+            }
+            return finding.category().name().equals(category)
                     && finding.severity().name().equals(severity)
                     && PathGlobs.matches(pathGlob, finding.path());
         }
@@ -94,11 +108,13 @@ public class LearnedPreferences {
     public void propose(Preference proposal) {
         String sql = """
                 INSERT INTO learned_preference (scope_type, scope_value, category, path_glob, severity,
-                                                state, evidence_total, evidence_dismissed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                                state, evidence_total, evidence_dismissed,
+                                                evidence_reviews)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (scope_type, scope_value, category, path_glob, severity)
                 DO UPDATE SET evidence_total = EXCLUDED.evidence_total,
                               evidence_dismissed = EXCLUDED.evidence_dismissed,
+                              evidence_reviews = EXCLUDED.evidence_reviews,
                               proposed_at = now()
                  WHERE learned_preference.state = ?
                 """;
@@ -111,7 +127,8 @@ public class LearnedPreferences {
             ps.setString(6, PROPOSED);
             ps.setInt(7, proposal.evidenceTotal());
             ps.setInt(8, proposal.evidenceDismissed());
-            ps.setString(9, PROPOSED);
+            ps.setInt(9, proposal.evidenceReviews());
+            ps.setString(10, PROPOSED);
             ps.executeUpdate();
         } catch (SQLException e) {
             LOG.warnf(e, "Could not record a learned-preference proposal");
@@ -166,7 +183,8 @@ public class LearnedPreferences {
                     rows.add(new Preference(rs.getLong("id"), rs.getString("scope_type"),
                             rs.getString("scope_value"), rs.getString("category"),
                             rs.getString("path_glob"), rs.getString("severity"), rs.getString("state"),
-                            rs.getInt("evidence_total"), rs.getInt("evidence_dismissed")));
+                            rs.getInt("evidence_total"), rs.getInt("evidence_dismissed"),
+                            rs.getInt("evidence_reviews")));
                 }
             }
         } catch (SQLException e) {

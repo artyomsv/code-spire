@@ -222,7 +222,7 @@ class ResultSagaRetryTest {
                 }
 
                 @Override
-                public void recordVerdicts(String reviewId,
+                public void recordVerdicts(String reviewId, int round,
                         java.util.List<dev.codespire.contract.review.FindingVerdict> verdicts) {
                 }
 

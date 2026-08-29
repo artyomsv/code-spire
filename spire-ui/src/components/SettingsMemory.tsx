@@ -41,8 +41,9 @@ function Card({
         {preference.scopeType === 'repo' && <> in {preference.scopeValue}</>} were dismissed.
       </p>
       <p className="muted">
-        {share}% dismissed · threshold: {thresholds.minEvidence} findings,{' '}
-        {thresholds.minDismissedPercent}% dismissed
+        {share}% dismissed across {preference.evidenceReviews}
+        {preference.evidenceReviews === 1 ? ' pull request' : ' pull requests'} · threshold:{' '}
+        {thresholds.minEvidence} findings, {thresholds.minDismissedPercent}% dismissed
       </p>
       {preference.state === 'PROPOSED' && (
         <div className="row-actions">

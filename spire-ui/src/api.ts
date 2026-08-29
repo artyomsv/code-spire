@@ -1226,6 +1226,13 @@ export interface LearnedPreference {
   state: 'PROPOSED' | 'APPROVED' | 'REJECTED';
   evidenceTotal: number;
   evidenceDismissed: number;
+  /**
+   * How many distinct reviews the evidence spans. Ten dismissals by one author on one
+   * pull request look identical to ten across ten teams without it -- and an ACKNOWLEDGED
+   * verdict comes from the model reading that author's own reply, so the evidence is
+   * manufacturable by the person it would benefit.
+   */
+  evidenceReviews: number;
 }
 
 /**

@@ -35,6 +35,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FindingProjectionTest {
 
     private static final String REVIEW = "review::TEST-WS/TEST-REPO#4001";
+    /** The round a verdict is recorded as landing in -- later than every round these tests raise. */
+    private static final int VERDICT_ROUND = 9;
+
     private static final String COMMIT = "TESTSHA000000000000000000000000000000001";
 
     @Inject
@@ -120,7 +123,7 @@ class FindingProjectionTest {
         findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/New.java", 7, Severity.NIT, null)));
         findings.recordGenerated(REVIEW, 3, COMMIT, List.of(finding("src/Other.java", 9, Severity.NIT, null)));
 
-        findings.recordVerdicts(REVIEW, List.of(
+        findings.recordVerdicts(REVIEW, VERDICT_ROUND, List.of(
                 new FindingVerdict(null, "src/Old.java", 42, FindingVerdict.Status.RESOLVED, null)));
 
         assertEquals("RESOLVED", column("src/Old.java", "verdict"),
@@ -136,7 +139,7 @@ class FindingProjectionTest {
                 List.of(finding("src/Renamed.java", 5, Severity.MAJOR, null)));
         findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-x", "src/Renamed.java", 5)));
 
-        findings.recordVerdicts(REVIEW, List.of(new FindingVerdict(
+        findings.recordVerdicts(REVIEW, VERDICT_ROUND, List.of(new FindingVerdict(
                 "thread-x", "src/MovedElsewhere.java", 999, FindingVerdict.Status.ACKNOWLEDGED, null)));
 
         assertEquals("ACKNOWLEDGED", column("src/Renamed.java", "verdict"));
@@ -154,14 +157,14 @@ class FindingProjectionTest {
     @Test
     void aRedeliveredVerdictBatchDoesNotRewriteAJudgmentAlreadyMade() {
         findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 3, Severity.MINOR, null)));
-        findings.recordVerdicts(REVIEW,
+        findings.recordVerdicts(REVIEW, VERDICT_ROUND,
                 List.of(new FindingVerdict(null, "src/A.java", 3, FindingVerdict.Status.STILL_OPEN, null)));
         findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/A.java", 3, Severity.MINOR, null)));
-        findings.recordVerdicts(REVIEW,
+        findings.recordVerdicts(REVIEW, VERDICT_ROUND,
                 List.of(new FindingVerdict(null, "src/A.java", 3, FindingVerdict.Status.RESOLVED, null)));
 
         // The same batch arrives again -- Kafka is at-least-once and ReviewGenerated carries verdicts.
-        findings.recordVerdicts(REVIEW,
+        findings.recordVerdicts(REVIEW, VERDICT_ROUND,
                 List.of(new FindingVerdict(null, "src/A.java", 3, FindingVerdict.Status.STILL_OPEN, null)));
 
         assertEquals("STILL_OPEN", verdictForRound(1), "round 1's judgment is history and must not move");

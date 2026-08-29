@@ -151,18 +151,20 @@ public class FindingProjection {
      * verdicts carry the first run's remapped paths, and a verdict for a finding that was never
      * posted has no thread ref at all.
      */
-    public void recordVerdicts(String reviewId, List<FindingVerdict> verdicts) {
+    public void recordVerdicts(String reviewId, int round, List<FindingVerdict> verdicts) {
         if (verdicts == null || verdicts.isEmpty()) {
             return;
         }
+        // verdict_round is written alongside the verdict because the duration is not derivable
+        // afterwards: verdict_at is a timestamp and rounds are not evenly spaced in time.
         String byThread = """
-                UPDATE review_finding SET verdict = ?, verdict_at = now()
+                UPDATE review_finding SET verdict = ?, verdict_at = now(), verdict_round = ?
                  WHERE id = (SELECT id FROM review_finding
                               WHERE review_id = ? AND thread_ref = ? AND verdict IS NULL
                               ORDER BY id DESC LIMIT 1)
                 """;
         String byLocation = """
-                UPDATE review_finding SET verdict = ?, verdict_at = now()
+                UPDATE review_finding SET verdict = ?, verdict_at = now(), verdict_round = ?
                  WHERE id = (SELECT id FROM review_finding
                               WHERE review_id = ? AND path = ? AND start_line = ? AND verdict IS NULL
                               ORDER BY id DESC LIMIT 1)
@@ -174,10 +176,10 @@ public class FindingProjection {
                 if (verdict == null || verdict.status() == null) {
                     continue;
                 }
-                if (applyByThread(thread, reviewId, verdict)) {
+                if (applyByThread(thread, reviewId, round, verdict)) {
                     continue;
                 }
-                applyByLocation(location, reviewId, verdict);
+                applyByLocation(location, reviewId, round, verdict);
             }
         } catch (SQLException e) {
             LOG.warnf(e, "Could not record verdicts for %s — dismissal rates will under-count", reviewId);
@@ -211,27 +213,44 @@ public class FindingProjection {
         }
     }
 
-    private boolean applyByThread(PreparedStatement ps, String reviewId, FindingVerdict verdict)
-            throws SQLException {
+    private boolean applyByThread(PreparedStatement ps, String reviewId, int round,
+                                  FindingVerdict verdict) throws SQLException {
         if (verdict.threadRef() == null || verdict.threadRef().isBlank()) {
             return false;
         }
         ps.setString(1, verdict.status().name());
-        ps.setString(2, reviewId);
-        ps.setString(3, verdict.threadRef());
+        setRound(ps, 2, round);
+        ps.setString(3, reviewId);
+        ps.setString(4, verdict.threadRef());
         return ps.executeUpdate() > 0;
     }
 
-    private void applyByLocation(PreparedStatement ps, String reviewId, FindingVerdict verdict)
-            throws SQLException {
+    private void applyByLocation(PreparedStatement ps, String reviewId, int round,
+                                 FindingVerdict verdict) throws SQLException {
         if (verdict.path() == null) {
             return;
         }
         ps.setString(1, verdict.status().name());
-        ps.setString(2, reviewId);
-        ps.setString(3, verdict.path());
-        ps.setInt(4, verdict.line());
+        setRound(ps, 2, round);
+        ps.setString(3, reviewId);
+        ps.setString(4, verdict.path());
+        ps.setInt(5, verdict.line());
         ps.executeUpdate();
+    }
+
+    /**
+     * The round a verdict landed in, or NULL when it could not be read.
+     *
+     * <p>NULL rather than a guess, and the analytics read excludes those rows rather than treating
+     * them as zero: an unknown duration averaged in as "fixed in the round it was raised" would bias
+     * the number toward exactly the wrong answer the old query already gave.
+     */
+    private static void setRound(PreparedStatement ps, int index, int round) throws SQLException {
+        if (round <= 0) {
+            ps.setNull(index, Types.INTEGER);
+        } else {
+            ps.setInt(index, round);
+        }
     }
 
     private static void deleteRound(Connection c, String reviewId, int round) throws SQLException {
@@ -301,9 +320,16 @@ public class FindingProjection {
         if (round <= 0 || paths.isEmpty() || paths.size() != lines.size()) {
             return;
         }
+        // One row per suppressed finding, matching the shape the two sibling writes use. A bare
+        // WHERE on the location stamps EVERY row there -- and two findings on one line is ordinary
+        // model output, so the visible one would be recorded as hidden, counted in the suppression
+        // total, and dropped from the corpus the proposal engine reads.
         String sql = """
                 UPDATE review_finding SET suppressed_by = ?
-                 WHERE review_id = ? AND round = ? AND path = ? AND start_line = ?
+                 WHERE id = (SELECT id FROM review_finding
+                              WHERE review_id = ? AND round = ? AND path = ? AND start_line = ?
+                                AND suppressed_by IS NULL
+                              ORDER BY id DESC LIMIT 1)
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             for (int i = 0; i < paths.size(); i++) {

@@ -921,8 +921,9 @@ public class ReviewWorker {
             // the only way anyone finds out is by noticing the count and going to look.
             sb.append("\n_").append(suppressedCount)
                     .append(suppressedCount == 1 ? " finding was" : " findings were")
-                    .append(" hidden by a learned preference an operator approved. ")
-                    .append("They are listed on this review in the dashboard._\n");
+                    .append(" hidden by a learned preference an operator approved ")
+                    .append("(Settings -> Memory). Switching that preference off brings them ")
+                    .append("back on the next review._\n");
         }
         sb.append("\nRun `/finding` in any inline thread to file what you discussed there as a tracked finding.\n");
         return sb.toString();

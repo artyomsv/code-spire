@@ -26,6 +26,7 @@ function preference(overrides: Partial<api.LearnedPreference> = {}): api.Learned
     state: 'PROPOSED',
     evidenceTotal: 16,
     evidenceDismissed: 14,
+    evidenceReviews: 5,
     ...overrides,
   };
 }
@@ -45,7 +46,7 @@ describe('SettingsMemory', () => {
 
     await waitFor(() => expect(screen.getByText('14 of 16')).toBeTruthy());
     // 88% observed against a 75% bar — both numbers, or the operator is judging blind.
-    expect(screen.getByText(/88% dismissed/)).toBeTruthy();
+    expect(screen.getByText(/88% dismissed across 5 pull requests/)).toBeTruthy();
     expect(screen.getByText(/threshold: 10 findings, 75% dismissed/)).toBeTruthy();
   });
 

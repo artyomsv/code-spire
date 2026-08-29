@@ -112,8 +112,15 @@ public class AnalyticsQueries {
                        count(*) FILTER (WHERE f.verdict = 'RESOLVED')                  AS resolved,
                        count(DISTINCT f.review_id)                                     AS reviews,
                        count(*) FILTER (WHERE f.suppressed_by IS NOT NULL)             AS suppressed,
+                       -- Rounds TAKEN, not the round raised. ORDER BY f.round answered the median
+                       -- round a resolved finding was RAISED in, so a finding raised in round 1 and
+                       -- fixed in round 4 contributed 1 and the tile read 1.0 forever -- confidently,
+                       -- on any healthy repository. Rows judged before verdict_round existed are
+                       -- excluded rather than counted as zero.
                        percentile_cont(0.5) WITHIN GROUP (
-                           ORDER BY f.round) FILTER (WHERE f.verdict = 'RESOLVED')     AS median_round
+                           ORDER BY (f.verdict_round - f.round + 1))
+                           FILTER (WHERE f.verdict = 'RESOLVED'
+                                     AND f.verdict_round IS NOT NULL)                   AS median_round
                   FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
                  WHERE s.archived_at IS NULL %s
                 """.formatted(DISMISSED, filter);

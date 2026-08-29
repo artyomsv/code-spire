@@ -382,7 +382,7 @@ public class ResultSaga {
         findings.recordGenerated(e.reviewId(), round, e.commit(), e.result().findings());
         // Verdicts ride this same event (empty on a first review), and they judge findings from
         // ANY earlier round -- priorRun is the carried-forward open set, not the previous round.
-        findings.recordVerdicts(e.reviewId(), e.verdicts());
+        findings.recordVerdicts(e.reviewId(), round, e.verdicts());
 
         // Learned memory hides what an operator approved hiding -- AFTER the model has reviewed,
         // never by steering the prompt.
