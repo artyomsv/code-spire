@@ -1,0 +1,28 @@
+{
+  "priority": 3,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [{ "contains": "Respond with ONLY the reply to post in the thread" }]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-followup",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "E2E fixture reply. The shape under discussion is:\n\n```java\nint safe = denominator == 0 ? 0 : numerator / denominator;\n```\n\nThat is the whole answer for this thread."
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 700, "completion_tokens": 60, "total_tokens": 760 }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "priority": 6,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [{ "contains": "one-paragraph overall assessment" }]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-review-clean",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"summary\":\"E2E fixture review: nothing to report.\",\"findings\":[]}"
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940 }
+    }
+  }
+}

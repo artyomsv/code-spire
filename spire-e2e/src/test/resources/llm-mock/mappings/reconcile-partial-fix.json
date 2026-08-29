@@ -1,0 +1,31 @@
+{
+  "priority": 3,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [
+      { "contains": "Respond ONLY with JSON:" },
+      { "matches": "(?s).*\\d+ -[^\"\\\\]*E2E-DEFECT-A.*" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-reconcile-partial",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"E2E: the division is now guarded.\"},{\"id\":2,\"status\":\"still-open\",\"note\":\"E2E: an upper bound was added, but a negative index is still unhandled.\"},{\"id\":3,\"status\":\"unchanged\",\"note\":\"E2E: untouched by this round.\"}]}"
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 800, "completion_tokens": 90, "total_tokens": 890 }
+    }
+  }
+}

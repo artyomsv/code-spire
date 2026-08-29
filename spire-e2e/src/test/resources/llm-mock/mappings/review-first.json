@@ -1,0 +1,31 @@
+{
+  "priority": 4,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [
+      { "contains": "one-paragraph overall assessment" },
+      { "matches": "(?s).*\\d+ \\+[^\"\\\\]*E2E-DEFECT-A.*" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-review-first",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"summary\":\"E2E fixture review.\",\"findings\":[{\"path\":\"src/main/java/e2e/Defects.java\",\"line\":7,\"endLine\":7,\"severity\":\"BLOCKER\",\"message\":\"E2E-FINDING-A division by zero when the denominator is zero.\",\"suggestion\":null},{\"path\":\"src/main/java/e2e/Defects.java\",\"line\":11,\"endLine\":11,\"severity\":\"MAJOR\",\"message\":\"E2E-FINDING-B unchecked index into the array.\",\"suggestion\":null},{\"path\":\"src/ui/defects.ts\",\"line\":6,\"endLine\":6,\"severity\":\"MINOR\",\"message\":\"E2E-FINDING-C unused binding.\",\"suggestion\":null}]}"
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 1200, "completion_tokens": 180, "total_tokens": 1380 }
+    }
+  }
+}

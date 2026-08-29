@@ -1,0 +1,31 @@
+{
+  "priority": 3,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [
+      { "contains": "one-paragraph overall assessment" },
+      { "contains": "E2E-FINDING-" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-review-rereview",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"summary\":\"E2E fixture re-review: nothing new beyond what is already reported.\",\"findings\":[]}"
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 1400, "completion_tokens": 40, "total_tokens": 1440 }
+    }
+  }
+}
