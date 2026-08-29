@@ -55,6 +55,20 @@ public final class JavaLanguageSupport implements LanguageSupport {
     private static final Pattern IMPORT_LINE =
             Pattern.compile("^\\s*import\\s+(static\\s+)?([\\w.]+)\\s*;");
 
+    /** A declared type: {@code class}/{@code interface}/{@code enum}/{@code record} plus its name. */
+    private static final Pattern TYPE_DECLARATION =
+            Pattern.compile("\\b(?:class|interface|enum|record)\\s+([A-Za-z_$][A-Za-z0-9_$]*)");
+
+    /** A declared method: an access modifier, a return type, then the name and an open paren. */
+    private static final Pattern MEMBER_DECLARATION = Pattern.compile(
+            "^\\s*(?:public|protected|private)\\s+[\\w<>,\\[\\]$.?\\s]*?"
+                    + "([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(");
+
+    /** Block and javadoc comments, across lines — DOTALL so a multi-line comment is one match. */
+    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
+
+    private static final Pattern PACKAGE_LINE = Pattern.compile("^\\s*package\\s+");
+
     private static final String JAVA_SOURCE_ROOT = "src/main/java/";
 
     @Override
@@ -89,6 +103,56 @@ public final class JavaLanguageSupport implements LanguageSupport {
             }
         }
         return identifiers;
+    }
+
+    /**
+     * A file's declared types and members, and the identifiers it merely mentions.
+     *
+     * <p>Regex rather than a parser, for the same reason the rest of this class is: the index only
+     * produces CANDIDATES, which the caller re-fetches and confirms before citing, so being
+     * occasionally wrong costs a wasted fetch rather than a wrong finding (ADR-026 §7.1). A parser
+     * would buy precision this design does not need and a dependency it does not want.
+     *
+     * <p>Imported names are excluded from {@code references} deliberately. They say what the file
+     * COULD use, not what it does, and rung 1 already follows imports in the other direction — an
+     * import-derived reference would make every importer look like a caller of everything its
+     * imports declare.
+     */
+    @Override
+    public Symbols symbolsIn(String fileContent) {
+        if (fileContent == null || fileContent.isBlank()) {
+            return Symbols.NONE;
+        }
+        Set<String> defines = new LinkedHashSet<>();
+        Set<String> references = new LinkedHashSet<>();
+        Set<String> imported = new LinkedHashSet<>();
+        for (ImportRef ref : importsIn(fileContent)) {
+            imported.addAll(ref.symbols());
+        }
+        String withoutBlockComments = BLOCK_COMMENT.matcher(fileContent).replaceAll(" ");
+        for (String rawLine : withoutBlockComments.split("\\R")) {
+            String line = stripCommentsAndStrings(rawLine);
+            Matcher type = TYPE_DECLARATION.matcher(line);
+            if (type.find()) {
+                defines.add(type.group(1));
+            }
+            Matcher member = MEMBER_DECLARATION.matcher(line);
+            if (member.find()) {
+                defines.add(member.group(1));
+            }
+            if (IMPORT_LINE.matcher(line).find() || PACKAGE_LINE.matcher(line).find()) {
+                continue;
+            }
+            Matcher identifier = IDENTIFIER.matcher(line);
+            while (identifier.find()) {
+                String candidate = identifier.group();
+                if (!KEYWORDS.contains(candidate) && !imported.contains(candidate)) {
+                    references.add(candidate);
+                }
+            }
+        }
+        references.removeAll(defines);
+        return new Symbols(defines, references);
     }
 
     private static String stripCommentsAndStrings(String content) {

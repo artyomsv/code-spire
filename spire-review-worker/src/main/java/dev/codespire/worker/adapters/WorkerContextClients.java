@@ -63,6 +63,14 @@ public class WorkerContextClients {
     @Inject
     WorkerCodeReferences codeReferences;
 
+    /**
+     * Rung 2 (ADR-026 §7). Injected here rather than constructed by the provider because the schema is
+     * worker-owned and ADR-021 forbids the Apache-2.0 provider module depending on this one — the same
+     * arrangement as {@code BlobStore}.
+     */
+    @Inject
+    PostgresSymbolIndex symbolIndex;
+
     public List<ContextProvider> forCommand(GatherContext command) {
         List<ContextProvider> providers = new java.util.ArrayList<>();
         for (ContextCredential cred : unpack(command)) {
@@ -74,7 +82,7 @@ public class WorkerContextClients {
                 case "gitlab-issues" ->
                         providers.add(new GitLabIssueContextProvider(gitLabIssueConfig(cred), mapper));
                 case "code" -> providers.add(new CodeContextProvider(readerFor(cred), codeReferences.all(),
-                        CodeContextConfig.parsePathAllowList(cred.projectKeys())));
+                        CodeContextConfig.parsePathAllowList(cred.projectKeys()), symbolIndex));
                 default -> throw new IllegalStateException("Unsupported context provider type: " + cred.type());
             }
         }

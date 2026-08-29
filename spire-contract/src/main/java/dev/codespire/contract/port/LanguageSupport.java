@@ -41,6 +41,37 @@ public interface LanguageSupport {
     List<String> candidatePaths(ImportRef ref, String importingPath);
 
     /**
+     * What a file's FULL TEXT declares and what it mentions — rung 2's index (ADR-026 §7).
+     *
+     * <p>Distinct from {@link #identifiersIn}, which reads a diff's changed lines to answer "what
+     * does this change touch". This reads a whole file to answer "what is in here", so the index can
+     * later be asked the reverse question — which files mention a symbol.
+     *
+     * <p>Defaulted to empty so a language that has not implemented it contributes nothing and its
+     * reviews proceed exactly as before, matching this interface's existing promise that adding a
+     * language is a new bean rather than a core edit.
+     */
+    default Symbols symbolsIn(String fileContent) {
+        return Symbols.NONE;
+    }
+
+    /**
+     * One file's structure. Names only — never source text, so nothing here can be persisted in
+     * violation of ADR-011.
+     *
+     * @param defines    identifiers this file declares (types, methods, exported members)
+     * @param references identifiers this file mentions but does not declare
+     */
+    record Symbols(Set<String> defines, Set<String> references) {
+
+        public static final Symbols NONE = new Symbols(Set.of(), Set.of());
+
+        public Symbols {
+            defines = defines == null ? Set.of() : Set.copyOf(defines);
+            references = references == null ? Set.of() : Set.copyOf(references);
+        }
+    }
+    /**
      * One import. {@code symbols} is what the statement brings into scope — the names that can be
      * intersected with {@link #identifiersIn}. {@code specifier} is the raw module reference.
      */

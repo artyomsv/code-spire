@@ -72,6 +72,23 @@ or consumes `PushReceived`.
    limitation into a false fact about the product. Reopening needs a majority-code corpus with
    cross-file dependencies, and the noise-floor run the criterion originally lacked.
 
+   **Reopened and built on operator judgement, 2026-08-29.** Rung 2 ships without the gate having
+   been cleared. That is a deliberate override, recorded here rather than left as a contradiction
+   between this ADR and the code: the gate is a discipline the operator adopted and may set aside,
+   and the reason given was that the feature can be verified on this repository afterwards.
+
+   That reasoning is sounder than the gate's own framing allowed for. Rung 1's value needed an
+   operator to judge whether findings improved — subjective, and swamped by model variance at the
+   corpus sizes available. Rung 2's core claim is not subjective: `callersOf` either returns
+   the files that reference a symbol in this repository or it does not, and confirmation-at-citation
+   either drops a stale candidate or it does not. Both are facts, checkable without an LLM. The
+   evidence bar for rung 2 is therefore a different instrument from the one rung 1 failed, and this
+   ADR should not be read as rung 2 having evaded a test it could have passed.
+
+   What remains genuinely unproven is the downstream claim — that a cited caller makes a review
+   better. That is the same question the corpus could not answer for rung 1, and building rung 2 does
+   not answer it either.
+
 **The index is a hint, never an answer — and that is what removes the staleness problem.** Nothing is
 cited from the table. Candidate paths are re-fetched at the review commit and the reference confirmed
 before it becomes a snippet. There is therefore no invalidation pass, no indexed-commit versus

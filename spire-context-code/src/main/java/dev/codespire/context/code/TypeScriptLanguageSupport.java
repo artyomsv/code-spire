@@ -64,6 +64,18 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
     // A statement's first line: "import" followed by at least one space, then more content — this
     // excludes both an unrelated identifier prefix ("importantValue") and "import.meta", neither of
     // which is an import statement.
+    /** Block and JSDoc comments, across lines — DOTALL so a multi-line comment is one match. */
+    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
+
+    /** A declared value or type: function, class, interface, type, enum, const/let/var. */
+    private static final Pattern DECLARATION = Pattern.compile(
+            "\\b(?:function|class|interface|type|enum|const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)");
+
+    /** A class or object method: a name immediately followed by an argument list and a brace. */
+    private static final Pattern METHOD_DECLARATION = Pattern.compile(
+            "^\\s*(?:public\\s+|private\\s+|protected\\s+|static\\s+|async\\s+)*"
+                    + "([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\([^)]*\\)\\s*[:{]");
+
     private static final Pattern IMPORT_START = Pattern.compile("^\\s*import\\s+\\S");
 
     // The statement is complete once a `from` clause closes its quote — the specifier itself never
@@ -111,6 +123,51 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
     private static String stripCommentsAndStrings(String content) {
         String withoutLiterals = QUOTED_LITERAL.matcher(content).replaceAll(" ");
         return LINE_COMMENT.matcher(withoutLiterals).replaceAll(" ");
+    }
+
+    /**
+     * A module's declarations and the identifiers it mentions — rung 2's index input (ADR-026 §7).
+     *
+     * <p>Mirrors {@code JavaLanguageSupport}: imported names are excluded from references, because
+     * an import says what the module COULD use and rung 1 already resolves imports in the other
+     * direction. Regex rather than a parser for the same reason as the rest of this class — the
+     * index yields candidates that are confirmed at citation, so imprecision costs a fetch.
+     */
+    @Override
+    public Symbols symbolsIn(String fileContent) {
+        if (fileContent == null || fileContent.isBlank()) {
+            return Symbols.NONE;
+        }
+        Set<String> defines = new LinkedHashSet<>();
+        Set<String> references = new LinkedHashSet<>();
+        Set<String> imported = new LinkedHashSet<>();
+        for (ImportRef ref : importsIn(fileContent)) {
+            imported.addAll(ref.symbols());
+        }
+        String withoutBlockComments = BLOCK_COMMENT.matcher(fileContent).replaceAll(" ");
+        for (String rawLine : withoutBlockComments.split("\\R")) {
+            String line = stripCommentsAndStrings(rawLine);
+            if (IMPORT_START.matcher(line).find()) {
+                continue;
+            }
+            Matcher declaration = DECLARATION.matcher(line);
+            if (declaration.find()) {
+                defines.add(declaration.group(1));
+            }
+            Matcher method = METHOD_DECLARATION.matcher(line);
+            if (method.find() && !KEYWORDS.contains(method.group(1))) {
+                defines.add(method.group(1));
+            }
+            Matcher identifier = IDENTIFIER.matcher(line);
+            while (identifier.find()) {
+                String candidate = identifier.group();
+                if (!KEYWORDS.contains(candidate) && !imported.contains(candidate)) {
+                    references.add(candidate);
+                }
+            }
+        }
+        references.removeAll(defines);
+        return new Symbols(defines, references);
     }
 
     @Override
