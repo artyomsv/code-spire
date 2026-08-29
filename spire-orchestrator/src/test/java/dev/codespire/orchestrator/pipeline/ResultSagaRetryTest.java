@@ -227,8 +227,8 @@ class ResultSagaRetryTest {
                 }
 
                 @Override
-                public void markSuppressed(String reviewId, int round, java.util.List<String> paths,
-                        java.util.List<Integer> lines, long preferenceId) {
+                public void markSuppressed(String reviewId, int round,
+                        dev.codespire.orchestrator.readmodel.SuppressionBatch batch) {
                 }
             };
 

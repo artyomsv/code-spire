@@ -79,12 +79,21 @@ public class OperatorIdentities {
                 }
             }
         } catch (SQLException e) {
-            // Read failure must not become "you may read anyone" — the caller treats an empty result
-            // as unlinked, which denies. Failing open here would be a privacy failure, not an outage.
-            LOG.warnf(e, "Could not resolve operator identities for a caller — treating as unlinked");
-            return List.of();
+            // Denies, and says so honestly. An empty list is the right AUTHORIZATION answer — failing
+            // open would be a privacy failure rather than an outage — but it is the wrong thing to
+            // REPORT, so this throws a marked exception the read path turns into an error state.
+            // The screen otherwise told an operator to ask an admin for a link they already have.
+            LOG.warnf(e, "Could not resolve operator identities for a caller");
+            throw new IdentityLookupFailed(e);
         }
         return links;
+    }
+
+    /** The lookup could not run. Distinct from "this operator has no mapping", which is a fact. */
+    public static final class IdentityLookupFailed extends RuntimeException {
+        IdentityLookupFailed(Throwable cause) {
+            super("could not resolve operator identities", cause);
+        }
     }
 
     /**
@@ -96,9 +105,16 @@ public class OperatorIdentities {
      * someone else's numbers.
      */
     public boolean owns(String oidcSubject, String providerType, String authorId) {
-        return forSubject(oidcSubject).stream()
-                .anyMatch(link -> link.providerType().equalsIgnoreCase(providerType)
-                        && link.authorId().equals(authorId));
+        try {
+            return forSubject(oidcSubject).stream()
+                    .anyMatch(link -> link.providerType().equalsIgnoreCase(providerType)
+                            && link.authorId().equals(authorId));
+        } catch (IdentityLookupFailed e) {
+            // Authorization fails CLOSED even though the read path reports the fault: refusing a
+            // legitimate operator during an outage is recoverable, showing one person another
+            // person's performance data is not.
+            return false;
+        }
     }
 
     /** The first mapping for a caller, for the dashboard's "my activity" landing view. */

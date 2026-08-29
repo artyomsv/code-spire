@@ -39,6 +39,29 @@ public class FindingProjection {
     /** Matches the literal the UI's findings card and {@code PriorFinding} already use. */
     static final String ORIGIN_CONVERSATION = "conversation";
 
+    // A row already carrying THIS ref wins over the newest unattached one, which is what makes
+    // a redelivery land on the row it landed on the first time. CommentsPosted has no
+    // idempotency guard of its own (unlike ReviewGenerated's ifCurrentRun), and "newest row
+    // still awaiting a ref" is not stable across two deliveries: once round 2's row is stamped
+    // it stops being a candidate, so the second delivery walked down and stamped round 1's
+    // never-posted row instead -- falsifying the "generated, never posted" fact AND handing the
+    // verdict rule a thread ref pointing at the wrong finding.
+        private static final String ATTACH_THREAD_REF = """
+                UPDATE review_finding SET thread_ref = ?
+                 WHERE id = (SELECT id FROM review_finding
+                              WHERE review_id = ? AND path = ? AND start_line = ?
+                                AND (thread_ref IS NULL OR thread_ref = ?)
+                              ORDER BY (thread_ref = ?) DESC NULLS LAST, id DESC
+                              LIMIT 1)
+                """;
+
+    /** A human-filed finding carries no message by design (DATA-MODEL §5), so the slot stays NULL. */
+    private static final String INSERT_CONVERSATION_FINDING = """
+                INSERT INTO review_finding (review_id, round, commit_sha, path, start_line, end_line,
+                                            severity, category, origin, message, suggestion, thread_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
+                """;
+
     @Inject
     DataSource dataSource;
 
@@ -106,14 +129,9 @@ public class FindingProjection {
         if (posted == null || posted.isEmpty()) {
             return;
         }
-        String sql = """
-                UPDATE review_finding SET thread_ref = ?
-                 WHERE id = (SELECT id FROM review_finding
-                              WHERE review_id = ? AND path = ? AND start_line = ?
-                                AND thread_ref IS NULL
-                              ORDER BY id DESC LIMIT 1)
-                """;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+        // See ATTACH_THREAD_REF.
+
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(ATTACH_THREAD_REF)) {
             for (PostedInline entry : posted) {
                 if (entry.line() <= 0 || entry.path() == null || entry.threadRef() == null) {
                     continue;
@@ -122,6 +140,8 @@ public class FindingProjection {
                 ps.setString(2, reviewId);
                 ps.setString(3, entry.path());
                 ps.setInt(4, entry.line());
+                ps.setString(5, entry.threadRef());
+                ps.setString(6, entry.threadRef());
                 ps.addBatch();
             }
             ps.executeBatch();
@@ -142,86 +162,75 @@ public class FindingProjection {
      * land. A missed {@code UPDATE} affects zero rows and throws nothing, so "median rounds to
      * resolved" and the dismissal rate driving learned memory would be quietly, systematically wrong.
      *
-     * <p>So: the newest <em>not yet judged</em> row for the location, across all rounds, preferring
-     * the verdict's own thread ref when it has one. Recency is row order, never id arithmetic — the
-     * V26 lesson applied on day one instead of after a replay of the GitLab defect.
-     *
-     * <p>Matching by location rather than only by thread ref matters on renames: the persisted
-     * verdicts carry the first run's remapped paths, and a verdict for a finding that was never
-     * posted has no thread ref at all.
+     * <p>The three matching rules and the reason each exists live in {@link FindingVerdicts} — they
+     * are the subtlest thing in this projection and every obvious alternative fails silently.
      */
     public void recordVerdicts(String reviewId, int round, List<FindingVerdict> verdicts) {
         if (verdicts == null || verdicts.isEmpty()) {
             return;
         }
-        // verdict_round is written alongside the verdict because the duration is not derivable
-        // afterwards: verdict_at is a timestamp and rounds are not evenly spaced in time.
-        String byThread = """
-                UPDATE review_finding SET verdict = ?, verdict_at = now(), verdict_round = ?
-                 WHERE id = (SELECT id FROM review_finding
-                              WHERE review_id = ? AND thread_ref = ? AND verdict IS NULL
-                              ORDER BY id DESC LIMIT 1)
-                """;
-        String byLocation = """
-                UPDATE review_finding SET verdict = ?, verdict_at = now(), verdict_round = ?
-                 WHERE id = (SELECT id FROM review_finding
-                              WHERE review_id = ? AND path = ? AND start_line = ? AND verdict IS NULL
-                              ORDER BY id DESC LIMIT 1)
-                """;
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement thread = c.prepareStatement(byThread);
-             PreparedStatement location = c.prepareStatement(byLocation)) {
-            for (FindingVerdict verdict : verdicts) {
-                if (verdict == null || verdict.status() == null) {
-                    continue;
-                }
-                if (applyByThread(thread, reviewId, round, verdict)) {
-                    continue;
-                }
-                applyByLocation(location, reviewId, round, verdict);
-            }
+        try (Connection c = dataSource.getConnection()) {
+            FindingVerdicts.apply(c, reviewId, round, verdicts);
         } catch (SQLException e) {
             LOG.warnf(e, "Could not record verdicts for %s — dismissal rates will under-count", reviewId);
         }
     }
-
     /** A finding a human filed with {@code /finding}. Carries no message by design (DATA-MODEL §5). */
-    public void recordConversationFinding(String reviewId, int round, String commit, String path,
-                                          int line, String severity, String threadRef) {
+    public void recordConversationFinding(String reviewId, int round, ConversationFinding finding) {
         if (round <= 0) {
             return;
         }
-        String sql = """
-                INSERT INTO review_finding (review_id, round, commit_sha, path, start_line, end_line,
-                                            severity, category, origin, message, suggestion, thread_ref)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
-                """;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(INSERT_CONVERSATION_FINDING)) {
             ps.setString(1, reviewId);
             ps.setInt(2, round);
-            ps.setString(3, commit == null ? "" : commit);
-            ps.setString(4, path);
-            ps.setInt(5, line);
-            ps.setInt(6, line);
-            ps.setString(7, severity);
+            ps.setString(3, finding.commit() == null ? "" : finding.commit());
+            ps.setString(4, finding.path());
+            ps.setInt(5, finding.line());
+            ps.setInt(6, finding.line());
+            ps.setString(7, finding.severity());
             ps.setString(8, ORIGIN_CONVERSATION);
-            ps.setString(9, threadRef);
+            ps.setString(9, finding.threadRef());
             ps.executeUpdate();
         } catch (SQLException e) {
             LOG.warnf(e, "Could not record the conversation finding for %s", reviewId);
         }
     }
 
-    private boolean applyByThread(PreparedStatement ps, String reviewId, int round,
-                                  FindingVerdict verdict) throws SQLException {
+    /**
+     * Applies a verdict through its thread ref, and reports whether the thread SETTLED it.
+     *
+     * <p>Probe-then-apply rather than a conditional UPDATE, because an UPDATE that touches no rows
+     * cannot say WHY. The old form returned false for "no such thread" and for "that thread's
+     * finding is already judged" alike, and the caller treated both as "try the location instead" —
+     * so a redelivered batch fell past a settled thread and stamped whatever the location rule found
+     * next. A thread ref is the finding's own identity; once it names a judged row, there is nothing
+     * left to look for.
+     *
+     * @return true when this verdict is finished with — either just applied, or already recorded.
+     */
+    private boolean applyByThread(PreparedStatement probe, PreparedStatement byId, String reviewId,
+                                  int round, FindingVerdict verdict) throws SQLException {
         if (verdict.threadRef() == null || verdict.threadRef().isBlank()) {
             return false;
         }
-        ps.setString(1, verdict.status().name());
-        FindingRows.setRound(ps, 2, round);
-        ps.setString(3, reviewId);
-        ps.setString(4, verdict.threadRef());
-        return ps.executeUpdate() > 0;
+        probe.setString(1, reviewId);
+        probe.setString(2, verdict.threadRef());
+        probe.setInt(3, round);
+        long id;
+        try (ResultSet rs = probe.executeQuery()) {
+            if (!rs.next()) {
+                return false;
+            }
+            if (rs.getString("verdict") != null) {
+                return true;
+            }
+            id = rs.getLong("id");
+        }
+        byId.setString(1, verdict.status().name());
+        FindingRows.setRound(byId, 2, round);
+        byId.setLong(3, id);
+        byId.executeUpdate();
+        return true;
     }
 
     private void applyByLocation(PreparedStatement ps, String reviewId, int round,
@@ -234,6 +243,7 @@ public class FindingProjection {
         ps.setString(3, reviewId);
         ps.setString(4, verdict.path());
         ps.setInt(5, verdict.line());
+        ps.setInt(6, round);
         ps.executeUpdate();
     }
 
@@ -247,37 +257,16 @@ public class FindingProjection {
     /**
      * Marks the findings a learned preference hid, naming the preference responsible.
      *
-     * <p>The rows stay in the corpus rather than being dropped. That is what makes a wrong
-     * preference detectable: if one starts hiding findings the team would have acted on, the
-     * evidence is still there to count, and revoking it restores them on the next review.
-     *
-     * <p>One row per suppressed finding, matching the shape the two sibling updates use. A bare
-     * WHERE on the location stamps EVERY row there -- and two findings on one line is ordinary model
-     * output, so the visible one would be recorded as hidden, counted in the suppression total, and
-     * dropped from the corpus the proposal engine reads.
+     * <p>The rows stay in the corpus rather than being dropped. That is what makes a wrong preference
+     * detectable: if one starts hiding findings the team would have acted on, the evidence is still
+     * there to count, and revoking it restores them on the next review.
      */
-    public void markSuppressed(String reviewId, int round, List<String> paths, List<Integer> lines,
-                               long preferenceId) {
-        if (round <= 0 || paths.isEmpty() || paths.size() != lines.size()) {
+    public void markSuppressed(String reviewId, int round, SuppressionBatch batch) {
+        if (round <= 0 || batch.hidden().isEmpty()) {
             return;
         }
-        String sql = """
-                UPDATE review_finding SET suppressed_by = ?
-                 WHERE id = (SELECT id FROM review_finding
-                              WHERE review_id = ? AND round = ? AND path = ? AND start_line = ?
-                                AND suppressed_by IS NULL
-                              ORDER BY id DESC LIMIT 1)
-                """;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            for (int i = 0; i < paths.size(); i++) {
-                ps.setLong(1, preferenceId);
-                ps.setString(2, reviewId);
-                ps.setInt(3, round);
-                ps.setString(4, paths.get(i));
-                ps.setInt(5, lines.get(i));
-                ps.addBatch();
-            }
-            ps.executeBatch();
+        try (Connection c = dataSource.getConnection()) {
+            FindingSuppressions.mark(c, reviewId, round, batch);
         } catch (SQLException e) {
             LOG.warnf(e, "Could not mark suppressed findings for %s", reviewId);
         }

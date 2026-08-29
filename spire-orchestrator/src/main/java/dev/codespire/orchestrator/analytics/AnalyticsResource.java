@@ -85,7 +85,18 @@ public class AnalyticsResource {
      */
     @GET
     @Path("/me")
-    public MyActivity myActivity() {
+    public Response myActivity() {
+        try {
+            return Response.ok(resolveMyActivity()).build();
+        } catch (OperatorIdentities.IdentityLookupFailed e) {
+            // An outage is not "you are not linked". Reporting it as unlinked told an operator to go
+            // and ask an admin for a mapping they may already have -- a wrong instruction, which is
+            // worse than no answer. 503 lands in the UI's error branch, which is its own sentence.
+            return Response.status(Response.Status.SERVICE_UNAVAILABLE).build();
+        }
+    }
+
+    private MyActivity resolveMyActivity() {
         return identities.firstFor(callerSubject())
                 .map(owned -> new MyActivity(true, owned.providerType(), owned.authorId(),
                         queries.totalsForAuthor(owned.providerType(), owned.authorId()),

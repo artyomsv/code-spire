@@ -412,8 +412,9 @@ public class IntegrationSaga {
         // human filed by hand -- the most deliberate signal the system receives -- was the one kind
         // it never learned from.
         findings.recordConversationFinding(reviewId, runs.roundOrUnknown(reviewId),
-                lifecycle.currentState(reviewId).currentCommit(),
-                f.path(), f.line(), f.severity().name(), root.value());
+                new dev.codespire.orchestrator.readmodel.ConversationFinding(
+                        lifecycle.currentState(reviewId).currentCommit(), f.path(), f.line(),
+                        f.severity().name(), root.value()));
         List<DomainEvent> appended = lifecycle.handle(reviewId,
                 new RecordCommand.RaiseConversationFinding(root, f.path(), f.line(), f.severity(),
                         f.message(), e.commentId()));

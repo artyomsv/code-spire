@@ -47,6 +47,27 @@ public class AnalyticsQueries {
                          long suppressed) {
     }
 
+    /** Lifted out of the method it serves: the text is most of its length and none of its logic. */
+    private static final String TOTALS = """
+                SELECT count(*)                                                        AS findings,
+                       count(*) FILTER (WHERE f.verdict IS NOT NULL)                   AS judged,
+                       count(*) FILTER (WHERE f.verdict IN %s)                         AS dismissed,
+                       count(*) FILTER (WHERE f.verdict = 'RESOLVED')                  AS resolved,
+                       count(DISTINCT f.review_id)                                     AS reviews,
+                       count(*) FILTER (WHERE f.suppressed_by IS NOT NULL)             AS suppressed,
+                       -- Rounds TAKEN, not the round raised. ORDER BY f.round answered the median
+                       -- round a resolved finding was RAISED in, so a finding raised in round 1 and
+                       -- fixed in round 4 contributed 1 and the tile read 1.0 forever -- confidently,
+                       -- on any healthy repository. Rows judged before verdict_round existed are
+                       -- excluded rather than counted as zero.
+                       percentile_cont(0.5) WITHIN GROUP (
+                           ORDER BY (f.verdict_round - f.round + 1))
+                           FILTER (WHERE f.verdict = 'RESOLVED'
+                                     AND f.verdict_round IS NOT NULL)                   AS median_round
+                  FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
+                 WHERE s.archived_at IS NULL %s
+                """;;
+
     @Inject
     DataSource dataSource;
 
@@ -105,25 +126,7 @@ public class AnalyticsQueries {
     }
 
     private Totals totals(String filter, Binder binder) {
-        String sql = """
-                SELECT count(*)                                                        AS findings,
-                       count(*) FILTER (WHERE f.verdict IS NOT NULL)                   AS judged,
-                       count(*) FILTER (WHERE f.verdict IN %s)                         AS dismissed,
-                       count(*) FILTER (WHERE f.verdict = 'RESOLVED')                  AS resolved,
-                       count(DISTINCT f.review_id)                                     AS reviews,
-                       count(*) FILTER (WHERE f.suppressed_by IS NOT NULL)             AS suppressed,
-                       -- Rounds TAKEN, not the round raised. ORDER BY f.round answered the median
-                       -- round a resolved finding was RAISED in, so a finding raised in round 1 and
-                       -- fixed in round 4 contributed 1 and the tile read 1.0 forever -- confidently,
-                       -- on any healthy repository. Rows judged before verdict_round existed are
-                       -- excluded rather than counted as zero.
-                       percentile_cont(0.5) WITHIN GROUP (
-                           ORDER BY (f.verdict_round - f.round + 1))
-                           FILTER (WHERE f.verdict = 'RESOLVED'
-                                     AND f.verdict_round IS NOT NULL)                   AS median_round
-                  FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
-                 WHERE s.archived_at IS NULL %s
-                """.formatted(DISMISSED, filter);
+        String sql = TOTALS.formatted(DISMISSED, filter);
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             binder.bind(ps);
             try (ResultSet rs = ps.executeQuery()) {

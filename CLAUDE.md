@@ -1214,8 +1214,37 @@ The design is fully specified in `docs/` — **treat those files as the source o
   The lesson was already recorded for `setNote` and `recordCharges`; the fakes now override every
   method the new paths reach, deliberately and with a comment saying why.
 
-  Measured, not estimated: **1711 Java tests across 214 suites** (`testFast` 666/81 + `testServices` —
-  gateway 73/11, orchestrator 746/95, worker 226/27); **413 `spire-ui` vitest tests across 55 files**;
+  **Every finding was closed in-round, including the ones a first pass had deferred.** Two of those
+  were the sharpest remaining edges, and both only reachable on a REDELIVERY — which is why an
+  ordinary run never showed them:
+  - **A verdict could land on the finding its own event had just inserted.** The thread rule could not
+    tell "no such thread" from "that thread is already judged" — an `UPDATE` touching no rows cannot
+    say why — so a redelivered batch fell past a settled thread into the location rule and stamped the
+    current round's fresh finding with an old verdict. A stray `ACKNOWLEDGED` then counts as a
+    dismissal in the proposal scan, the number deciding whether the reviewer starts hiding findings.
+    Verdicts are now bounded to earlier rounds, and the thread path probes and reads the verdict.
+  - **A redelivered `CommentsPosted` stamped the wrong row.** That handler has no idempotency guard,
+    and "newest row still awaiting a ref" is not stable across two deliveries: once the posted row is
+    stamped it stops being a candidate, so the second delivery walked down onto an earlier round's
+    never-posted finding — falsifying that fact AND handing the verdict rule a ref pointing at the
+    wrong finding. A row already carrying the ref now wins over the newest unattached one.
+
+  **Both needed their tests sharpened twice**, and the reason generalises: a first version of each
+  passed with the guard deleted. The verdict test used round 2, where the round bound alone already
+  excluded the row, so it proved the bound rather than the probe — round 3 separates them. The
+  thread-ref test had the posted row as the newest one, where `ORDER BY id DESC` picks it anyway;
+  the discriminating case needs the EARLIER round to be the posted one.
+
+  Also closed rather than carried: a database outage reported itself as "your identity is not
+  linked" (sending an operator to request a mapping they already had — authorization still fails
+  closed, but the READ now reports the fault); the JWT identity branch was untested because
+  `@TestSecurity` yields a `QuarkusPrincipal`, so only the fallback ever ran; `/rescan` was an
+  unbounded aggregate; the analytics arithmetic had no test of its own; and the size and parameter
+  rules — verdict logic to `FindingVerdicts`, suppression to `FindingSuppressions`, plumbing to
+  `FindingRows`, two parameter objects, SQL lifted to constants.
+
+  Measured, not estimated: **1725 Java tests across 216 suites** (`testFast` 666/81 + `testServices` —
+  gateway 73/11, orchestrator 760/97, worker 226/27); **413 `spire-ui` vitest tests across 55 files**;
   `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for

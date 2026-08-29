@@ -589,8 +589,8 @@ class ConversationFindingSagaTest {
         // setNote and recordCharges, and hit four times in this milestone alone.
         saga.findings = new dev.codespire.orchestrator.readmodel.FindingProjection() {
             @Override
-            public void recordConversationFinding(String reviewId, int round, String commit,
-                    String path, int line, String severity, String threadRef) {
+            public void recordConversationFinding(String reviewId, int round,
+                    dev.codespire.orchestrator.readmodel.ConversationFinding finding) {
             }
         };
         saga.runs = new dev.codespire.orchestrator.llm.ReviewRuns() {

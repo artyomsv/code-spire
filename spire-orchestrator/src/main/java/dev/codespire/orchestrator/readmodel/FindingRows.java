@@ -55,21 +55,27 @@ final class FindingRows {
                 if (finding == null || finding.path() == null || finding.range() == null) {
                     continue;
                 }
-                ps.setString(1, reviewId);
-                ps.setInt(2, round);
-                ps.setString(3, commit == null ? "" : commit);
-                ps.setString(4, finding.path());
-                ps.setInt(5, finding.range().startLine());
-                ps.setInt(6, finding.range().endLine());
-                ps.setString(7, finding.severity() == null ? "" : finding.severity().name());
-                setNullable(ps, 8, finding.category() == null ? null : finding.category().name());
-                ps.setString(9, FindingProjection.ORIGIN_REVIEW);
-                setNullable(ps, 10, encrypted(encryption, finding.message(), reviewId));
-                setNullable(ps, 11, encrypted(encryption, finding.suggestion(), reviewId));
+                bind(ps, encryption, reviewId, round, commit, finding);
                 ps.addBatch();
             }
             ps.executeBatch();
         }
+    }
+
+    /** One row's eleven columns, in one place, so the insert loop stays readable. */
+    private static void bind(PreparedStatement ps, EncryptionService encryption, String reviewId,
+                             int round, String commit, Finding finding) throws SQLException {
+        ps.setString(1, reviewId);
+        ps.setInt(2, round);
+        ps.setString(3, commit == null ? "" : commit);
+        ps.setString(4, finding.path());
+        ps.setInt(5, finding.range().startLine());
+        ps.setInt(6, finding.range().endLine());
+        ps.setString(7, finding.severity() == null ? "" : finding.severity().name());
+        setNullable(ps, 8, finding.category() == null ? null : finding.category().name());
+        ps.setString(9, FindingProjection.ORIGIN_REVIEW);
+        setNullable(ps, 10, encrypted(encryption, finding.message(), reviewId));
+        setNullable(ps, 11, encrypted(encryption, finding.suggestion(), reviewId));
     }
 
     static String encrypted(EncryptionService encryption, String value, String reviewId) {

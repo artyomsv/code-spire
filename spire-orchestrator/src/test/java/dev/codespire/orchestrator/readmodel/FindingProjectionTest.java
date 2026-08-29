@@ -171,6 +171,84 @@ class FindingProjectionTest {
         assertEquals("RESOLVED", verdictForRound(2), "a redelivery must not undo the newer judgment");
     }
 
+    /**
+     * <b>A redelivered verdict must not land on the round it arrived with.</b>
+     *
+     * <p>Verdicts judge findings from EARLIER rounds. Without that bound, a redelivered
+     * {@code ReviewGenerated} whose prior row was already judged fell past the thread rule — which
+     * could not distinguish "no such thread" from "already judged" — into the location rule, and
+     * stamped the finding this same event had just inserted for the current round.
+     *
+     * <p>The consequence is not cosmetic: a stray {@code ACKNOWLEDGED} counts as a dismissal in the
+     * proposal scan, which is the number that decides whether the reviewer starts hiding findings.
+     */
+    @Test
+    void aRedeliveredVerdictDoesNotStampTheFindingItsOwnEventJustInserted() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 5, Severity.MAJOR, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-x", "src/A.java", 5)));
+        var judged = new FindingVerdict("thread-x", "src/A.java", 5, FindingVerdict.Status.RESOLVED, null);
+        findings.recordVerdicts(REVIEW, 2, List.of(judged));
+        // Round 2 raises the same location again, as a re-review of an unfixed area does. It is
+        // unjudged, and it sits inside the earlier-round window a round-3 redelivery would search --
+        // which is what makes this discriminate the PROBE rather than the round bound. At round 2
+        // the bound alone already excluded it, so the obvious version of this test proved nothing.
+        findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/A.java", 5, Severity.MAJOR, null)));
+
+        findings.recordVerdicts(REVIEW, 3, List.of(judged));
+
+        assertEquals("RESOLVED", verdictForRound(1), "round 1 keeps the judgment it was given");
+        assertNull(verdictForRound(2),
+                "the current round's fresh finding must not inherit an older round's verdict");
+    }
+
+    /**
+     * The same bound on the location path, which a never-posted finding takes.
+     *
+     * <p>A finding that failed to post carries no thread ref, so its verdict can only be matched by
+     * location — and if the current round raised anything at that location, the newest row won and
+     * the older one stayed unjudged forever.
+     */
+    @Test
+    void aVerdictWithNoThreadRefJudgesTheOlderRowRatherThanThisRoundsNewOne() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/B.java", 7, Severity.MINOR, null)));
+        findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/B.java", 7, Severity.MINOR, null)));
+
+        findings.recordVerdicts(REVIEW, 2, List.of(
+                new FindingVerdict(null, "src/B.java", 7, FindingVerdict.Status.ACKNOWLEDGED, null)));
+
+        assertEquals("ACKNOWLEDGED", verdictForRound(1));
+        assertNull(verdictForRound(2), "this round's finding has not been judged by anyone yet");
+    }
+
+    /**
+     * <b>A redelivered {@code CommentsPosted} must re-stamp the row it stamped the first time.</b>
+     *
+     * <p>That handler has no idempotency guard of its own — unlike {@code ReviewGenerated}'s
+     * {@code ifCurrentRun} — and "newest row still awaiting a ref" is not stable across two
+     * deliveries: once round 2's row is stamped it stops being a candidate, so the second delivery
+     * walked down and stamped round 1's never-posted row instead. That falsifies the
+     * "generated, never posted" fact AND hands the verdict rule a thread ref pointing at the wrong
+     * finding, so the two defects compound.
+     */
+    @Test
+    void aRedeliveredCommentsPostedReStampsItsOwnRowRatherThanALaterUnpostedOne() {
+        // Round 1 posts. Round 2 raises the same location and fails to post, so its row is NEWER
+        // and still unattached — which is what makes this discriminate: "newest row awaiting a ref"
+        // now points somewhere else entirely. The obvious ordering (round 2 posted, round 1 did not)
+        // proves nothing, because there the correct row is also the newest one.
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/C.java", 10, Severity.NIT, null)));
+        var posted = List.of(new PostedInline("thread-b", "src/C.java", 10));
+        findings.recordThreadRefs(REVIEW, posted);
+        findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/C.java", 10, Severity.NIT, null)));
+
+        findings.recordThreadRefs(REVIEW, posted);
+
+        assertEquals("thread-b", threadRefForRound(1), "the redelivery belongs to round 1's post");
+        assertNull(threadRefForRound(2),
+                "round 2 was generated and never posted — a redelivery must not rewrite that, and two "
+                        + "rows claiming one thread ref would then mislead the verdict rule as well");
+    }
+
     /** Findings quote the source under review, so the message never sits in clear (DATA-MODEL §5). */
     @Test
     void theMessageIsEncryptedAtRestWhileTheCoordinatesStayQueryable() {
@@ -194,6 +272,14 @@ class FindingProjectionTest {
                 + " ORDER BY id DESC LIMIT 1", ps -> {
             ps.setString(1, REVIEW);
             ps.setString(2, path);
+        });
+    }
+
+    private String threadRefForRound(int round) {
+        return queryOne("SELECT thread_ref FROM review_finding WHERE review_id = ? AND round = ?"
+                + " ORDER BY id DESC LIMIT 1", ps -> {
+            ps.setString(1, REVIEW);
+            ps.setInt(2, round);
         });
     }
 

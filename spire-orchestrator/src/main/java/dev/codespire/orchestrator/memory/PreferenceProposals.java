@@ -59,6 +59,17 @@ public class PreferenceProposals {
     /** Pull requests a group must span. One author on one PR is not a team preference. */
     static final int MIN_DISTINCT_REVIEWS = 2;
 
+    /**
+     * How far back the scan looks.
+     *
+     * <p>Two reasons, and the second is the one that matters. It bounds an aggregate an admin can
+     * trigger on demand over a table that only grows — the {@code GROUP BY} has no index that fits
+     * it, so an unbounded scan gets slower every week. And a preference should reflect what a team
+     * believes NOW: dismissals from two years ago are evidence about people who may have left.
+     */
+    @ConfigProperty(name = "spire.memory.window-days", defaultValue = "180")
+    int windowDays;
+
     /** Judged findings a group needs before it can say anything. */
     @ConfigProperty(name = "spire.memory.min-evidence", defaultValue = "10")
     int minEvidence;
@@ -85,6 +96,27 @@ public class PreferenceProposals {
         return minDismissedPercent;
     }
 
+    /**
+     * Judged, categorised, not-already-hidden findings inside the window, grouped per path.
+     *
+     * <p>An uncategorised finding cannot be grouped and is excluded here rather than bucketed into
+     * OTHER, which would put "the model did not say" and "the model said OTHER" in one pile.
+     */
+    private static final String CANDIDATE_GROUPS = """
+                SELECT s.workspace, s.slug, s.provider_type, f.category, f.severity, f.path,
+                       count(*)                                        AS judged,
+                       count(*) FILTER (WHERE f.verdict IN %s)         AS dismissed,
+                       count(DISTINCT f.review_id)                     AS reviews
+                  FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
+                 WHERE f.verdict IS NOT NULL
+                   AND f.category IS NOT NULL
+                   AND f.suppressed_by IS NULL
+                   AND f.created_at >= now() - make_interval(days => ?)
+                   AND f.category <> ALL (?)
+                   AND f.severity <> ALL (?)
+                 GROUP BY s.workspace, s.slug, s.provider_type, f.category, f.severity, f.path
+                """;;
+
     @Inject
     DataSource dataSource;
 
@@ -107,46 +139,17 @@ public class PreferenceProposals {
 
     /** @return how many groups crossed both thresholds. Package-private so a test can drive it. */
     int scan() {
-        // Grouping happens in SQL over the clear columns; nothing decrypts. A finding with no
-        // category cannot be grouped and is excluded here rather than bucketed into OTHER, which
-        // would put "the model did not say" and "the model said OTHER" in one pile.
-        String sql = """
-                SELECT s.workspace, s.slug, s.provider_type, f.category, f.severity, f.path,
-                       count(*)                                        AS judged,
-                       count(*) FILTER (WHERE f.verdict IN %s)         AS dismissed,
-                       count(DISTINCT f.review_id)                     AS reviews
-                  FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
-                 WHERE f.verdict IS NOT NULL
-                   AND f.category IS NOT NULL
-                   AND f.suppressed_by IS NULL
-                   AND f.category <> ALL (?)
-                   AND f.severity <> ALL (?)
-                 GROUP BY s.workspace, s.slug, s.provider_type, f.category, f.severity, f.path
-                """.formatted(DISMISSED);
+        // Grouping happens in SQL over the clear columns; nothing decrypts. See CANDIDATE_GROUPS.
+        String sql = CANDIDATE_GROUPS.formatted(DISMISSED);
 
         Groups groups = new Groups();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setArray(1, c.createArrayOf("varchar", NEVER_SUPPRESSED_CATEGORIES.toArray()));
-            ps.setArray(2, c.createArrayOf("varchar", NEVER_SUPPRESSED_SEVERITIES.toArray()));
+            ps.setInt(1, windowDays);
+            ps.setArray(2, c.createArrayOf("varchar", NEVER_SUPPRESSED_CATEGORIES.toArray()));
+            ps.setArray(3, c.createArrayOf("varchar", NEVER_SUPPRESSED_SEVERITIES.toArray()));
             try (ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                // Paths collapse to a glob in Java rather than in SQL: the ladder is the group's
-                // identity, and it has to be the same ladder the filter matches with. Two
-                // implementations of it would be free to drift, and a drifted glob silently
-                // re-proposes a group an operator already rejected.
-                String glob = PathGlobs.of(rs.getString("path"));
-                if (glob == null) {
-                    continue;
-                }
-                // The scope carries the PLATFORM. One workspace name registered on two SCMs is the
-                // collision this project has been bitten by twice; pooling their evidence would let
-                // one team's dismissals hide findings from another team that dismissed nothing.
-                groups.add(new Key(rs.getString("provider_type") + ":" + rs.getString("workspace")
-                        + "/" + rs.getString("slug"),
-                        rs.getString("category"), glob, rs.getString("severity")),
-                        rs.getInt("judged"), rs.getInt("dismissed"), rs.getInt("reviews"));
-            }
+                accumulate(rs, groups);
             }
         } catch (SQLException e) {
             LOG.warnf(e, "Could not scan for learned preferences — nothing proposed this run");
@@ -163,6 +166,31 @@ public class PreferenceProposals {
      * percentage says. It does not make the signal trustworthy on its own, which is why the count
      * also reaches the card an admin decides from.
      */
+    /**
+     * Folds the per-path rows into per-glob groups.
+     *
+     * <p>Paths collapse to a glob in Java rather than in SQL, because the ladder IS the group's
+     * identity and it has to be the same ladder the filter matches with. Two implementations would
+     * be free to drift, and a drifted glob silently re-proposes a group an operator already
+     * rejected — the one guarantee {@code REJECTED} exists to give.
+     *
+     * <p>The scope carries the PLATFORM. One workspace name registered on two SCMs is the collision
+     * this project has been bitten by twice; pooling the evidence would let one team's dismissals
+     * hide findings from another team that dismissed nothing.
+     */
+    private static void accumulate(ResultSet rs, Groups groups) throws SQLException {
+        while (rs.next()) {
+            String glob = PathGlobs.of(rs.getString("path"));
+            if (glob == null) {
+                continue;
+            }
+            groups.add(new Key(rs.getString("provider_type") + ":" + rs.getString("workspace")
+                    + "/" + rs.getString("slug"),
+                    rs.getString("category"), glob, rs.getString("severity")),
+                    rs.getInt("judged"), rs.getInt("dismissed"), rs.getInt("reviews"));
+        }
+    }
+
     boolean qualifies(int judged, int dismissed, int reviews) {
         return judged >= minEvidence
                 && reviews >= MIN_DISTINCT_REVIEWS
