@@ -72,12 +72,19 @@ class ReviewChainTest {
         assertEquals(3, ReadModel.findingsCount(reviewId),
                 "S1 — the mock returns three findings for this fixture");
 
-        // Our side: exactly one summary thread recorded.
-        assertEquals(1, ReadModel.threads(reviewId).stream()
-                        .filter(ReadModel.Thread::isOurs)
-                        .filter(ReadModel.Thread::isSummary)
-                        .count(),
-                "S1 — exactly one summary comment");
+        // Our side: exactly one summary thread, and one thread per finding anchored at its own line.
+        //
+        // Deliberately NOT filtered by isOurs. markSummaryThread does not set it — the flag governs
+        // conversation scope (which threads the bot answers), and the summary comment is answered
+        // through the summary path rather than by being "ours". Asserting isOurs here would be
+        // asserting an implementation detail the code documents as intentionally absent.
+        List<ReadModel.Thread> threads = ReadModel.threads(reviewId);
+        assertEquals(1, threads.stream().filter(ReadModel.Thread::isSummary).count(),
+                "S1 — exactly one summary comment: " + threads);
+        assertEquals(List.of("7", "11", "6"),
+                threads.stream().filter(thread -> !thread.isSummary())
+                        .map(ReadModel.Thread::line).toList(),
+                "S1 — each finding is anchored at the line its marker sits on: " + threads);
 
         // GitLab's side. The read model saying we posted is not proof that GitLab has it, and the two
         // disagreeing is precisely the class of defect this suite exists to catch.

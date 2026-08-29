@@ -26,6 +26,12 @@ public final class Environment {
 
     private static final String HUMAN_TOKEN = "TEST-e2e-human-token-000000000000";
 
+    private static final String SCM_PROVIDER = "e2e-gitlab";
+
+    private static final String LLM_PROVIDER = "e2e-llm-mock";
+
+    private static final String MODEL = "e2e-mock-model";
+
     private final String workspace;
 
     private final String slug;
@@ -77,11 +83,15 @@ public final class Environment {
         String workspace = admin.get("/projects/" + projectId).get("namespace").get("path").asText();
 
         SpireDriver spire = new SpireDriver();
-        spire.registerScmProvider("e2e-gitlab", "http://gitlab/api/v4", workspace, BOT_TOKEN);
+        // Idempotent: a second run against the same stack would otherwise hit the registry's unique
+        // constraint, which surfaces as a bare 500 rather than a 409.
+        spire.resetRegistries(SCM_PROVIDER, LLM_PROVIDER, MODEL, workspace + "/" + slug);
+
+        spire.registerScmProvider(SCM_PROVIDER, "http://gitlab/api/v4", workspace, BOT_TOKEN);
         // Catalogued BEFORE the provider names it: ADR-023's guard refuses a provider whose model is
         // not priceable, so the reverse order fails at registration.
-        spire.catalogueUnmeteredModel("e2e-mock-model", "E2E mock model");
-        spire.registerLlmProvider("e2e-llm-mock", "http://llm-mock:8080/v1", "e2e-mock-model");
+        spire.catalogueUnmeteredModel(MODEL, "E2E mock model");
+        spire.registerLlmProvider(LLM_PROVIDER, "http://llm-mock:8080/v1", MODEL);
 
         SpireDriver.Webhook hook = spire.registerWebhook("gitlab", workspace + "/" + slug);
         // The service name and CONTAINER port, not the published host port: GitLab reaches the

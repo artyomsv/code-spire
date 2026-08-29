@@ -73,6 +73,35 @@ public final class SpireDriver {
 
     // --- registration ----------------------------------------------------------------------------
 
+    /**
+     * Removes anything a previous run of this suite registered, so setup is idempotent.
+     *
+     * <p>Necessary because a duplicate registry name is not a graceful refusal: the unique constraint
+     * surfaces as a bare <b>500</b> with an error id and no message, so a second run failed in a way
+     * that said nothing about what was wrong. (That status is the class already tracked in
+     * {@code techdebt/spire-orchestrator/3-3-rejection-messages-never-reach-the-client.md} — a
+     * registry rejection that reaches the client as a 500 rather than a 409.)
+     *
+     * <p>Ordered: the LLM provider names the model, and {@code LlmModelRegistry} refuses to delete a
+     * model a provider still references — correctly, since that would orphan it.
+     */
+    public void resetRegistries(String scmProviderName, String llmProviderName, String modelName,
+                                String webhookTarget) {
+        deleteByField("/api/llm-providers", "name", llmProviderName);
+        deleteByField("/api/llm-models", "name", modelName);
+        deleteByField("/api/providers", "name", scmProviderName);
+        deleteByField("/gw/webhook-repos", "target", webhookTarget);
+    }
+
+    private void deleteByField(String collectionPath, String field, String value) {
+        for (JsonNode row : get(collectionPath)) {
+            if (row.hasNonNull(field) && value.equals(row.get(field).asText())) {
+                send(request(collectionPath + "/" + row.get("id").asText(), tokenFor(collectionPath))
+                        .DELETE());
+            }
+        }
+    }
+
     public String registerScmProvider(String name, String baseUrl, String workspace, String apiToken) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
