@@ -134,6 +134,46 @@ describe('AnalyticsOverview', () => {
     expect(screen.getByText(/nothing was backfilled/i)).toBeTruthy();
   });
 
+  /**
+   * The spec says the suppression count appears on the summary comment AND the dashboard. Only the
+   * comment was asserted. If this tile is missing, an operator reading the dashboard cannot tell a
+   * quiet repository from one where a learned preference is hiding things.
+   */
+  it('shows how many findings a learned preference hid', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
+      totals: { ...EMPTY_TOTALS, findings: 9, suppressed: 4 },
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Hidden by preferences/i)).toBeTruthy());
+    expect(screen.getByText('4')).toBeTruthy();
+  });
+
+  /** With nothing hidden the tile stays away, rather than reading a reassuring zero. */
+  it('omits the hidden tile when no preference hid anything', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
+      totals: EMPTY_TOTALS,
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/No findings recorded yet/i)).toBeTruthy());
+    expect(screen.queryByText(/Hidden by preferences/i)).toBeNull();
+  });
+
   it('labels an uncategorized finding rather than leaving the cell blank', async () => {
     vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
       totals: { ...EMPTY_TOTALS, findings: 1 },

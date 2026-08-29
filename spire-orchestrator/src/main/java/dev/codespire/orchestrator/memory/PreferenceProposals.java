@@ -106,7 +106,7 @@ public class PreferenceProposals {
                 SELECT s.workspace, s.slug, s.provider_type, f.category, f.severity, f.path,
                        count(*)                                        AS judged,
                        count(*) FILTER (WHERE f.verdict IN %s)         AS dismissed,
-                       count(DISTINCT f.review_id)                     AS reviews
+                       array_agg(DISTINCT f.review_id)                 AS review_ids
                   FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
                  WHERE f.verdict IS NOT NULL
                    AND f.category IS NOT NULL
@@ -187,8 +187,17 @@ public class PreferenceProposals {
             groups.add(new Key(rs.getString("provider_type") + ":" + rs.getString("workspace")
                     + "/" + rs.getString("slug"),
                     rs.getString("category"), glob, rs.getString("severity")),
-                    rs.getInt("judged"), rs.getInt("dismissed"), rs.getInt("reviews"));
+                    rs.getInt("judged"), rs.getInt("dismissed"), reviewIds(rs));
         }
+    }
+
+    /** The reviews behind one path's rows, as a set the caller can union across paths. */
+    private static java.util.Set<String> reviewIds(ResultSet rs) throws SQLException {
+        java.sql.Array array = rs.getArray("review_ids");
+        if (array == null) {
+            return java.util.Set.of();
+        }
+        return java.util.Set.of((String[]) array.getArray());
     }
 
     boolean qualifies(int judged, int dismissed, int reviews) {
@@ -210,26 +219,33 @@ public class PreferenceProposals {
     /**
      * Accumulates per-path rows into per-glob groups, then proposes the ones that qualify.
      *
-     * <p>The review count is a MAX rather than a sum: several paths under one glob are usually the
-     * same pull requests seen again, so adding them would multiply one review into many and defeat
-     * the distinct-review floor. Max under-counts instead, which is the safe direction for a floor.
+     * <p><b>The reviews are UNIONED, not counted per path and combined.</b> The SQL groups by path,
+     * so its {@code count(DISTINCT review_id)} answers "how many reviews touched THIS path" — and a
+     * glob usually covers many paths that each appear in one review. Summing multiplies one review
+     * into many; taking a max reports 1 for a group spanning a dozen pull requests, which silently
+     * defeats the distinct-review floor entirely and was how the first version of this shipped.
+     * Only the union of the actual ids is the number the floor is about.
      */
     private static final class Groups {
-        private final java.util.Map<Key, int[]> totals = new java.util.LinkedHashMap<>();
+        private record Counts(int[] judgedAndDismissed, java.util.Set<String> reviews) {
+        }
 
-        void add(Key key, int judged, int dismissed, int reviews) {
-            int[] counts = totals.computeIfAbsent(key, k -> new int[3]);
-            counts[0] += judged;
-            counts[1] += dismissed;
-            counts[2] = Math.max(counts[2], reviews);
+        private final java.util.Map<Key, Counts> totals = new java.util.LinkedHashMap<>();
+
+        void add(Key key, int judged, int dismissed, java.util.Set<String> reviewIds) {
+            Counts counts = totals.computeIfAbsent(key,
+                    k -> new Counts(new int[2], new java.util.HashSet<>()));
+            counts.judgedAndDismissed()[0] += judged;
+            counts.judgedAndDismissed()[1] += dismissed;
+            counts.reviews().addAll(reviewIds);
         }
 
         int proposeQualifying(PreferenceProposals owner) {
             int proposed = 0;
             for (var entry : totals.entrySet()) {
-                int judged = entry.getValue()[0];
-                int dismissed = entry.getValue()[1];
-                int reviews = entry.getValue()[2];
+                int judged = entry.getValue().judgedAndDismissed()[0];
+                int dismissed = entry.getValue().judgedAndDismissed()[1];
+                int reviews = entry.getValue().reviews().size();
                 if (owner.qualifies(judged, dismissed, reviews)) {
                     owner.propose(entry.getKey(), judged, dismissed, reviews);
                     proposed++;

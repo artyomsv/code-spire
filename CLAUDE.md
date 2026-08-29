@@ -1243,8 +1243,24 @@ The design is fully specified in `docs/` — **treat those files as the source o
   rules — verdict logic to `FindingVerdicts`, suppression to `FindingSuppressions`, plumbing to
   `FindingRows`, two parameter objects, SQL lifted to constants.
 
-  Measured, not estimated: **1725 Java tests across 216 suites** (`testFast` 666/81 + `testServices` —
-  gateway 73/11, orchestrator 760/97, worker 226/27); **413 `spire-ui` vitest tests across 55 files**;
+  **Checking the shipped code against the spec's own exit criteria then found three gaps — and one
+  of them was a defect that made the feature inert.** `PreferenceProposals.scan()` was package-private
+  with a javadoc saying "so a test can drive it", and nothing did: everything deciding WHICH groups
+  become proposals lives in its SQL, and none of it was exercised. Driving it end to end showed the
+  distinct-review floor counted `count(DISTINCT review_id)` per PATH and then took a `Math.max` across
+  the paths a glob covers. A glob usually covers many paths that each appear in one pull request, so
+  the answer was 1, the `reviews >= 2` floor never held, and **no proposal would ever have been
+  generated on a real corpus.** Learned memory would have looked installed and quietly done nothing —
+  the exact failure shape this feature was designed to avoid, one level up. The union of the actual
+  ids is the only number the floor is about.
+
+  The other two were coverage, not behaviour: "a rejected proposal does not reappear" was asserted
+  against the upsert rather than **across two consecutive scans**, which is where the guarantee
+  actually rests (it depends on `path_glob` being derived identically each night); and the dashboard's
+  suppression tile was unasserted while the summary comment's count was.
+
+  Measured, not estimated: **1732 Java tests across 217 suites** (`testFast` 666/81 + `testServices` —
+  gateway 73/11, orchestrator 767/98, worker 226/27); **415 `spire-ui` vitest tests across 55 files**;
   `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
