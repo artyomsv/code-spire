@@ -78,17 +78,15 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
     // A statement's first line: "import" followed by at least one space, then more content — this
     // excludes both an unrelated identifier prefix ("importantValue") and "import.meta", neither of
     // which is an import statement.
-    /** Block and JSDoc comments, across lines — DOTALL so a multi-line comment is one match. */
-    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
 
     /** A declared value or type: function, class, interface, type, enum, const/let/var. */
     private static final Pattern DECLARATION = Pattern.compile(
             "\\b(?:function|class|interface|type|enum|const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)");
 
-    /** A class or object method: a name immediately followed by an argument list and a brace. */
-    private static final Pattern METHOD_DECLARATION = Pattern.compile(
-            "^\\s*(?:public\\s+|private\\s+|protected\\s+|static\\s+|async\\s+)*"
-                    + "([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\([^)]*\\)\\s*[:{]");
+    /** Words taking an argument list without declaring anything — a call, not a declaration. */
+    private static final Set<String> NOT_DECLARATIONS = Set.of(
+            "if", "for", "while", "switch", "catch", "return", "new", "typeof", "await", "throw",
+            "do", "else", "try", "case", "delete", "void", "in", "of");
 
     private static final Pattern IMPORT_START = Pattern.compile("^\\s*import\\s+\\S");
 
@@ -152,36 +150,65 @@ public final class TypeScriptLanguageSupport implements LanguageSupport {
         if (fileContent == null || fileContent.isBlank()) {
             return Symbols.NONE;
         }
+        if (SourceText.tooLargeToScan(fileContent)) {
+            return Symbols.NONE;
+        }
         Set<String> defines = new LinkedHashSet<>();
         Set<String> references = new LinkedHashSet<>();
-        Set<String> imported = new LinkedHashSet<>();
-        for (ImportRef ref : importsIn(fileContent)) {
-            imported.addAll(ref.symbols());
-        }
-        String withoutBlockComments = BLOCK_COMMENT.matcher(fileContent).replaceAll(" ");
-        for (String rawLine : withoutBlockComments.split("\\R")) {
-            String line = stripCommentsAndStrings(rawLine);
-            if (IMPORT_START.matcher(line).find()) {
+        boolean insideImport = false;
+        for (String rawLine : SourceText.stripBlockComments(fileContent).split("\\R")) {
+            // Tracked on the RAW line, and across the whole statement rather than its first line.
+            // A braced import wraps, and stripCommentsAndStrings removes the quoted specifier that
+            // ends it -- so the terminator has to be looked for before stripping. Skipping the whole
+            // span is the guard the removed imported-name filter was standing in for.
+            if (!insideImport && IMPORT_START.matcher(rawLine).find()) {
+                insideImport = true;
+            }
+            if (insideImport) {
+                insideImport = rawLine.indexOf('\'') < 0 && rawLine.indexOf('"') < 0
+                        && rawLine.indexOf(';') < 0;
                 continue;
             }
-            Matcher declaration = DECLARATION.matcher(line);
-            if (declaration.find()) {
-                defines.add(declaration.group(1));
-            }
-            Matcher method = METHOD_DECLARATION.matcher(line);
-            if (method.find() && !KEYWORDS.contains(method.group(1))) {
-                defines.add(method.group(1));
-            }
-            Matcher identifier = IDENTIFIER.matcher(line);
-            while (identifier.find()) {
-                String candidate = identifier.group();
-                if (!KEYWORDS.contains(candidate) && !imported.contains(candidate)) {
-                    references.add(candidate);
-                }
-            }
+            scanLine(stripCommentsAndStrings(rawLine), defines, references);
         }
         references.removeAll(defines);
         return new Symbols(defines, references);
+    }
+
+    /**
+     * One line's declarations and references.
+     *
+     * <p><b>Imported names stay as references</b>, because an ES module imports the callable itself
+     * — {@code import { chargeFor } … chargeFor(rate)}. Excluding them, as an earlier version did,
+     * left this language contributing no caller edge at all: the index recorded prop names and
+     * destructured locals and never a component or hook, so {@code callersOf("Button")} could never
+     * return anything.
+     *
+     * <p>Only top-level or exported {@code const}/{@code let}/{@code var} count as declarations. A
+     * function-local is not something another file can call, and counting them let a handful of
+     * local variable names consume the whole caller-lookup budget.
+     */
+    private void scanLine(String line, Set<String> defines, Set<String> references) {
+        Matcher declaration = DECLARATION.matcher(line);
+        if (declaration.find() && isTopLevelOrExported(line)) {
+            defines.add(declaration.group(1));
+        }
+        String callable = SourceText.declaredCallableName(line, NOT_DECLARATIONS);
+        if (callable != null && !KEYWORDS.contains(callable)) {
+            defines.add(callable);
+        }
+        Matcher identifier = IDENTIFIER.matcher(line);
+        while (identifier.find()) {
+            String candidate = identifier.group();
+            if (!KEYWORDS.contains(candidate)) {
+                references.add(candidate);
+            }
+        }
+    }
+
+    /** Column-zero or {@code export} — the two shapes another module can actually reach. */
+    private static boolean isTopLevelOrExported(String line) {
+        return !line.isEmpty() && (!Character.isWhitespace(line.charAt(0)) || line.contains("export "));
     }
 
     @Override

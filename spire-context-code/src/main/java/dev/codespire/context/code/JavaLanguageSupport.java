@@ -59,13 +59,13 @@ public final class JavaLanguageSupport implements LanguageSupport {
     private static final Pattern TYPE_DECLARATION =
             Pattern.compile("\\b(?:class|interface|enum|record)\\s+([A-Za-z_$][A-Za-z0-9_$]*)");
 
-    /** A declared method: an access modifier, a return type, then the name and an open paren. */
-    private static final Pattern MEMBER_DECLARATION = Pattern.compile(
-            "^\\s*(?:public|protected|private)\\s+[\\w<>,\\[\\]$.?\\s]*?"
-                    + "([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(");
-
-    /** Block and javadoc comments, across lines — DOTALL so a multi-line comment is one match. */
-    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
+    /**
+     * Words that take an argument list without declaring anything, so a line containing them is a
+     * call or a control-flow construct rather than a declaration.
+     */
+    private static final Set<String> NOT_DECLARATIONS = Set.of(
+            "if", "for", "while", "switch", "catch", "return", "new", "synchronized", "assert",
+            "super", "this", "do", "else", "try", "throw", "case", "instanceof");
 
     private static final Pattern PACKAGE_LINE = Pattern.compile("^\\s*package\\s+");
 
@@ -123,36 +123,49 @@ public final class JavaLanguageSupport implements LanguageSupport {
         if (fileContent == null || fileContent.isBlank()) {
             return Symbols.NONE;
         }
+        if (SourceText.tooLargeToScan(fileContent)) {
+            return Symbols.NONE;
+        }
         Set<String> defines = new LinkedHashSet<>();
         Set<String> references = new LinkedHashSet<>();
-        Set<String> imported = new LinkedHashSet<>();
-        for (ImportRef ref : importsIn(fileContent)) {
-            imported.addAll(ref.symbols());
-        }
-        String withoutBlockComments = BLOCK_COMMENT.matcher(fileContent).replaceAll(" ");
-        for (String rawLine : withoutBlockComments.split("\\R")) {
+        for (String rawLine : SourceText.stripBlockComments(fileContent).split("\\R")) {
             String line = stripCommentsAndStrings(rawLine);
-            Matcher type = TYPE_DECLARATION.matcher(line);
-            if (type.find()) {
-                defines.add(type.group(1));
-            }
-            Matcher member = MEMBER_DECLARATION.matcher(line);
-            if (member.find()) {
-                defines.add(member.group(1));
-            }
-            if (IMPORT_LINE.matcher(line).find() || PACKAGE_LINE.matcher(line).find()) {
-                continue;
-            }
-            Matcher identifier = IDENTIFIER.matcher(line);
-            while (identifier.find()) {
-                String candidate = identifier.group();
-                if (!KEYWORDS.contains(candidate) && !imported.contains(candidate)) {
-                    references.add(candidate);
-                }
-            }
+            scanLine(line, defines, references);
         }
         references.removeAll(defines);
         return new Symbols(defines, references);
+    }
+
+    /**
+     * One line's declarations and references.
+     *
+     * <p><b>Imported names are deliberately kept as references.</b> An earlier version excluded
+     * them, reasoning that an import says what a file COULD use rather than what it does — which is
+     * wrong here and quietly made the whole feature inert. To call {@code Pricer.chargeFor()} a file
+     * must import {@code Pricer}, so the filter removed the name precisely from the files that are
+     * callers, and {@code callersOf("Pricer")} returned nothing. The import STATEMENTS are skipped
+     * below, which is the guard that was actually wanted; the filter on top of it removed only
+     * genuine body uses.
+     */
+    private void scanLine(String line, Set<String> defines, Set<String> references) {
+        Matcher type = TYPE_DECLARATION.matcher(line);
+        if (type.find()) {
+            defines.add(type.group(1));
+        }
+        String callable = SourceText.declaredCallableName(line, NOT_DECLARATIONS);
+        if (callable != null && !KEYWORDS.contains(callable)) {
+            defines.add(callable);
+        }
+        if (IMPORT_LINE.matcher(line).find() || PACKAGE_LINE.matcher(line).find()) {
+            return;
+        }
+        Matcher identifier = IDENTIFIER.matcher(line);
+        while (identifier.find()) {
+            String candidate = identifier.group();
+            if (!KEYWORDS.contains(candidate)) {
+                references.add(candidate);
+            }
+        }
     }
 
     private static String stripCommentsAndStrings(String content) {

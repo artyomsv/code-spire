@@ -59,15 +59,26 @@ class JavaSymbolsTest {
     }
 
     /**
-     * An import says what the file COULD use, not what it does — and rung 1 already walks imports in
-     * the other direction. Counting them as references would make every importer look like a caller
-     * of everything its imports declare.
+     * An imported name that the body USES is a reference, and this is the single most important thing
+     * this scanner gets right.
+     *
+     * <p>This test previously asserted the opposite, on the reasoning that "an import says what a file
+     * COULD use, not what it does". That reasoning is sound and the conclusion was wrong: to CALL
+     * something from another file you must import it, so excluding imported names removed the name
+     * precisely from the files that are callers, and `callersOf("Pricer")` returned nothing. The guard
+     * actually wanted is skipping the import STATEMENTS, which happens separately.
+     *
+     * <p>An import the body never uses still contributes nothing, because only the statement lines
+     * mention it — which is the property the old filter was there to provide, obtained for free.
      */
     @Test
-    void doesNotCountAnImportedNameAsAReference() {
-        assertFalse(support.symbolsIn(SOURCE).references().contains("Pricer"),
-                "Pricer is imported; rung 1 already resolves it, and the index must not double-count it");
-        assertFalse(support.symbolsIn(SOURCE).references().contains("List"));
+    void countsAnImportedNameTheBodyActuallyUses() {
+        Symbols s = support.symbolsIn(SOURCE);
+
+        assertTrue(s.references().contains("Pricer"),
+                "a file that imports and calls Pricer must be findable as its caller: " + s.references());
+        assertFalse(s.references().contains("List"),
+                "List is imported but never used in the body, so only its import line mentions it");
     }
 
     @Test
