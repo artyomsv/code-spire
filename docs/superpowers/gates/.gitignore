@@ -1,0 +1,5 @@
+# Run artifacts: per-arm findings, context logs and the scratch results a run leaves behind.
+# The harness writes beside itself, so a run must not dirty the working tree.
+f-*.json
+ctx-*.log
+before-*.txt

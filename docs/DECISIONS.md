@@ -56,6 +56,22 @@ or consumes `PushReceived`.
    correct rather than a limitation. Rung 2 is gated on rung 1 clearing an evidence bar fixed in
    advance.
 
+   **Outcome (2026-08-29): the bar was not cleared, rung 2 is not authorized, and P3 closed at rung
+   1.** The measurement ran on five merged pull requests plus one from the test repository, each
+   reviewed twice with only the code-context provider toggled: 10 findings shared, 7 only with
+   context, 8 only without — against a noise floor, measured by running the identical arm twice, of
+   five differing findings on a pull request where nothing changed. The toggle moved findings no more
+   than rerunning the same configuration did.
+
+   **Recorded deliberately: the null is corpus-limited, and does NOT mean the feature was falsified.**
+   The runs produced 3 code findings against 15 documentation findings, because this repository's
+   large pull requests are majority ADRs, runbooks and plans — and code context can only ever change
+   a code finding. There were three, in both arms. A future reader deciding whether to reopen rung 2
+   should know the gate established that *this corpus cannot measure it*, not that the retrieved
+   definitions failed to help; an ADR that records a verdict without its reason converts a corpus
+   limitation into a false fact about the product. Reopening needs a majority-code corpus with
+   cross-file dependencies, and the noise-floor run the criterion originally lacked.
+
 **The index is a hint, never an answer — and that is what removes the staleness problem.** Nothing is
 cited from the table. Candidate paths are re-fetched at the review commit and the reference confirmed
 before it becomes a snippet. There is therefore no invalidation pass, no indexed-commit versus

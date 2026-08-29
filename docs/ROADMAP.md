@@ -545,6 +545,7 @@ down is the original design-time roadmap (kept for reference).
 
 ### What is actually left
 
+**P3 closed at rung 1 on 2026-08-29** (the rung 2 evidence gate returned a corpus-limited null).
 **Every numbered item in A through E is now closed** (1–11, 13, 14, 15, 16, 17 — item 10 closed with
 D10 on 2026-08-03; **16 and 17 closed 2026-08-24**). Only **D12** remains numbered. The product loop —
 webhook → diff → context → review → conversation → reconciliation — is complete and live-verified on
@@ -557,7 +558,7 @@ Open, by nature of the work rather than by section:
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P3** | Repository knowledge base, rung 2 | S–M | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) is **not authorized by rung 1 shipping** — it starts only after the evidence measurement fixed in spec §9: re-run reviewed PRs with and without code context and diff the findings; ships only if at least one new finding is judged correct and false positives do not increase. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
+| **P3** | Repository knowledge base | ✅ **closed at rung 1 (2026-08-29)** | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) was **never started and is not authorized**: the §9 measurement ran on 2026-08-29 and returned a null, so P3 closes here. The null is corpus-limited rather than a verdict on the feature — see the rung 2 bullet below and spec §9. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 
@@ -659,13 +660,14 @@ does not exist yet. Operator decides.
   (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) asserting a retrieved snippet's body
   reaches the `Prompt` object actually sent to the model, confirmed to discriminate. 1504 Java tests
   across 197 suites; 375 `spire-ui` vitest tests across 51 files.
-- **Rung 2, gated on evidence — not started.** `worker.code_symbol` — structure only, never content —
+- **Rung 2 — never started, and now not authorized.** `worker.code_symbol` — structure only, never content —
   answering call-site impact. A hint confirmed at citation, never an answer. **Rung 1 shipping does
   not authorize rung 2**: it begins only after the measurement fixed in spec §9 — re-run reviewed PRs
   with and without code context and diff the findings; ships only if at least one new finding is
-  judged correct by the operator and false positives do not increase. Failing that bar stops P3 here.
+  judged correct by the operator and false positives do not increase. Failing that bar stops P3 here,
+  and it did.
 
-  **First attempt, 2026-08-28: not run, and the reason was not the corpus.** Reviewing four real
+  **First attempt, 2026-08-28 — not run at all.** Reviewing four real
   merged PRs found that the deployment could not produce a review of any of them — a reasoning model
   spent the whole 4096-token output default on thinking and returned nothing, twice, on two different
   models. Both arms would have reported zero findings, which under the rule above is a **null result
@@ -673,16 +675,30 @@ does not exist yet. Operator decides.
   are fixed and merged (#77, 2026-08-28) — twelve in the end, not four: the review round found five
   more in the fix itself and running it against real GitHub found three more, every one of those in
   the UI and none reachable from a test suite. The gate itself still has to be run, and the harness
-  that runs it is unchanged. Nothing here is evidence for or against rung 2 yet.
+  that runs it is unchanged. Nothing in that attempt is evidence for or against rung 2.
 
-  **Before it is run again, §9 needs a positive control.** As written the gate cannot fail safely: it
-  stops rung 2 on a null result, while having no way to tell "code context did not help" from "the
-  pipeline produced nothing" — which is exactly what happened. Asserting that each arm came back
-  parseable (`degraded = false`) is now cheap, because #77 added the field that check needs.
-- **Exit:** reviews reference code elsewhere in the repo, not just the diff. Mechanically true of
-  rung 1 — a `CODE_SNIPPET` item can name a file the diff never touched. Whether that reference makes
-  a review *better* is a separate, unproven claim, which is exactly what the evidence gate above tests
-  before rung 2 is allowed to start.
+  **Second attempt, 2026-08-29 — run, with the positive control the first attempt showed it needed.**
+  Five merged pull requests plus one from the test repository, each reviewed twice with only the
+  code-context provider toggled; every counted run asserted that its arm actually differed (control
+  received zero snippets, treatment 3–12) and that the model returned something parseable
+  (`degraded = false`, the field #77 added). Result: **10 findings shared, 7 only with context, 8 only
+  without** — and a noise floor, measured by running the *identical* arm twice, of **five differing
+  findings on one pull request where nothing changed at all**. The toggle produced no more variation
+  than rerunning the same configuration. Under §9 that is a null, and rung 2 is not authorized.
+
+  **But the null is corpus-limited, and that distinction is the point.** Split by file type, the runs
+  produced **3 code findings against 15 documentation findings** — code-spire's large pull requests
+  are majority ADRs, runbooks and implementation plans, and code context can only ever change a *code*
+  finding. There were three, in both arms. So the gate did not falsify rung 1; it established that
+  this repository cannot serve as its test bed. Reopening needs a different corpus (majority code,
+  with cross-file dependencies), a mandatory noise-floor run, and the corpus criterion §9 lacked.
+  The harness, its three controls and the one it was still missing are in
+  `docs/superpowers/gates/`.
+- **Exit — met.** Reviews reference code elsewhere in the repo, not just the diff: a `CODE_SNIPPET`
+  item can name a file the diff never touched, and does. Whether that reference makes a review
+  *better* stayed a separate claim, and the gate above could not settle it on this corpus — so P3
+  closes on the criterion it was written against, with the stronger claim explicitly unproven rather
+  than quietly assumed.
 - **Not built:** embeddings, a vector store, a repository crawl, a `PushReceived` consumer,
   `spire-indexer` as a deployable. The Qdrant/LanceDB-versus-pgvector contradiction between this file
   and DATA-MODEL is left **unresolved and deferred** rather than settled — this design needs neither.
