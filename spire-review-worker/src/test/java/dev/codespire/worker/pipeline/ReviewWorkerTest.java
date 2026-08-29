@@ -282,6 +282,42 @@ class ReviewWorkerTest {
                 "a truncated review is flagged on the posted summary comment");
     }
 
+    /**
+     * A learned preference hid something, and the pull request says so.
+     *
+     * <p>This line is the entire accountability mechanism for FR-10. The filter runs in the
+     * orchestrator and the author never sees it; if the count does not reach the summary, a
+     * preference that has started hiding real defects is invisible to everyone who could notice.
+     * Prompt injection was rejected precisely because it could not offer this.
+     */
+    @Test
+    void aSuppressedFindingCountIsStatedOnThePostedSummary() {
+        worker.postComments(new PostComments(REVIEW_ID, REPO, 9, COMMIT,
+                new ReviewResult(List.of(finding("src/A.java", 1)), "ok", ModelUsage.of("m", 1, 1)),
+                null, List.of(), null, 3));
+
+        assertTrue(sink.summaryBody.contains("3 findings were hidden by a learned preference"),
+                "the count must reach the pull request: " + sink.summaryBody);
+    }
+
+    /** Singular reads as a sentence rather than as a template someone forgot to finish. */
+    @Test
+    void oneSuppressedFindingIsWordedInTheSingular() {
+        worker.postComments(new PostComments(REVIEW_ID, REPO, 9, COMMIT,
+                new ReviewResult(List.of(finding("src/A.java", 1)), "ok", ModelUsage.of("m", 1, 1)),
+                null, List.of(), null, 1));
+
+        assertTrue(sink.summaryBody.contains("1 finding was hidden"), sink.summaryBody);
+    }
+
+    /** A deployment with no preferences must post exactly what it posted before this existed. */
+    @Test
+    void noSuppressionsMeansNoMentionOfThem() {
+        worker.postComments(postCommand(List.of(finding("src/A.java", 1))));
+
+        assertFalse(sink.summaryBody.contains("hidden by a learned preference"), sink.summaryBody);
+    }
+
     @Test
     void oneFailingInlinePostNeverAbortsTheBatch() {
         sink.failOnInline = 1; // the FIRST inline post throws a 500
