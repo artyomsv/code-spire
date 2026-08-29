@@ -20,9 +20,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Every module that has tests belongs to exactly one CI tier.
  *
- * <p>CI runs two Gradle lifecycle tasks: {@code testFast} for the modules whose tests need no
- * Docker, and {@code testServices} for the three deployables, whose {@code @QuarkusTest}s boot
- * Postgres and Kafka Dev Services containers and are the slow half of the suite.
+ * <p>CI runs three Gradle lifecycle tasks: {@code testFast} for the modules whose tests need no
+ * Docker, {@code testServices} for the three deployables, whose {@code @QuarkusTest}s boot Postgres
+ * and Kafka Dev Services containers and are the slow half of the suite, and {@code testE2e} for
+ * modules whose tests drive a stack they do not own.
+ *
+ * <p>The third tier is not "even slower". What separates it is ownership: a service test BOOTS what it
+ * talks to, so it is hermetic and can run on the PR path; an e2e test is handed a running stack and a
+ * containerised GitLab, so it can only run where one exists. That is why it is nightly, and why a
+ * module landing in the wrong tier fails differently in each direction — a fast-tier module that
+ * needs a stack reddens every PR, and an e2e-tier module that does not need one is silently never run
+ * on the PR path.
  *
  * <p>A module in neither tier is still compiled by the build and is <em>tested by nothing</em>, while
  * CI reports green. That is the same vacuity as a snapshot gate that iterates an empty list and reads
@@ -40,41 +48,47 @@ class TestTierCoverageTest {
 
     private static final String SERVICE_TIER = "serviceTestModules";
 
+    private static final String E2E_TIER = "e2eTestModules";
+
+    private static final List<String> ALL_TIERS = List.of(FAST_TIER, SERVICE_TIER, E2E_TIER);
+
     private static final Pattern INCLUDE = Pattern.compile("^\\s*include\\(\"([^\"]+)\"\\)", Pattern.MULTILINE);
 
     private static final Pattern QUOTED = Pattern.compile("\"([^\"]+)\"");
 
     @Test
     void everyModuleWithTestsIsInExactlyOneTier() throws IOException {
-        Set<String> fast = tierList(FAST_TIER);
-        Set<String> services = tierList(SERVICE_TIER);
-
         List<String> unassigned = new ArrayList<>();
         List<String> duplicated = new ArrayList<>();
         for (String module : includedModules()) {
             if (!hasTests(module)) {
                 continue;
             }
-            boolean inFast = fast.contains(module);
-            boolean inServices = services.contains(module);
-            if (inFast && inServices) {
+            int tiers = 0;
+            for (String tier : ALL_TIERS) {
+                if (tierList(tier).contains(module)) {
+                    tiers++;
+                }
+            }
+            if (tiers > 1) {
                 duplicated.add(module);
-            } else if (!inFast && !inServices) {
+            } else if (tiers == 0) {
                 unassigned.add(module);
             }
         }
 
         assertTrue(unassigned.isEmpty(),
                 "These modules have tests but belong to no CI tier, so CI never runs them: " + unassigned
-                        + ". Add each to " + FAST_TIER + " or " + SERVICE_TIER + " in the root build.gradle.kts.");
+                        + ". Add each to one of " + ALL_TIERS + " in the root build.gradle.kts.");
         assertTrue(duplicated.isEmpty(),
-                "These modules are in both CI tiers, so their tests run twice per build: " + duplicated);
+                "These modules are in more than one CI tier, so their tests run twice per build: "
+                        + duplicated);
     }
 
     @Test
-    void neitherTierNamesAModuleThatIsNotIncluded() throws IOException {
+    void noTierNamesAModuleThatIsNotIncluded() throws IOException {
         Set<String> included = includedModules();
-        for (String tier : List.of(FAST_TIER, SERVICE_TIER)) {
+        for (String tier : ALL_TIERS) {
             for (String module : tierList(tier)) {
                 assertTrue(included.contains(module),
                         tier + " names '" + module + "', which settings.gradle.kts does not include. A stale "
@@ -92,6 +106,7 @@ class TestTierCoverageTest {
         assertFalse(tierList(FAST_TIER).isEmpty(), FAST_TIER + " parsed to nothing");
         assertEquals(3, tierList(SERVICE_TIER).size(),
                 SERVICE_TIER + " should name exactly the three deployables");
+        assertFalse(tierList(E2E_TIER).isEmpty(), E2E_TIER + " parsed to nothing");
         assertTrue(includedModules().size() > 10,
                 "settings.gradle.kts parsed to " + includedModules().size() + " modules, which is too few");
     }

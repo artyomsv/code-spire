@@ -28,3 +28,5 @@ include("spire-llm")
 include("spire-gateway")
 include("spire-review-worker")
 include("spire-orchestrator")
+
+include("spire-e2e")
