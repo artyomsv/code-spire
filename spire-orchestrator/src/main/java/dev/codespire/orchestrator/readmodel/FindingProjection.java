@@ -13,7 +13,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Types;
 import java.util.List;
 
 /**
@@ -71,8 +70,8 @@ public class FindingProjection {
             boolean previousAutoCommit = c.getAutoCommit();
             c.setAutoCommit(false);
             try {
-                deleteRound(c, reviewId, round);
-                insertAll(c, reviewId, round, commit, findings);
+                FindingRows.deleteRound(c, reviewId, round);
+                FindingRows.insertAll(c, encryption, reviewId, round, commit, findings);
                 c.commit();
             } catch (SQLException e) {
                 c.rollback();
@@ -219,7 +218,7 @@ public class FindingProjection {
             return false;
         }
         ps.setString(1, verdict.status().name());
-        setRound(ps, 2, round);
+        FindingRows.setRound(ps, 2, round);
         ps.setString(3, reviewId);
         ps.setString(4, verdict.threadRef());
         return ps.executeUpdate() > 0;
@@ -231,7 +230,7 @@ public class FindingProjection {
             return;
         }
         ps.setString(1, verdict.status().name());
-        setRound(ps, 2, round);
+        FindingRows.setRound(ps, 2, round);
         ps.setString(3, reviewId);
         ps.setString(4, verdict.path());
         ps.setInt(5, verdict.line());
@@ -245,85 +244,23 @@ public class FindingProjection {
      * them as zero: an unknown duration averaged in as "fixed in the round it was raised" would bias
      * the number toward exactly the wrong answer the old query already gave.
      */
-    private static void setRound(PreparedStatement ps, int index, int round) throws SQLException {
-        if (round <= 0) {
-            ps.setNull(index, Types.INTEGER);
-        } else {
-            ps.setInt(index, round);
-        }
-    }
-
-    private static void deleteRound(Connection c, String reviewId, int round) throws SQLException {
-        try (PreparedStatement ps =
-                     c.prepareStatement("DELETE FROM review_finding WHERE review_id = ? AND round = ?")) {
-            ps.setString(1, reviewId);
-            ps.setInt(2, round);
-            ps.executeUpdate();
-        }
-    }
-
-    private void insertAll(Connection c, String reviewId, int round, String commit,
-                           List<Finding> findings) throws SQLException {
-        if (findings == null || findings.isEmpty()) {
-            return;
-        }
-        String sql = """
-                INSERT INTO review_finding (review_id, round, commit_sha, path, start_line, end_line,
-                                            severity, category, origin, message, suggestion)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """;
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
-            for (Finding finding : findings) {
-                if (finding == null || finding.path() == null || finding.range() == null) {
-                    continue;
-                }
-                ps.setString(1, reviewId);
-                ps.setInt(2, round);
-                ps.setString(3, commit == null ? "" : commit);
-                ps.setString(4, finding.path());
-                ps.setInt(5, finding.range().startLine());
-                ps.setInt(6, finding.range().endLine());
-                ps.setString(7, finding.severity() == null ? "" : finding.severity().name());
-                setNullable(ps, 8, finding.category() == null ? null : finding.category().name());
-                ps.setString(9, ORIGIN_REVIEW);
-                // Findings quote the source under review — encrypted at rest, AAD = reviewId, the
-                // same binding review_status.findings_json uses.
-                setNullable(ps, 10, encrypted(finding.message(), reviewId));
-                setNullable(ps, 11, encrypted(finding.suggestion(), reviewId));
-                ps.addBatch();
-            }
-            ps.executeBatch();
-        }
-    }
-
-    private String encrypted(String value, String reviewId) {
-        return value == null ? null : encryption.encryptString(value, reviewId);
-    }
-
-    private static void setNullable(PreparedStatement ps, int index, String value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, Types.VARCHAR);
-        } else {
-            ps.setString(index, value);
-        }
-    }
-
     /**
      * Marks the findings a learned preference hid, naming the preference responsible.
      *
      * <p>The rows stay in the corpus rather than being dropped. That is what makes a wrong
      * preference detectable: if one starts hiding findings the team would have acted on, the
      * evidence is still there to count, and revoking it restores them on the next review.
+     *
+     * <p>One row per suppressed finding, matching the shape the two sibling updates use. A bare
+     * WHERE on the location stamps EVERY row there -- and two findings on one line is ordinary model
+     * output, so the visible one would be recorded as hidden, counted in the suppression total, and
+     * dropped from the corpus the proposal engine reads.
      */
     public void markSuppressed(String reviewId, int round, List<String> paths, List<Integer> lines,
                                long preferenceId) {
         if (round <= 0 || paths.isEmpty() || paths.size() != lines.size()) {
             return;
         }
-        // One row per suppressed finding, matching the shape the two sibling writes use. A bare
-        // WHERE on the location stamps EVERY row there -- and two findings on one line is ordinary
-        // model output, so the visible one would be recorded as hidden, counted in the suppression
-        // total, and dropped from the corpus the proposal engine reads.
         String sql = """
                 UPDATE review_finding SET suppressed_by = ?
                  WHERE id = (SELECT id FROM review_finding

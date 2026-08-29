@@ -1177,8 +1177,45 @@ The design is fully specified in `docs/` — **treat those files as the source o
   that could not fail because the upsert never writes `state` — the guard actually protects the
   *evidence* on a decided row, which is what the replacement asserts.
 
-  Measured, not estimated: **1685 Java tests across 210 suites** (`testFast` 657/80 + `testServices` —
-  gateway 73/11, orchestrator 732/92, worker 223/27); **402 `spire-ui` vitest tests across 53 files**;
+  **Reviewed on four lenses, and the two worst defects were in the new code (2026-08-29).** Both
+  were silent, and both were about ORDER rather than logic — the class this feature was designed to
+  avoid, arriving in its own implementation.
+  - **A hidden finding was hidden forever.** The suppression filter ran eleven lines after
+    `recordOpenFindings`, so a suppressed finding entered the carry-forward, became the next round's
+    `PriorRun`, and the worker turned it into the review prompt's EXCLUSION list — telling the model
+    never to raise it again. Revoking the preference could not restore it, because the filter had
+    nothing left to un-hide. That is exactly the property ADR-027 names as the reason a counted
+    filter beats prompt injection, and four places promised it in prose while the code did the
+    opposite. `LearnedMemoryTest.revokingStopsTheHidingOnTheNextReview` passed throughout, because a
+    unit test of the filter cannot see the seam; the fix is a saga-level test.
+  - **A read failure would have deleted history.** `ReviewRuns.currentRun` answers `FIRST_RUN` when
+    it cannot read — right for the ledger, where a charge under run 1 is harmless and refusing loses
+    money. Wrong for a round-KEYED write: `recordGenerated` replaces every row for
+    `(review_id, round)`, so a transient fault during round 5 resolved to 1, deleted round 1's real
+    rows, and filed round 5's findings there. The `round <= 0` guard was unreachable from production,
+    so the test covering it tested nothing. `roundOrUnknown` returns a sentinel instead.
+
+  Eight more, each verified before being changed: a preference could hide a **SECURITY** finding and
+  the evidence for it is **manufacturable** (an `ACKNOWLEDGED` verdict comes from the model reading
+  the author's own reply, so ten "won't fix" answers on one PR qualified a group — now a
+  never-suppressed floor enforced at both ends, plus a two-review minimum shown on the card); the
+  Memory screen showed **"threshold: 0 findings, 0% dismissed"** because the thresholds were read as
+  FIELDS off an `@ApplicationScoped` bean and a CDI proxy delegates methods, not fields; **"median
+  rounds to fix" was the median round RAISED** (`ORDER BY round`), so it read 1.0 forever on a
+  healthy repository — V39 records `verdict_round`; `markSuppressed` **stamped every row on the**
+  **line**; `/finding` findings **never entered the corpus** (`recordConversationFinding` had zero
+  callers, so the `origin='conversation'` V36 documents described rows that could not exist); the PR
+  comment **pointed at a page that does not exist**; and identity resolution leaned on an **internal**
+  **Quarkus class**, whose silent failure would key analytics on a reassignable username.
+
+  **One trap recurred four times in this milestone**, which is worth more than any single fix: an
+  un-overridden method on a saga test fake opens a real database connection from a plain unit test.
+  `roundOrUnknown`, `markSuppressed`, `recordVerdicts` and `recordConversationFinding` each hit it.
+  The lesson was already recorded for `setNote` and `recordCharges`; the fakes now override every
+  method the new paths reach, deliberately and with a comment saying why.
+
+  Measured, not estimated: **1711 Java tests across 214 suites** (`testFast` 666/81 + `testServices` —
+  gateway 73/11, orchestrator 746/95, worker 226/27); **413 `spire-ui` vitest tests across 55 files**;
   `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
