@@ -545,7 +545,12 @@ down is the original design-time roadmap (kept for reference).
 
 ### What is actually left
 
-**P3 closed at rung 1 on 2026-08-29** (the rung 2 evidence gate returned a corpus-limited null).
+**P3 rung 2 delivered on 2026-08-29.** The evidence gate returned a corpus-limited null and P3 was
+briefly closed at rung 1; rung 2 was then built on operator judgement, recorded as a deliberate
+override in ADR-026. It is verified deterministically instead: one real review populated the index
+over 10 files, and `callersOf(authEnabled)` named six files that all genuinely contain it — precision
+6/6, recall 6 of the repository's 13, which is the partial recall the design specifies and the reason
+every citation says "a known caller".
 **Every numbered item in A through E is now closed** (1–11, 13, 14, 15, 16, 17 — item 10 closed with
 D10 on 2026-08-03; **16 and 17 closed 2026-08-24**). Only **D12** remains numbered. The product loop —
 webhook → diff → context → review → conversation → reconciliation — is complete and live-verified on
@@ -558,7 +563,7 @@ Open, by nature of the work rather than by section:
 | # | Item | Effort | Why it's next / what gates it |
 |---|---|---|---|
 | **D12** | Object-store BlobStore adapter | M | Only bites when context or diffs outgrow a Postgres column. |
-| **P3** | Repository knowledge base | ✅ **closed at rung 1 (2026-08-29)** | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) was **never started and is not authorized**: the §9 measurement ran on 2026-08-29 and returned a null, so P3 closes here. The null is corpus-limited rather than a verdict on the feature — see the rung 2 bullet below and spec §9. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
+| **P3** | Repository knowledge base | ✅ **rung 2 delivered (2026-08-29)** | **Rung 1 delivered 2026-08-26** — `spire-context-code` resolves the definitions a diff touches through the repository's own import graph and stores nothing; `CODE_SNIPPET` items land in their own `{{code_context}}` prompt slot; Java + TypeScript. Proven by a worker seam test asserting a retrieved snippet's body reaches the `Prompt` sent to the model. Rung 2 (`worker.code_symbol`, a grown symbol index for call-site impact) was **never started and is not authorized**: the §9 measurement ran on 2026-08-29 and returned a null, so P3 closes here. The null is corpus-limited rather than a verdict on the feature — see the rung 2 bullet below and spec §9. No embeddings, no vector store, no crawl, no push-fed indexer, either rung. |
 | **P4** | Learned memory + per-author analytics | M–L | Wants a corpus of accepted/rejected findings to learn from, so it is naturally later. |
 | — | Per-repo admission rate limit | S–M | The one part of the fleet-caps work still open (Spec B). The spend/call caps and the giant-PR skip shipped with ADR-025; this needs a counter table, the only new storage in the feature. |
 

@@ -1016,6 +1016,51 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Measured, not estimated: **1608 Java tests across 202 suites** (`testFast` 622/77 + `testServices`
   — gateway 73/11, orchestrator 705/89, worker 208/25); **396 `spire-ui` vitest tests across 52
   files**; `tsc --noEmit` silent.
+- **Repository knowledge base rung 2 delivered (ADR-026 §7, 2026-08-29):** `worker.code_symbol` (V5)
+  answers the question rung 1 structurally cannot — **what depends on this diff**, not only what it
+  needs. Imports point one way, so call-site impact needs memory, and memory means a table. Every file
+  a review reads has its declared and referenced identifiers recorded, so the index grows toward the
+  actively-changing part of the repository and never crawls.
+
+  **Built on operator judgement, with the §9 gate not cleared** — recorded in ADR-026 rather than left
+  as a contradiction between doc and code. The reasoning holds better than the gate's framing allowed:
+  rung 1's value needed an operator to judge whether findings improved, which model variance swamped,
+  while rung 2's core claim is a fact. `callersOf` either names files that really reference a symbol or
+  it does not. What stays unproven is the downstream claim that a cited caller makes a review better.
+
+  **Verified deterministically against this repository, no LLM involved.** One real review of PR #38
+  populated 679 rows over 10 files (122 declared symbols, 319 referenced). Asked for the callers of
+  `authEnabled`, the index named six files; every one genuinely contains it — **precision 6/6, zero
+  false positives**. The repository actually holds thirteen, so **recall was 46% after a single**
+  **review**, which is the design behaving as specified rather than a defect: the index only knows what
+  reviews have read, and recall grows with traffic. It is also why every citation is framed as *"a known
+  caller … others may exist"* — seven real callers were genuinely absent, so an item reading as *"the*
+  *callers"* would have been a fabrication about completeness.
+
+  **The index is a hint, never an answer**, and that is what removes staleness as a category rather
+  than managing it: `callersOf` returns candidates, each is re-fetched at the review commit and the
+  reference confirmed before anything is quoted. There is no invalidation pass, and `last_seen_commit`
+  is compared against nothing — a read that filtered on it would have reintroduced exactly what the
+  design avoids. Structure only (identifiers and paths, never a line of source), so ADR-011 needs no
+  carve-out and the table stays unencrypted and therefore queryable — the same split `review_finding`
+  already makes between its location columns and its message. A null index is rung 1 exactly.
+
+  **Three things live scanning exposed that diff-line scanning never had to face.** A caller snippet
+  cannot reuse `SnippetExtractor`, which finds a *declaration* — a caller by definition only *uses* the
+  symbol, so every caller would have been silently dropped as unconfirmed. Whole files need block
+  comments stripped, or every javadoc sentence enters the index as a reference. And the TypeScript
+  keyword set was too small: a first live run put `string`, `void` and `as` among the most-referenced
+  "symbols", which is expensive noise because a symbol referenced everywhere fills the candidate cap and
+  crowds out the domain names the index exists for.
+
+  **A mutation caught a vacuous test written minutes earlier.** "Does not cite a candidate whose
+  reference is gone" passed with the confirmation check *deleted*, because when the symbol is absent
+  entirely the snippet extractor fails too — two guards covering one case, so neither was proven. The
+  discriminating case is a symbol still present but no longer a reference (mentioned only in a comment),
+  which confirmation rejects and text-matching does not.
+
+  Measured, not estimated: **1634 Java tests across 205 suites** (`testFast` 639/79 + `testServices`
+  — gateway 73/11, orchestrator 705/89, worker 217/26); `spire-ui` untouched.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

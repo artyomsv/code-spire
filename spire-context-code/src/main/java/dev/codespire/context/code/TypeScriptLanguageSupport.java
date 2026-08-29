@@ -36,10 +36,24 @@ import java.util.regex.Pattern;
  */
 public final class TypeScriptLanguageSupport implements LanguageSupport {
 
+    /**
+     * Reserved words and built-in type names, which are never repository symbols.
+     *
+     * <p>The type-level half was added after a live run: scanning whole files put {@code string},
+     * {@code void} and {@code as} among the most-referenced "symbols" in the index. They are pure
+     * noise, and expensive noise — a symbol referenced by every file fills the candidate cap and
+     * crowds out the domain names the index exists to answer for. Diff-line scanning never surfaced
+     * this because a hunk carries far less type vocabulary than a file does.
+     */
     private static final Set<String> KEYWORDS = Set.of(
             "const", "let", "var", "function", "class", "return", "if", "else", "import", "from",
             "export", "default", "async", "await", "new", "this", "null", "true", "false",
-            "interface", "type");
+            "interface", "type", "as", "void", "string", "number", "boolean", "any", "unknown",
+            "never", "undefined", "object", "symbol", "bigint", "readonly", "keyof", "typeof",
+            "extends", "implements", "public", "private", "protected", "static", "abstract",
+            "enum", "namespace", "declare", "satisfies", "infer", "is", "in", "of", "for", "while",
+            "switch", "case", "break", "continue", "throw", "try", "catch", "finally", "yield",
+            "super", "instanceof", "delete", "do", "with", "get", "set");
 
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
