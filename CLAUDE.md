@@ -830,12 +830,25 @@ The design is fully specified in `docs/` — **treat those files as the source o
   in `{{context}}` can never evict retrieved code by sharing one budget — proven by a seam test
   (`ReviewWorkerTest.aCodeSnippetReachesThePromptSentToTheModel`) that fakes the assembled context and
   asserts the snippet body reaches the `Prompt` object actually sent to the model, confirmed to
-  discriminate (fails when `ReviewPromptBuilder` is made to render `code_context` empty). **Rung 2**
-  (`worker.code_symbol`, a grown symbol index for call-site impact) is **not authorized by rung 1
-  shipping** — ADR-026 gates it on the evidence measurement in spec §9: re-run real reviewed PRs with
-  and without code context and diff the findings; it ships only if at least one new finding is judged
-  correct by the operator and false positives do not increase. Measured, not estimated: **1504 Java
-  tests across 197 suites** (`testFast` 581/75 + `testServices` — gateway 68/11, orchestrator 669/87,
+  discriminate (fails when `ReviewPromptBuilder` is made to render `code_context` empty).
+  **Rung 2 (`worker.code_symbol`) was never started, and P3 closed at rung 1 on 2026-08-29** when the
+  §9 evidence measurement returned a null: 10 findings shared between the arms, 7 only with code
+  context, 8 only without — against a noise floor, measured by running the *identical* arm twice, of
+  five differing findings on a pull request where nothing changed at all. The toggle moved findings no
+  more than rerunning the same configuration did.
+
+  **The null is corpus-limited, and the distinction is the whole point of recording it.** The runs
+  produced **3 code findings against 15 documentation findings** — this repository's large pull
+  requests are majority ADRs, runbooks and plans, and code context can only ever change a *code*
+  finding. There were three, in both arms. So the gate established that this corpus cannot measure the
+  feature, NOT that retrieved definitions fail to help; anyone reopening rung 2 needs a majority-code
+  corpus with cross-file dependencies. The harness is committed at `docs/superpowers/gates/`, with the
+  three per-run controls it enforces (both arms are first reviews, the arms genuinely differed, each
+  run returned something parseable) — each added because its absence had already produced a wrong
+  answer. The 2026-08-28 attempt measured a token cap and would have reported it as a null about the
+  feature.
+
+  Measured, not estimated: **1504 Java tests across 197 suites** (`testFast` 581/75 + `testServices` — gateway 68/11, orchestrator 669/87,
   worker 186/24); **375 `spire-ui` vitest tests across 51 files**; `tsc --noEmit` silent.
 - **Browser login to the packaged stack fixed, and the guard that missed it rewritten (2026-08-27):**
   nobody could sign in to a packaged deployment on any port but 80, and three separate causes had to

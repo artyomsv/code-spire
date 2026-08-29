@@ -392,6 +392,46 @@ not increase false positives.
 **Fail:** repository context does not move findings. The honest outcome is that P3 stops there,
 having cost a fraction of its estimate to learn.
 
+### 9.1 Result — run 2026-08-29: FAIL (null), P3 closed at rung 1
+
+Five merged pull requests from this repository (#38, #40, #42, #43, #61) plus one from the test
+repository, each reviewed twice through the real pipeline with only the code-context provider
+toggled. One further pull request (#76) was excluded: its treatment arm exceeded the LLM request
+budget. Cost: about $4.50.
+
+| | |
+|---|---|
+| Found by both arms | 10 |
+| Only **with** code context | 7 |
+| Only **without** | 8 |
+| Noise floor — identical arm run twice | **5 differing findings on one PR where nothing changed** |
+| Findings by type | control 3 code / 15 docs · treatment 3 code / 14 docs |
+
+The toggle produced no more variation than rerunning the same configuration, so the 7 does not
+survive contact with the noise floor. Under the criterion above, that is a fail.
+
+**Why the null is corpus-limited.** Code context can only ever change a *code* finding, and there
+were three of those in both arms. Nearly every finding — and nearly every difference — landed in
+`DECISIONS.md`, `SMOKE-TEST.md` or an implementation plan, which no retrieved code snippet could have
+produced. The gate did not falsify rung 1; it established that this repository is majority
+documentation and cannot serve as the test bed.
+
+**What §9 was missing, and what a re-run needs.** The criterion above fixes a pass/fail rule but says
+nothing about whether the corpus can discriminate — so a perfectly executed measurement can be
+pointed at nothing. A future run must additionally require:
+
+1. **A corpus criterion** — pull requests that are majority code, with cross-file dependencies.
+   Verifiable up front by counting code versus non-code files in the diff.
+2. **A mandatory noise-floor run** (the same arm twice). At the observed variance a single pair
+   cannot resolve the effect, and without it a difference of 7 reads as a result.
+3. **The three per-run controls** the harness already enforces: both arms are first reviews, the arms
+   genuinely differed (control 0 snippets, treatment > 0), and each run returned something parseable
+   (`degraded = false`). Each of those was added because its absence had already produced a wrong
+   answer — the first attempt, on 2026-08-28, measured a token cap and would have reported it as a
+   null about the feature.
+
+The harness and its README are committed at `docs/superpowers/gates/`.
+
 ## 10. Documentation changes this requires
 
 - `ARCHITECTURE.md` §5: remove step 3 (`PushReceived` -> `RepositoryIndexDecider`), record why a
