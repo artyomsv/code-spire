@@ -4,6 +4,103 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-027 — Findings are retained as a queryable projection, and a learned preference filters visibly
+
+**Context.** P4 was scheduled on the assumption that a corpus of accepted and rejected findings
+existed to learn from. Reading the schema against the documents found it did not, in two layers.
+`DATA-MODEL.md` had specified `review_finding` — *"persisted for dashboard / analytics / memory"* —
+since the beginning, and no migration ever created it; ADR-026 and `V5__code_symbol.sql` both cited
+it as an existing precedent for the coordinates-clear/content-encrypted split. And the findings
+themselves were being discarded continuously: the persisted domain stream carries
+`ReviewOutcomeRecorded(commit, findingsCount, summaryDigest)` — a count and a digest — while the
+findings ride inline on integration events under ADR-014's short bus retention, and
+`review_status.posted_findings_json` holds one overwritten round. That is ADR-011 working exactly as
+designed. Nobody had drawn the consequence.
+
+**Decision.** `review_finding` (V36) is the durable record: one row per finding per round,
+coordinates and classification in clear because the table exists to be grouped server-side, message
+and suggestion Tink-encrypted because they quote the source under review. Analytics (FR-11) ships
+with it. Learned memory (FR-10) proposes preferences an operator approves, and an approved
+preference **filters after generation** rather than steering the prompt.
+
+**No backfill, and the corpus therefore starts empty.** A salvage from `posted_findings_json` would
+give exactly one unrepresentative round per review with no verdicts — rows that look like history
+while being a single snapshot. The same honest shape as ADR-026's symbol index, and it means FR-10
+cannot be measured on the day it ships; that is written into the exit criteria rather than
+discovered later.
+
+**Analytics ships with the projection, not after it.** It is the only way to tell a correct
+projection from a wrong one, because a bad number is visible immediately and a bad row is not —
+ADR-023's sequence, where building the ledger and reading it back is what exposed four separate
+places that had turned *unknown* into *zero*.
+
+**The filter is deterministic and counted, because a silent mechanism is one this project has twice
+paid for.** Prompt injection might produce better findings rather than merely fewer, but nothing can
+tell whether the model honoured the instruction, and a finding it silently skipped leaves no trace.
+The LLM circuit breaker once recorded a failed future as a success while looking installed, and
+ADR-023's `0` meant *unknown*. A filter that records what it removed cannot fail that way: the count
+is on the summary comment and the dashboard, the hidden findings are one click away, the rows stay
+in the corpus, and revocation takes effect on the next review.
+
+**Three write rules are not the obvious ones**, and each obvious version fails silently.
+
+- *Verdicts do not judge the previous round.* `priorRun` is built from the carried-forward OPEN set
+  (V20), which spans every earlier round, so a finding raised in round 1 and fixed in round 4 still
+  has its row at round 1. A `round - 1` rule updates round 3, matches nothing, and throws nothing.
+  Matching is the newest not-yet-judged row for the location across all rounds, preferring the
+  verdict's own thread ref — recency by row order, never id arithmetic (the V26 lesson).
+- *Thread-ref attachment is not scoped to a round.* A push between generation and posting appends a
+  new `ReviewRequested`, so the current round has already moved and refs would attach to a round that
+  generated nothing.
+- *Idempotency is delete-then-insert, not a unique key.* A redelivered `ReviewGenerated` re-runs the
+  handler inside the `isReviewing` window — the window the V30 double-charge lived in. A unique key
+  cannot help: `category` is nullable by design and Postgres treats NULLs as distinct, so it would
+  fail on exactly the uncategorized rows, while simultaneously dropping two legitimate findings of
+  one category on one line.
+
+**Per-author analytics is self-visible, and its identity link is never inferred.** An operator sees
+their own numbers, an admin sees anyone's. That needs `operator_identity` (V37), keyed on
+`(oidc_subject, provider_type)` — the platform is not decoration, since the same `providerUserId` on
+two SCMs is two unrelated people, the collision this project has been bitten by twice. Matching
+usernames automatically is **refused rather than deferred**: a coincidental match shows one person
+another person's performance data and nothing in the UI looks wrong. The per-author read is
+row-level authorized in code because `@RolesAllowed` cannot express "a viewer may read their own
+row", and an unmapped operator is refused, never defaulted. `/api/me` grows a `subject` field
+because nothing else lists operators, so an admin would otherwise be asked to type a value nobody
+can see.
+
+**Consequences.**
+
+- `Finding` gains a nullable, closed `category`. Closed because free-text categories from a model
+  produce a long tail of near-duplicate labels that group nothing, and grouping is the point.
+  Nullable because a customized `REVIEW` template (E16) never asks for it; those rows degrade to
+  severity-and-path grouping. An unrecognised label parses to **null, not `OTHER`** — `OTHER` is an
+  answer the model gave, an unparseable label is unknown, and ADR-023 is the standing lesson.
+- Conversation-raised findings and customized-prompt repositories are structurally inert for learned
+  memory (no category, and for the former no message either). The Memory screen says so rather than
+  showing an empty list that reads as "nothing to learn yet".
+- Stale runs are not recorded — this projection sits inside `ifCurrentRun`. `chargeGeneratedCalls`
+  deliberately does not, because the money was spent, so a repository's spend can include runs that
+  contributed no finding rows and the two lenses will not reconcile exactly.
+- The per-repo spend lens inherits `techdebt/spire-orchestrator/3-3`: `llm_charge` keys on a
+  `reviewId` carrying no provider, so one workspace name registered on two SCMs sums two unrelated
+  repositories. Cited where the figure renders rather than left to be rediscovered.
+- No retention on `review_finding` in this milestone; a purge rides with the ADR-024 purge when that
+  exists, which now has a second table to cover.
+- `projection_checkpoint` remains dead schema. A generic event-log replay would not have recovered
+  historical findings anyway, since the log never carried them.
+
+**Rejected.** *Backfilling from `posted_findings_json`* — one unrepresentative round per review.
+*Deriving categories from message text* — messages are encrypted, and clusters shift whenever the
+model or prompt changes, making a preference unstable for reasons no operator could see. *Extending
+`review_thread` instead* — it is per posted thread, so it misses everything never posted, and its
+rows alias across rounds, which is what caused the ADR-019 reconciliation defect on GitLab.
+*Username-matching for identity.* *A composite per-author quality score* — mostly a function of what
+someone was assigned. *Writing findings to the domain event log* — a reversal of ADR-011's
+minimize-stored-source posture, needing its own decision.
+
+---
+
 ## ADR-026 — The repository knowledge base is derived, structural, and confirmed at citation
 
 **Context.** ROADMAP records P3 as "whole-repo RAG": embeddings, a pluggable vector store, and a

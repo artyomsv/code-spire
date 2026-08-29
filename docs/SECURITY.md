@@ -203,6 +203,18 @@ thread. This is a threat class distinct from the OWASP-web items above.
   turns rung 2 off entirely (code context degrades to rung 1, which stores nothing), and
   `spire.symbol-index.retention-days` bounds how long a row survives without being re-observed.
 
+- **`operator_identity` maps named people to measured activity, which is new here (P4).** Every
+  other table this deployment holds is about repositories, reviews and money; this one is about
+  humans, and per-author analytics is performance data. Three controls follow from that. It is
+  **admin-only including its reads** (ADR-022's "a listing is an inventory" rule, at its sharpest —
+  the listing *is* the map). The per-author read is **row-level authorized in code**, because
+  `@RolesAllowed` cannot express "a viewer may read their own row"; an unmapped operator is refused
+  rather than defaulted. And the mapping is **never inferred**: matching an OIDC `preferred_username`
+  against an SCM handle would, on a coincidental match, show one person another person's data with
+  nothing in the UI looking wrong — a silent failure about a named individual. `review_finding`
+  itself holds no new personal data; `review_status.author_id` predates P4 and stays as it was, and
+  `email` is still never logged or persisted (NFR-9).
+
 ## Cost / abuse controls
 
 "One bot, every PR, no per-seat" is the headline feature and the cost risk: any workspace member who

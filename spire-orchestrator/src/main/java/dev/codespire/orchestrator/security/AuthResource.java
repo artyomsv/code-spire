@@ -38,8 +38,10 @@ public class AuthResource {
      * @param authenticated whether THIS caller is signed in
      * @param user the signed-in operator, or empty
      * @param roles the operator's spire roles, or empty
+     * @param subject the caller's own OIDC subject, or empty
      */
-    public record Me(boolean authEnabled, boolean authenticated, String user, List<String> roles) {
+    public record Me(boolean authEnabled, boolean authenticated, String user, List<String> roles,
+                     String subject) {
     }
 
     /**
@@ -58,7 +60,30 @@ public class AuthResource {
                 authEnabled,
                 signedIn,
                 signedIn ? identity.getPrincipal().getName() : "",
-                signedIn ? spireRoles(identity.getRoles()) : List.of());
+                signedIn ? spireRoles(identity.getRoles()) : List.of(),
+                signedIn ? subjectOf(identity) : "");
+    }
+
+    /**
+     * The caller's own OIDC subject, which {@code operator_identity} is keyed on (P4 / FR-11).
+     *
+     * <p>Without this the mapping cannot be administered at all: no surface anywhere lists operators
+     * or their subjects, so an admin would be asked to type a value nobody can see. Returning it is
+     * safe for the same reason this whole endpoint is public — it describes the caller and nobody
+     * else, and an operator hands it to an admin themselves.
+     *
+     * <p>Falls back to the principal name when the identity carries no JWT (the {@code %dev} profile
+     * runs unauthenticated), so the field is never null and the UI has one thing to render.
+     */
+    private static String subjectOf(SecurityIdentity identity) {
+        Object principal = identity.getPrincipal();
+        if (principal instanceof io.quarkus.oidc.runtime.OidcJwtCallerPrincipal jwt) {
+            String subject = jwt.getSubject();
+            if (subject != null && !subject.isBlank()) {
+                return subject;
+            }
+        }
+        return identity.getPrincipal().getName();
     }
 
     /** Only this application's own roles; an operator's other realm roles are not our business. */
