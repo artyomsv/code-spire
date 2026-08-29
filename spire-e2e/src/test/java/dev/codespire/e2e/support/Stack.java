@@ -35,20 +35,28 @@ public final class Stack {
         return HTTP;
     }
 
+    /**
+     * The 348xx block, not the packaged stack's 347xx.
+     *
+     * <p>deploy/compose.e2e.yml declares its own compose project so it never adopts a packaged stack a
+     * developer already has running — and two projects cannot bind the same host port, so the whole
+     * block moves with the name. Pointing this suite at 34700 would run it against that other stack,
+     * which is exactly the confusion the separate project exists to prevent.
+     */
     public static String uiBaseUrl() {
-        return env("SPIRE_E2E_BASE_URL", "http://localhost:34700");
+        return env("SPIRE_E2E_BASE_URL", "http://localhost:34800");
     }
 
     public static String keycloakBaseUrl() {
-        return env("SPIRE_E2E_KEYCLOAK_URL", "http://localhost:34767");
+        return env("SPIRE_E2E_KEYCLOAK_URL", "http://localhost:34867");
     }
 
     public static String gitlabBaseUrl() {
-        return env("SPIRE_E2E_GITLAB_URL", "http://localhost:34780");
+        return env("SPIRE_E2E_GITLAB_URL", "http://localhost:34880");
     }
 
     public static String llmMockAdminUrl() {
-        return env("SPIRE_E2E_LLM_MOCK_URL", "http://localhost:34781") + "/__admin";
+        return env("SPIRE_E2E_LLM_MOCK_URL", "http://localhost:34881") + "/__admin";
     }
 
     /**

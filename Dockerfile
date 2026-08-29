@@ -24,6 +24,10 @@ COPY spire-context-gitlab/build.gradle.kts spire-context-gitlab/
 COPY spire-context-jira/build.gradle.kts spire-context-jira/
 COPY spire-contract/build.gradle.kts spire-contract/
 COPY spire-diff/build.gradle.kts spire-diff/
+# Not a dependency of any service — but settings.gradle.kts includes it, and Gradle refuses to
+# configure an included project whose directory is absent. Every module in settings must appear in
+# this list or `:spire-<service>:dependencies` fails before a single service class is compiled.
+COPY spire-e2e/build.gradle.kts spire-e2e/
 COPY spire-encryption/build.gradle.kts spire-encryption/
 COPY spire-gateway/build.gradle.kts spire-gateway/
 COPY spire-http/build.gradle.kts spire-http/
