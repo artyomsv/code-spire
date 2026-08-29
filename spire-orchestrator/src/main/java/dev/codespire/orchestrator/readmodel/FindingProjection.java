@@ -289,6 +289,37 @@ public class FindingProjection {
         }
     }
 
+    /**
+     * Marks the findings a learned preference hid, naming the preference responsible.
+     *
+     * <p>The rows stay in the corpus rather than being dropped. That is what makes a wrong
+     * preference detectable: if one starts hiding findings the team would have acted on, the
+     * evidence is still there to count, and revoking it restores them on the next review.
+     */
+    public void markSuppressed(String reviewId, int round, List<String> paths, List<Integer> lines,
+                               long preferenceId) {
+        if (round <= 0 || paths.isEmpty() || paths.size() != lines.size()) {
+            return;
+        }
+        String sql = """
+                UPDATE review_finding SET suppressed_by = ?
+                 WHERE review_id = ? AND round = ? AND path = ? AND start_line = ?
+                """;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            for (int i = 0; i < paths.size(); i++) {
+                ps.setLong(1, preferenceId);
+                ps.setString(2, reviewId);
+                ps.setInt(3, round);
+                ps.setString(4, paths.get(i));
+                ps.setInt(5, lines.get(i));
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        } catch (SQLException e) {
+            LOG.warnf(e, "Could not mark suppressed findings for %s", reviewId);
+        }
+    }
+
     /** Row count for one review — the seam a test asserts on, and the dashboard's cheapest read. */
     public int countFor(String reviewId) {
         try (Connection c = dataSource.getConnection();

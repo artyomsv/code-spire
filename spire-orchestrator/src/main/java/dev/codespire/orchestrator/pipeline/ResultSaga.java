@@ -74,6 +74,9 @@ public class ResultSaga {
     dev.codespire.orchestrator.readmodel.FindingProjection findings;
 
     @Inject
+    dev.codespire.orchestrator.memory.PreferenceFilter preferenceFilter;
+
+    @Inject
     dev.codespire.orchestrator.readmodel.ReviewThreadView threads;
 
     @Inject
@@ -394,9 +397,31 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), e.result().findings().size(),
                 Integer.toHexString(e.result().summary().hashCode())));
+        // P4/ADR-027: learned memory hides what an operator approved hiding -- AFTER the model has
+        // reviewed, never by steering the prompt. The rows stay in review_finding marked with the
+        // preference that hid them, so a wrong preference is countable and revoking it restores the
+        // findings on the next review.
+        var repo = ReviewIds.parse(e.reviewId()).repo();
+        var filtered = preferenceFilter.apply(repo, e.result());
+        recordSuppressions(e.reviewId(), filtered);
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
-                e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(), e.result(), cred,
-                e.verdicts(), priorSummaryRef));
+                e.reviewId(), repo, e.prId(), e.commit(), filtered.result(), cred,
+                e.verdicts(), priorSummaryRef, filtered.suppressedCount()));
+    }
+
+    /** Groups the hidden findings by the preference responsible, so each batch names its cause. */
+    private void recordSuppressions(String reviewId,
+            dev.codespire.orchestrator.memory.PreferenceFilter.Filtered filtered) {
+        if (filtered.suppressed().isEmpty()) {
+            return;
+        }
+        int round = runs.currentRun(reviewId);
+        var byPreference = filtered.suppressed().stream().collect(java.util.stream.Collectors
+                .groupingBy(dev.codespire.orchestrator.memory.PreferenceFilter.Suppression::preferenceId));
+        byPreference.forEach((preferenceId, hidden) -> findings.markSuppressed(reviewId, round,
+                hidden.stream().map(h -> h.finding().path()).toList(),
+                hidden.stream().map(h -> h.finding().range().startLine()).toList(),
+                preferenceId));
     }
 
     /**

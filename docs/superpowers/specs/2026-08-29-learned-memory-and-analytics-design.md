@@ -364,11 +364,13 @@ a strictly larger change for no benefit.
 `ActionCommand.PostComments` gains a `suppressedCount`, so the worker can render the line into the
 summary it posts. Per the 2026-08-28 lesson, adding a component to a wire record compiles at every
 rebuild site — the shorter convenience constructors stay valid — so the change ships with a wither
-that enumerates the components once, beside the record. The contract snapshot gate will **not**
-catch this: `PostComments` is reached through a sealed hierarchy the golden file does not recurse
-into (`techdebt/spire-contract/3-2`). Safe here for the same two reasons that debt entry gives —
-Jackson defaults a missing int to zero and Kafka retention is short — but approved by nothing, so it
-is stated rather than assumed.
+that enumerates the components once, beside the record. **The contract snapshot gate caught this, and that is worth recording because an earlier draft of
+this spec predicted it would not.** The golden file lists each command's own components, so adding
+`suppressedCount` failed it until the snapshot was updated. What it genuinely cannot see is a change
+inside a NESTED wire type: `Finding` gaining `category` sits inside `ReviewResult` inside
+`ReviewGenerated`, and the golden never described its shape, so that change passed the gate in
+silence. Both halves of `techdebt/spire-contract/3-2` were therefore demonstrated live in one
+milestone -- the gate holding at the top level and blind one level down.
 
 **A suppressed finding recurs every round, and the counts say "suppressions", not "findings".**
 Because it is never posted it never enters `posted_findings_json`, so the next round's exclusion

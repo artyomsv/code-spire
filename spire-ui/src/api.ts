@@ -1213,3 +1213,52 @@ export async function unlinkOperatorIdentity(
   );
   if (!res.ok) throw new Error(`Unlink failed: ${res.status}`);
 }
+
+// --- Learned memory (P4 / FR-10) --------------------------------------------
+
+export interface LearnedPreference {
+  id: number;
+  scopeType: string;
+  scopeValue: string;
+  category: string;
+  pathGlob: string;
+  severity: string;
+  state: 'PROPOSED' | 'APPROVED' | 'REJECTED';
+  evidenceTotal: number;
+  evidenceDismissed: number;
+}
+
+/**
+ * The bar a proposal had to clear, carried so the card can show it beside the score.
+ * A proposal whose threshold is invisible is a conclusion nobody can weigh — the rung-2
+ * gate's failure, where a null from a corpus too thin to speak looked like a result.
+ */
+export interface MemoryThresholds {
+  minEvidence: number;
+  minDismissedPercent: number;
+}
+
+export interface MemoryView {
+  preferences: LearnedPreference[];
+  thresholds: MemoryThresholds;
+}
+
+export async function fetchMemory(): Promise<MemoryView> {
+  const res = await apiFetch('/api/memory/preferences');
+  if (!res.ok) throw new Error(`Learned memory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function decidePreference(
+  id: number,
+  action: 'approve' | 'reject' | 'revoke',
+): Promise<void> {
+  const res = await apiFetch(`/api/memory/preferences/${id}/${action}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Could not ${action} the preference: ${res.status}`);
+}
+
+export async function rescanMemory(): Promise<number> {
+  const res = await apiFetch('/api/memory/preferences/rescan', { method: 'POST' });
+  if (!res.ok) throw new Error(`Rescan failed: ${res.status}`);
+  return (await res.json()).proposed as number;
+}

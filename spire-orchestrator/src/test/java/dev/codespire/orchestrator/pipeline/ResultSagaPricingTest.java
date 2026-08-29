@@ -56,6 +56,21 @@ class ResultSagaPricingTest {
     private int run = ReviewRuns.FIRST_RUN;
 
     /**
+     * A {@link dev.codespire.orchestrator.memory.PreferenceFilter} that hides nothing.
+     *
+     * <p>Overridden rather than injected for the same reason as the projection above: the real one
+     * reads learned_preference through a datasource these unit tests do not have.
+     */
+    private static final dev.codespire.orchestrator.memory.PreferenceFilter NO_PREFERENCES =
+            new dev.codespire.orchestrator.memory.PreferenceFilter() {
+                @Override
+                public Filtered apply(dev.codespire.contract.scm.RepoRef repo,
+                        dev.codespire.contract.review.ReviewResult result) {
+                    return new Filtered(result, java.util.List.of());
+                }
+            };
+
+    /**
      * A {@link dev.codespire.orchestrator.readmodel.FindingProjection} that writes nothing.
      *
      * <p>Every method is overridden deliberately. These are plain unit tests with no datasource, so
@@ -344,6 +359,7 @@ class ResultSagaPricingTest {
     private ResultSaga sagaFor(String model, boolean priceable) {
         ResultSaga saga = new ResultSaga();
         saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {

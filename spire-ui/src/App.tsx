@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, FileText, GitPullRequest, LogOut, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Brain, FileText, GitPullRequest, LogOut, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import ReviewsList from './components/ReviewsList';
@@ -18,6 +18,7 @@ import PromptDetail from './components/PromptDetail';
 import RequireRole from './components/RequireRole';
 import { AnalyticsOverview, AnalyticsRepo, MyAnalytics } from './components/Analytics';
 import { SettingsOperators } from './components/SettingsOperators';
+import { SettingsMemory } from './components/SettingsMemory';
 import { useLiveReviews } from './useLiveReviews';
 import { useMe } from './hooks/useMe';
 import { canAdminister, ensureServiceSessions, goToFullLogin, goToLogout, needsLogin } from './auth';
@@ -42,12 +43,13 @@ export default function App() {
   const onDlq = location.pathname.startsWith('/settings/dlq');
   const onPrompts = location.pathname.startsWith('/settings/prompts');
   const onOperators = location.pathname.startsWith('/settings/operators');
+  const onMemory = location.pathname.startsWith('/settings/memory');
   // '/analytics/me' is its own screen, so the overview flag must exclude it -- otherwise both nav
   // entries highlight at once and neither tells the operator where they are.
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
   const onSettings = onGeneral || onProviders || onLlm || onContext || onWebhooks || onDlq || onPrompts
-    || onOperators;
+    || onOperators || onMemory;
   const onReviews = location.pathname === '/';
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
@@ -173,6 +175,10 @@ export default function App() {
           {admin && (
           <>
           <div className="label">Configure</div>
+          <a className={onMemory ? 'active' : ''} href="#/settings/memory">
+            <Brain className="ic" size={16} />
+            Memory
+          </a>
           <a className={onOperators ? 'active' : ''} href="#/settings/operators">
             <UsersRound className="ic" size={16} />
             Operators
@@ -336,6 +342,7 @@ export default function App() {
           <Route path="/analytics/me" element={<MyAnalytics subject={me?.subject} />} />
           <Route path="/analytics/:workspace/:slug" element={<AnalyticsRepo />} />
           <Route path="/settings/operators" element={configure(<SettingsOperators />)} />
+          <Route path="/settings/memory" element={configure(<SettingsMemory />)} />
           <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
           <Route path="/settings/providers" element={configure(<SettingsProviders />)} />
           <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
