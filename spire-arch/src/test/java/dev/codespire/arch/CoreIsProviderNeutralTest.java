@@ -112,6 +112,9 @@ class CoreIsProviderNeutralTest {
                         + "operator configured, which is the point of them.");
         allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextKeyValidator.java",
                 "Composition root: maps a context type to the API path its connectivity check pings.");
+        allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/operator/OperatorConnects.java",
+                "Composition root: maps a platform to the adapter that signs an operator in. Every sign-in "
+                        + "URL, scope and token field stays in its own adapter; this only chooses one.");
         return Collections.unmodifiableMap(allowed);
     }
 

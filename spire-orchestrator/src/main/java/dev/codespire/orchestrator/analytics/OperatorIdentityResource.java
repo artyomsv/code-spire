@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.analytics;
 
+import dev.codespire.orchestrator.operator.OperatorDirectory;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -37,6 +38,9 @@ public class OperatorIdentityResource {
     @Inject
     AnalyticsQueries queries;
 
+    @Inject
+    OperatorDirectory directory;
+
     @GET
     public List<OperatorIdentities.Link> list() {
         return identities.all();
@@ -54,6 +58,24 @@ public class OperatorIdentityResource {
     @Path("/candidates")
     public List<AnalyticsQueries.ObservedAuthor> candidates() {
         return queries.observedAuthors();
+    }
+
+    /**
+     * The operators to pick from — everyone who has signed in.
+     *
+     * <p>The other half of the same problem the candidates list solved. This form asked an admin to
+     * type an OIDC subject, an opaque id the product displays nowhere, so both ends of a mapping
+     * could only be filled by someone willing to query the database.
+     *
+     * <p>Most links should never be made here at all: an operator proves their own account by
+     * signing into the SCM. This stays for the case that flow cannot serve — an operator who has
+     * left, an account renamed, a platform with no OAuth app — which is repair work, and repair work
+     * an admin still has to be able to do.
+     */
+    @GET
+    @Path("/operators")
+    public List<OperatorDirectory.Operator> operators() {
+        return directory.all();
     }
 
     @POST
