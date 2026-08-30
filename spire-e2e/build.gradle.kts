@@ -79,7 +79,11 @@ tasks.named("check") { setDependsOn(emptyList<Any>()) }
  */
 tasks.register("captureE2eDiagnostics") {
     val repoRoot = rootProject.projectDir
-    val diagnosticsDir = layout.buildDirectory.dir("e2e-diagnostics").get().asFile
+    // REPO-RELATIVE, and deliberately so. The script runs with its working directory set to the repo
+    // root, and handing a Windows absolute path (`E:\...`) to a bash script makes `mkdir -p` create a
+    // single directory whose name is the path with its separators stripped — which is exactly what
+    // happened, in the repo root, and very nearly got committed.
+    val diagnosticsDir = "spire-e2e/build/e2e-diagnostics"
     val testTask = tasks.named<Test>("test")
 
     // A passing run has nothing worth keeping, and an hour of logs every time would bury the one run
@@ -88,7 +92,7 @@ tasks.register("captureE2eDiagnostics") {
 
     doLast {
         try {
-            ProcessBuilder("bash", "deploy/e2e-diagnostics.sh", diagnosticsDir.absolutePath)
+            ProcessBuilder("bash", "deploy/e2e-diagnostics.sh", diagnosticsDir)
                 .directory(repoRoot)
                 .redirectErrorStream(true)
                 .start()
