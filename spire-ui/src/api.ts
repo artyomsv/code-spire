@@ -1150,10 +1150,22 @@ export interface AnalyticsLens {
  */
 export interface MyActivity {
   linked: boolean;
-  providerType: string | null;
-  authorId: string | null;
+  /**
+   * EVERY SCM account the caller owns, not one. A developer is routinely a GitHub id, a
+   * GitLab id and a Bitbucket UUID at once, and reporting the first showed an arbitrary
+   * slice of their work under the heading 'my activity'.
+   */
+  identities: OperatorIdentityLink[];
   totals: AnalyticsTotals | null;
   breakdown: AnalyticsBreakdown[];
+}
+
+/** An SCM account this deployment has actually reviewed — what an admin picks from. */
+export interface ObservedAuthor {
+  providerType: string;
+  authorId: string;
+  displayName: string;
+  reviews: number;
 }
 
 export interface OperatorIdentityLink {
@@ -1185,6 +1197,12 @@ export async function fetchAnalyticsRepo(workspace: string, slug: string): Promi
 export async function fetchMyActivity(): Promise<MyActivity> {
   const res = await apiFetch('/api/analytics/me');
   if (!res.ok) throw new Error(`My activity failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchOperatorCandidates(): Promise<ObservedAuthor[]> {
+  const res = await apiFetch('/api/operator-identities/candidates');
+  if (!res.ok) throw new Error(`Author candidates failed: ${res.status}`);
   return res.json();
 }
 

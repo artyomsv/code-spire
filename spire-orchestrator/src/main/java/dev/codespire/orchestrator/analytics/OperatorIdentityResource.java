@@ -34,9 +34,26 @@ public class OperatorIdentityResource {
     @Inject
     OperatorIdentities identities;
 
+    @Inject
+    AnalyticsQueries queries;
+
     @GET
     public List<OperatorIdentities.Link> list() {
         return identities.all();
+    }
+
+    /**
+     * The SCM accounts this deployment has actually reviewed — what an admin picks from.
+     *
+     * <p>The first version of this screen asked an admin to TYPE a stable provider id such as
+     * {@code 3218389}. The product shows that value nowhere, so the field could only be filled by
+     * someone willing to query the database — while every one of those ids had already been
+     * recorded, dozens of times, by the reviews themselves.
+     */
+    @GET
+    @Path("/candidates")
+    public List<AnalyticsQueries.ObservedAuthor> candidates() {
+        return queries.observedAuthors();
     }
 
     @POST
@@ -77,7 +94,7 @@ public class OperatorIdentityResource {
                     + "on two platforms belongs to two different people.";
         }
         if (isBlank(request.authorId())) {
-            return "authorId is required — the SCM's stable user id, shown on the review detail page.";
+            return "authorId is required — pick one of the authors this deployment has reviewed.";
         }
         return null;
     }

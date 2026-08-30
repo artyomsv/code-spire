@@ -36,7 +36,19 @@ public class AnalyticsQueries {
      */
     private static final String DISMISSED = "('ACKNOWLEDGED', 'UNCHANGED')";
 
-    /** One row of the by-kind breakdown. {@code category} is null for uncategorized findings. */
+    /**
+     * An SCM account this deployment has actually reviewed.
+     *
+     * <p>The point of exposing these: an operator identity should be PICKED from what the system
+     * has seen, never typed. {@code author_id} is a stable provider id — {@code 3218389}, or a
+     * Bitbucket UUID — and it appears nowhere else in the dashboard, so asking an admin to enter one
+     * asks them to find a value the product never shows them.
+     */
+    public record ObservedAuthor(String providerType, String authorId, String displayName,
+                                 long reviews) {
+    }
+
+    /** One lens's numbers plus its by-kind breakdown. */
     public record Breakdown(String severity, String category, long raised, long dismissed,
                             long resolved, long unjudged) {
     }
@@ -99,6 +111,70 @@ public class AnalyticsQueries {
     }
 
     /**
+     * One person's numbers across every SCM account they own.
+     *
+     * <p>A human legitimately has several: the same developer is a GitHub id, a GitLab id and a
+     * Bitbucket UUID. Reporting only one of them — which an earlier version did, by taking the first
+     * mapping — showed an arbitrary slice of someone's work and called it their activity.
+     */
+    public Totals totalsForIdentities(List<OperatorIdentities.Link> links) {
+        return links.isEmpty() ? emptyTotals() : totals(identityFilter(links), identityBinder(links));
+    }
+
+    public List<Breakdown> breakdownForIdentities(List<OperatorIdentities.Link> links) {
+        return links.isEmpty() ? List.of() : breakdown(identityFilter(links), identityBinder(links));
+    }
+
+    /**
+     * Every SCM account this deployment has reviewed, most active first.
+     *
+     * <p>Sourced from the reviews themselves rather than from any registry: the authors a
+     * deployment has seen ARE the candidates, and nothing else knows them.
+     */
+    public List<ObservedAuthor> observedAuthors() {
+        String sql = """
+                SELECT s.provider_type, s.author_id, max(s.author) AS display_name,
+                       count(*) AS reviews
+                  FROM review_status s
+                 WHERE s.author_id <> '' AND s.provider_type <> ''
+                 GROUP BY s.provider_type, s.author_id
+                 ORDER BY reviews DESC, display_name
+                """;
+        List<ObservedAuthor> authors = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                authors.add(new ObservedAuthor(rs.getString("provider_type"), rs.getString("author_id"),
+                        rs.getString("display_name"), rs.getLong("reviews")));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not list observed authors", e);
+        }
+        return authors;
+    }
+
+    /** One {@code (provider_type, author_id)} pair per mapped identity, all bound. */
+    private static String identityFilter(List<OperatorIdentities.Link> links) {
+        return " AND (s.provider_type, s.author_id) IN ("
+                + String.join(", ", java.util.Collections.nCopies(links.size(), "(?, ?)")) + ") ";
+    }
+
+    private static Binder identityBinder(List<OperatorIdentities.Link> links) {
+        return ps -> {
+            int index = 1;
+            for (OperatorIdentities.Link link : links) {
+                ps.setString(index++, link.providerType());
+                ps.setString(index++, link.authorId());
+            }
+        };
+    }
+
+    private static Totals emptyTotals() {
+        return new Totals(0, 0, 0, 0, null, null, 0, 0);
+    }
+
+    /**
      * The repositories that have findings, for the index screen.
      *
      * <p>Sourced from the reviews this deployment actually ran, not from the gateway's registrations:
@@ -131,7 +207,7 @@ public class AnalyticsQueries {
             binder.bind(ps);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
-                    return new Totals(0, 0, 0, 0, null, null, 0, 0);
+                    return emptyTotals();
                 }
                 long judged = rs.getLong("judged");
                 long dismissed = rs.getLong("dismissed");
