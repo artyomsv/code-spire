@@ -18,14 +18,22 @@ export interface OAuthSetupStep {
  *
  * <p>The first question anyone asks, and the one the original panel never answered. It is not
  * obvious: the application is registered ONCE for the whole deployment, by an admin, and every
- * operator then signs in through it — nobody registers their own. Which account owns it is a
- * lifecycle decision rather than a technical one on two of the three platforms, since the
- * application only ever reads the profile of whoever signs in.
+ * operator then signs in through it — nobody registers their own. It is also nothing to do with the
+ * bot credential in the provider registry.
+ *
+ * <p><b>One rule decides it: match the application to whoever owns the repositories.</b> An earlier
+ * version of this guidance named only the shared account and treated a personal one as a
+ * compromise, which is wrong for the case it is most often read in — repositories owned by one
+ * person. There a personal application is simply the right answer: the two share a fate anyway, so
+ * there is nothing to outlive. The mismatch worth avoiding is the other direction, a personal
+ * application in front of an organization’s repositories, which leaves when that person does.
  */
 export interface OAuthOwner {
-  /** Where to register it, named the way the platform names that place. */
-  where: string;
-  /** Why there, and what the alternative costs. */
+  /** Where it goes when the repositories belong to a shared account, named as the platform does. */
+  shared: string;
+  /** Where it goes when the repositories belong to one person. */
+  personal: string;
+  /** The rule that decides between them, and what a mismatch costs. */
   detail: string;
 }
 
@@ -43,11 +51,14 @@ const GUIDES: Record<string, OAuthSetupGuide> = {
   github: {
     providerLabel: 'GitHub',
     owner: {
-      where: 'The organization that owns your repositories',
+      shared: 'the organization → Settings → Developer settings → OAuth Apps',
+      personal: 'your own account → Settings → Developer settings → OAuth Apps',
       detail:
-        'Its Settings → Developer settings → OAuth Apps. A personal account can hold it instead, and ' +
-        'works identically — but it then leaves with that person, and every operator’s link stops ' +
-        'working the day their account is closed.',
+        'Both work identically. Personal repositories take a personal application — that is the ' +
+        'right answer rather than a compromise, since the application and the repositories share a ' +
+        'fate either way. Only the mismatch costs anything: a personal application in front of an ' +
+        'organization’s repositories leaves when that person does, and every operator’s link goes ' +
+        'with it.',
     },
     // GitHub is the one platform whose sign-in host and API host genuinely differ, which is why
     // the form has two base fields at all. On Enterprise Server neither is derivable from the other.
@@ -81,11 +92,13 @@ const GUIDES: Record<string, OAuthSetupGuide> = {
   gitlab: {
     providerLabel: 'GitLab',
     owner: {
-      where: 'The top-level group that owns your projects',
+      shared: 'the top-level group → Settings → Applications',
+      personal: 'your own account → Edit profile → Applications',
       detail:
-        'Its Settings → Applications. A personal one under Edit profile → Applications works and ' +
-        'belongs to that person; on a self-managed instance an admin can create an instance-wide ' +
-        'one under the Admin area instead.',
+        'Both work identically. Personal projects take a personal application — that is the right ' +
+        'answer rather than a compromise, since the two share a fate either way. A self-managed ' +
+        'instance can also hold one instance-wide under the Admin area, which is the better choice ' +
+        'when several groups are reviewed.',
     },
     // One host serves both, so only the sign-in base is asked for; the API base is derived by
     // adding /api/v4. Filling it in by hand is allowed but never necessary.
@@ -110,10 +123,11 @@ const GUIDES: Record<string, OAuthSetupGuide> = {
   'bitbucket-cloud': {
     providerLabel: 'Bitbucket',
     owner: {
-      where: 'The workspace that owns your repositories',
+      shared: 'the workspace → Workspace settings → OAuth consumers',
+      personal: 'your own workspace → Workspace settings → OAuth consumers',
       detail:
-        'Its Workspace settings → OAuth consumers. Bitbucket offers no personal option — consumers ' +
-        'exist only on a workspace — so this is the only place it can go.',
+        'The same place either way, and there is no decision to make: Bitbucket gives every account ' +
+        'a workspace — a solo one is named after you — and consumers exist only on a workspace.',
     },
     selfHosted: null,
     steps: [

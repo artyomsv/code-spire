@@ -65,8 +65,9 @@ export function ScmConnections() {
           signs in through the same application.
         </li>
         <li>
-          <strong>Under the account that owns your repositories</strong> — the organization,
-          workspace or group. Each platform’s exact place is named below.
+          <strong>Under whatever account owns your repositories</strong> — an organization, group or
+          workspace if they are shared, or your own account if they are yours. Each platform’s exact
+          place is named below.
         </li>
         <li>
           <strong>This is not the bot’s credential.</strong> That one proves the reviewer’s
@@ -234,7 +235,13 @@ function SetupChecklist({ providerType }: { providerType: string }) {
       <div className="wh-setup-title">On {guide.providerLabel} — one-off setup</div>
       {/* Above the steps, because "whose account" is asked before "what do I click". */}
       <div className="oauth-owner">
-        <div className="oauth-owner-where">Register it under: {guide.owner.where}</div>
+        <div className="oauth-owner-where">Register it under the account that owns the repositories</div>
+        <dl className="oauth-owner-cases">
+          <dt>Shared repositories</dt>
+          <dd>{guide.owner.shared}</dd>
+          <dt>Your own repositories</dt>
+          <dd>{guide.owner.personal}</dd>
+        </dl>
         <div className="wh-step-detail">{guide.owner.detail}</div>
       </div>
       <ol className="wh-steps">

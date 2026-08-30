@@ -81,8 +81,13 @@ describe('ScmConnections', () => {
     expect(screen.getByText(/not the bot/i)).toBeTruthy();
 
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
-    expect(await screen.findByText(/Register it under: The organization that owns your repositories/))
+    expect(await screen.findByText(/Register it under the account that owns the repositories/))
       .toBeTruthy();
+    // Both cases, side by side. Repositories owned by one person are the common case for a small
+    // deployment, and an answer that only named the organization left it looking unsupported.
+    expect(screen.getByText('Shared repositories')).toBeTruthy();
+    expect(screen.getByText('Your own repositories')).toBeTruthy();
+    expect(screen.getByText(/your own account → Settings/)).toBeTruthy();
   });
 
   /**

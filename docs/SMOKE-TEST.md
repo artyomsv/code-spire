@@ -1523,16 +1523,25 @@ resulting claim could not be checked by anything. This is the platform answering
    deployment, not one per person**, and it goes on the account that owns your repositories — not on
    a repository, and not on the bot account whose token the provider registry already holds. That
    credential proves the *reviewer's* identity; this one lets a person prove their own.
-   - **GitHub** — the organization → Settings → Developer settings → OAuth Apps → New OAuth App.
-     A personal account works identically but leaves with that person, taking every operator's link
-     with it. No permission section to fill in: the profile-only scope is requested per sign-in.
-   - **GitLab** — the top-level group → Settings → Applications, scope `read_user`, **Confidential**
-     ticked (without it GitLab issues no client secret at all). A personal application under Edit
-     profile → Applications works and belongs to that person; a self-managed instance can hold an
-     instance-wide one in the Admin area.
+
+   **Match the application to whoever owns the repositories.** If they belong to an organization,
+   group or workspace, put it there. If they are one person's own repositories, a personal
+   application is the right answer rather than a compromise — the two share a fate anyway, so there
+   is nothing for a shared account to outlive. The only costly mismatch is the other direction: a
+   personal application in front of an organization's repositories leaves when that person does,
+   and every operator's link goes with it.
+
+   - **GitHub** — the organization (or your own account) → Settings → Developer settings →
+     OAuth Apps → New OAuth App. No permission section to fill in: the profile-only scope is
+     requested per sign-in.
+   - **GitLab** — the top-level group → Settings → Applications, or your own account → Edit profile
+     → Applications. Scope `read_user`, **Confidential** ticked (without it GitLab issues no client
+     secret at all). A self-managed instance can also hold one instance-wide in the Admin area,
+     which is the better choice when several groups are reviewed.
    - **Bitbucket** — the workspace → Workspace settings → OAuth consumers, permission
      **Account: Read**, and **This is a private consumer** ticked (a public consumer has no client
-     secret). Bitbucket offers no personal option, so the workspace is the only place it can go.
+     secret). No decision to make here: every Bitbucket account has a workspace, a solo one named
+     after you, and consumers exist only on a workspace.
 3. In the dashboard, Settings → **Operators** → *Sign-in applications* → **Set up** for that
    platform. Copy the **redirect address** shown there into the application you just registered —
    it must match exactly, including scheme, host, port and path. Paste the client id and secret.

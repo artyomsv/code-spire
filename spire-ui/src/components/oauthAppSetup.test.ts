@@ -51,21 +51,32 @@ describe('oauthSetupGuide', () => {
    * account does this go under? It is not guessable — the application has nothing to do with the
    * bot credential, is not registered per person, and lives on an account rather than on a repo.
    */
-  it('names the account that should own the application, per platform', () => {
-    expect(oauthSetupGuide('github')!.owner.where).toMatch(/organization/i);
-    expect(oauthSetupGuide('gitlab')!.owner.where).toMatch(/group/i);
-    expect(oauthSetupGuide('bitbucket-cloud')!.owner.where).toMatch(/workspace/i);
+  it('names the shared account that should own the application, per platform', () => {
+    expect(oauthSetupGuide('github')!.owner.shared).toMatch(/organization/i);
+    expect(oauthSetupGuide('gitlab')!.owner.shared).toMatch(/group/i);
+    expect(oauthSetupGuide('bitbucket-cloud')!.owner.shared).toMatch(/workspace/i);
   });
 
   /**
-   * Two platforms allow a personal account and one does not, and the difference matters: a personal
-   * application leaves with the person, taking every operator's link with it. Naming a place
-   * without saying why invites the easier choice, so the reason is part of the answer.
+   * Repositories owned by one person are the case this guidance is most often read in, and an
+   * earlier version answered it badly — it named only the shared account and called a personal one
+   * a compromise. It is not: when the repositories are personal too, the application and the
+   * repositories share a fate anyway, so there is nothing for a shared account to outlive.
    */
-  it('says what a personal account costs, or that there is no such option', () => {
-    expect(oauthSetupGuide('github')!.owner.detail).toMatch(/personal account/i);
-    expect(oauthSetupGuide('gitlab')!.owner.detail).toMatch(/personal one/i);
-    expect(oauthSetupGuide('bitbucket-cloud')!.owner.detail).toMatch(/no personal option/i);
+  it('gives personal repositories an answer of their own, not a warning', () => {
+    for (const type of ['github', 'gitlab', 'bitbucket-cloud']) {
+      expect(oauthSetupGuide(type)!.owner.personal.length).toBeGreaterThan(0);
+      expect(oauthSetupGuide(type)!.owner.personal).toMatch(/your own/i);
+    }
+  });
+
+  /** The rule that decides, stated once, so neither case reads as the exception. */
+  it('states the rule as matching the repositories, and names the one costly mismatch', () => {
+    expect(oauthSetupGuide('github')!.owner.detail).toMatch(/right answer rather than a compromise/i);
+    // The mismatch that actually costs something is the other direction.
+    expect(oauthSetupGuide('github')!.owner.detail).toMatch(/leaves when that person does/i);
+    // Bitbucket has no decision to make at all, and saying so beats offering a false choice.
+    expect(oauthSetupGuide('bitbucket-cloud')!.owner.detail).toMatch(/same place either way/i);
   });
 
   /** An application lives on an account, never on a repository — a different settings page entirely. */
