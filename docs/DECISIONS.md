@@ -4,6 +4,66 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-028 — An operator's SCM account is proved by signing in, never asserted or inferred
+
+**Context.** ADR-027 shipped per-author analytics with `operator_identity` (V37) as an
+admin-managed map from an OIDC subject to an SCM author id, and recorded that it is *"never
+inferred"* because a coincidental username match would show one person another person's performance
+data with nothing on screen looking wrong. That reasoning holds. What it left unexamined is that the
+alternative it chose — an admin asserting the pair — cannot be checked either. It is the same
+unverifiable claim with a human attached, and the screen made that worse: both fields were free
+text over values the product displays nowhere (an opaque OIDC subject, a stable provider id such as
+`3218389` or `557058:ee019d01-…`), so the only way to fill the form was to query the database.
+
+**The bot's token cannot answer this question.** It proves the *bot's* identity. It can confirm a
+handle exists; nothing it returns says the human at the browser is that handle, so any design built
+on it is a claim anyone could make about anyone.
+
+**Decision.** An operator proves their own account by signing into the platform. `scm_oauth_app`
+(V40) holds one OAuth application per platform, client secret Tink-encrypted like every other
+credential; a new credential-free SPI port `OperatorOAuth` is implemented by each SCM adapter;
+`oauth_connect_state` (V40) binds one attempt to one browser session. The admin form remains, both
+ends now picked from recorded values (`operator_seen`, V41), as the repair path — an operator who
+has left, an account renamed, a platform with no application configured.
+
+**Identity comes from each adapter's existing `whoami()`, not a second parser.** That is the method
+provider registration already uses, so the id stored for an operator is the *same* id the ingress
+records as a pull request's author. Anything else matches no rows, and the failure looks exactly
+like having done nothing.
+
+**The access token is used once and discarded.** The durable record is a stable public id, so
+nothing this flow produces is a credential that could later be stolen. The requested scope is the
+account's own profile and nothing more: signing in to prove who you are must not be a reason to hand
+this deployment repository access.
+
+**State is stored, not held in memory.** A restart between the redirect and the callback would
+otherwise refuse a legitimate return, and a second replica would never have seen it. It is
+*consumed* rather than checked, so a replayed callback finds nothing, and it carries the subject it
+was issued to — because the attack this exists to stop is a crafted callback URL that links the
+sender's account to whoever clicks it, after which the recipient is measured as a different person
+and every screen looks normal.
+
+**Two base URLs per application, not one.** For one platform the sign-in host and the API host
+genuinely differ, and for another they share a host but not a path. Neither is derivable from the
+other on a self-hosted install. Blank means "the platform's own hosted service", filled in by each
+adapter rather than stored as a default — a URL the core wrote would be the core naming a provider,
+which ADR-020 forbids. The derivation that matters is per-adapter: a self-hosted operator who fills
+in only the sign-in URL must be identified against *their* instance, because falling back to the
+hosted service would link them to whoever holds that name there, with the sign-in itself having
+succeeded.
+
+**Auto-linking on a username match was considered and rejected**, which is the same answer ADR-027
+gave and now has a better alternative than a form. The failure is silent, invisible on screen, and
+concerns a named person's performance data. A sign-in costs one click and removes the question.
+
+**Consequences.** An admin registers an OAuth application per platform before the flow is available;
+until then the interface says so rather than hiding the option, because an operator whose account is
+simply not offered has nothing to act on. The redirect address is computed from the request and
+shown for copying — it is the one value an admin cannot work out, and registering the wrong one
+fails at the platform with a message that names nothing in this product.
+
+---
+
 ## ADR-027 — Findings are retained as a queryable projection, and a learned preference filters visibly
 
 **Context.** P4 was scheduled on the assumption that a corpus of accepted and rejected findings
