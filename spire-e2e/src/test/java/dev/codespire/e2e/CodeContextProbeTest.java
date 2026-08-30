@@ -29,41 +29,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <h2>Why this is disabled</h2>
  *
- * <p>It cannot pass against a CONTAINERISED GitLab, for a structural reason rather than a defect.
- * {@code GitLabSourceFileReader} fetches source through {@code PinnedJsonClient}, whose SSRF guard
- * refuses loopback, link-local and site-local addresses <b>on every request</b>
- * ({@code PinnedJsonClient:199}). A Docker-network GitLab is RFC1918, so the fetch is refused, and
- * context providers fail soft — the review still completes, {@code ContextAssembled} is still
- * emitted, and {@code worker.context_blob} simply stays empty.
+ * <p>It fails against the containerised GitLab and <b>the cause is not established</b>. The code
+ * provider runs and extracts identifiers, then resolves none of them — its own instrumentation says
+ * {@code Context resolution for CODE: extracted=17 resolved=0 contributed=0}, and
+ * {@code worker.context_blob} stays empty across every review. Nothing throws, because context
+ * providers fail soft by design.
  *
- * <p>The design spec's §3.1 got this wrong: it established that
- * {@code SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS} relaxes the guard, but that flag governs
- * {@code PublicHttpsGuard}, which the ORCHESTRATOR consults at provider create/update. The worker's
- * per-request guard is a different control in a different module with no such escape, and nothing
- * about relaxing the first touches the second. Every {@code spire-http}-based context provider —
- * Jira, Confluence, GitHub Issues, GitLab Issues and code — is affected identically.
+ * <p>Disabled rather than deleted because the fixtures and assertions are correct, and disabled rather
+ * than left red because a permanently-failing test in a nightly suite trains people to ignore the
+ * suite. Tracked, with the reproduction and what to check first, in
+ * {@code techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md}.
  *
- * <p>Two ways forward, neither of them a test change:
- * <ol>
- *   <li>Give {@code PinnedJsonClient} the same opt-in relaxation the orchestrator guard already has.
- *       That is a change to a security control and belongs in its own reviewed commit, not smuggled
- *       into a test PR.</li>
- *   <li>Reach a GitLab on a public-resolving address, which a Docker network cannot provide.</li>
- * </ol>
+ * <p><b>A wrong diagnosis got as far as five documents, so it is recorded here too.</b> The first
+ * explanation was that {@code PinnedJsonClient}'s SSRF guard refuses site-local addresses on every
+ * request. It does not: {@code isPrivateAddress} is reachable only from
+ * {@code requireSafeRedirectTarget}, which runs only on a 3xx and returns immediately for a same-host
+ * target — its javadoc says outright that dev/test legitimately run against localhost. The
+ * neighbouring claim, that {@code SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS} governs a different
+ * control ({@code PublicHttpsGuard}, orchestrator, registration-time), is true; it was simply used to
+ * support a conclusion the code does not support.
  *
- * <p>Kept rather than deleted because the fixtures and assertions are correct and become runnable the
- * moment the blocker is lifted — and because the diagnosis above is the expensive part. Tracked in
- * {@code techdebt/global/3-3-context-providers-cannot-reach-a-private-network-scm.md}.
- *
- * <p><b>One thing it already proved.</b> An earlier version put the definition inside the merge
- * request's own diff, and passed — for the wrong reason: the definition's body reached the model
+ * <p><b>What this test already proved.</b> An earlier version put the definition inside the merge
+ * request's own diff, and PASSED — for the wrong reason: the definition's body reached the model
  * because it was in the DIFF, not because anything retrieved it. That version would have passed
- * against a completely inert code-context provider. Moving the definition to the target branch is
- * what turned it into a real assertion, and is why the failure above is trustworthy.
+ * against a completely inert provider. Moving the definition to the target branch is what turned it
+ * into a real assertion, and is why the failure is worth investigating rather than dismissing.
  */
-@Disabled("Structurally blocked: PinnedJsonClient's per-request SSRF guard refuses a "
-        + "Docker-network GitLab, so no spire-http context provider can fetch. See the class "
-        + "javadoc and techdebt/global/3-3-context-providers-cannot-reach-a-private-network-scm.md")
+@Disabled("Fails against the containerised GitLab: the code provider extracts identifiers and "
+        + "resolves none, cause not yet established. Reproduction and next steps in "
+        + "techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md")
 class CodeContextProbeTest {
 
     /** Present only in the definition's body, so finding it proves the snippet was retrieved. */

@@ -52,17 +52,41 @@ tasks.test {
         showStandardStreams = true
     }
 
-    // Captured at configuration time: Gradle 9 forbids reaching for `project` inside a task action.
+    finalizedBy("captureE2eDiagnostics")
+}
+
+/**
+ * `check` must NOT reach the e2e tier.
+ *
+ * `./gradlew build` is a documented command in CLAUDE.md, and `build` depends on `check`, which
+ * depends on `test` in every subproject. Without this, `build` runs the e2e suite on any machine that
+ * does not happen to have the packaged stack plus a booted GitLab up — and `outputs.upToDateWhen
+ * { false }` guarantees it re-runs and re-fails every time. `testE2e` is the only way in, by design.
+ */
+tasks.named("check") { setDependsOn(emptyList<Any>()) }
+
+/**
+ * Captures service logs and GitLab's own delivery history when the suite goes red.
+ *
+ * <p>A FINALIZER, not a `doLast` on the test task. A failing `Test` task throws from inside its own
+ * task action, and Gradle then skips every remaining action — so the `doLast` this replaces never ran
+ * on a failure, which is precisely and only when it was wanted. Found empirically rather than by
+ * reading: the diagnostics directory in the worktree was two hours older than the failing run that
+ * should have written it, while the nightly's upload step would have shipped an empty artifact.
+ *
+ * <p>A finalizer's `onlyIf` is evaluated after the test task has finished, so it can see
+ * `state.failure` — which a `doLast` on the same task cannot, since the state is not yet final.
+ */
+tasks.register("captureE2eDiagnostics") {
     val repoRoot = rootProject.projectDir
     val diagnosticsDir = layout.buildDirectory.dir("e2e-diagnostics").get().asFile
+    val testTask = tasks.named<Test>("test")
 
-    // On failure only. A passing run has nothing worth keeping, and writing an hour of logs every
-    // time would bury the one run that matters. Without this a nightly failure is a red square:
-    // the containers keep running, but a CI runner is gone by the time anyone looks.
+    // A passing run has nothing worth keeping, and an hour of logs every time would bury the one run
+    // that matters.
+    onlyIf { testTask.get().state.failure != null }
+
     doLast {
-        if (state.failure == null) {
-            return@doLast
-        }
         try {
             ProcessBuilder("bash", "deploy/e2e-diagnostics.sh", diagnosticsDir.absolutePath)
                 .directory(repoRoot)

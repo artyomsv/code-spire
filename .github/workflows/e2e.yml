@@ -37,8 +37,13 @@ jobs:
       # real Gradle task in spire-encryption — a random base64 string is NOT a valid keyset.
       - name: Generate keysets
         run: |
-          echo "MASTER_KEYSET=$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" >> "$GITHUB_ENV"
-          echo "WEBHOOK_KEYSET=$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" >> "$GITHUB_ENV"
+          MASTER_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          WEBHOOK_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          # Masked so a later step that dumps the environment cannot print them into a public log.
+          echo "::add-mask::$MASTER_KEYSET"
+          echo "::add-mask::$WEBHOOK_KEYSET"
+          echo "MASTER_KEYSET=$MASTER_KEYSET" >> "$GITHUB_ENV"
+          echo "WEBHOOK_KEYSET=$WEBHOOK_KEYSET" >> "$GITHUB_ENV"
 
       # Every value below is obviously synthetic. The realm ships the same three client secrets, and no
       # real credential enters CI.
@@ -118,8 +123,13 @@ jobs:
       # Gradle task — a random base64 string is NOT a valid Tink keyset.
       - name: Generate keysets
         run: |
-          echo "MASTER_KEYSET=$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" >> "$GITHUB_ENV"
-          echo "WEBHOOK_KEYSET=$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" >> "$GITHUB_ENV"
+          MASTER_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          WEBHOOK_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          # Masked so a later step that dumps the environment cannot print them into a public log.
+          echo "::add-mask::$MASTER_KEYSET"
+          echo "::add-mask::$WEBHOOK_KEYSET"
+          echo "MASTER_KEYSET=$MASTER_KEYSET" >> "$GITHUB_ENV"
+          echo "WEBHOOK_KEYSET=$WEBHOOK_KEYSET" >> "$GITHUB_ENV"
 
       # Every value below is obviously synthetic. No real credential enters CI, and the GitLab this
       # creates is destroyed with the runner.
@@ -183,6 +193,9 @@ jobs:
           name: gitlab-loop-diagnostics
           path: spire-e2e/build/e2e-diagnostics
           if-no-files-found: warn
+          # Bounded rather than the 90-day repo default: the bundle is fixture-only today, but its
+          # contract is "capture everything a failed run needs", which makes it a standing channel.
+          retention-days: 7
 
       - name: Down
         if: always()

@@ -50,7 +50,24 @@ public final class Await {
         }
         throw new AssertionError(step + " — not satisfied within " + deadline
                 + " (" + attempts + " probes)"
-                + (lastError == null ? "" : "; last probe error: " + lastError));
+                + (lastError == null ? "" : "; last probe error: " + describe(lastError)));
+    }
+
+    /**
+     * The whole cause chain, not just {@code toString()}.
+     *
+     * <p>Every driver in this harness wraps an {@code IOException} as
+     * {@code IllegalStateException("GitLab request failed: " + uri, e)}, so rendering only the
+     * outermost exception discards the one word that matters — "Connection refused", "Read timed
+     * out", "Broken pipe". In a nightly job nobody is watching, that word is the difference between a
+     * failure someone can act on and one that costs a re-run to understand.
+     */
+    private static String describe(Throwable error) {
+        StringBuilder chain = new StringBuilder(error.toString());
+        for (Throwable cause = error.getCause(); cause != null; cause = cause.getCause()) {
+            chain.append(" <- ").append(cause);
+        }
+        return chain.toString();
     }
 
     public static <T> T until(String step, Supplier<Optional<T>> probe) {

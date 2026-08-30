@@ -18,7 +18,7 @@
           "finish_reason": "stop",
           "message": {
             "role": "assistant",
-            "content": "E2E fixture reply. The shape under discussion is:\n\n```java\nint safe = denominator == 0 ? 0 : numerator / denominator;\n```\n\nThat is the whole answer for this thread."
+            "content": "E2E fixture reply. The shape under discussion is:\n\n```java\nint safe = denominator == 0 ? 0 : numerator / denominator;\n```\n\nThe guard is what matters here rather than the arithmetic: without it a zero denominator throws before anything downstream has a chance to react, and the caller sees a stack trace instead of a value. E2E-FULL-THREAD-TAIL-MARKER"
           }
         }
       ],

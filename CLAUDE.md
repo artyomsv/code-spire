@@ -1155,17 +1155,22 @@ The design is fully specified in `docs/` — **treat those files as the source o
     run and left an instance with **zero users** that serves every page normally; and a duplicate
     registry name reaches the client as a bare **500** rather than a 409 (the class already tracked in
     `techdebt/spire-orchestrator/3-3-…`).
-  - **One scenario is disabled for a structural reason, recorded rather than worked around.** The
-    code-context probes cannot run against a container: `PinnedJsonClient`'s SSRF guard refuses
-    site-local addresses on **every request**, and `SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS` does
-    not reach it — that flag governs `PublicHttpsGuard`, which the *orchestrator* consults at provider
-    create/update. So a context provider registers happily and every fetch it makes is refused; because
-    context providers fail soft, the review completes with an empty context and no error anywhere.
-    Filed as `techdebt/global/3-3-context-providers-cannot-reach-a-private-network-scm.md`, because
-    giving a security control an escape hatch belongs in its own reviewed commit. An earlier version of
-    those probes **passed, for the wrong reason** — the definition sat inside the merge request's own
-    diff, so its body reached the model whether or not anything retrieved it; moving it to the target
-    branch is what made the assertion real, and is why the failure is trustworthy.
+  - **One scenario is disabled with an UNEXPLAINED failure, and the first explanation was wrong.** The
+    code-context probes fail against the containerised GitLab: the provider runs, extracts identifiers,
+    and resolves none (`Context resolution for CODE: extracted=17 resolved=0`), leaving
+    `worker.context_blob` empty. Nothing throws, because context providers fail soft — so a failing
+    provider and a pull request with genuinely no context are indistinguishable, which is the
+    operator-facing risk that outlives the specific bug. Filed as
+    `techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md` with the reproduction.
+    The first diagnosis — that `PinnedJsonClient`'s SSRF guard refuses site-local addresses on every
+    request — is **false**: `isPrivateAddress` is reachable only from `requireSafeRedirectTarget`,
+    which runs only on a 3xx and exempts same-host targets, and its javadoc says outright that dev/test
+    run against localhost. It reached five documents before anyone read the guard, and a four-lens
+    review did not uniformly catch it (the security lens called the diagnosis accurate; the QA lens
+    read the code and found it unreachable) — **agents agreeing is not evidence**. Separately, an
+    earlier version of those probes **passed for the wrong reason**: the definition sat inside the
+    merge request's own diff, so its body reached the model whether or not anything retrieved it.
+    Moving it to the target branch is what made the assertion real.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

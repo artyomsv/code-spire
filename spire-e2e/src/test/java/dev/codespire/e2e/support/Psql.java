@@ -1,6 +1,7 @@
 package dev.codespire.e2e.support;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,16 @@ public final class Psql {
      */
     private static final String SEPARATOR = "";
 
+    /**
+     * ASCII record separator, so ROWS are delimited by something a value cannot contain.
+     *
+     * <p>Splitting on newline first looked fine and was wrong in the PASSING direction: a value
+     * containing a newline — a finding message, a note body, an error text — became two rows, so a
+     * count came out too high and nothing failed. No current caller selects such a column, but
+     * {@link #rows} is a generic helper and the next caller would have found out the hard way.
+     */
+    private static final String RECORD_SEPARATOR = "";
+
     private Psql() {
     }
 
@@ -46,28 +57,39 @@ public final class Psql {
                 "-f", "deploy/compose.e2e.yml",
                 "--env-file", "deploy/.env",
                 "exec", "-T",
-                "-e", "PGPASSWORD=" + required("POSTGRES_PASSWORD"),
                 "postgres",
                 "psql", "-U", required("POSTGRES_USER"), "-d", required("POSTGRES_DB"),
-                "-tA", "-F", SEPARATOR, "-c", sql);
+                "-tA", "-F", SEPARATOR, "-R", RECORD_SEPARATOR, "-c", sql);
 
-        String output = run(command);
         List<List<String>> rows = new ArrayList<>();
-        for (String line : output.split("\\R")) {
-            if (line.isBlank()) {
+        for (String record : run(command).split(RECORD_SEPARATOR, -1)) {
+            // Only the trailing newline psql writes after the last record is stripped. A row whose
+            // single column is '' or NULL prints as nothing, and skipping every blank could not tell
+            // those apart from that trailing newline — so ReadModel.prState on a NULL column reported
+            // "the row is missing" when the row existed and the value was null.
+            String row = record.strip();
+            if (row.isEmpty() && !rows.isEmpty()) {
                 continue;
             }
-            rows.add(List.of(line.split(SEPARATOR, -1)));
+            if (row.isEmpty() && !record.contains(SEPARATOR)) {
+                continue;
+            }
+            rows.add(List.of(row.split(SEPARATOR, -1)));
         }
         return rows;
     }
 
     private static String run(List<String> command) {
+        ProcessBuilder builder = new ProcessBuilder(command)
+                .directory(repoRoot())
+                .redirectErrorStream(true);
+        // On the CHILD's environment, not in argv. `docker compose exec` forwards it, and a password
+        // passed as a command-line argument is readable in `ps` by any other user on the machine for
+        // the life of the call. A fixture password here, but the fix costs nothing.
+        builder.environment().put("PGPASSWORD", required("POSTGRES_PASSWORD"));
+
         try {
-            Process process = new ProcessBuilder(command)
-                    .directory(repoRoot())
-                    .redirectErrorStream(true)
-                    .start();
+            Process process = builder.start();
             String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             if (!process.waitFor(60, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
@@ -77,10 +99,12 @@ public final class Psql {
                 throw new IllegalStateException("psql exited " + process.exitValue() + ": " + output);
             }
             return output;
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new IllegalStateException("could not run psql — is the e2e stack up?", e);
+        } catch (InterruptedException e) {
+            // Restore the flag rather than swallowing it, as every other class in this module does.
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted running psql", e);
         }
     }
 

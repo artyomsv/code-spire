@@ -79,11 +79,16 @@ class RenameTest {
                 "SUPERSEDED means the finding's code disappeared. The code moved; it did not "
                         + "disappear. Statuses: " + statuses + ", locations: " + locations);
 
-        assertTrue(ReadModel.findingsCount(reviewId) <= findingsBefore,
-                "a rename must not churn finding identity — the same defects must not come back as "
-                        + "NEW findings at the new path. Found " + ReadModel.findingsCount(reviewId)
-                        + " after the rename, up from " + findingsBefore
-                        + ". Statuses: " + statuses + ", locations: " + locations);
+        // A third assertion — that findingsCount does not rise, i.e. the defects do not come back as
+        // NEW findings at the new path — was written here and REMOVED, because it could not fail.
+        // The mocked findings hardcode the pre-rename path, so nothing in the fixture set can emit a
+        // finding at Validation.java; and after the rename the already-reported block is present, so
+        // the re-review stub answers with an empty findings list. The count was flat either way.
+        //
+        // Making it real needs a mapping that emits a finding at the RENAMED path when the diff shows
+        // it added (priority 2, keyed on an added `class Validation` line). Until that exists, the two
+        // assertions above are what carries this test — and leaving a third one that reads
+        // load-bearing while being unfalsifiable is worse than not having it.
     }
 
     private static List<String> verdictStatuses(Environment env, long mrIid) {

@@ -15,9 +15,11 @@ import org.junit.jupiter.api.TestMethodOrder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.time.Duration;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -41,6 +43,12 @@ class ReviewChainTest {
     private static final String TS_PATH = "src/ui/defects.ts";
 
     private static final String BRANCH = "e2e-topic";
+
+    /**
+     * Sits at the END of the mocked follow-up answer, past the 160-character preview boundary, so an
+     * endpoint that returned the stored preview instead of the full thread would fail S2.
+     */
+    private static final String FOLLOWUP_TAIL_MARKER = "E2E-FULL-THREAD-TAIL-MARKER";
 
     private static Environment env;
 
@@ -126,7 +134,10 @@ class ReviewChainTest {
         String thread = env.spire().get("/api/reviews/" + env.workspace() + "/" + env.slug()
                 + "/" + mrIid + "/threads/" + discussionId).toString();
 
-        assertTrue(thread.contains("E2E fixture reply"),
+        // Asserted on the TAIL, not on "E2E fixture reply". That phrase opens the answer, so it sits
+        // inside the stored <=160-char preview too — making the endpoint return the preview, which is
+        // the exact regression this step names, would have left the assertion green.
+        assertTrue(thread.contains(FOLLOWUP_TAIL_MARKER),
                 "S2 — the endpoint must return the bot's full answer, not the <=160-char preview the "
                         + "card used to show: " + thread);
     }
@@ -162,31 +173,39 @@ class ReviewChainTest {
     void s5_theTurnCapPostsOneNoticeAndAMentionOverridesIt() {
         String discussionId = firstFindingDiscussionId();
 
-        // Reply until the cap fires. Bounded by Await's own deadline rather than a guessed count, so
-        // the scenario does not depend on the configured cap being any particular number.
-        Await.until("S5 the turn cap fired", () -> {
+        // Reply until the cap fires, ONE EXCHANGE AT A TIME. Posting on Await's own 3s interval
+        // queued replies far faster than a follow-up round trip completes, so a backlog of pre-cap
+        // answers was still landing during the assertions below — and the @-mention step could then
+        // be satisfied by a queued answer rather than by the mention.
+        Await.until("S5 the turn cap fired", Duration.ofMinutes(8), () -> {
             if (ReadModel.events(reviewId, "TurnCapNotified") >= 1) {
                 return Optional.of(true);
             }
+            long before = botNotesIn(discussionId);
             env.human().replyToDiscussion(env.projectId(), mrIid, discussionId, "And another question?");
+            // Wait for THIS exchange to resolve — either an answer, or the notice that ends them.
+            Await.until("S5 the exchange resolved", Duration.ofMinutes(2), () ->
+                    botNotesIn(discussionId) > before || ReadModel.events(reviewId, "TurnCapNotified") >= 1
+                            ? Optional.of(true) : Optional.empty());
             return Optional.empty();
         });
 
         long noticesAtCap = ReadModel.events(reviewId, "TurnCapNotified");
-        long answersAtCap = botNotesIn(discussionId);
 
-        // One more plain reply must post NOTHING. The notice is once per thread — repeating it would
-        // be the bot talking past a human who has already been told.
+        // The property the cap exists for: a further plain reply gets NO answer. Asserting only that
+        // no second notice appears would pass with the cap removed entirely — the notice is claimed
+        // once per thread, so it fires once either way while every reply keeps being answered.
         env.human().replyToDiscussion(env.projectId(), mrIid, discussionId, "One more plain reply.");
-        Await.absent("S5 no second turn-cap notice",
-                () -> ReadModel.events(reviewId, "TurnCapNotified"));
-        assertEquals(noticesAtCap, ReadModel.events(reviewId, "TurnCapNotified"));
+        Await.absent("S5 a capped thread gets no further answers", () -> botNotesIn(discussionId));
+        assertEquals(noticesAtCap, ReadModel.events(reviewId, "TurnCapNotified"),
+                "S5 — the hand-off notice is posted once per thread, never repeated");
 
-        // An explicit @-mention overrides the cap and gets a real answer.
+        // Snapshot AFTER the quiet period, so nothing in flight can satisfy the mention's assertion.
+        long answersBeforeMention = botNotesIn(discussionId);
         env.human().replyToDiscussion(env.projectId(), mrIid, discussionId,
                 "@" + Environment.BOT_USERNAME + " please answer this one.");
-        Await.until("S5 an @-mention overrides the cap",
-                () -> botNotesIn(discussionId) > answersAtCap ? Optional.of(true) : Optional.empty());
+        Await.until("S5 an @-mention overrides the cap", () ->
+                botNotesIn(discussionId) > answersBeforeMention ? Optional.of(true) : Optional.empty());
     }
 
     @Test
@@ -259,7 +278,7 @@ class ReviewChainTest {
     @Order(8)
     void s8_slashReviewUpdatesTheSummaryInPlace() {
         long runsBefore = ReadModel.events(reviewId, "ReviewRequested");
-        long summariesBefore = discussionsWithRef(summaryDiscussionId());
+        String refBefore = summaryThreadRef();
 
         env.human().addNote(env.projectId(), mrIid, "/review");
 
@@ -269,8 +288,16 @@ class ReviewChainTest {
                     ? Optional.of(true) : Optional.empty();
         });
 
-        assertEquals(summariesBefore, discussionsWithRef(summaryDiscussionId()),
-                "S8 — the summary comment is updated in place, never duplicated");
+        // Counting discussions that carry the summary's id could not fail: GitLab ids are unique, so
+        // that count is always 1. A worker that posted a SECOND summary would write a second
+        // is_summary row with a new ref, and summaryThreadRef() — findFirst by seq — would still
+        // return the old one, whose discussion still exists. Both halves below can actually go red.
+        assertEquals(1, ReadModel.threads(reviewId).stream()
+                        .filter(ReadModel.Thread::isSummary).count(),
+                "S8 — a second summary comment would be a second is_summary row: "
+                        + ReadModel.threads(reviewId));
+        assertEquals(refBefore, summaryThreadRef(),
+                "S8 — the summary is edited in place, so its ref must not move");
     }
 
     /**
@@ -370,15 +397,31 @@ class ReviewChainTest {
 
         awaitRunAfter("S10 the closing run completed", runsBefore);
 
-        assertTrue(ReadModel.findingsCount(reviewId) > findingsBefore
-                        || verdictStatuses().stream().allMatch("RESOLVED"::equals),
-                "S10 — the newly introduced defect is raised as its own finding: "
-                        + verdictStatuses() + ", findings " + ReadModel.findingsCount(reviewId));
+        // Two assertions, never a disjunction. As an OR this could not fail: the S10 commit removes
+        // the second marker, so the reconcile fixture answers "all resolved" and the right-hand side
+        // was true by construction — and allMatch on an empty list is true as well, so an empty
+        // reconciliation passed too. Deleting the entire raise-a-new-finding path left it green.
+        assertEquals(findingsBefore + 1, ReadModel.findingsCount(reviewId),
+                "S10 — the newly introduced defect is raised as its own finding: " + verdictStatuses());
+
+        List<String> statuses = verdictStatuses();
+        assertFalse(statuses.isEmpty(), "S10 — there must be prior findings to close out");
+        assertTrue(statuses.stream().allMatch("RESOLVED"::equals),
+                "S10 — every prior finding closes out by the end of the chain: " + statuses);
     }
 
     @Test
     @Order(11)
     void s11_mergingFlipsTheBadgeAndStartsNoNewWork() {
+        // GitLab computes mergeability asynchronously after a push, and S10 pushed moments ago.
+        // Merging while the status is still `checking` answers 405, which the driver turns into a
+        // hard failure — a live flake in the chain's last step, where it costs the whole run's signal.
+        Await.until("S11 the merge request became mergeable", () -> {
+            String status = env.human().get("/projects/" + env.projectId()
+                    + "/merge_requests/" + mrIid).path("detailed_merge_status").asText("");
+            return "mergeable".equals(status) ? Optional.of(true) : Optional.empty();
+        });
+
         env.human().mergeMergeRequest(env.projectId(), mrIid);
 
         // The POSITIVE signal first. Asserting the absence immediately would pass against a system

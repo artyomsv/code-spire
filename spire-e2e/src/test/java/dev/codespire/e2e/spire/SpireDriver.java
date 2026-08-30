@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,17 +31,31 @@ public final class SpireDriver {
     /** The realm's own operator (deploy/keycloak/realm-spire.json). Holds spire-admin. */
     private static final String OPERATOR = "dev-operator";
 
-    private final String orchestratorToken;
+    /**
+     * Re-minted before it expires rather than once per driver.
+     *
+     * <p>The realm sets no {@code accessTokenLifespan}, so Keycloak's default 300 seconds applies —
+     * and one run of the scenario chain comfortably outlives that. A token that expires mid-chain
+     * surfaces as {@code spire 401} from whichever step happened to be running, which reads like an
+     * RBAC defect rather than a clock. Re-minting costs one Keycloak call.
+     */
+    private static final Duration TOKEN_MAX_AGE = Duration.ofSeconds(240);
 
-    private final String gatewayToken;
+    private final Map<String, String> tokens = new LinkedHashMap<>();
 
-    public SpireDriver() {
-        this.orchestratorToken = mintToken("spire-orchestrator", required("SPIRE_OIDC_ORCHESTRATOR_SECRET"));
-        this.gatewayToken = mintToken("spire-gateway", required("SPIRE_OIDC_GATEWAY_SECRET"));
-    }
+    private final Map<String, Instant> mintedAt = new LinkedHashMap<>();
 
     public String operatorToken() {
-        return orchestratorToken;
+        return tokenFor("/api/");
+    }
+
+    private String freshToken(String clientId, String secretVar) {
+        Instant minted = mintedAt.get(clientId);
+        if (minted == null || Instant.now().isAfter(minted.plus(TOKEN_MAX_AGE))) {
+            tokens.put(clientId, mintToken(clientId, required(secretVar)));
+            mintedAt.put(clientId, Instant.now());
+        }
+        return tokens.get(clientId);
     }
 
     private static String mintToken(String clientId, String clientSecret) {
@@ -193,7 +208,7 @@ public final class SpireDriver {
         body.put("enabled", true);
 
         // The gateway's own prefix and the gateway's own token.
-        JsonNode created = send(request("/gw/webhook-repos", gatewayToken)
+        JsonNode created = send(request("/gw/webhook-repos", tokenFor("/gw/"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Json.write(body))));
 
@@ -230,7 +245,9 @@ public final class SpireDriver {
 
     /** The URL prefix decides the audience, because ADR-022 made the prefix the isolation boundary. */
     private String tokenFor(String path) {
-        return path.startsWith("/gw/") ? gatewayToken : orchestratorToken;
+        return path.startsWith("/gw/")
+                ? freshToken("spire-gateway", "SPIRE_OIDC_GATEWAY_SECRET")
+                : freshToken("spire-orchestrator", "SPIRE_OIDC_ORCHESTRATOR_SECRET");
     }
 
     private HttpRequest.Builder request(String path, String token) {

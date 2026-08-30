@@ -61,7 +61,10 @@ services:
         sidekiq['max_concurrency'] = 9
         gitlab_rails['initial_root_password'] = ENV['GITLAB_ROOT_PASSWORD']
     ports:
-      - "${E2E_GITLAB_PORT:-34880}:80"
+      # Loopback only. This GitLab holds an admin token whose value is a public constant in this
+      # repo and has private-network webhook targets enabled, so a published-on-all-interfaces bind
+      # would let anyone who can reach the port authenticate as admin and pivot into the stack.
+      - "127.0.0.1:${E2E_GITLAB_PORT:-34880}:80"
     shm_size: 256m
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/-/readiness"]
@@ -86,5 +89,7 @@ services:
     volumes:
       - ../spire-e2e/src/test/resources/llm-mock:/home/wiremock:ro
     ports:
-      - "${E2E_LLM_MOCK_PORT:-34881}:8080"
+      # Loopback only: WireMock`s /__admin API is unauthenticated, and POST /__admin/mappings with a
+      # proxyBaseUrl would turn this into a forward proxy onto the stack`s own network.
+      - "127.0.0.1:${E2E_LLM_MOCK_PORT:-34881}:8080"
     restart: unless-stopped

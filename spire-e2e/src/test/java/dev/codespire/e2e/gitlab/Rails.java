@@ -1,6 +1,7 @@
 package dev.codespire.e2e.gitlab;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -44,10 +45,12 @@ final class Rails {
                         "gitlab-rails runner exited " + process.exitValue() + ": " + output);
             }
             return output;
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("gitlab-rails runner failed for script: " + script, e);
+        } catch (IOException e) {
+            throw new IllegalStateException("could not run gitlab-rails runner", e);
+        } catch (InterruptedException e) {
+            // Restore the flag rather than swallowing it, as every other class in this module does.
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted running gitlab-rails runner", e);
         }
     }
 

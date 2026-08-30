@@ -66,19 +66,30 @@ so a Docker-network GitLab does not trip them either.
 a configuration no operator should run, and `PublicHttpsGuard`'s production behaviour is *not*
 covered by this suite. It remains covered by `ProviderUrlValidationTest` in `testServices`.
 
-**Correction (2026-08-30): this section was incomplete, and the gap cost a scenario.** "The guard"
-is not one guard. `PublicHttpsGuard` is the orchestrator's, it fires at provider create/update, and
-the environment variable above relaxes it. `spire-http`'s `PinnedJsonClient` has its *own*
-private-address check that fires on **every request** (`PinnedJsonClient:199`), in a different module,
-with no such flag — and every context provider fetches through it. So relaxing the first lets the
-suite *register* a context provider against `http://gitlab/api/v4`, and every fetch that provider then
-makes is refused. Because context providers fail soft, the review still completes and
-`ContextAssembled` is still emitted; only `worker.context_blob` staying empty reveals it.
+**This section is correct as written, and a correction that was appended to it on 2026-08-30 was
+itself wrong — both facts are kept, because the second is the more useful one.**
 
-The consequence is scoped and recorded rather than worked around: the code-context probes (§9.2) are
-`@Disabled` and tracked in
-`techdebt/global/3-3-context-providers-cannot-reach-a-private-network-scm.md`. Adding an escape to a
-security control is not something a test branch should do on its own account.
+The wrong correction claimed that `spire-http`'s `PinnedJsonClient` applies a private-address check on
+every request, and that this structurally blocks every context provider from reaching a
+Docker-network GitLab. It does not. `isPrivateAddress` is reachable only from
+`requireSafeRedirectTarget`, which runs only on a **3xx** and returns immediately for a same-host
+target; its javadoc says plainly that dev/test legitimately run against WireMock on localhost. The
+distinction it leaned on — that `SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS` governs
+`PublicHttpsGuard` (orchestrator, registration-time) and not the worker's transport — is true, and was
+used to support a conclusion the code does not support.
+
+What is actually observed is narrower and still unexplained: the `code` context provider runs,
+extracts identifiers, and resolves none of them (`Context resolution for CODE: extracted=17
+resolved=0`). The code-context probes (§9.2) are `@Disabled` on that basis, with the reproduction and
+the first thing to check recorded in
+`techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md`.
+
+**The process lesson is worth more than the finding.** A plausible mechanism was reached for without
+testing it, and it propagated into a techdebt entry, this spec, `CLAUDE.md`, a test's javadoc and a
+pull request description before anyone read the guard. A four-lens review round did not uniformly
+catch it either — the security lens read the claim and called it accurate; the QA lens read
+`PinnedJsonClient` and found the guard unreachable on the direct path. Agents agreeing is not
+evidence.
 
 Rejected alternatives:
 
