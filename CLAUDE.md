@@ -1209,6 +1209,33 @@ docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d      # fr
 ./deploy/render-manifests.sh --check                                        # rendered-manifest drift
 ```
 
+**The GitLab end-to-end suite** (`spire-e2e`, host ports 348xx — its own compose project, so it can
+run alongside a packaged stack):
+
+```bash
+# Bring it up ONCE. GitLab needs ~6 minutes before it answers; poll rather than guess:
+docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml --env-file deploy/.env up -d --build
+until curl -fsS http://localhost:34880/users/sign_in >/dev/null 2>&1; do sleep 15; done
+
+set -a; . deploy/.env; set +a     # the suite reads POSTGRES_*, SPIRE_OIDC_*, DEV_OPERATOR_PASSWORD
+./gradlew testE2e                 # re-runnable in seconds against the warm stack
+
+# Tear it down when you are finished — this does NOT happen automatically.
+docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml --env-file deploy/.env down -v
+```
+
+**The stack deliberately outlives the run.** Nothing in `testE2e` starts or stops a container: GitLab
+is a six-minute boot, so tearing down per run would make the iteration loop unusable and every local
+failure expensive to reproduce. CI does the opposite — `.github/workflows/e2e.yml` ends with
+`down -v` under `if: always()`, because a runner is thrown away and a leaked volume is nobody's
+convenience. If you are wondering why `docker ps` still shows a GitLab: that is why, and the line
+above is the cure.
+
+Results land in `spire-e2e/build/reports/tests/test/index.html` locally; the nightly job uploads the
+same report plus the JUnit XML as an artifact, and writes a per-suite pass/fail table into the run
+summary. On a red run it additionally uploads `deploy/e2e-diagnostics.sh`'s capture — service logs,
+the LLM mock's request journal, and GitLab's own webhook-delivery history.
+
 ## Conventions (enforced by design docs — do not regress)
 
 - **Everything between components is an async event/command** — the only sync edge is webhook
