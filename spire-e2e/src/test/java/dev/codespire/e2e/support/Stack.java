@@ -102,7 +102,11 @@ public final class Stack {
         if (!down.isEmpty()) {
             throw new IllegalStateException("The e2e stack is not up." + down
                     + "\n\nStart it with:\n  " + START_COMMAND
-                    + "\n\nGitLab takes around five minutes to become ready after that returns.");
+                    + "\n\nGitLab takes around five minutes to become ready after that returns."
+                    + "\n\nIf `docker compose ps` says the container is healthy and `docker port` shows"
+                    + " the mapping, the port forwarding itself is stale — Docker Desktop drops it"
+                    + " after the engine restarts, and the container looks perfectly fine from the"
+                    + " inside. `docker compose ... restart <service>` re-establishes it.");
         }
     }
 

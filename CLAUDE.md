@@ -1107,6 +1107,65 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
   Measured, not estimated: **1658 Java tests across 207 suites** (`testFast` 657/80 + `testServices`
   — gateway 73/11, orchestrator 705/89, worker 223/27); `spire-ui` untouched.
+- **The Mode G runbook is now a job (`spire-e2e`, 2026-08-30):** the S1–S11 parity script runs
+  unattended against a **real containerised GitLab**, closing the gap that every automated test below
+  the SCM boundary ran against WireMock — which is *our belief about the API*, authored by whoever
+  held the wrong model of it. GitLab is the only one of the three providers this is possible for, and
+  the reason is worth recording so nobody retries it: GitHub Enterprise Server is a licensed appliance
+  VM, and the self-hostable Bitbucket is **Data Center**, whose `/rest/api/1.0` is a *different API
+  family* from the Cloud `/2.0` our adapter targets — self-hosting it would exercise an adapter we do
+  not ship. Gitea/Forgejo are a trap for the same reason one level down: GitHub-shaped, and divergent
+  in exactly the places this project has been bitten. GitHub and Bitbucket stay on the manual runbook.
+  New third CI tier `testE2e` (nightly, never the PR path) beside `testFast`/`testServices`; the split
+  is by what a module's tests **own**, since a service test boots what it talks to while an e2e test is
+  handed a running stack. `deploy/compose.e2e.yml` adds `gitlab-ce` + a WireMock LLM to the packaged
+  stack under **its own compose project**, because compose treats a same-named project as the same
+  stack and would otherwise reconfigure a developer's running deployment underneath them.
+  - **Everything is on one Docker network, which is what removes the tunnel** — GitLab POSTs straight
+    at `ui:8080/webhooks/gitlab/{key}`. Inbound reach to an ephemeral runner is the single reason the
+    other two tiers cannot be automated this way.
+  - **The mock is steered by the fixture repository, not by reconfiguration.** It tells the three call
+    kinds apart by `PromptCatalog.lockedSystemSuffix` — chosen because it is *locked*, so a per-repo
+    prompt override (a supported feature) cannot break the suite — and a defect marker counts only on
+    an **added** line. Two shapes matter and differ: the review prompt renders `<lineNumber> +content`
+    (`DiffRenderer`), while the reconcile prompt carries a **raw** unified diff, because
+    `ReviewWorker.reconcile` passes the incremental compare through unrendered. A pattern written for
+    one matches nothing in the other, and the mock then answers with a fallback that reads exactly
+    like "nothing was fixed". The fallback verdict is `UNCHANGED`, never `RESOLVED`: a `/review` re-run
+    happens on the *same commit*, and while it said resolved it closed every finding and posted
+    "Fixed in `<sha>`" against untouched code.
+  - **S9b is the load-bearing assertion.** Asserting that *untouched* findings stay `UNCHANGED` proves
+    nothing — when the incremental diff parses to zero files every file reads as untouched, so they
+    still read `UNCHANGED`. Only a **touched-but-unfixed** finding surviving as `STILL_OPEN` can fail
+    under that regression, which is the one that made ADR-019 inert on GitLab alone. Mutation-verified,
+    as were the added-lines-only rule and the tier guard.
+  - **The rename question is settled.** `SMOKE-TEST.md` called finding-identity churn a known
+    limitation and cited a `techdebt/` entry that does not exist, while `CLAUDE.md` recorded a pass
+    where a 100%-similarity rename did *not* churn. `RenameTest` decides it against a real GitLab —
+    findings follow the file, nothing reports `SUPERSEDED`, nothing returns as new — and the runbook
+    is corrected in place.
+  - **Six defects the existing suite could not see**, each fixed: adding a module to
+    `settings.gradle.kts` broke **every production image build** (the `Dockerfile` names each module by
+    hand for its dependency layer; now guarded both ways by `ImageBuildSeesEveryModuleTest`); Java's
+    `HttpClient` opens a plaintext origin with an h2c upgrade that nginx does not answer, so every
+    proxied call hung its full 60s while curl returned in 60ms; `grafana['enable']` was dropped from
+    Omnibus in 16.3 and an unknown key *aborts* reconfigure, restart-looping the container with no
+    symptom outside its own logs; GitLab's health endpoints are restricted to `monitoring_whitelist`
+    so `/-/readiness` answers 404 from the host whether it is up or not; GitLab's root seeding did not
+    run and left an instance with **zero users** that serves every page normally; and a duplicate
+    registry name reaches the client as a bare **500** rather than a 409 (the class already tracked in
+    `techdebt/spire-orchestrator/3-3-…`).
+  - **One scenario is disabled for a structural reason, recorded rather than worked around.** The
+    code-context probes cannot run against a container: `PinnedJsonClient`'s SSRF guard refuses
+    site-local addresses on **every request**, and `SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS` does
+    not reach it — that flag governs `PublicHttpsGuard`, which the *orchestrator* consults at provider
+    create/update. So a context provider registers happily and every fetch it makes is refused; because
+    context providers fail soft, the review completes with an empty context and no error anywhere.
+    Filed as `techdebt/global/3-3-context-providers-cannot-reach-a-private-network-scm.md`, because
+    giving a security control an escape hatch belongs in its own reviewed commit. An earlier version of
+    those probes **passed, for the wrong reason** — the definition sat inside the merge request's own
+    diff, so its body reached the model whether or not anything retrieved it; moving it to the target
+    branch is what made the assertion real, and is why the failure is trustworthy.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
