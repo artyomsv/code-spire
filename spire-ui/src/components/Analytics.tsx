@@ -151,7 +151,7 @@ export function AnalyticsOverview() {
   const repos = useLoaded<string[]>(fetchAnalyticsRepos, []);
 
   return (
-    <>
+    <section className="content">
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">
@@ -184,7 +184,7 @@ export function AnalyticsOverview() {
           </table>
         )}
       </div>
-    </>
+    </section>
   );
 }
 
@@ -195,17 +195,19 @@ export function AnalyticsRepo() {
     [workspace, slug],
   );
   return (
-    <div className="card">
-      <div className="prov-head">
-        <h2 className="prov-title">
-          <BarChart3 size={15} className="an-title-icon" /> {workspace}/{slug}
-        </h2>
-        <Link className="btn-ghost" to="/analytics">
-          All repositories
-        </Link>
+    <section className="content">
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <BarChart3 size={15} className="an-title-icon" /> {workspace}/{slug}
+          </h2>
+          <Link className="btn-ghost" to="/analytics">
+            All repositories
+          </Link>
+        </div>
+        <Lens state={lens} />
       </div>
-      <Lens state={lens} />
-    </div>
+    </section>
   );
 }
 
@@ -218,62 +220,61 @@ export function AnalyticsRepo() {
  */
 export function MyAnalytics({ subject }: { subject?: string }) {
   const state = useLoaded<MyActivity>(fetchMyActivity, []);
+  const accounts = state.kind === 'ready' && state.value.linked ? state.value.identities.length : null;
 
-  if (state.kind === 'loading') return <p className="prov-note">Loading…</p>;
-  if (state.kind === 'error') {
-    return (
+  return (
+    <section className="content">
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">
             <UserRound size={15} className="an-title-icon" /> My activity
           </h2>
+          {accounts !== null && (
+            <span className="badge">
+              {accounts === 1 ? '1 linked account' : `${accounts} linked accounts`}
+            </span>
+          )}
         </div>
-        <p className="prov-note an-error" role="alert">
-          <TriangleAlert size={14} /> Could not load your activity — {state.message}
-        </p>
+        <MyActivityBody state={state} subject={subject} />
       </div>
+    </section>
+  );
+}
+
+/** The three states, each its own answer -- see the note on {@link MyAnalytics}. */
+function MyActivityBody({ state, subject }: { state: LoadState<MyActivity>; subject?: string }) {
+  if (state.kind === 'loading') return <p className="prov-note">Loading…</p>;
+
+  if (state.kind === 'error') {
+    return (
+      <p className="prov-note an-error" role="alert">
+        <TriangleAlert size={14} /> Could not load your activity — {state.message}
+      </p>
     );
   }
 
   if (!state.value.linked) {
     return (
-      <div className="card">
-        <div className="prov-head">
-          <h2 className="prov-title">
-            <UserRound size={15} className="an-title-icon" /> My activity
-          </h2>
+      <div className="wh-empty" role="status">
+        <div className="wh-empty-icon">
+          <UserRound size={20} />
         </div>
-        <div className="wh-empty" role="status">
-          <div className="wh-empty-icon">
-            <UserRound size={20} />
-          </div>
-          <p className="an-empty-title">Your SCM identity isn’t linked</p>
-          <p className="prov-note">
-            That is different from having no activity — nobody has told the dashboard which SCM
-            account is yours. An admin can link you under <strong>Settings → Operators</strong>.
+        <p className="an-empty-title">Your SCM identity isn’t linked</p>
+        <p className="prov-note">
+          That is different from having no activity — nobody has told the dashboard which SCM account
+          is yours. An admin can link you under <strong>Settings → Operators</strong>.
+        </p>
+        {subject && (
+          <p className="an-subject">
+            Your operator id: <code>{subject}</code>
           </p>
-          {subject && (
-            <p className="an-subject">
-              Your operator id: <code>{subject}</code>
-            </p>
-          )}
-        </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="card">
-      <div className="prov-head">
-        <h2 className="prov-title">
-          <UserRound size={15} className="an-title-icon" /> My activity
-        </h2>
-        <span className="badge">
-          {state.value.identities.length === 1
-            ? '1 linked account'
-            : `${state.value.identities.length} linked accounts`}
-        </span>
-      </div>
+    <>
       <div className="an-identities">
         {state.value.identities.map((id) => (
           <span key={`${id.providerType}-${id.authorId}`} className="chip">
@@ -283,6 +284,6 @@ export function MyAnalytics({ subject }: { subject?: string }) {
       </div>
       {state.value.totals && <Totals totals={state.value.totals} />}
       <Breakdown rows={state.value.breakdown} />
-    </div>
+    </>
   );
 }

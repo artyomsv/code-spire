@@ -78,99 +78,101 @@ export function SettingsOperators() {
   };
 
   return (
-    <div className="card">
-      <div className="prov-head">
-        <h2 className="prov-title">
-          <UsersRound size={15} className="an-title-icon" /> Operators
-        </h2>
-      </div>
+    <section className="content">
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <UsersRound size={15} className="an-title-icon" /> Operators
+          </h2>
+        </div>
 
-      <p className="prov-note">
-        Links a signed-in operator to the SCM accounts whose reviews are measured about them, so
-        per-author analytics can show someone their own numbers. The accounts below are the ones this
-        deployment has actually reviewed — an operator can own several, and each is linked
-        separately. An operator finds their operator id on their own activity screen.
-      </p>
-
-      <form onSubmit={submit} className="op-form">
-        <label className="field">
-          <span className="field-label">Operator id</span>
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            placeholder="from the operator’s activity screen"
-            required
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">SCM account</span>
-          <select value={picked} onChange={(e) => setPicked(e.target.value)} required>
-            <option value="">Choose a reviewed author…</option>
-            {candidates.map((c) => (
-              <option key={keyOf(c)} value={keyOf(c)}>
-                {c.displayName} · {c.providerType} · {c.reviews}{' '}
-                {c.reviews === 1 ? 'review' : 'reviews'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="btn" type="submit" disabled={saving || candidates.length === 0}>
-          {saving ? 'Linking…' : 'Link'}
-        </button>
-      </form>
-
-      {candidates.length === 0 && (
         <p className="prov-note">
-          No author has been reviewed yet, so there is nobody to link. Run a review first.
+          Links a signed-in operator to the SCM accounts whose reviews are measured about them, so
+          per-author analytics can show someone their own numbers. The accounts below are the ones this
+          deployment has actually reviewed — an operator can own several, and each is linked
+          separately. An operator finds their operator id on their own activity screen.
         </p>
-      )}
 
-      {error && (
-        <p className="prov-note an-error" role="alert">
-          {error}
-        </p>
-      )}
+        <form onSubmit={submit} className="op-form">
+          <label className="field">
+            <span className="field-label">Operator id</span>
+            <input
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="from the operator’s activity screen"
+              required
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">SCM account</span>
+            <select value={picked} onChange={(e) => setPicked(e.target.value)} required>
+              <option value="">Choose a reviewed author…</option>
+              {candidates.map((c) => (
+                <option key={keyOf(c)} value={keyOf(c)}>
+                  {c.displayName} · {c.providerType} · {c.reviews}{' '}
+                  {c.reviews === 1 ? 'review' : 'reviews'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="btn" type="submit" disabled={saving || candidates.length === 0}>
+            {saving ? 'Linking…' : 'Link'}
+          </button>
+        </form>
 
-      {links !== null && links.length === 0 && (
-        <p className="prov-note">No operator is linked yet, so nobody can see their own activity.</p>
-      )}
+        {candidates.length === 0 && (
+          <p className="prov-note">
+            No author has been reviewed yet, so there is nobody to link. Run a review first.
+          </p>
+        )}
 
-      {links !== null && links.length > 0 && (
-        <table className="prov-table">
-          <thead>
-            <tr>
-              <th>Operator id</th>
-              <th>Platform</th>
-              <th>SCM account</th>
-              <th className="cell-r" />
-            </tr>
-          </thead>
-          <tbody>
-            {links.map((link) => (
-              <tr key={`${link.oidcSubject}-${link.providerType}`}>
-                <td>
-                  <code>{link.oidcSubject}</code>
-                </td>
-                <td>{link.providerType}</td>
-                <td>
-                  <span className="prov-name">{nameFor(candidates, link)}</span>
-                  <div className="prov-sub">{link.authorId}</div>
-                </td>
-                <td className="cell-r">
-                  <button
-                    className="iconbtn"
-                    aria-label={`Unlink ${link.oidcSubject} on ${link.providerType}`}
-                    onClick={() => void remove(link)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </td>
+        {error && (
+          <p className="prov-note an-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        {links !== null && links.length === 0 && (
+          <p className="prov-note">No operator is linked yet, so nobody can see their own activity.</p>
+        )}
+
+        {links !== null && links.length > 0 && (
+          <table className="prov-table">
+            <thead>
+              <tr>
+                <th>Operator id</th>
+                <th>Platform</th>
+                <th>SCM account</th>
+                <th className="cell-r" />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+            </thead>
+            <tbody>
+              {links.map((link) => (
+                <tr key={`${link.oidcSubject}-${link.providerType}`}>
+                  <td>
+                    <code>{link.oidcSubject}</code>
+                  </td>
+                  <td>{link.providerType}</td>
+                  <td>
+                    <span className="prov-name">{nameFor(candidates, link)}</span>
+                    <div className="prov-sub">{link.authorId}</div>
+                  </td>
+                  <td className="cell-r">
+                    <button
+                      className="iconbtn"
+                      aria-label={`Unlink ${link.oidcSubject} on ${link.providerType}`}
+                      onClick={() => void remove(link)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
   );
 }
 

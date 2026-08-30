@@ -31,6 +31,37 @@ function toggleTheme() {
   root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
 }
 
+/**
+ * The topbar heading, longest matching prefix first.
+ *
+ * <p>This replaced a nested ternary whose final branch was `'Reviews'`, so a path it did not know
+ * fell into a branch naming a REAL screen: the header said <b>Reviews</b> while Analytics, My
+ * activity, Memory or Operators was on screen. That is the ADR-025 `refused` shape once more — an
+ * unhandled case defaulting into the reassuring answer rather than an honest one.
+ *
+ * <p>Order is significant: `/analytics/me` must precede `/analytics`.
+ */
+const TITLES: ReadonlyArray<readonly [string, string]> = [
+  ['/r/', 'Review detail'],
+  ['/analytics/me', 'My activity'],
+  ['/analytics', 'Analytics'],
+  ['/settings/operators', 'Operators'],
+  ['/settings/memory', 'Memory'],
+  ['/settings/general', 'General'],
+  ['/settings/providers', 'Repositories'],
+  ['/settings/llm', 'LLM'],
+  ['/settings/context', 'Context'],
+  ['/settings/webhooks', 'Webhooks'],
+  ['/settings/prompts', 'Prompts'],
+  ['/settings/dlq', 'Dead-letter'],
+];
+
+/** A path nobody claimed gets a neutral word, never the name of a screen it is not showing. */
+function titleFor(pathname: string): string {
+  if (pathname === '/') return 'Reviews';
+  return TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'Dashboard';
+}
+
 export default function App() {
   const { reviews, loading, error, showArchived, setShowArchived } = useLiveReviews();
   const location = useLocation();
@@ -52,23 +83,7 @@ export default function App() {
   // "not settings", which was right while the rail had two sections and silently wrong the moment
   // Analytics arrived: both entries lit up at once.
   const onReviews = location.pathname === '/' || location.pathname.startsWith('/r/');
-  const title = location.pathname.startsWith('/r/')
-    ? 'Review detail'
-    : onGeneral
-      ? 'General'
-      : onProviders
-        ? 'Repositories'
-        : onLlm
-          ? 'LLM'
-          : onContext
-            ? 'Context'
-            : onWebhooks
-              ? 'Webhooks'
-              : onDlq
-                ? 'Dead-letter'
-                : onPrompts
-                  ? 'Prompts'
-                  : 'Reviews';
+  const title = titleFor(location.pathname);
   const { me, loading: sessionLoading } = useMe();
   /**
    * Go to a login as soon as `/api/me` says one is needed — the answer the app already has.

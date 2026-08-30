@@ -116,66 +116,68 @@ export function SettingsMemory() {
   };
 
   return (
-    <div className="card">
-      <div className="prov-head">
-        <h2 className="prov-title">
-          <Brain size={15} className="an-title-icon" /> Learned memory
-        </h2>
-        <button className="btn-ghost" onClick={() => void rescan()} disabled={busy}>
-          {busy ? 'Scanning…' : 'Scan now'}
-        </button>
-      </div>
-
-      <p className="prov-note">
-        When a team keeps dismissing the same kind of finding, it is proposed here. An approved
-        preference hides matching findings <em>after</em> the review runs — the count is shown on the
-        pull request and the hidden findings stay on the review, so a preference that turns out wrong
-        is visible and one click from being switched off. Security findings and blockers are never
-        proposed, whatever the evidence says.
-      </p>
-
-      {error && (
-        <p className="prov-note an-error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {view !== null && view.preferences.length === 0 && (
-        <div className="wh-empty" role="status">
-          <div className="wh-empty-icon">
-            <Brain size={20} />
-          </div>
-          <p className="an-empty-title">Nothing proposed yet</p>
-          <p className="prov-note">
-            A group needs {view.thresholds.minEvidence} judged findings across at least two pull
-            requests before anything can be suggested, and the record only started when this shipped
-            — nothing was backfilled. Findings with no category can never be grouped, so a repository
-            using a customized review prompt will not produce proposals.
-          </p>
+    <section className="content">
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <Brain size={15} className="an-title-icon" /> Learned memory
+          </h2>
+          <button className="btn-ghost" onClick={() => void rescan()} disabled={busy}>
+            {busy ? 'Scanning…' : 'Scan now'}
+          </button>
         </div>
-      )}
 
-      {view !== null && view.preferences.length > 0 && (
-        <table className="prov-table">
-          <thead>
-            <tr>
-              <th>Preference</th>
-              <th>Evidence</th>
-              <th className="cell-r">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {view.preferences.map((preference) => (
-              <Card
-                key={preference.id}
-                preference={preference}
-                thresholds={view.thresholds}
-                onDecide={(id, action) => void decide(id, action)}
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+        <p className="prov-note">
+          When a team keeps dismissing the same kind of finding, it is proposed here. An approved
+          preference hides matching findings <em>after</em> the review runs — the count is shown on the
+          pull request and the hidden findings stay on the review, so a preference that turns out wrong
+          is visible and one click from being switched off. Security findings and blockers are never
+          proposed, whatever the evidence says.
+        </p>
+
+        {error && (
+          <p className="prov-note an-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        {view !== null && view.preferences.length === 0 && (
+          <div className="wh-empty" role="status">
+            <div className="wh-empty-icon">
+              <Brain size={20} />
+            </div>
+            <p className="an-empty-title">Nothing proposed yet</p>
+            <p className="prov-note">
+              A group needs {view.thresholds.minEvidence} judged findings across at least two pull
+              requests before anything can be suggested, and the record only started when this shipped
+              — nothing was backfilled. Findings with no category can never be grouped, so a repository
+              using a customized review prompt will not produce proposals.
+            </p>
+          </div>
+        )}
+
+        {view !== null && view.preferences.length > 0 && (
+          <table className="prov-table">
+            <thead>
+              <tr>
+                <th>Preference</th>
+                <th>Evidence</th>
+                <th className="cell-r">Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {view.preferences.map((preference) => (
+                <Card
+                  key={preference.id}
+                  preference={preference}
+                  thresholds={view.thresholds}
+                  onDecide={(id, action) => void decide(id, action)}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
   );
 }

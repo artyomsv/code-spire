@@ -96,8 +96,32 @@ function payloadFor(url: string): unknown {
   }
   if (/\/description$/.test(url)) return { description: null };
   if (/\/api\/reviews\/[^/]+\/[^/]+\/\d+$/.test(url)) return detail;
+  // The analytics lenses and the memory view are OBJECTS, and the fallback below is a list. A
+  // screen handed the wrong shape throws while rendering, React unmounts the whole tree, and the
+  // route then looks like one that never mounted -- so an absent fixture reads as a routing fault.
+  if (/\/api\/analytics\/(overview|me)$/.test(url)) return emptyLens;
+  if (/\/api\/memory\/preferences$/.test(url)) return emptyMemory;
   return [];
 }
+
+/** Nothing measured yet: zeroes for counts, null for every rate — the state a new deployment is in. */
+const emptyLens = {
+  linked: true,
+  identities: [],
+  totals: {
+    findings: 0,
+    judged: 0,
+    dismissed: 0,
+    resolved: 0,
+    dismissalRate: null,
+    medianRoundsToResolve: null,
+    reviews: 0,
+    suppressed: 0,
+  },
+  breakdown: [],
+};
+
+const emptyMemory = { preferences: [], thresholds: { minEvidence: 10, minDismissedPercent: 70 } };
 
 const jsonResponse = (payload: unknown) => ({
   ok: true,
@@ -113,8 +137,21 @@ const renderAt = (path: string) =>
     </MemoryRouter>,
   );
 
+/**
+ * Every route, because the `main .content` assertion below is also the padding check.
+ *
+ * <p>Each screen supplies its own `.content` wrapper, which is where the page's padding lives. The
+ * four screens added for P4 did not, so they rendered edge-to-edge against the rail — and this list
+ * is why nobody noticed: the check that would have caught it existed and was never extended to the
+ * new routes. A route missing from here is a screen with no coverage at all, so treat adding a
+ * `<Route>` and adding a row here as one action.
+ */
 const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/', title: 'Reviews', nav: 'Reviews' },
+  { path: '/analytics', title: 'Analytics', nav: 'Analytics' },
+  { path: '/analytics/me', title: 'My activity', nav: 'My activity' },
+  { path: '/settings/operators', title: 'Operators', nav: 'Operators' },
+  { path: '/settings/memory', title: 'Memory', nav: 'Memory' },
   { path: '/settings/general', title: 'General', nav: 'General' },
   { path: '/settings/context', title: 'Context', nav: 'Context' },
   { path: '/settings/providers', title: 'Repositories', nav: 'Repositories' },
@@ -149,7 +186,15 @@ describe('App — routing shell', () => {
     expect(active).toHaveTextContent(nav);
     // The title and the highlight are both derived from the pathname, so they would still look
     // right if the <Route> itself were missing and nothing mounted. Every screen roots at
-    // `.content`, so this is what actually proves the route matched.
+    // `.content` -- which is also where the page's padding lives -- so this is what actually
+    // proves the route matched AND that the screen is inset from the rail.
+    //
+    // Waiting for the skeletons to clear first is what makes it discriminating. `RequireRole`
+    // renders its own `.content` while `/api/me` is in flight, and it calls `useMe()` a SECOND
+    // time (the hook holds no cache), so on the eight admin routes that skeleton was still on
+    // screen at this line and satisfied the query no matter what the screen itself rendered.
+    // Verified by mutation: dropping a screen's wrapper used to leave this green.
+    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument());
     expect(document.querySelector('main .content')).toBeInTheDocument();
   });
 
