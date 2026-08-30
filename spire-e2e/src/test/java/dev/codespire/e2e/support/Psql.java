@@ -36,7 +36,7 @@ public final class Psql {
      * count came out too high and nothing failed. No current caller selects such a column, but
      * {@link #rows} is a generic helper and the next caller would have found out the hard way.
      */
-    private static final String RECORD_SEPARATOR = "";
+    private static final String RECORD_SEPARATOR = "";
 
     private Psql() {
     }
@@ -63,20 +63,37 @@ public final class Psql {
 
         List<List<String>> rows = new ArrayList<>();
         for (String record : run(command).split(RECORD_SEPARATOR, -1)) {
-            // Only the trailing newline psql writes after the last record is stripped. A row whose
-            // single column is '' or NULL prints as nothing, and skipping every blank could not tell
-            // those apart from that trailing newline — so ReadModel.prState on a NULL column reported
-            // "the row is missing" when the row existed and the value was null.
-            String row = record.strip();
-            if (row.isEmpty() && !rows.isEmpty()) {
-                continue;
-            }
+            String row = trimLineTerminators(record);
+            // A row whose only column is '' or NULL prints as nothing, and psql also writes a newline
+            // after the last record. Distinguishing them is why the blank check is not just
+            // `isEmpty()`: ReadModel.prState on a NULL column would otherwise report "the row is
+            // missing" when the row exists and the value is null.
             if (row.isEmpty() && !record.contains(SEPARATOR)) {
                 continue;
             }
             rows.add(List.of(row.split(SEPARATOR, -1)));
         }
         return rows;
+    }
+
+    /**
+     * Trims newlines only — NOT {@link String#strip()}.
+     *
+     * <p>Java counts the ASCII separators 0x1C-0x1F as whitespace, so {@code strip()} silently ate the
+     * leading unit separator of a row whose first column was empty, turning {@code ['', 'x']} into
+     * {@code ['x']} and shifting every later column. The record separator this splits on is 0x1E, and
+     * the column separator is 0x1F, so a whitespace-based trim is exactly the wrong tool here.
+     */
+    private static String trimLineTerminators(String record) {
+        int start = 0;
+        int end = record.length();
+        while (start < end && (record.charAt(start) == '\n' || record.charAt(start) == '\r')) {
+            start++;
+        }
+        while (end > start && (record.charAt(end - 1) == '\n' || record.charAt(end - 1) == '\r')) {
+            end--;
+        }
+        return record.substring(start, end);
     }
 
     private static String run(List<String> command) {
