@@ -15,11 +15,10 @@ import {
 /**
  * Three states, never two.
  *
- * An empty corpus, a failed load and (on the personal view) an unlinked identity say
- * three different things and send an operator to three different places. Collapsing
- * any of them into "no data" is the shape the ADR-025 `refused` incident took, where a
- * status the lookup did not know fell through into the reassuring branch and a refused
- * review rendered as five green segments under "done".
+ * An empty corpus, a failed load and (on the personal view) an unlinked identity say three different
+ * things and send an operator to three different places. Collapsing any of them into "no data" is the
+ * shape the ADR-025 `refused` incident took, where a status the lookup did not know fell through into
+ * the reassuring branch and a refused review rendered as five green segments under "done".
  */
 type LoadState<T> =
   | { kind: 'loading' }
@@ -33,8 +32,9 @@ function useLoaded<T>(load: () => Promise<T>, deps: unknown[]): LoadState<T> {
     setState({ kind: 'loading' });
     load()
       .then((value) => live && setState({ kind: 'ready', value }))
-      .catch((e: unknown) =>
-        live && setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) }),
+      .catch(
+        (e: unknown) =>
+          live && setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) }),
       );
     return () => {
       live = false;
@@ -44,41 +44,36 @@ function useLoaded<T>(load: () => Promise<T>, deps: unknown[]): LoadState<T> {
   return state;
 }
 
+/** A cell with no measurement reads `—`, never `0` — zero is a number, absence is not. */
 function percent(rate: number | null): string {
   return rate === null ? '—' : `${Math.round(rate * 100)}%`;
 }
 
-function number(value: number | null): string {
+function rounded(value: number | null): string {
   return value === null ? '—' : String(Math.round(value * 10) / 10);
 }
 
-/** A cell with no data reads `—`, never `0` — zero is a measurement, absence is not. */
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="an-stat">
+      <div className="an-stat-value">{value}</div>
+      <div className="an-stat-label">{label}</div>
+    </div>
+  );
+}
+
 function Totals({ totals }: { totals: AnalyticsTotals }) {
   return (
-    <div className="tiles" role="group" aria-label="Totals">
-      <div className="tile">
-        <span className="tile-value">{totals.findings}</span>
-        <span className="tile-label">Findings</span>
-      </div>
-      <div className="tile">
-        <span className="tile-value">{totals.reviews}</span>
-        <span className="tile-label">Reviews</span>
-      </div>
-      <div className="tile">
-        <span className="tile-value">{percent(totals.dismissalRate)}</span>
-        <span className="tile-label">
-          Dismissed{totals.judged === 0 ? ' (nothing judged yet)' : ` of ${totals.judged} judged`}
-        </span>
-      </div>
-      <div className="tile">
-        <span className="tile-value">{number(totals.medianRoundsToResolve)}</span>
-        <span className="tile-label">Median rounds to fix</span>
-      </div>
+    <div className="an-stats">
+      <Stat value={String(totals.findings)} label="Findings" />
+      <Stat value={String(totals.reviews)} label="Reviews" />
+      <Stat
+        value={percent(totals.dismissalRate)}
+        label={totals.judged === 0 ? 'Dismissed (nothing judged yet)' : `Dismissed of ${totals.judged} judged`}
+      />
+      <Stat value={rounded(totals.medianRoundsToResolve)} label="Median rounds to fix" />
       {totals.suppressed > 0 && (
-        <div className="tile">
-          <span className="tile-value">{totals.suppressed}</span>
-          <span className="tile-label">Hidden by preferences</span>
-        </div>
+        <Stat value={String(totals.suppressed)} label="Hidden by preferences" />
       )}
     </div>
   );
@@ -87,39 +82,46 @@ function Totals({ totals }: { totals: AnalyticsTotals }) {
 function Breakdown({ rows }: { rows: AnalyticsBreakdown[] }) {
   if (rows.length === 0) {
     return (
-      <p className="muted">
-        No findings recorded yet. This record starts when a review runs — nothing was backfilled,
-        so the history begins here rather than pretending to reach further back than it does.
+      <p className="prov-note">
+        No findings recorded yet. This record starts when a review runs — nothing was backfilled, so
+        the history begins here rather than pretending to reach further back than it does.
       </p>
     );
   }
   return (
-    <table className="table">
+    <table className="prov-table">
       <thead>
         <tr>
           <th>Kind</th>
           <th>Severity</th>
-          <th>Raised</th>
-          <th>Dismissed</th>
-          <th>Fixed</th>
-          <th>Not judged</th>
+          <th className="cell-r">Raised</th>
+          <th className="cell-r">Dismissed</th>
+          <th className="cell-r">Fixed</th>
+          <th className="cell-r">Not judged</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((row) => (
           <tr key={`${row.severity}-${row.category ?? 'unlabelled'}`}>
             <td>
-              {row.category ?? (
-                <span className="muted" title="The model did not label this one — a customized review prompt does not ask for a category.">
+              {row.category ? (
+                <span className="prov-name">{row.category}</span>
+              ) : (
+                <span
+                  className="muted"
+                  title="The model did not label this one — a customized review prompt does not ask for a category."
+                >
                   unlabelled
                 </span>
               )}
             </td>
-            <td>{row.severity}</td>
-            <td>{row.raised}</td>
-            <td>{row.dismissed}</td>
-            <td>{row.resolved}</td>
-            <td>{row.unjudged}</td>
+            <td>
+              <span className={`badge sev-${row.severity.toLowerCase()}`}>{row.severity}</span>
+            </td>
+            <td className="cell-r">{row.raised}</td>
+            <td className="cell-r">{row.dismissed}</td>
+            <td className="cell-r">{row.resolved}</td>
+            <td className="cell-r">{row.unjudged}</td>
           </tr>
         ))}
       </tbody>
@@ -128,10 +130,10 @@ function Breakdown({ rows }: { rows: AnalyticsBreakdown[] }) {
 }
 
 function Lens({ state }: { state: LoadState<AnalyticsLens> }) {
-  if (state.kind === 'loading') return <p className="muted">Loading…</p>;
+  if (state.kind === 'loading') return <p className="prov-note">Loading…</p>;
   if (state.kind === 'error') {
     return (
-      <p className="error" role="alert">
+      <p className="prov-note an-error" role="alert">
         <TriangleAlert size={14} /> Could not load analytics — {state.message}
       </p>
     );
@@ -144,31 +146,45 @@ function Lens({ state }: { state: LoadState<AnalyticsLens> }) {
   );
 }
 
-/** Deployment-wide numbers plus the repositories that have any. */
 export function AnalyticsOverview() {
   const overview = useLoaded<AnalyticsLens>(fetchAnalyticsOverview, []);
   const repos = useLoaded<string[]>(fetchAnalyticsRepos, []);
 
   return (
-    <section className="card">
-      <h2>
-        <BarChart3 size={16} /> Review analytics
-      </h2>
-      <Lens state={overview} />
-      <h3>Repositories</h3>
-      {repos.kind === 'ready' && repos.value.length === 0 && (
-        <p className="muted">No repository has recorded findings yet.</p>
-      )}
-      {repos.kind === 'ready' && (
-        <ul className="plain-list">
-          {repos.value.map((repo) => (
-            <li key={repo}>
-              <Link to={`/analytics/${repo}`}>{repo}</Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <>
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <BarChart3 size={15} className="an-title-icon" /> Review analytics
+          </h2>
+        </div>
+        <Lens state={overview} />
+      </div>
+
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">Repositories</h2>
+        </div>
+        {repos.kind === 'ready' && repos.value.length === 0 && (
+          <p className="prov-note">No repository has recorded findings yet.</p>
+        )}
+        {repos.kind === 'ready' && repos.value.length > 0 && (
+          <table className="prov-table">
+            <tbody>
+              {repos.value.map((repo) => (
+                <tr key={repo}>
+                  <td>
+                    <Link className="an-repo" to={`/analytics/${repo}`}>
+                      {repo}
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -179,61 +195,94 @@ export function AnalyticsRepo() {
     [workspace, slug],
   );
   return (
-    <section className="card">
-      <h2>
-        <BarChart3 size={16} /> {workspace}/{slug}
-      </h2>
+    <div className="card">
+      <div className="prov-head">
+        <h2 className="prov-title">
+          <BarChart3 size={15} className="an-title-icon" /> {workspace}/{slug}
+        </h2>
+        <Link className="btn-ghost" to="/analytics">
+          All repositories
+        </Link>
+      </div>
       <Lens state={lens} />
-    </section>
+    </div>
   );
 }
 
 /**
- * The caller's own numbers.
+ * The caller's own numbers, across every SCM account they own.
  *
- * The unlinked branch is the reason this is its own screen: it must not render as an
- * empty chart. "You have done nothing" and "we do not know who you are" are different
- * facts, and only one of them is fixable by the operator reading it.
+ * The unlinked branch is why this is its own screen: it must not render as an empty chart. "You have
+ * done nothing" and "we do not know who you are" are different facts, and only one is fixable by the
+ * person reading it.
  */
 export function MyAnalytics({ subject }: { subject?: string }) {
   const state = useLoaded<MyActivity>(fetchMyActivity, []);
 
-  if (state.kind === 'loading') return <p className="muted">Loading…</p>;
+  if (state.kind === 'loading') return <p className="prov-note">Loading…</p>;
   if (state.kind === 'error') {
     return (
-      <p className="error" role="alert">
-        <TriangleAlert size={14} /> Could not load your activity — {state.message}
-      </p>
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <UserRound size={15} className="an-title-icon" /> My activity
+          </h2>
+        </div>
+        <p className="prov-note an-error" role="alert">
+          <TriangleAlert size={14} /> Could not load your activity — {state.message}
+        </p>
+      </div>
     );
   }
+
   if (!state.value.linked) {
     return (
-      <section className="card">
-        <h2>
-          <UserRound size={16} /> My activity
-        </h2>
-        <p role="status">
-          Your SCM identity isn’t linked, so there is nothing to show yet — this is different from
-          having no activity. Ask an admin to link you under Settings → Operators.
-        </p>
-        {subject && (
-          <p className="muted">
-            They will need your operator id: <code>{subject}</code>
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <UserRound size={15} className="an-title-icon" /> My activity
+          </h2>
+        </div>
+        <div className="wh-empty" role="status">
+          <div className="wh-empty-icon">
+            <UserRound size={20} />
+          </div>
+          <p className="an-empty-title">Your SCM identity isn’t linked</p>
+          <p className="prov-note">
+            That is different from having no activity — nobody has told the dashboard which SCM
+            account is yours. An admin can link you under <strong>Settings → Operators</strong>.
           </p>
-        )}
-      </section>
+          {subject && (
+            <p className="an-subject">
+              Your operator id: <code>{subject}</code>
+            </p>
+          )}
+        </div>
+      </div>
     );
   }
+
   return (
-    <section className="card">
-      <h2>
-        <UserRound size={16} /> My activity
-      </h2>
-      <p className="muted">
-        {state.value.providerType} · {state.value.authorId}
-      </p>
+    <div className="card">
+      <div className="prov-head">
+        <h2 className="prov-title">
+          <UserRound size={15} className="an-title-icon" /> My activity
+        </h2>
+        <span className="badge">
+          {state.value.identities.length === 1
+            ? '1 linked account'
+            : `${state.value.identities.length} linked accounts`}
+        </span>
+      </div>
+      <div className="an-identities">
+        {state.value.identities.map((id) => (
+          <span key={`${id.providerType}-${id.authorId}`} className="chip">
+            {id.providerType} · {id.authorId}
+          </span>
+        ))}
+      </div>
       {state.value.totals && <Totals totals={state.value.totals} />}
       <Breakdown rows={state.value.breakdown} />
-    </section>
+    </div>
   );
 }

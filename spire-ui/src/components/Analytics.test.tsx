@@ -33,8 +33,7 @@ describe('MyAnalytics', () => {
   it('says the identity is not linked rather than showing an empty chart', async () => {
     vi.spyOn(api, 'fetchMyActivity').mockResolvedValue({
       linked: false,
-      providerType: null,
-      authorId: null,
+      identities: [],
       totals: null,
       breakdown: [],
     });
@@ -54,8 +53,7 @@ describe('MyAnalytics', () => {
   it('shows which SCM account it is reporting on once linked', async () => {
     vi.spyOn(api, 'fetchMyActivity').mockResolvedValue({
       linked: true,
-      providerType: 'github',
-      authorId: 'TEST-AUTHOR-9',
+      identities: [{ oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: 'TEST-AUTHOR-9' }],
       totals: { ...EMPTY_TOTALS, findings: 4, judged: 2, dismissed: 1, dismissalRate: 0.5 },
       breakdown: [
         { severity: 'NIT', category: 'NAMING', raised: 3, dismissed: 1, resolved: 1, unjudged: 1 },

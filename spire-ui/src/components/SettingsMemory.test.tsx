@@ -44,10 +44,10 @@ describe('SettingsMemory', () => {
 
     render(<SettingsMemory />);
 
-    await waitFor(() => expect(screen.getByText('14 of 16')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/14 of 16 dismissed/)).toBeTruthy());
     // 88% observed against a 75% bar — both numbers, or the operator is judging blind.
-    expect(screen.getByText(/88% dismissed across 5 pull requests/)).toBeTruthy();
-    expect(screen.getByText(/threshold: 10 findings, 75% dismissed/)).toBeTruthy();
+    expect(screen.getByText(/88% across 5 pull requests/)).toBeTruthy();
+    expect(screen.getByText(/bar: 10 findings, 75%/)).toBeTruthy();
   });
 
   it('offers approve and reject on a proposal, and neither hides anything yet', async () => {
