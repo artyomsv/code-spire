@@ -28,14 +28,25 @@ class SpireDriverTest {
      * Also proves the two-token split is necessary rather than defensive: this call goes to the
      * gateway's own prefix, and a token minted for the orchestrator is refused there by design.
      */
+    /**
+     * A unique target per run, cleaned up afterwards. A fixed one collides with the previous run's
+     * registration on the second execution, and the registry's unique constraint surfaces as a bare
+     * 500 rather than a 409 — so the test would fail saying nothing about why.
+     */
     @Test
     void registersAWebhookAndGetsTheSecretExactlyOnce() {
         SpireDriver spire = new SpireDriver();
-        SpireDriver.Webhook hook = spire.registerWebhook("gitlab", "e2e-probe/e2e-probe-webhook");
+        String target = "e2e-probe/e2e-probe-webhook-" + System.currentTimeMillis();
+        try {
+            SpireDriver.Webhook hook = spire.registerWebhook("gitlab", target);
 
-        assertFalse(hook.key().isBlank());
-        assertFalse(hook.secret().isBlank(),
-                "the secret is returned only on create — GitLab's Secret token field needs it, and the "
-                        + "view thereafter carries only hasSecret");
+            assertFalse(hook.key().isBlank());
+            assertFalse(hook.secret().isBlank(),
+                    "the secret is returned only on create — GitLab's Secret token field needs it, and "
+                            + "the view thereafter carries only hasSecret");
+        } finally {
+            spire.resetRegistries("e2e-probe-none", "e2e-probe-none", "e2e-probe-none",
+                    "e2e-probe-none", target);
+        }
     }
 }

@@ -66,6 +66,20 @@ so a Docker-network GitLab does not trip them either.
 a configuration no operator should run, and `PublicHttpsGuard`'s production behaviour is *not*
 covered by this suite. It remains covered by `ProviderUrlValidationTest` in `testServices`.
 
+**Correction (2026-08-30): this section was incomplete, and the gap cost a scenario.** "The guard"
+is not one guard. `PublicHttpsGuard` is the orchestrator's, it fires at provider create/update, and
+the environment variable above relaxes it. `spire-http`'s `PinnedJsonClient` has its *own*
+private-address check that fires on **every request** (`PinnedJsonClient:199`), in a different module,
+with no such flag — and every context provider fetches through it. So relaxing the first lets the
+suite *register* a context provider against `http://gitlab/api/v4`, and every fetch that provider then
+makes is refused. Because context providers fail soft, the review still completes and
+`ContextAssembled` is still emitted; only `worker.context_blob` staying empty reveals it.
+
+The consequence is scoped and recorded rather than worked around: the code-context probes (§9.2) are
+`@Disabled` and tracked in
+`techdebt/global/3-3-context-providers-cannot-reach-a-private-network-scm.md`. Adding an escape to a
+security control is not something a test branch should do on its own account.
+
 Rejected alternatives:
 
 - *Seed the provider row directly into Postgres.* Keeps prod config intact, but the harness must

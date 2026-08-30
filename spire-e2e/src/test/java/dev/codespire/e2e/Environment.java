@@ -32,6 +32,8 @@ public final class Environment {
 
     private static final String MODEL = "e2e-mock-model";
 
+    private static final String CONTEXT_PROVIDER = "e2e-code-context";
+
     private final String workspace;
 
     private final String slug;
@@ -85,13 +87,19 @@ public final class Environment {
         SpireDriver spire = new SpireDriver();
         // Idempotent: a second run against the same stack would otherwise hit the registry's unique
         // constraint, which surfaces as a bare 500 rather than a 409.
-        spire.resetRegistries(SCM_PROVIDER, LLM_PROVIDER, MODEL, workspace + "/" + slug);
+        spire.resetRegistries(SCM_PROVIDER, LLM_PROVIDER, MODEL, CONTEXT_PROVIDER,
+                workspace + "/" + slug);
 
         spire.registerScmProvider(SCM_PROVIDER, "http://gitlab/api/v4", workspace, BOT_TOKEN);
         // Catalogued BEFORE the provider names it: ADR-023's guard refuses a provider whose model is
         // not priceable, so the reverse order fails at registration.
         spire.catalogueUnmeteredModel(MODEL, "E2E mock model");
         spire.registerLlmProvider(LLM_PROVIDER, "http://llm-mock:8080/v1", MODEL);
+
+        // Code context reads source files with its OWN credential, from the context-provider registry.
+        // Without it the context stage still runs and still emits ContextAssembled, but assembles
+        // nothing — the feature is silently inert rather than failing.
+        spire.registerCodeContextProvider(CONTEXT_PROVIDER, "http://gitlab/api/v4", BOT_TOKEN);
 
         SpireDriver.Webhook hook = spire.registerWebhook("gitlab", workspace + "/" + slug);
         // The service name and CONTAINER port, not the published host port: GitLab reaches the

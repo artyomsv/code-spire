@@ -86,7 +86,8 @@ public final class SpireDriver {
      * model a provider still references — correctly, since that would orphan it.
      */
     public void resetRegistries(String scmProviderName, String llmProviderName, String modelName,
-                                String webhookTarget) {
+                                String contextProviderName, String webhookTarget) {
+        deleteByField("/api/context-providers", "name", contextProviderName);
         deleteByField("/api/llm-providers", "name", llmProviderName);
         deleteByField("/api/llm-models", "name", modelName);
         deleteByField("/api/providers", "name", scmProviderName);
@@ -156,6 +157,28 @@ public final class SpireDriver {
         body.put("rates", Map.of());
         body.put("enabled", true);
         return post("/api/llm-models", body).get("id").asText();
+    }
+
+    /**
+     * Registers the {@code code} context provider — the credential {@code CodeContextProvider} reads
+     * source files with.
+     *
+     * <p>Not optional, and not obvious: code context lives in the CONTEXT provider registry, which is
+     * separate from the SCM provider registry, so registering the SCM provider does not supply it.
+     * Without this the context stage still runs and still emits {@code ContextAssembled} — it simply
+     * assembles nothing, so {@code worker.context_blob} stays empty and no snippet ever reaches the
+     * prompt. Nothing fails; the feature is just silently inert.
+     */
+    public String registerCodeContextProvider(String name, String baseUrl, String apiToken) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("name", name);
+        body.put("type", "code");
+        body.put("baseUrl", baseUrl);
+        body.put("authKind", "bearer");
+        body.put("secret", apiToken);
+        body.put("enabled", true);
+        body.put("isDefault", true);
+        return post("/api/context-providers", body).get("id").asText();
     }
 
     /** The routing key and the one-time secret. Both are needed to create the hook in GitLab. */
