@@ -1232,6 +1232,90 @@ export async function unlinkOperatorIdentity(
   if (!res.ok) throw new Error(`Unlink failed: ${res.status}`);
 }
 
+/** Someone who has signed in to this dashboard — what an admin picks instead of typing a subject. */
+export interface SeenOperator {
+  subject: string;
+  username: string;
+  displayName: string;
+}
+
+export async function fetchSeenOperators(): Promise<SeenOperator[]> {
+  const res = await apiFetch('/api/operator-identities/operators');
+  if (!res.ok) throw new Error(`Operators failed: ${res.status}`);
+  return res.json();
+}
+
+// --- Proving an SCM account by signing in (FR-11) ---------------------------
+
+/** One platform an operator may prove an account on, and whether they already have. */
+export interface ConnectablePlatform {
+  providerType: string;
+  configured: boolean;
+  linked: boolean;
+  authorId: string;
+}
+
+/**
+ * The OAuth application an operator signs into.
+ *
+ * `redirectUri` is computed by the server from the request, so it is the address an admin must
+ * register on the platform — there is nothing for them to work out and nothing to keep in step.
+ */
+export interface ScmOAuthApp {
+  providerType: string;
+  webBaseUrl: string | null;
+  apiBaseUrl: string | null;
+  clientId: string;
+  hasSecret: boolean;
+  connectable: boolean;
+  redirectUri: string;
+}
+
+export async function fetchConnectablePlatforms(): Promise<ConnectablePlatform[]> {
+  const res = await apiFetch('/api/operator-connect');
+  if (!res.ok) throw new Error(`Connect options failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Where to send the whole window to start a sign-in.
+ *
+ * Not fetched: the server answers with a redirect to the platform, and a cross-origin redirect is
+ * an opaque failure to `fetch`. The same reason the dashboard's own login is a navigation.
+ */
+export function connectStartUrl(providerType: string): string {
+  return `/api/operator-connect/${encodeURIComponent(providerType)}/start`;
+}
+
+export async function fetchScmOAuthApps(): Promise<ScmOAuthApp[]> {
+  const res = await apiFetch('/api/scm-oauth-apps');
+  if (!res.ok) throw new Error(`OAuth apps failed: ${res.status}`);
+  return res.json();
+}
+
+/** A blank `clientSecret` keeps the stored one — sending '' would wipe a working credential. */
+export async function saveScmOAuthApp(app: {
+  providerType: string;
+  webBaseUrl: string;
+  apiBaseUrl: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<void> {
+  const res = await apiFetch('/api/scm-oauth-apps', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(app),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Save failed: ${res.status}`);
+}
+
+export async function deleteScmOAuthApp(providerType: string): Promise<void> {
+  const res = await apiFetch(`/api/scm-oauth-apps/${encodeURIComponent(providerType)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+}
+
 // --- Learned memory (P4 / FR-10) --------------------------------------------
 
 export interface LearnedPreference {

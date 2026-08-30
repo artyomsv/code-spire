@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { BarChart3, TriangleAlert, UserRound } from 'lucide-react';
 import {
   AnalyticsBreakdown,
@@ -11,6 +11,7 @@ import {
   fetchAnalyticsRepos,
   fetchMyActivity,
 } from '../api';
+import { ConnectOptions, connectOutcome } from './ConnectOptions';
 
 /**
  * Three states, never two.
@@ -220,10 +221,20 @@ export function AnalyticsRepo() {
  */
 export function MyAnalytics({ subject }: { subject?: string }) {
   const state = useLoaded<MyActivity>(fetchMyActivity, []);
+  const [params] = useSearchParams();
   const accounts = state.kind === 'ready' && state.value.linked ? state.value.identities.length : null;
+  // The sign-in returns here by a whole-window navigation, so its result arrives in the URL. It is
+  // rendered above everything: an operator who has just come back from their SCM is looking for the
+  // answer to one question, and a screen that silently looked the same either way would not answer it.
+  const outcome = connectOutcome(params.get('connect'));
 
   return (
     <section className="content">
+      {outcome && (
+        <p className={`prov-note ${outcome.ok ? 'connect-ok' : 'an-error'}`} role="status">
+          {outcome.text}
+        </p>
+      )}
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">
@@ -264,6 +275,7 @@ function MyActivityBody({ state, subject }: { state: LoadState<MyActivity>; subj
           That is different from having no activity — nobody has told the dashboard which SCM account
           is yours. An admin can link you under <strong>Settings → Operators</strong>.
         </p>
+        <ConnectOptions />
         {subject && (
           <p className="an-subject">
             Your operator id: <code>{subject}</code>
@@ -282,6 +294,7 @@ function MyActivityBody({ state, subject }: { state: LoadState<MyActivity>; subj
           </span>
         ))}
       </div>
+      <ConnectOptions />
       {state.value.totals && <Totals totals={state.value.totals} />}
       <Breakdown rows={state.value.breakdown} />
     </>

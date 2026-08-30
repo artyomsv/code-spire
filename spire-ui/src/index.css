@@ -1436,3 +1436,32 @@
   /* The pull-request URL field: one wide input on its own row. */
   .field-pr { flex: 1 1 100%; min-width: 0; }
 }
+
+/* ---- proving an SCM account by signing in (FR-11) ---- */
+@layer components {
+  /* One platform's sign-in application: a summary row that opens into its form. */
+  .oauth-app { border-top: 1px solid var(--line); padding: 12px 18px; }
+  .oauth-app-head { display: flex; align-items: center; gap: 9px; }
+
+  /* Same shape as .op-form -- these are the same kind of thing and should not look different. */
+  .oauth-app-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    padding: 13px 0 2px;
+  }
+  .oauth-app-form .field { flex: 1 1 240px; margin: 0; }
+  .oauth-app-form .btn { flex: none; }
+  /* The redirect address is for copying, so it reads as a value rather than something to fill in. */
+  .oauth-app-form input[readonly] { color: var(--text-2); cursor: text; }
+
+  .connect-options { display: flex; flex-wrap: wrap; gap: 9px; padding: 13px 18px 4px; }
+
+  /* The one green note on these screens: a sign-in that worked. Everything else uses .an-error. */
+  .connect-ok {
+    color: var(--good);
+    border-left: 2px solid color-mix(in srgb, var(--good) 55%, transparent);
+    padding-left: 12px;
+  }
+}

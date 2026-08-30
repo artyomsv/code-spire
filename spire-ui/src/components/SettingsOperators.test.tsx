@@ -4,17 +4,15 @@ import { SettingsOperators } from './SettingsOperators';
 import * as api from '../api';
 
 /**
- * The operator-to-SCM mapping screen (P4 / FR-11).
+ * Which SCM accounts belong to which operator (P4 / FR-11).
  *
- * <p>The property worth pinning is that the SCM account is <b>picked from what the deployment has
- * actually reviewed</b>, never typed. The first version asked an admin to enter a stable provider id
- * such as `3218389` — a value the product displays nowhere, so the only way to fill the field was to
- * query the database, while every one of those ids had already been recorded dozens of times by the
- * reviews themselves.
+ * <p>The property worth pinning is that <b>both ends are picked, never typed</b>. The first version
+ * asked for an OIDC subject and a stable provider id — two opaque values the product displays
+ * nowhere, so the only way to fill the form was to query the database, while both had already been
+ * recorded by ordinary use: subjects by every sign-in, author ids by every review.
  *
- * <p>A human still decides WHICH author is which operator. That part is deliberate: a coincidental
- * username match would show one person another person's performance data with nothing on screen
- * looking wrong. The product supplies the choices; an admin asserts the link.
+ * <p>The form is the repair path. The normal route is an operator signing into the platform, which
+ * is proof rather than an assertion — covered by `ConnectOptions.test.tsx`.
  */
 
 const AUTHORS: api.ObservedAuthor[] = [
@@ -22,13 +20,22 @@ const AUTHORS: api.ObservedAuthor[] = [
   { providerType: 'gitlab', authorId: '40124851', displayName: 'TEST-AUTHOR-A', reviews: 5 },
 ];
 
+const OPERATORS: api.SeenOperator[] = [
+  { subject: 'TEST-SUBJECT-1', username: 'test-user-one', displayName: 'TEST Operator One' },
+  { subject: 'TEST-SUBJECT-9', username: 'test-user-nine', displayName: 'TEST Operator Nine' },
+];
+
 describe('SettingsOperators', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(api, 'fetchOperatorCandidates').mockResolvedValue(AUTHORS);
+    vi.spyOn(api, 'fetchSeenOperators').mockResolvedValue(OPERATORS);
+    // The sign-in card renders above the form and loads on its own; this screen's tests are not
+    // about it, so it is answered rather than left to reject into a shared error banner.
+    vi.spyOn(api, 'fetchScmOAuthApps').mockResolvedValue([]);
   });
 
-  it('lists the existing mappings with their platform and the name the reviews recorded', async () => {
+  it('lists the existing mappings with the operator and the name the reviews recorded', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
       { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '3218389' },
     ]);
@@ -37,41 +44,45 @@ describe('SettingsOperators', () => {
 
     await waitFor(() => expect(screen.getByText('TEST-SUBJECT-1')).toBeTruthy());
     const row = screen.getByText('TEST-SUBJECT-1').closest('tr') as HTMLElement;
-    // The display name, not just the opaque id — the id alone means nothing to a reader.
+    // Both sides show a name, not just an opaque id -- the ids alone mean nothing to a reader.
+    expect(within(row).getByText(/TEST Operator One/)).toBeTruthy();
     expect(within(row).getByText('TEST-AUTHOR-A')).toBeTruthy();
     expect(within(row).getByText('3218389')).toBeTruthy();
     expect(within(row).getByText('github')).toBeTruthy();
   });
 
   /**
-   * The whole point of the redesign: an admin chooses an account the system has seen. If this ever
-   * becomes a free-text field again, the screen goes back to being unusable without a database.
+   * The whole point of the redesign. If either field ever becomes free text again, the screen goes
+   * back to being unusable without a database session.
    */
-  it('offers the reviewed authors as choices rather than a text field', async () => {
+  it('offers both ends as choices rather than text fields', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
 
     render(<SettingsOperators />);
 
     await waitFor(() => expect(screen.getByLabelText(/SCM account/)).toBeTruthy());
-    const picker = screen.getByLabelText(/SCM account/) as HTMLSelectElement;
-    expect(picker.tagName).toBe('SELECT');
+    const account = screen.getByLabelText(/SCM account/) as HTMLSelectElement;
+    const operator = screen.getByLabelText(/^Operator$/) as HTMLSelectElement;
+    expect(account.tagName).toBe('SELECT');
+    expect(operator.tagName).toBe('SELECT');
     // Each option names the person and how much the deployment has seen of them.
-    expect(within(picker).getByText(/TEST-AUTHOR-A · github · 21 reviews/)).toBeTruthy();
-    expect(within(picker).getByText(/TEST-AUTHOR-A · gitlab · 5 reviews/)).toBeTruthy();
+    expect(within(account).getByText(/TEST-AUTHOR-A · github · 21 reviews/)).toBeTruthy();
+    expect(within(operator).getByText(/TEST Operator One · test-user-one/)).toBeTruthy();
   });
 
-  it('sends the platform and id of the account that was picked', async () => {
+  it('sends the subject and the account that were picked', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     const link = vi.spyOn(api, 'linkOperatorIdentity').mockResolvedValue(undefined);
 
     const { container } = render(<SettingsOperators />);
     // Wait for the OPTIONS, not the button: the button is always there, and changing a select
-    // before its options exist leaves the value at '' -- the browser refuses a value it has no option for.
+    // before its options exist leaves the value at '' -- the browser refuses a value it has no
+    // option for.
     await waitFor(() => expect(screen.getByText(/TEST-AUTHOR-A · gitlab/)).toBeTruthy());
 
-    fireEvent.change(screen.getByLabelText(/Operator id/), { target: { value: 'TEST-SUBJECT-9' } });
+    fireEvent.change(screen.getByLabelText(/^Operator$/), { target: { value: 'TEST-SUBJECT-9' } });
     fireEvent.change(screen.getByLabelText(/SCM account/), { target: { value: 'gitlab|40124851' } });
-    fireEvent.submit(container.querySelector('form') as HTMLFormElement);
+    fireEvent.submit(container.querySelector('form.op-form') as HTMLFormElement);
 
     await waitFor(() =>
       expect(link).toHaveBeenCalledWith({
@@ -106,7 +117,7 @@ describe('SettingsOperators', () => {
     expect(screen.getByText(/nobody can see their own activity/)).toBeTruthy();
   });
 
-  /** Before any review has run there is nobody to pick, and the screen says so rather than showing an empty menu. */
+  /** Two different empty states, because they send an admin to two different places. */
   it('explains that nothing can be linked until a review has run', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     vi.spyOn(api, 'fetchOperatorCandidates').mockResolvedValue([]);
@@ -117,18 +128,26 @@ describe('SettingsOperators', () => {
     expect((screen.getByText('Link') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('explains that nothing can be linked until somebody has signed in', async () => {
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchSeenOperators').mockResolvedValue([]);
+
+    render(<SettingsOperators />);
+
+    await waitFor(() => expect(screen.getByText(/Nobody has signed in yet/)).toBeTruthy());
+    expect((screen.getByText('Link') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('surfaces a rejected mapping instead of appearing to have saved it', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     vi.spyOn(api, 'linkOperatorIdentity').mockRejectedValue(new Error('TEST-REJECTED'));
 
     const { container } = render(<SettingsOperators />);
-    // Wait for the OPTIONS, not the button: the button is always there, and changing a select
-    // before its options exist leaves the value at '' -- the browser refuses a value it has no option for.
     await waitFor(() => expect(screen.getByText(/TEST-AUTHOR-A · gitlab/)).toBeTruthy());
 
-    fireEvent.change(screen.getByLabelText(/Operator id/), { target: { value: 'TEST-SUBJECT-9' } });
+    fireEvent.change(screen.getByLabelText(/^Operator$/), { target: { value: 'TEST-SUBJECT-9' } });
     fireEvent.change(screen.getByLabelText(/SCM account/), { target: { value: 'github|3218389' } });
-    fireEvent.submit(container.querySelector('form') as HTMLFormElement);
+    fireEvent.submit(container.querySelector('form.op-form') as HTMLFormElement);
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/TEST-REJECTED/));
   });
