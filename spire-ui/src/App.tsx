@@ -48,9 +48,10 @@ export default function App() {
   // entries highlight at once and neither tells the operator where they are.
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
-  const onSettings = onGeneral || onProviders || onLlm || onContext || onWebhooks || onDlq || onPrompts
-    || onOperators || onMemory;
-  const onReviews = location.pathname === '/';
+  // Reviews owns the list and every review detail page -- a POSITIVE test. It used to be styled as
+  // "not settings", which was right while the rail had two sections and silently wrong the moment
+  // Analytics arrived: both entries lit up at once.
+  const onReviews = location.pathname === '/' || location.pathname.startsWith('/r/');
   const title = location.pathname.startsWith('/r/')
     ? 'Review detail'
     : onGeneral
@@ -149,7 +150,10 @@ export default function App() {
         </div>
         <nav className="nav">
           <div className="label">Operate</div>
-          <a className={onSettings ? '' : 'active'} href="#/">
+          {/* Highlighted by a POSITIVE test, not by "not settings". The negation was right while
+              the rail had two sections and silently wrong the moment Analytics was added: both
+              entries lit up at once, so the nav no longer told an operator where they were. */}
+          <a className={onReviews ? 'active' : ''} href="#/">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <rect x="1.5" y="2.5" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="1.5" y="7" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />

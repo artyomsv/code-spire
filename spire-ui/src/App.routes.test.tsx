@@ -197,6 +197,33 @@ describe('App — routing shell', () => {
  * refuses every configuration read with a 403 — these cover the interface's side of that, which is
  * not to leave a viewer looking at controls and pages that can only fail.
  */
+describe('App — rail highlighting', () => {
+  /**
+   * Exactly one rail entry is highlighted at a time.
+   *
+   * <p>Reviews used to be styled by NEGATION -- active whenever the path was not a settings route.
+   * That was right while the rail had two sections and silently wrong the moment Analytics arrived:
+   * on /analytics both entries lit up, so the nav stopped telling an operator where they were.
+   */
+  it.each([
+    ['/', 'Reviews'],
+    ['/analytics', 'Analytics'],
+    ['/analytics/me', 'My activity'],
+  ])('highlights only %s in the rail', async (path, expected) => {
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(document.querySelector('nav.nav')).toBeTruthy());
+    const active = Array.from(document.querySelectorAll('nav.nav a.active')).map((a) =>
+      (a.textContent ?? '').trim(),
+    );
+    expect(active).toEqual([expected]);
+  });
+});
+
 describe('App — what a viewer may see', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', SilentSocket);
