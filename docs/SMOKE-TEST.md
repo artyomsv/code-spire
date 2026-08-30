@@ -1519,11 +1519,20 @@ resulting claim could not be checked by anything. This is the platform answering
 
 1. Stack up with authentication ON (`docker-compose.idp.yml`, Mode J's prerequisites). The flow is
    meaningless with auth off: there is no operator identity to link to.
-2. Register an OAuth application on the platform you are testing:
-   - **GitHub** — Settings → Developer settings → OAuth Apps → New OAuth App.
-   - **GitLab** — User settings → Applications, scope `read_user`, **confidential** on.
-   - **Bitbucket** — Workspace settings → OAuth consumers, permission **Account: Read**, and
-     **This is a private consumer** ticked (a public consumer cannot use a client secret).
+2. Register an OAuth application on the platform you are testing. **One per platform for the whole
+   deployment, not one per person**, and it goes on the account that owns your repositories — not on
+   a repository, and not on the bot account whose token the provider registry already holds. That
+   credential proves the *reviewer's* identity; this one lets a person prove their own.
+   - **GitHub** — the organization → Settings → Developer settings → OAuth Apps → New OAuth App.
+     A personal account works identically but leaves with that person, taking every operator's link
+     with it. No permission section to fill in: the profile-only scope is requested per sign-in.
+   - **GitLab** — the top-level group → Settings → Applications, scope `read_user`, **Confidential**
+     ticked (without it GitLab issues no client secret at all). A personal application under Edit
+     profile → Applications works and belongs to that person; a self-managed instance can hold an
+     instance-wide one in the Admin area.
+   - **Bitbucket** — the workspace → Workspace settings → OAuth consumers, permission
+     **Account: Read**, and **This is a private consumer** ticked (a public consumer has no client
+     secret). Bitbucket offers no personal option, so the workspace is the only place it can go.
 3. In the dashboard, Settings → **Operators** → *Sign-in applications* → **Set up** for that
    platform. Copy the **redirect address** shown there into the application you just registered —
    it must match exactly, including scheme, host, port and path. Paste the client id and secret.

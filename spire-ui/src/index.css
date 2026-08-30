@@ -1443,6 +1443,25 @@
   .oauth-app { border-top: 1px solid var(--line); padding: 12px 18px; }
   .oauth-app-head { display: flex; align-items: center; gap: 9px; }
 
+  /* The three facts asked before the form: one per platform, whose account, not the bot. */
+  .oauth-facts {
+    margin: 0;
+    padding: 0 18px 4px 34px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-2);
+  }
+  .oauth-facts li { margin-bottom: 3px; }
+  .oauth-facts strong { color: var(--text); font-weight: 550; }
+
+  /* Whose account owns the application — above the steps, since it is asked before them. */
+  .oauth-owner {
+    border-left: 2px solid color-mix(in srgb, var(--iris) 45%, transparent);
+    padding: 2px 0 2px 11px;
+    margin-bottom: 12px;
+  }
+  .oauth-owner-where { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 1.45; }
+
   /* The expanded panel: the address to copy, the portal checklist, then the fields. */
   .oauth-app-open { padding-top: 12px; display: flex; flex-direction: column; gap: 14px; }
   .oauth-app-open .field { margin: 0; }

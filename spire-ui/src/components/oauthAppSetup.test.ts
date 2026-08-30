@@ -46,6 +46,36 @@ describe('oauthSetupGuide', () => {
     expect(all('github')).toMatch(/Nothing to configure for permissions/);
   });
 
+  /**
+   * The first question anyone asks, and the one the panel originally answered nowhere: whose
+   * account does this go under? It is not guessable — the application has nothing to do with the
+   * bot credential, is not registered per person, and lives on an account rather than on a repo.
+   */
+  it('names the account that should own the application, per platform', () => {
+    expect(oauthSetupGuide('github')!.owner.where).toMatch(/organization/i);
+    expect(oauthSetupGuide('gitlab')!.owner.where).toMatch(/group/i);
+    expect(oauthSetupGuide('bitbucket-cloud')!.owner.where).toMatch(/workspace/i);
+  });
+
+  /**
+   * Two platforms allow a personal account and one does not, and the difference matters: a personal
+   * application leaves with the person, taking every operator's link with it. Naming a place
+   * without saying why invites the easier choice, so the reason is part of the answer.
+   */
+  it('says what a personal account costs, or that there is no such option', () => {
+    expect(oauthSetupGuide('github')!.owner.detail).toMatch(/personal account/i);
+    expect(oauthSetupGuide('gitlab')!.owner.detail).toMatch(/personal one/i);
+    expect(oauthSetupGuide('bitbucket-cloud')!.owner.detail).toMatch(/no personal option/i);
+  });
+
+  /** An application lives on an account, never on a repository — a different settings page entirely. */
+  it('sends the admin to the account settings, not the repository settings', () => {
+    for (const type of ['github', 'gitlab', 'bitbucket-cloud']) {
+      const first = oauthSetupGuide(type)!.steps[0];
+      expect(`${first.title} ${first.detail ?? ''}`).toMatch(/not the (repository|project)/i);
+    }
+  });
+
   it('gives every step a non-empty title', () => {
     for (const providerType of ['github', 'gitlab', 'bitbucket-cloud']) {
       for (const step of oauthSetupGuide(providerType)!.steps) {

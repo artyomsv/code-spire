@@ -70,6 +70,22 @@ describe('ScmConnections', () => {
   });
 
   /**
+   * The question the panel originally answered nowhere. An admin cannot start until they know the
+   * application is one per platform, belongs to the account that owns the repositories, and is not
+   * the bot credential they already set up.
+   */
+  it('answers whose account registers it, before showing the form', async () => {
+    render(<ScmConnections />);
+
+    expect(await screen.findByText(/once per platform/)).toBeTruthy();
+    expect(screen.getByText(/not the bot/i)).toBeTruthy();
+
+    fireEvent.click((await screen.findAllByText('Edit'))[0]);
+    expect(await screen.findByText(/Register it under: The organization that owns your repositories/))
+      .toBeTruthy();
+  });
+
+  /**
    * The instructions are the feature. Registering an application means working in a portal where
    * every field is named differently -- GitLab calls the client id an Application ID, Bitbucket
    * calls it a Key -- and two platforms refuse to issue a secret at all unless a box is ticked.

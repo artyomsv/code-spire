@@ -52,11 +52,27 @@ export function ScmConnections() {
 
       <p className="prov-note">
         With one of these set up, an operator proves their own SCM account by signing in to it — the
-        platform says who they are, so nobody has to assert it. Set up is a one-off per platform:
-        register an application there, paste its client id and secret here, and give it the redirect
-        address this page shows you. The only permission requested is reading the signed-in
-        account’s own profile — never repository access.
+        platform says who they are, so nobody has to assert it. The only permission requested is
+        reading the signed-in account’s own profile, never repository access.
       </p>
+
+      {/* The three facts everyone asks before touching the form, and the panel used to answer
+          none of them. "Whose account" in particular is not guessable: the application is nothing
+          to do with the bot credential, and it is not per person. */}
+      <ul className="oauth-facts">
+        <li>
+          <strong>You register it once per platform</strong>, not once per person. Every operator
+          signs in through the same application.
+        </li>
+        <li>
+          <strong>Under the account that owns your repositories</strong> — the organization,
+          workspace or group. Each platform’s exact place is named below.
+        </li>
+        <li>
+          <strong>This is not the bot’s credential.</strong> That one proves the reviewer’s
+          identity; this one lets a person prove their own.
+        </li>
+      </ul>
 
       {error && (
         <p className="prov-note an-error" role="alert">
@@ -216,6 +232,11 @@ function SetupChecklist({ providerType }: { providerType: string }) {
   return (
     <div className="wh-setup">
       <div className="wh-setup-title">On {guide.providerLabel} — one-off setup</div>
+      {/* Above the steps, because "whose account" is asked before "what do I click". */}
+      <div className="oauth-owner">
+        <div className="oauth-owner-where">Register it under: {guide.owner.where}</div>
+        <div className="wh-step-detail">{guide.owner.detail}</div>
+      </div>
       <ol className="wh-steps">
         {guide.steps.map((step, i) => (
           <li className="wh-step" key={i}>
