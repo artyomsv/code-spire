@@ -48,7 +48,22 @@ class LlmMockContractTest {
     /** Exactly how DiffRenderer writes an added line: line number, space, '+', content. */
     private static final String ADDED_A = "7 +        return numerator / denominator;  // E2E-DEFECT-A";
 
-    private static final String REMOVED_A = "7 -        return numerator / denominator;  // E2E-DEFECT-A";
+    /**
+     * The reconcile prompt carries a RAW unified diff, not DiffRenderer's output.
+     *
+     * <p>{@code ReviewWorker.reconcile} passes the incremental compare diff through unrendered when
+     * the compare succeeds, so removed lines are plain {@code -} at line start — NOT the
+     * {@code <lineNumber> -<content>} the review prompt uses. A pattern written for the review shape
+     * matches nothing here, and the mock then silently answers with the fallback verdicts: every
+     * finding UNCHANGED, which is indistinguishable from a review where nothing was fixed.
+     */
+    private static final String REMOVED_A = "\n-        return numerator / denominator;  // E2E-DEFECT-A";
+
+    private static final String REMOVED_B = "\n-        return values[index];  // E2E-DEFECT-B";
+
+    /** The review prompt's shape, for contrast: the sign follows the line number. */
+    private static final String RENDERED_REMOVED_A =
+            "7 -        return numerator / denominator;  // E2E-DEFECT-A";
 
     private static final String ADDED_D = "9 +export function widened(rows: any) {  // E2E-DEFECT-D";
 
@@ -74,7 +89,7 @@ class LlmMockContractTest {
 
     @Test
     void aRemovedMarkerLineDoesNotProduceAFinding() {
-        String content = completion(REVIEW + "\n" + REMOVED_A);
+        String content = completion(REVIEW + "\n" + RENDERED_REMOVED_A);
 
         assertFalse(content.contains("E2E-FINDING-A"),
                 "a removed marker line must not read as a present defect: " + content);
@@ -99,7 +114,7 @@ class LlmMockContractTest {
 
     @Test
     void aReconcilePromptReturnsVerdictsNotFindings() {
-        String content = completion(RECONCILE + "\n" + REMOVED_A);
+        String content = completion(RECONCILE + REMOVED_A);
 
         assertTrue(content.contains("\"verdicts\""), content);
         assertFalse(content.contains("\"findings\""), content);
@@ -129,7 +144,7 @@ class LlmMockContractTest {
 
     @Test
     void aReconcileSeeingTheSecondMarkerRemovedResolvesEverything() {
-        String content = completion(RECONCILE + "\n11 -        return values[index];  // E2E-DEFECT-B");
+        String content = completion(RECONCILE + REMOVED_B);
 
         assertTrue(content.contains("resolved"), content);
         assertFalse(content.contains("still-open"), content);

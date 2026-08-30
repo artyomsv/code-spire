@@ -5,7 +5,7 @@
     "urlPath": "/v1/chat/completions",
     "bodyPatterns": [
       { "contains": "Respond ONLY with JSON:" },
-      { "matches": "(?s).*\\d+ -[^\"\\\\]*E2E-DEFECT-A.*" }
+      { "matches": "(?s).*\\\\n-[^\"\\\\]*E2E-DEFECT-A.*" }
     ]
   },
   "response": {

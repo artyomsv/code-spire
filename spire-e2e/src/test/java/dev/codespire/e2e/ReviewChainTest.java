@@ -273,6 +273,163 @@ class ReviewChainTest {
                 "S8 — the summary comment is updated in place, never duplicated");
     }
 
+    /**
+     * S9a and S9b in one commit, because they are one round.
+     *
+     * <p>S9b is the load-bearing assertion of the whole suite. Asserting that UNTOUCHED findings stay
+     * UNCHANGED proves nothing: {@code downgradeUntouched} only rewrites findings whose hunks the
+     * incremental diff says were touched, so when that diff parses to zero files EVERY file reads as
+     * untouched and untouched findings still read UNCHANGED. Only a TOUCHED-but-unfixed finding
+     * surviving as STILL_OPEN can fail under that regression — which is the exact defect that made
+     * ADR-019's reconciliation inert on GitLab alone.
+     */
+    @Test
+    @Order(9)
+    void s9_aFullFixResolvesAndAPartialFixStaysOpen() {
+        long runsBefore = ReadModel.events(reviewId, "ReviewRequested");
+
+        // Defect A removed outright. Defect B's hunk is TOUCHED — a bound is added — but the defect
+        // remains, which is what makes its verdict meaningful.
+        env.human().commit(env.projectId(), BRANCH, null, "Fix A fully, B partially",
+                List.of(FileAction.update(JAVA_PATH, """
+                        package e2e;
+
+                        /** E2E fixture. Every defect here is deliberate and marked. */
+                        public final class Defects {
+
+                            public static int divide(int numerator, int denominator) {
+                                return denominator == 0 ? 0 : numerator / denominator;
+                            }
+
+                            public static String at(String[] values, int index) {
+                                if (index >= values.length) {
+                                    return null;
+                                }
+                                return values[index];  // E2E-DEFECT-B
+                            }
+                        }
+                        """)));
+
+        awaitRunAfter("S9 the reconciling run completed", runsBefore);
+
+        List<String> statuses = verdictStatuses();
+        assertTrue(statuses.contains("RESOLVED"),
+                "S9a — the fully fixed finding resolves: " + statuses);
+        assertTrue(statuses.contains("STILL_OPEN"),
+                "S9b — a TOUCHED but unfixed finding must survive as STILL_OPEN. If this reads "
+                        + "UNCHANGED, the incremental diff parsed to zero files and downgradeUntouched "
+                        + "rewrote it — the exact regression that made reconciliation inert on GitLab: "
+                        + statuses);
+
+        assertTrue(ReadModel.events(reviewId, "ThreadResolved") >= 1,
+                "S9a — ThreadResolved is written only when the adapter reported resolved:true, so its "
+                        + "presence is proof the SCM-side resolve landed rather than degrading to a reply");
+        assertTrue(anyThreadResolvedOnGitLab(),
+                "S9a — and GitLab itself must agree the thread is resolved");
+    }
+
+    @Test
+    @Order(10)
+    void s10_theRemainingFixesCloseOutAndANewDefectIsRaised() {
+        long runsBefore = ReadModel.events(reviewId, "ReviewRequested");
+        long findingsBefore = ReadModel.findingsCount(reviewId);
+
+        env.human().commit(env.projectId(), BRANCH, null, "Fix the rest and introduce a new defect",
+                List.of(
+                        FileAction.update(JAVA_PATH, """
+                                package e2e;
+
+                                /** E2E fixture. Every defect here is deliberate and marked. */
+                                public final class Defects {
+
+                                    public static int divide(int numerator, int denominator) {
+                                        return denominator == 0 ? 0 : numerator / denominator;
+                                    }
+
+                                    public static String at(String[] values, int index) {
+                                        if (index < 0 || index >= values.length) {
+                                            return null;
+                                        }
+                                        return values[index];
+                                    }
+                                }
+                                """),
+                        FileAction.update(TS_PATH, """
+                                export interface Row {
+                                  id: string;
+                                }
+
+                                export function count(rows: Row[]): number {
+                                  return rows.length;
+                                }
+
+                                export function widened(rows: any): number {  // E2E-DEFECT-D
+                                  return rows.length;
+                                }
+                                """)));
+
+        awaitRunAfter("S10 the closing run completed", runsBefore);
+
+        assertTrue(ReadModel.findingsCount(reviewId) > findingsBefore
+                        || verdictStatuses().stream().allMatch("RESOLVED"::equals),
+                "S10 — the newly introduced defect is raised as its own finding: "
+                        + verdictStatuses() + ", findings " + ReadModel.findingsCount(reviewId));
+    }
+
+    @Test
+    @Order(11)
+    void s11_mergingFlipsTheBadgeAndStartsNoNewWork() {
+        env.human().mergeMergeRequest(env.projectId(), mrIid);
+
+        // The POSITIVE signal first. Asserting the absence immediately would pass against a system
+        // that simply has not processed the merge yet, which is not an assertion at all.
+        Await.until("S11 the merge-request state flips to MERGED", () ->
+                "MERGED".equals(ReadModel.prState(reviewId)) ? Optional.of(true) : Optional.empty());
+
+        assertEquals("completed", ReadModel.status(reviewId),
+                "S11 — the merge-request state is its own axis; merging does not change review status");
+
+        Await.absent("S11 no new review run after the merge",
+                () -> ReadModel.events(reviewId, "ReviewRequested"));
+    }
+
+    private static void awaitRunAfter(String step, long runsBefore) {
+        Await.until(step, () -> {
+            boolean newRun = ReadModel.events(reviewId, "ReviewRequested") > runsBefore;
+            return newRun && "completed".equals(ReadModel.status(reviewId))
+                    ? Optional.of(true) : Optional.empty();
+        });
+    }
+
+    /**
+     * Verdicts come from the REST detail view, not psql: reconciliation_json is Tink-encrypted with
+     * the review id as AAD, so the database holds ciphertext.
+     */
+    private static List<String> verdictStatuses() {
+        List<String> statuses = new ArrayList<>();
+        for (JsonNode row : env.spire().reviewSummary(env.workspace(), env.slug(), mrIid)
+                .withArray("reconciliation")) {
+            // The detail view renders these for DISPLAY — lower-case, and with the underscore in
+            // STILL_OPEN spelled as a space. Normalised back to the aggregate's own vocabulary so the
+            // assertions read in the domain's terms rather than the dashboard's.
+            statuses.add(row.get("status").asText()
+                    .toUpperCase(java.util.Locale.ROOT)
+                    .replace(' ', '_'));
+        }
+        return statuses;
+    }
+
+    private static boolean anyThreadResolvedOnGitLab() {
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            for (JsonNode note : discussion.get("notes")) {
+                if (note.path("resolved").asBoolean(false)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static String summaryThreadRef() {
         return ReadModel.threads(reviewId).stream()
                 .filter(ReadModel.Thread::isSummary)
