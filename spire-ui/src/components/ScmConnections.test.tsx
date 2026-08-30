@@ -42,7 +42,10 @@ describe('ScmConnections', () => {
   it('separates a platform that is set up from one that is not', async () => {
     render(<ScmConnections />);
 
-    await waitFor(() => expect(screen.getByText('github')).toBeTruthy());
+    // Named the way the platform names itself, not by the internal provider type: this row is read
+    // beside that platform’s own portal, and "bitbucket-cloud" appears nowhere in it.
+    await waitFor(() => expect(screen.getByText('GitHub')).toBeTruthy());
+    expect(screen.getByText('GitLab')).toBeTruthy();
     expect(screen.getByText('Configured')).toBeTruthy();
     expect(screen.getByText('Not set up')).toBeTruthy();
   });
@@ -57,9 +60,35 @@ describe('ScmConnections', () => {
 
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
 
-    const field = (await screen.findByLabelText(/Redirect address/)) as HTMLInputElement;
-    expect(field.value).toBe('https://spire.example.invalid/api/operator-connect/github/callback');
-    expect(field.readOnly).toBe(true);
+    expect(await screen.findByText('Redirect address to register')).toBeTruthy();
+    expect(
+      screen.getByText('https://spire.example.invalid/api/operator-connect/github/callback'),
+    ).toBeTruthy();
+    // Copied, never retyped. One wrong character fails on the platform with a message that names
+    // nothing in this product, which is the same reason Settings -> Webhooks copies its payload URL.
+    expect(screen.getByText('Copy')).toBeTruthy();
+  });
+
+  /**
+   * The instructions are the feature. Registering an application means working in a portal where
+   * every field is named differently -- GitLab calls the client id an Application ID, Bitbucket
+   * calls it a Key -- and two platforms refuse to issue a secret at all unless a box is ticked.
+   */
+  it('walks through the platform’s own portal, step by step', async () => {
+    render(<ScmConnections />);
+    fireEvent.click((await screen.findAllByText('Edit'))[0]);
+
+    expect(await screen.findByText(/On GitHub . one-off setup/)).toBeTruthy();
+    expect(screen.getByText(/Authorization callback URL/)).toBeTruthy();
+    expect(screen.getByText(/Generate a new client secret/)).toBeTruthy();
+  });
+
+  /** Blank means the hosted service everywhere, so the hint has to say what self-managed needs. */
+  it('says what a self-managed install needs in each base field', async () => {
+    render(<ScmConnections />);
+    fireEvent.click((await screen.findAllByText('Edit'))[0]);
+
+    expect(await screen.findByText(/api\/v3/)).toBeTruthy();
   });
 
   /**
