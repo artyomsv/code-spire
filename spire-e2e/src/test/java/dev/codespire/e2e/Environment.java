@@ -2,10 +2,13 @@ package dev.codespire.e2e;
 
 import dev.codespire.e2e.gitlab.GitLabDriver;
 import dev.codespire.e2e.spire.SpireDriver;
+import dev.codespire.e2e.support.Await;
 import dev.codespire.e2e.support.Stack;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The setup phase, and itself a test: if provider or webhook registration regresses, nothing
@@ -84,6 +87,11 @@ public final class Environment {
         admin.addMember(projectId, ids.get(HUMAN_USERNAME));
         String workspace = admin.get("/projects/" + projectId).get("namespace").get("path").asText();
 
+        GitLabDriver bot = GitLabDriver.as(BOT_TOKEN);
+        GitLabDriver human = GitLabDriver.as(HUMAN_TOKEN);
+        awaitVisibleTo(human, projectId, HUMAN_USERNAME);
+        awaitVisibleTo(bot, projectId, BOT_USERNAME);
+
         SpireDriver spire = new SpireDriver();
         // Idempotent: a second run against the same stack would otherwise hit the registry's unique
         // constraint, which surfaces as a bare 500 rather than a 409.
@@ -108,8 +116,24 @@ public final class Environment {
 
         spire.setReviewMode("active");
 
-        return new Environment(workspace, slug, projectId, hook.key(),
-                GitLabDriver.as(BOT_TOKEN), GitLabDriver.as(HUMAN_TOKEN), spire);
+        return new Environment(workspace, slug, projectId, hook.key(), bot, human, spire);
+    }
+
+    /**
+     * Membership does not take effect the instant {@code addMember} returns.
+     *
+     * <p>Observed as a flake: the very first commit answered {@code 404 Project Not Found}, which
+     * GitLab returns for an unauthorised project as readily as a missing one — so the message pointed
+     * at the wrong cause entirely. Waiting for the member to actually see the project is both the fix
+     * and, when it times out, a far more honest failure than a 404 during setup.
+     */
+    private static void awaitVisibleTo(GitLabDriver user, long projectId, String username) {
+        Await.until("setup: project " + projectId + " became visible to " + username,
+                Duration.ofMinutes(2),
+                () -> {
+                    user.get("/projects/" + projectId);
+                    return Optional.of(true);
+                });
     }
 
     /**
