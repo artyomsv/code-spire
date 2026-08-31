@@ -32,12 +32,20 @@ public final class GitLabDriver {
     public static final String ADMIN_TOKEN = "TEST-e2e-admin-token-00000000000";
 
     /**
-     * GitLab rejects a password containing a common sequence — "12345" alone is enough to fail
-     * validation — so this is structured noise rather than anything readable. It is never used to log
-     * in; every call in this harness is token-authenticated. An account simply cannot be created
-     * without one.
+     * The account password is generated inside the Rails script and never leaves it.
+     *
+     * <p>GitLab will not create a user without one, and rejects anything containing a common
+     * sequence — but nothing in this harness ever *uses* it: every call is token-authenticated
+     * through {@code set_token}. So the value is not something we need to know, and a constant here
+     * was a secret-shaped string in the repository for no benefit. Gitleaks flagged it as a
+     * {@code generic-api-key} at entropy 4.32, and was right to: an entropy scanner cannot tell a
+     * throwaway fixture from a live credential, and a repository that trains people to wave such
+     * findings through is worse off than one with a slightly awkward test.
+     *
+     * <p>Generating it where it is consumed removes the finding by removing the secret, rather than
+     * by allow-listing it.
      */
-    private static final String PASSWORD = "Zx9Qv-Kp3Rw-Ln7Bd-Tq2Ms";
+    private static final String PASSWORD_EXPRESSION = "SecureRandom.alphanumeric(24)";
 
     private final String token;
 
@@ -114,14 +122,16 @@ public final class GitLabDriver {
     private static String ensureUserScript(String username, boolean admin) {
         return ("u = User.find_by_username('%s'); "
                 + "if u.nil?; "
+                // Generated here and never returned. See PASSWORD_EXPRESSION.
+                + "pw = %s; "
                 + "u = Users::CreateService.new(nil, username: '%s', email: '%s@example.invalid', "
-                + "name: '%s', password: '%s', password_confirmation: '%s', "
+                + "name: '%s', password: pw, password_confirmation: pw, "
                 + "skip_confirmation: true, organization_id: org.id).execute.payload[:user]; "
                 + "end; "
                 // Not redundant: Users::CreateService ignores an `admin:` key in its params.
                 + "u.admin = %s; u.save! if u.changed?; "
                 + "puts '%s%s=' + u.id.to_s; ")
-                .formatted(username, username, username, username, PASSWORD, PASSWORD, admin,
+                .formatted(username, PASSWORD_EXPRESSION, username, username, username, admin,
                         USER_ID_MARKER, username);
     }
 
