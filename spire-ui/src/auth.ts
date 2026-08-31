@@ -15,6 +15,12 @@ export interface Me {
   authenticated: boolean;
   user: string;
   roles: string[];
+  /**
+   * The caller's own OIDC subject. Needed because operator_identity is keyed on it and
+   * nothing else lists operators, so without this an admin would be asked to type a value
+   * nobody can see. Optional so an older backend that does not send it still parses.
+   */
+  subject?: string;
 }
 
 /**

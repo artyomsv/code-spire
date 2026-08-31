@@ -11,6 +11,10 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorRun;
+import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingCategory;
+import dev.codespire.contract.review.LineRange;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -48,6 +52,9 @@ class ResultSagaRetryTest {
     private static final String COMMIT = "cafe123";
 
     private final List<ActionCommand> emitted = new ArrayList<>();
+
+    /** What recordOpenFindings actually received -- the carry-forward the next round reads. */
+    private final List<ReviewResult> carriedForward = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
     private final List<RecordCommand> recorded = new ArrayList<>();
     private final List<String> retryNotes = new ArrayList<>();
@@ -59,6 +66,8 @@ class ResultSagaRetryTest {
 
     private ResultSaga sagaWith(int storedAttempt, int maxAttempts, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         // The budget is read from the policy on each failure, so Settings changes it without a restart.
         saga.reviewPolicy = new dev.codespire.orchestrator.policy.ReviewPolicy() {
             @Override
@@ -158,6 +167,7 @@ class ResultSagaRetryTest {
             public void recordOpenFindings(String reviewId, ReviewResult result,
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+                carriedForward.add(result);
             }
 
             @Override
@@ -176,6 +186,51 @@ class ResultSagaRetryTest {
     private static ReviewFailed failure(boolean retryable) {
         return new ReviewFailed(REVIEW_ID, COMMIT, "generate", "boom", retryable, 1);
     }
+
+    /**
+     * A {@link dev.codespire.orchestrator.memory.PreferenceFilter} that hides nothing.
+     *
+     * <p>Overridden rather than injected for the same reason as the projection above: the real one
+     * reads learned_preference through a datasource these unit tests do not have.
+     */
+    private static final dev.codespire.orchestrator.memory.PreferenceFilter NO_PREFERENCES =
+            new dev.codespire.orchestrator.memory.PreferenceFilter() {
+                @Override
+                public Filtered apply(dev.codespire.contract.scm.RepoRef repo,
+                        dev.codespire.contract.review.ReviewResult result) {
+                    return new Filtered(result, java.util.List.of());
+                }
+            };
+
+    /**
+     * A {@link dev.codespire.orchestrator.readmodel.FindingProjection} that writes nothing.
+     *
+     * <p>Every method is overridden deliberately. These are plain unit tests with no datasource, so
+     * an un-overridden one would open a real connection -- the exact trap recorded when making
+     * {@code setNote} always write turned a saga fake into a live database call.
+     */
+    private static final dev.codespire.orchestrator.readmodel.FindingProjection SILENT_FINDINGS =
+            new dev.codespire.orchestrator.readmodel.FindingProjection() {
+                @Override
+                public void recordGenerated(String reviewId, int round, String commit,
+                        java.util.List<dev.codespire.contract.review.Finding> findings) {
+                }
+
+                @Override
+                public void recordThreadRefs(String reviewId,
+                        java.util.List<dev.codespire.contract.event.IntegrationEvent.CommentsPosted.PostedInline> posted) {
+                }
+
+                @Override
+                public void recordVerdicts(String reviewId, int round,
+                        java.util.List<dev.codespire.contract.review.FindingVerdict> verdicts) {
+                }
+
+                @Override
+                public void markSuppressed(String reviewId, int round,
+                        dev.codespire.orchestrator.readmodel.SuppressionBatch batch) {
+                }
+            };
 
     @Test
     void retryableWithBudget_schedulesTheNextAttemptInsteadOfDispatchingIt() {
@@ -204,6 +259,8 @@ class ResultSagaRetryTest {
         // ("threadIsOurs=false") and stay silent — invisible on GitHub/Bitbucket, where they coincide.
         List<String> ownedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -315,9 +372,61 @@ class ResultSagaRetryTest {
         assertNull(notes.get(0), "a clean run writes null, which is what CLEARS an earlier run text");
     }
 
+    /**
+     * <b>A suppressed finding must not reach the next round's exclusion list.</b>
+     *
+     * <p>The seam a unit test of {@code PreferenceFilter} cannot see, and the one that broke.
+     * {@code recordOpenFindings} builds the carry-forward that becomes the next round's
+     * {@code PriorRun}, and {@code ReviewWorker.exclusionsFromPersisted} turns every prior finding
+     * into the review prompt's "already reported" list. Filtering after that write put hidden
+     * findings into it, so round two told the model not to raise them — and revoking the preference
+     * could not restore them, because the filter had nothing left to un-hide.
+     *
+     * <p>That silently destroyed the property ADR-027 gives as the whole reason a counted filter
+     * beats prompt injection. Four places promised the opposite in prose while the code did this.
+     */
+    @Test
+    void aSuppressedFindingNeverEntersTheCarryForwardThatBecomesTheExclusionList() {
+        var hidden = new Finding("src/test/Noisy.java", new LineRange(4, 4), Severity.NIT,
+                FindingCategory.NAMING, "hidden by a preference", null);
+        var kept = new Finding("src/main/Real.java", new LineRange(9, 9), Severity.BLOCKER,
+                FindingCategory.SECURITY, "must survive", null);
+        var saga = sagaForReviewGenerated(new PriorRun(COMMIT, "sum-prior-1", List.of()),
+                Optional.of("packed-cred"));
+        saga.preferenceFilter = filterHiding(hidden);
+
+        saga.on(new ReviewGenerated(REVIEW_ID, 412L, COMMIT,
+                new ReviewResult(List.of(hidden, kept), "s", ModelUsage.of(null, 0, 0))));
+
+        assertEquals(1, carriedForward.size(), "the carry-forward is written once");
+        assertEquals(List.of(kept), carriedForward.get(0).findings(),
+                "a hidden finding must be absent from the carry-forward, or the next round tells the "
+                        + "model to stay quiet about it and revocation can never bring it back");
+
+        var posted = assertInstanceOf(ActionCommand.PostComments.class, emitted.getLast());
+        assertEquals(List.of(kept), posted.findings().findings());
+        assertEquals(1, posted.suppressedCount());
+    }
+
+    /** A filter that hides exactly the findings it is given. */
+    private static dev.codespire.orchestrator.memory.PreferenceFilter filterHiding(Finding... hidden) {
+        var hiddenSet = java.util.Set.of(hidden);
+        return new dev.codespire.orchestrator.memory.PreferenceFilter() {
+            @Override
+            public Filtered apply(dev.codespire.contract.scm.RepoRef repo, ReviewResult result) {
+                var kept = result.findings().stream().filter(f -> !hiddenSet.contains(f)).toList();
+                var suppressed = result.findings().stream().filter(hiddenSet::contains)
+                        .map(f -> new Suppression(f, 7L)).toList();
+                return new Filtered(result.withFindings(kept), suppressed);
+            }
+        };
+    }
+
     /** Minimal ResultSaga wired for the ReviewGenerated -> PostComments path (no ReviewFailed fakery needed). */
     private ResultSaga sagaForReviewGenerated(PriorRun priorRun, Optional<String> credential) {
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
@@ -374,6 +483,7 @@ class ResultSagaRetryTest {
             public void recordOpenFindings(String reviewId, ReviewResult result,
                     List<dev.codespire.contract.review.FindingVerdict> verdicts,
                     List<dev.codespire.contract.review.PriorFinding> priorFindings) {
+                carriedForward.add(result);
             }
 
             @Override
@@ -408,6 +518,14 @@ class ResultSagaRetryTest {
             public int currentRun(String reviewId) {
                 return FIRST_RUN;
             }
+
+            // Overridden too, and not by accident: the real one opens a connection, so leaving it
+            // alone turns this fake into a live database call -- the trap already recorded for
+            // setNote and recordCharges.
+            @Override
+            public int roundOrUnknown(String reviewId) {
+                return FIRST_RUN;
+            }
         };
         return saga;
     }
@@ -420,6 +538,8 @@ class ResultSagaRetryTest {
     void followUpGenerated_touchesTheProjectionForLiveUpdate() {
         List<String> touched = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -455,6 +575,8 @@ class ResultSagaRetryTest {
         // @-mentioned again — once the bot has spoken, the conversation is its own.
         List<String> ownedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -511,6 +633,8 @@ class ResultSagaRetryTest {
         List<String> markedOwned = new ArrayList<>();
         List<String> bumpedThreads = new ArrayList<>();
         ResultSaga saga = new ResultSaga();
+        saga.findings = SILENT_FINDINGS;
+        saga.preferenceFilter = NO_PREFERENCES;
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {

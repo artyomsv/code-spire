@@ -3,6 +3,7 @@ package dev.codespire.llm;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.FindingCategory;
 import dev.codespire.contract.review.Severity;
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,50 @@ class FindingsParserTest {
         assertEquals(12, finding.range().endLine());
         assertEquals(Severity.MAJOR, finding.severity());
         assertEquals("use Optional", finding.suggestion());
+    }
+
+    /**
+     * The wire-up between the model's JSON and the closed enum (P4 / ADR-027).
+     *
+     * <p>Both ends were tested and the join between them was not: the enum has its own tests and
+     * the database column has its own, but nothing proved the parser reads the field at all.
+     */
+    @Test
+    void readsTheCategoryTheModelWasAskedFor() {
+        ReviewResult result = parse("""
+                { "summary": "s",
+                  "findings": [
+                    { "path": "src/App.java", "line": 3, "severity": "NIT",
+                      "category": "NAMING", "message": "m", "suggestion": null }
+                  ] }
+                """, USAGE);
+        assertEquals(FindingCategory.NAMING, result.findings().getFirst().category());
+    }
+
+    /**
+     * A model that omits the field, or invents an eleventh label, leaves the category UNKNOWN —
+     * never {@code OTHER}. {@code OTHER} is an answer the model gave; an unparseable label means
+     * nobody knows what it meant, and grouping the two together would count confusions as a kind.
+     * A customized review prompt (E16) produces the omitted case on every finding it parses.
+     */
+    @Test
+    void anAbsentOrUnrecognisedCategoryParsesToNullRatherThanOther() {
+        ReviewResult omitted = parse("""
+                { "summary": "s",
+                  "findings": [
+                    { "path": "src/App.java", "line": 3, "severity": "NIT", "message": "m" }
+                  ] }
+                """, USAGE);
+        assertNull(omitted.findings().getFirst().category());
+
+        ReviewResult invented = parse("""
+                { "summary": "s",
+                  "findings": [
+                    { "path": "src/App.java", "line": 3, "severity": "NIT",
+                      "category": "ARCHITECTURE", "message": "m" }
+                  ] }
+                """, USAGE);
+        assertNull(invented.findings().getFirst().category());
     }
 
     @Test

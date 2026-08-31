@@ -837,7 +837,8 @@ public class ReviewWorker {
             }
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
-                    String body = renderSummary(review, unanchored, failed, command.commit())
+                    String body = renderSummary(review, unanchored, failed, command.commit(),
+                            command.suppressedCount())
                             + renderReconciliationSection(command.verdicts());
                     CommentRef summary = updateOrPost(commentSink, command, body);
                     // The THREAD, matching what inline slots record: it is what core needs as the
@@ -901,7 +902,7 @@ public class ReviewWorker {
     }
 
     private String renderSummary(ReviewResult review, List<Finding> unanchored,
-                                 List<Finding> failed, String commit) {
+                                 List<Finding> failed, String commit, int suppressedCount) {
         StringBuilder sb = new StringBuilder();
         sb.append("### Code Spire review (`").append(commit).append("`)\n\n");
         if (review.truncated()) {
@@ -914,6 +915,16 @@ public class ReviewWorker {
         }
         appendFindingList(sb, "\nNot anchorable to the diff (cited lines not in the change):\n", unanchored);
         appendFindingList(sb, "\nCould not be posted inline (SCM error):\n", failed);
+        if (suppressedCount > 0) {
+            // Said out loud, on the artefact the author actually reads, because a filter nobody can
+            // see is the failure mode this whole design avoids: if a learned preference is wrong,
+            // the only way anyone finds out is by noticing the count and going to look.
+            sb.append("\n_").append(suppressedCount)
+                    .append(suppressedCount == 1 ? " finding was" : " findings were")
+                    .append(" hidden by a learned preference an operator approved ")
+                    .append("(Settings -> Memory). Switching that preference off brings them ")
+                    .append("back on the next review._\n");
+        }
         sb.append("\nRun `/finding` in any inline thread to file what you discussed there as a tracked finding.\n");
         return sb.toString();
     }
