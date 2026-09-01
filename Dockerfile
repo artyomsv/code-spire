@@ -39,6 +39,7 @@ COPY spire-review-worker/build.gradle.kts spire-review-worker/
 COPY spire-scm-bitbucket/build.gradle.kts spire-scm-bitbucket/
 COPY spire-scm-github/build.gradle.kts spire-scm-github/
 COPY spire-scm-gitlab/build.gradle.kts spire-scm-gitlab/
+COPY spire-workspace/build.gradle.kts spire-workspace/
 
 # A Windows checkout gives gradlew CRLF and /bin/sh then rejects the shebang with
 # "bad interpreter: /bin/sh^M". CI on Linux never sees this; a local deploy/compose.yml build does.
