@@ -135,7 +135,9 @@ public final class CodexAdapter implements HarnessAdapter {
             case "turn.completed" -> usageEvent(node.path("usage"), at);
             case "item.started", "item.completed" -> item(node, envelope, at);
             case "" -> Optional.empty();
-            default -> Optional.of(new RunEvent.StateChange(at, envelope, ""));
+            // The envelope name is model-controlled text like every other field: the agent writes
+            // to the same stdout the parser reads, so it is clipped rather than trusted to be short.
+            default -> Optional.of(new RunEvent.StateChange(at, clip(envelope), ""));
         };
     }
 
@@ -160,7 +162,7 @@ public final class CodexAdapter implements HarnessAdapter {
                     ? new RunEvent.ToolResult(at, "shell", failed(item),
                             clip(item.path("aggregated_output").asText("")))
                     : new RunEvent.ToolUse(at, "shell", clip(item.path("command").asText(""))));
-            default -> Optional.of(new RunEvent.StateChange(at, envelope, itemType));
+            default -> Optional.of(new RunEvent.StateChange(at, clip(envelope), clip(itemType)));
         };
     }
 
@@ -203,20 +205,46 @@ public final class CodexAdapter implements HarnessAdapter {
             return Optional.empty();
         }
         if (cached > input || reasoning > output) {
-            // The vendor's own numbers contradict each other, so no split can be trusted. Report
-            // the headline total as the degraded case rather than flooring a subtraction to zero
-            // and presenting the result as a breakdown.
-            return Optional.of(new RunEvent.Usage(at,
-                    UsageReport.of(Map.of(TokenBucket.TOTAL, input + output))));
+            return Optional.of(new RunEvent.Usage(at, unreconciled(input, cached, output, reasoning)));
         }
 
         Map<TokenBucket, Long> counts = new EnumMap<>(TokenBucket.class);
-        counts.put(TokenBucket.INPUT, input - cached);
-        counts.put(TokenBucket.CACHED_INPUT, cached);
-        counts.put(TokenBucket.CACHE_WRITE, cacheWrite);
-        counts.put(TokenBucket.OUTPUT, output - reasoning);
-        counts.put(TokenBucket.REASONING, reasoning);
-        return Optional.of(new RunEvent.Usage(at, UsageReport.of(counts)));
+        put(counts, TokenBucket.INPUT, input - cached);
+        put(counts, TokenBucket.CACHED_INPUT, cached);
+        put(counts, TokenBucket.CACHE_WRITE, cacheWrite);
+        put(counts, TokenBucket.OUTPUT, output - reasoning);
+        put(counts, TokenBucket.REASONING, reasoning);
+
+        // Nothing survived, so nothing was measured. An all-zero map would build a report whose
+        // isUnknown() is FALSE and whose every bucket reads 0 — the fabricated zero UsageReport.of
+        // refuses, entering one level up. It is reached by an empty usage block and by the vendor
+        // renaming its fields, and it is worse than UNKNOWN: a run recorded as measured-free rather
+        // than unpriced, which is exactly what a spend cap would fail to fire on.
+        return counts.isEmpty()
+                ? Optional.empty()
+                : Optional.of(new RunEvent.Usage(at, UsageReport.of(counts)));
+    }
+
+    /** Only a measured bucket is recorded; a zero is the absence of one, and absent reads as zero. */
+    private static void put(Map<TokenBucket, Long> counts, TokenBucket bucket, long value) {
+        if (value > 0) {
+            counts.put(bucket, value);
+        }
+    }
+
+    /**
+     * The degraded case: the vendor's numbers contradict each other, so no split can be trusted.
+     *
+     * <p>{@code TokenUsageMapper} carries the vendor's OWN total here — the one number it has not
+     * derived. Codex reports none, so this is derived from the very fields that just failed their
+     * check, and the direction of the guess matters. Under {@code cached > input} the natural
+     * reading is that input EXCLUDES cached, making the true total {@code input + cached + output};
+     * {@code input + output} would then be short by the cached amount. For waste detection,
+     * understating is the harmful direction, so each side takes the larger of its two figures.
+     */
+    private static UsageReport unreconciled(long input, long cached, long output, long reasoning) {
+        return UsageReport.of(Map.of(TokenBucket.TOTAL,
+                Math.max(input, cached) + Math.max(output, reasoning)));
     }
 
     /** A field that is absent reads as zero; one that is present but not a number reads as -1. */
@@ -243,19 +271,44 @@ public final class CodexAdapter implements HarnessAdapter {
     }
 
     /**
-     * The LAST usage report wins. Codex emits one per turn, and each is a measurement of that turn's
-     * cumulative totals rather than an increment — summing them would multiply a multi-turn run's
-     * cost by roughly the number of turns.
+     * The LAST usage report wins, unless the sequence disproves that reading.
+     *
+     * <p>Codex emits one report per turn, and each is believed to carry that turn's CUMULATIVE
+     * totals rather than an increment — summing them would multiply a multi-turn run by roughly its
+     * turn count. That belief is INFERRED from single-turn runs and has never been measured across
+     * turns, so it is checked rather than trusted: cumulative totals are non-decreasing, and a
+     * report smaller than one before it falsifies the reading. When that happens the run is
+     * reported as an unreconciled TOTAL, because increments and cumulative totals cannot both be
+     * true and guessing between them silently corrupts every tokens-per-run figure downstream.
      */
     @Override
     public UsageReport usage(RunEventSummary seen) {
         UsageReport latest = UsageReport.unknown();
+        long highWater = -1L;
+        boolean shrank = false;
+
         for (RunEvent event : seen.events()) {
-            if (event instanceof RunEvent.Usage usage) {
-                latest = usage.report();
+            if (!(event instanceof RunEvent.Usage usage)) {
+                continue;
             }
+            long total = totalOf(usage.report());
+            // Cumulative totals are non-decreasing. A later report smaller than an earlier one
+            // falsifies the reading this method is built on, and the two possibilities cannot both
+            // be true — so say the run is unreconciled rather than silently record whichever
+            // number the assumption happens to select.
+            shrank |= total < highWater;
+            highWater = Math.max(highWater, total);
+            latest = usage.report();
+        }
+
+        if (shrank) {
+            return UsageReport.of(Map.of(TokenBucket.TOTAL, highWater));
         }
         return latest;
+    }
+
+    private static long totalOf(UsageReport report) {
+        return report.asMap().orElse(Map.of()).values().stream().mapToLong(Long::longValue).sum();
     }
 
     private static String clip(String text) {

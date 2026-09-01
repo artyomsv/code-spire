@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -173,7 +174,10 @@ class CodexAdapterTest {
                 {"type":"item.completed","item":{"type":"command_execution","command":"cat big",\
                 "aggregated_output":"%s","exit_code":0}}""".formatted(huge)).orElseThrow();
 
-        assertTrue(assertInstanceOf(RunEvent.ToolResult.class, event).summary().length() < 3_000);
+        // Asserted exactly. A "< 3000" bound also passes for an empty string, so it would hold
+        // against a clip that dropped the field entirely.
+        assertEquals(2_001, assertInstanceOf(RunEvent.ToolResult.class, event).summary().length(),
+                "2000 characters plus the ellipsis that marks the truncation");
     }
 
     // ---- usage ------------------------------------------------------------------------------
@@ -193,9 +197,12 @@ class CodexAdapterTest {
         assertFalse(report.isUnknown());
         assertEquals(4_080L, report.tokens(TokenBucket.INPUT), "input minus the cached subset");
         assertEquals(9_984L, report.tokens(TokenBucket.CACHED_INPUT));
-        assertEquals(0L, report.tokens(TokenBucket.CACHE_WRITE));
+        // CACHE_WRITE and REASONING are ABSENT, not measured as zero — only a non-zero bucket is
+        // recorded, so that an all-zero usage block cannot become a measured-free run. Asserted on
+        // the map, because tokens() answers 0 either way and cannot tell the two apart.
+        assertEquals(Set.of(TokenBucket.INPUT, TokenBucket.CACHED_INPUT, TokenBucket.OUTPUT),
+                report.asMap().orElseThrow().keySet());
         assertEquals(8L, report.tokens(TokenBucket.OUTPUT));
-        assertEquals(0L, report.tokens(TokenBucket.REASONING));
 
         long partitioned = report.tokens(TokenBucket.INPUT) + report.tokens(TokenBucket.CACHED_INPUT)
                 + report.tokens(TokenBucket.OUTPUT) + report.tokens(TokenBucket.REASONING);
@@ -229,6 +236,92 @@ class CodexAdapterTest {
     }
 
     @Test
+    void anEmptyUsageObjectIsUnknownNotAMeasuredZero() {
+        // The fabricated zero, one level up from UsageReport.of(Map.of()). An empty usage block
+        // passes isObject(), yields five zero counts, and would build a report whose isUnknown() is
+        // FALSE and whose every bucket reads 0. That is worse than UNKNOWN: the run is recorded as
+        // measured-free rather than unpriced, and a spend cap built on it never fires.
+        assertTrue(adapter.parse("""
+                {"type":"turn.completed","usage":{}}""").isEmpty());
+    }
+
+    @Test
+    void aRenamedUsageShapeIsUnknownNotAMeasuredZero() {
+        // The concrete way the above happens: the CLI moves to OpenAI-style field names and every
+        // count this adapter looks for is absent. It must arrive unpriceable, so the shape change
+        // is visible, rather than as a free run nobody questions.
+        assertTrue(adapter.parse("""
+                {"type":"turn.completed","usage":{"prompt_tokens":500,"completion_tokens":20}}""")
+                .isEmpty());
+    }
+
+    @Test
+    void anUnreconciledTotalDoesNotUnderstateTheRun() {
+        // TokenUsageMapper carries the VENDOR's own figure in a degraded TOTAL — the one number it
+        // has not derived. Codex reports none, so this total is derived from the very fields that
+        // just failed their consistency check. Under cached > input the natural reading is that
+        // input EXCLUDES cached, so input + output would be short by the cached amount — and for
+        // waste detection, understating is the harmful direction.
+        RunEvent event = adapter.parse("""
+                {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":150,\
+                "output_tokens":10,"reasoning_output_tokens":40}}""").orElseThrow();
+
+        UsageReport report = adapter.usage(RunEventSummary.of(List.of(event)));
+
+        assertEquals(190L, report.tokens(TokenBucket.TOTAL), "max(100,150) + max(10,40)");
+        assertEquals(Set.of(TokenBucket.TOTAL), report.asMap().orElseThrow().keySet(),
+                "a TOTAL is the degraded case and is never offered alongside a split");
+    }
+
+    @Test
+    void aShrinkingUsageReportFalsifiesTheCumulativeReading() {
+        // usage() keeps the LAST report because turn totals are believed CUMULATIVE — inferred from
+        // single-turn runs, never measured across turns. Cumulative totals are non-decreasing, so a
+        // later report smaller than an earlier one disproves the reading. Rather than silently
+        // record the smaller number, say the run is unreconciled.
+        RunEvent big = adapter.parse("""
+                {"type":"turn.completed","usage":{"input_tokens":900,"output_tokens":45}}""").orElseThrow();
+        RunEvent small = adapter.parse("""
+                {"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}""").orElseThrow();
+
+        UsageReport report = adapter.usage(RunEventSummary.of(List.of(big, small)));
+
+        assertEquals(Set.of(TokenBucket.TOTAL), report.asMap().orElseThrow().keySet(),
+                "increments and cumulative totals cannot both be true; say so instead of guessing");
+    }
+
+    @Test
+    void anUnknownEnvelopeTypeIsClippedLikeEveryOtherModelControlledField() {
+        // The agent writes to the same stdout the parser reads, so the envelope name is
+        // model-controlled text too. It was the one field reaching a timeline row unclipped.
+        RunEvent event = adapter.parse("{\"type\":\"" + "z".repeat(50_000) + "\"}").orElseThrow();
+
+        assertTrue(assertInstanceOf(RunEvent.StateChange.class, event).state().length() <= 2_001);
+    }
+
+    @Test
+    void aNonZeroCacheWriteIsTreatedAsAdditionalToInput() {
+        // Pins an UNVERIFIED reading on purpose. cache_write is treated as ADDITIONAL to input,
+        // matching its name and how Anthropic reports the same concept — but every run observed so
+        // far reported zero, so the subset reading is not ruled out. The contradiction gate cannot
+        // catch a wrong choice here: cacheWrite is compared against nothing, so if it really is a
+        // subset the adapter overstates by exactly that amount and degrades to nothing.
+        //
+        // Asserting the reading explicitly means changing it is a deliberate act with a failing
+        // test, rather than a silent drift in an arithmetic nobody re-reads.
+        RunEvent event = adapter.parse("""
+                {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":10,\
+                "cache_write_input_tokens":7,"output_tokens":5,"reasoning_output_tokens":0}}""")
+                .orElseThrow();
+
+        UsageReport report = adapter.usage(RunEventSummary.of(List.of(event)));
+
+        assertEquals(90L, report.tokens(TokenBucket.INPUT),
+                "input minus cached only — cache_write is NOT subtracted under the additional reading");
+        assertEquals(7L, report.tokens(TokenBucket.CACHE_WRITE));
+    }
+
+    @Test
     void aNegativeVendorCountIsRejectedRatherThanStored() {
         // A buggy OpenAI-compatible proxy once dead-lettered a paid review this way.
         assertTrue(adapter.parse("""
@@ -247,8 +340,12 @@ class CodexAdapterTest {
 
         UsageReport report = adapter.usage(RunEventSummary.of(List.of(event)));
 
-        assertEquals(110L, report.tokens(TokenBucket.TOTAL));
-        assertEquals(0L, report.tokens(TokenBucket.INPUT), "no split is offered alongside a TOTAL");
+        assertEquals(160L, report.tokens(TokenBucket.TOTAL), "max(100,150) + max(10,0)");
+        // Asserted on the map, not on tokens(). tokens() answers 0 for an absent bucket, so
+        // assertEquals(0L, tokens(INPUT)) cannot tell "not measured" from "measured as zero" —
+        // it would pass whether or not a split was offered.
+        assertEquals(Set.of(TokenBucket.TOTAL), report.asMap().orElseThrow().keySet(),
+                "no split is offered alongside a TOTAL");
     }
 
     @Test
