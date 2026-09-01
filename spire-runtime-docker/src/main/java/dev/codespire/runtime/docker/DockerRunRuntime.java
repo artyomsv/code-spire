@@ -2,6 +2,9 @@ package dev.codespire.runtime.docker;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
+import com.github.dockerjava.api.command.PullImageCmd;
+import com.github.dockerjava.api.command.PullImageResultCallback;
+import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
@@ -11,6 +14,7 @@ import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
+import com.github.dockerjava.core.NameParser;
 import com.github.dockerjava.core.command.WaitContainerResultCallback;
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import com.github.dockerjava.transport.DockerHttpClient;
@@ -76,6 +80,9 @@ public final class DockerRunRuntime implements RunRuntime {
 
     /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
     private static final long PIDS_LIMIT = 512;
+
+    /** A registry pull of an agent image with a toolchain in it; a stalled one must not hang a run. */
+    private static final Duration PULL_TIMEOUT = Duration.ofMinutes(10);
 
     private final DockerClient client;
 
@@ -158,6 +165,35 @@ public final class DockerRunRuntime implements RunRuntime {
         return "spire-" + runId + "-" + volume;
     }
 
+    /**
+     * Pulls the image when the daemon does not hold it. An operator's agent image lives in a
+     * registry and a digest-pinned reference (FR-F13) is the normal case, not a local tag — the
+     * first CI run proved it, failing every unit with NotFound on a runner that had never seen
+     * alpine. A digest reference is passed whole; a name:tag pair is split, because docker-java's
+     * tag-less pull fetches every tag of the repository.
+     */
+    private void ensureImage(String image) {
+        try {
+            client.inspectImageCmd(image).exec();
+            return;
+        } catch (NotFoundException absent) {
+            // not held locally: pull it
+        }
+        PullImageCmd pull = client.pullImageCmd(image);
+        if (!image.contains("@")) {
+            NameParser.ReposTag parsed = NameParser.parseRepositoryTag(image);
+            pull = client.pullImageCmd(parsed.repos).withTag(parsed.tag.isEmpty() ? "latest" : parsed.tag);
+        }
+        try {
+            if (!pull.exec(new PullImageResultCallback()).awaitCompletion(PULL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Pulling image " + image + " did not complete within " + PULL_TIMEOUT);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted pulling image " + image, e);
+        }
+    }
+
     private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
         List<Bind> binds = new ArrayList<>();
         for (Mount mount : container.mounts()) {
@@ -188,6 +224,7 @@ public final class DockerRunRuntime implements RunRuntime {
                 // none to read. Teardown is destroy()'s job and nothing else's.
                 .withAutoRemove(false);
 
+        ensureImage(container.image());
         return client.createContainerCmd(container.image())
                 .withCmd(container.argv())
                 .withEnv(env)             // credentials live HERE, never in a label
@@ -253,7 +290,7 @@ public final class DockerRunRuntime implements RunRuntime {
         }
         Integer exit;
         try {
-            exit = client.waitContainerCmd(agent.get())
+            exit = client.waitContainerCmd(agent.orElseThrow())
                     .exec(new WaitContainerResultCallback())
                     .awaitStatusCode(wallClockOf(handle).toSeconds(), TimeUnit.SECONDS);
         } catch (RuntimeException e) {

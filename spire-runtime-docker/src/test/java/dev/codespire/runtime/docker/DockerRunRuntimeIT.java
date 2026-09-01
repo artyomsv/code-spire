@@ -1,5 +1,6 @@
 package dev.codespire.runtime.docker;
 
+import com.github.dockerjava.api.exception.NotFoundException;
 import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
@@ -69,6 +70,29 @@ class DockerRunRuntimeIT {
         RunHandle handle = runtime.create(spec);
         started.add(handle);
         return handle;
+    }
+
+    @Test
+    void pullsAnImageTheDaemonDoesNotHold() {
+        // The first CI run failed every case in this class with NotFound: the runner had never seen
+        // alpine, and create() assumed the image was local. An operator's agent image never is —
+        // it comes from a registry, digest-pinned (FR-F13). A tiny image is removed first so the
+        // pull path runs on a developer's machine too, not only on a fresh runner.
+        String image = "busybox:1.37.0";
+        try {
+            runtime.client().removeImageCmd(image).withForce(true).exec();
+        } catch (NotFoundException alreadyAbsent) {
+            // the state the test wants
+        }
+        ContainerSpec noop = new ContainerSpec(image, List.of("sh", "-c", "true"), Map.of(), List.of());
+        RunHandle handle = start(new RunUnitSpec("pull-1", noop,
+                new ContainerSpec(image, List.of("sh", "-c", "echo pulled"), Map.of(), List.of()),
+                noop, 64L * 1024 * 1024, 500_000_000L, Duration.ofMinutes(2)));
+
+        Finalization finalization = runtime.salvage(handle);
+
+        assertEquals(0, finalization.exitCode());
+        assertTrue(runtime.client().inspectImageCmd(image).exec().getId().startsWith("sha256:"));
     }
 
     @Test
