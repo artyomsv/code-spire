@@ -149,7 +149,11 @@ public class AttentionQueries {
     }
 
     private void scmProviderRows(Connection c, List<AttentionView> rows) throws SQLException {
-        if (count(c, "SELECT COUNT(*) FROM scm_provider WHERE enabled = TRUE") == 0) {
+        // role = 'REVIEWER' on both queries: since V42 a workspace may also hold a FACTORY row, which
+        // reviews nothing. Counting it here said "source control is configured" for a deployment
+        // that could review no pull request, and warned about a push identity that holds no
+        // conversation.
+        if (count(c, "SELECT COUNT(*) FROM scm_provider WHERE enabled = TRUE AND role = 'REVIEWER'") == 0) {
             rows.add(new AttentionView("SCM_PROVIDER_MISSING", Severity.BLOCKING, null,
                     "No enabled source-control provider is configured, so no pull request can be reviewed.",
                     "/settings/providers"));
@@ -159,6 +163,7 @@ public class AttentionQueries {
         try (PreparedStatement ps = c.prepareStatement("""
                 SELECT id, name FROM scm_provider
                  WHERE enabled = TRUE
+                   AND role = 'REVIEWER'
                    AND (bot_account_id IS NULL OR bot_account_id = '')
                    AND (bot_username   IS NULL OR bot_username   = '')
                  ORDER BY name

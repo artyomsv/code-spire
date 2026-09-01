@@ -74,6 +74,40 @@ fail the build on the project's own name.
 2. A second run whose agent modifies a CI-configuration file is **refused at the push gate**,
    preserves its workspace, and raises an attention row naming the paths.
 
+**Delivered (2026-09-01, PR #95).** Both criteria are proven by `M0WalkingSkeletonTest`
+(`spire-run-worker`, `testServices` tier) against real containers — the publisher image built from
+this repository, the reference agent entrypoint with a shell script standing in for the model, and a
+self-built smart-HTTP git origin on the Docker network behind basic auth — and by runbook
+**Mode P** (`docs/SMOKE-TEST.md`) against a real forge with Codex. "Preserves its workspace" holds
+in the sense §5 of RUN-TOPOLOGY gives it: every commit pushed before the gate tripped stays on the
+branch; the refused commit itself is destroyed with the unit, as the design says it will be.
+
+What the build taught that the design or the plan had wrong, each fixed in the code rather than
+argued around:
+
+- **The plan's automated test could not have run.** It assumed a `file://` origin, which no
+  container can reach, and a runtime that fed the prompt on stdin, which none did — Codex declares
+  stdin delivery and would have started on an empty prompt, which a script-harness test can never
+  notice. The prompt now rides in `SPIRE_PROMPT` and the image entrypoint hands it over from a file
+  outside the tree; the origin is a container.
+- **The run unit named things nobody had built.** `spire-publisher:latest`, its `spire-clone`
+  entrypoint and the codex agent image existed only as strings. `CloneMain` (JGit, read credential
+  only, identity written into the workspace, remote removed), `spire-publisher/Dockerfile` and
+  `deploy/agent/` are the delivery.
+- **The runtime never pulled an image**, so the first CI run failed every container test on a
+  runner that had never seen alpine. An operator's agent image is a registry reference by
+  definition (FR-F13).
+- **Two refusals were missing from the endpoint that spends the money**: a null harness
+  credential (the key now comes from the LLM provider registry) and a re-dispatch of an existing
+  subject that the worker's claim would have dropped as a redelivery while the operator held a 201.
+  Plus the abbreviated `baseCommit` the resource accepted and the publisher's `ObjectId.fromString`
+  rejected — after the agent had been paid for.
+- **Criterion 2's attention row was in this document and in no plan task.** `RUN_PUSH_GATE_REFUSED`
+  names the paths and clears on acknowledgement, like a failed review's row.
+- **The neutrality scan's planned regex failed the build on the project's own name**: under `(?i)`,
+  `\bPi[A-Z]` is `pipeline`. Case-sensitive for that one clause.
+- **FR-F13 is split across M0 and M1** and the PRD now says so.
+
 **FRs:** FR-F1..F4, F11, F13, F28, F29.
 
 ---

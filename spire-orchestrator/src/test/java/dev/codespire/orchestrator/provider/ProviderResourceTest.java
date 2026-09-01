@@ -71,6 +71,49 @@ class ProviderResourceTest {
         return m;
     }
 
+    @jakarta.inject.Inject
+    ProviderRegistry registry;
+
+    @Test
+    void aFactoryRoleSurvivesTheRestPathOnCreateAndUpdate() {
+        // resolveIdentity rebuilt the input with the 12-argument constructor, so a FACTORY
+        // registration through this endpoint was stored as the workspace's REVIEWER: the review
+        // pipeline held the push token and POST /api/runs answered 409 forever. Only a test that
+        // goes through the resource can see it — every earlier test called the registry directly.
+        var b = body("rest-factory", "bearer", "tok-abc", null);
+        b.put("role", "FACTORY");
+        String id = given().contentType("application/json").body(b)
+                .when().post("/api/providers")
+                .then().statusCode(201)
+                .body("role", equalTo("FACTORY"))
+                .extract().path("id");
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory").isEmpty(),
+                "a FACTORY registration is never the workspace's reviewer");
+
+        // An update that carries no secret takes the other rebuild path; the role must survive it too.
+        var update = body("rest-factory", "bearer", "", null);
+        update.put("role", "FACTORY");
+        given().contentType("application/json").body(update)
+                .when().put("/api/providers/" + id)
+                .then().statusCode(200)
+                .body("role", equalTo("FACTORY"));
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+    }
+
+    @Test
+    void aRoleOutsideTheClosedSetIsA400NamingTheSet() {
+        var b = body("rest-role", "bearer", "tok-abc", null);
+        b.put("role", "OVERLORD");
+        given().contentType("application/json").body(b)
+                .when().post("/api/providers")
+                .then().statusCode(400);
+    }
+
     @Test
     void createReturns201AndNeverEchoesTheSecret() {
         given().contentType("application/json").body(body("rest-create", "bearer", "tok-abc", null))

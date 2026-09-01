@@ -17,6 +17,14 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
                                 String model, Map<String, String> credentials,
                                 Duration wallClock) {
 
+    /**
+     * The key under which the worker supplies the model credential in {@link #credentials()}. The
+     * name the arm's own process reads it as ({@code OPENAI_API_KEY} for Codex, something else for
+     * the next arm) is the arm's knowledge: {@link HarnessAdapter#environment} translates, and core
+     * never spells a vendor's variable.
+     */
+    public static final String CREDENTIAL = "HARNESS_CREDENTIAL";
+
     public HarnessInvocation {
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(prompt, "prompt");

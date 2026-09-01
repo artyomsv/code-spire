@@ -18,6 +18,24 @@ class HandoffWatcherTest {
     }
 
     @Test
+    void refusesToReadPastTheBundleCap(@TempDir Path handoff) throws Exception {
+        // Each bundle costs a read up to the size cap plus a push, and the set of handled names is
+        // agent-chosen. A run that checkpoints without end is looping or attacking the publisher.
+        HandoffWatcher watcher = new HandoffWatcher(handoff, 2);
+        List<Path> seen = new ArrayList<>();
+        Files.writeString(handoff.resolve("1.bundle"), "x");
+        Files.writeString(handoff.resolve("2.bundle"), "y");
+        watcher.poll(seen::add);
+        assertEquals(2, seen.size());
+
+        Files.writeString(handoff.resolve("3.bundle"), "z");
+        IllegalStateException refusal = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class, () -> watcher.poll(seen::add));
+        assertTrue(refusal.getMessage().contains("more than 2 bundles"), refusal.getMessage());
+        assertEquals(2, seen.size(), "the bundle past the cap is never handed over");
+    }
+
+    @Test
     void seesEachNewBundleExactlyOnce(@TempDir Path handoff) throws Exception {
         List<Path> seen = new ArrayList<>();
         HandoffWatcher watcher = new HandoffWatcher(handoff);

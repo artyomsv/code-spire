@@ -21,6 +21,10 @@ repositories {
 dependencies {
     implementation(project(":spire-workspace"))
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    // JGit logs through SLF4J 1.7. With no binding it prints a three-line warning to stderr at
+    // every start, which the worker's log stream then carries for every run. The publisher's
+    // reporting channel is its stdout JSON lines by design (ADR-038); a logger adds nothing.
+    runtimeOnly("org.slf4j:slf4j-nop:1.7.36")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")

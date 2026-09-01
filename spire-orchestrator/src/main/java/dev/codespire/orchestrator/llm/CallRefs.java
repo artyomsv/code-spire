@@ -100,6 +100,13 @@ public final class CallRefs {
      * confuse two repositories that share a workspace name on different SCMs.
      */
     public static String forRun(String runId, int attempt, String seq) {
+        if (runId == null || runId.isBlank()) {
+            throw new IllegalArgumentException("a run charge needs its run id; a blank one would let "
+                    + "every unattributed call share one key and collide");
+        }
+        if (seq == null || seq.isBlank()) {
+            throw new IllegalArgumentException("a run charge needs its call sequence within the attempt");
+        }
         if (attempt < 1) {
             throw new IllegalArgumentException("attempt starts at 1: " + attempt);
         }

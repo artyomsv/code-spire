@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
@@ -74,9 +75,5 @@ class MachineAccountsTest {
     void aRoleThatIsNeitherIsRefusedAtRegistration() {
         assertThrows(IllegalArgumentException.class,
                 () -> providers.create(input("TEST-bad-" + UUID.randomUUID(), "x", "TEST-x", "OVERLORD")));
-    }
-
-    private static void assertThrows(Class<? extends Throwable> expected, Runnable action) {
-        org.junit.jupiter.api.Assertions.assertThrows(expected, action::run);
     }
 }

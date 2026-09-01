@@ -24,6 +24,18 @@ final class DlqTopics {
             "PullRequestEventReceived", "PullRequestClosed", "ManualCommandReceived",
             "AuthorReplied", "PushReceived");
 
+    /**
+     * The factory's two topics. Before these sets existed a run record fell through to
+     * {@code cs.commands}, where the review worker's deserializer cannot read it: the run was never
+     * recovered, and a record carrying credentials was copied onto a second topic.
+     */
+    static final String RUN_COMMANDS = "cs.run-commands";
+    static final String RUN_RESULTS = "cs.run-results";
+
+    private static final Set<String> RUN_COMMAND_TYPES = Set.of("ExecuteRun", "CancelRun");
+
+    private static final Set<String> RUN_RESULT_TYPES = Set.of("RunStarted", "RunFinished", "RunFailed");
+
     private DlqTopics() {
     }
 
@@ -37,6 +49,12 @@ final class DlqTopics {
         }
         if (INGRESS_EVENT_TYPES.contains(type)) {
             return INTEGRATION;
+        }
+        if (RUN_COMMAND_TYPES.contains(type)) {
+            return RUN_COMMANDS;
+        }
+        if (RUN_RESULT_TYPES.contains(type)) {
+            return RUN_RESULTS;
         }
         return COMMANDS;
     }

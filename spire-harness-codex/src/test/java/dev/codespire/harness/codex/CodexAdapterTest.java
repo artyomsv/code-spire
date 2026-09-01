@@ -36,7 +36,7 @@ class CodexAdapterTest {
 
     private HarnessInvocation invocation() {
         return new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
-                Map.of("OPENAI_API_KEY", "sk-secret"), Duration.ofMinutes(30));
+                Map.of(HarnessInvocation.CREDENTIAL, "sk-secret"), Duration.ofMinutes(30));
     }
 
     // ---- invocation -------------------------------------------------------------------------
@@ -93,6 +93,8 @@ class CodexAdapterTest {
         Map<String, String> env = adapter.environment(invocation());
 
         assertEquals("sk-secret", env.get("OPENAI_API_KEY"), "the child process needs the real value");
+        assertFalse(env.containsKey(HarnessInvocation.CREDENTIAL),
+                "the SPI's neutral key is translated, never forwarded as an environment variable");
         assertEquals("1", env.get("CODEX_QUIET_MODE"));
         // argv is world-readable through /proc/<pid>/cmdline and echoed by docker inspect.
         assertFalse(String.join(" ", adapter.command(invocation())).contains("sk-secret"));

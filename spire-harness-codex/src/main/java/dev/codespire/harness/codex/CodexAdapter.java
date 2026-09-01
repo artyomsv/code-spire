@@ -49,6 +49,9 @@ public final class CodexAdapter implements HarnessAdapter {
     /** What this arm sets itself. A credential of the same name is a collision, not an override. */
     private static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
 
+    /** What the Codex process reads its key from. Vendor knowledge, and this arm's alone. */
+    private static final String API_KEY_VARIABLE = "OPENAI_API_KEY";
+
     @Override
     public HarnessType type() {
         return HarnessType.CODEX;
@@ -110,7 +113,15 @@ public final class CodexAdapter implements HarnessAdapter {
      */
     @Override
     public Map<String, String> environment(HarnessInvocation invocation) {
-        return EnvironmentPolicy.merge(invocation.credentials(), OWN_SETTINGS);
+        // The worker hands the key over under the SPI's neutral name; this arm knows what its own
+        // process reads. Everything else in the map still goes through the policy, which is where
+        // a name that would relocate the config or hijack the child is refused.
+        Map<String, String> credentials = new java.util.LinkedHashMap<>(invocation.credentials());
+        String apiKey = credentials.remove(HarnessInvocation.CREDENTIAL);
+        if (apiKey != null) {
+            credentials.put(API_KEY_VARIABLE, apiKey);
+        }
+        return EnvironmentPolicy.merge(credentials, OWN_SETTINGS);
     }
 
     /**

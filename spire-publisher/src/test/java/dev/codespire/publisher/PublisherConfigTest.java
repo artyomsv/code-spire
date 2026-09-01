@@ -110,6 +110,34 @@ class PublisherConfigTest {
     }
 
     @Test
+    void plainHttpIsRefusedOutsideTheLocalTrustZone() {
+        // The token would cross the network in the clear. Hosted forges are https; a self-managed
+        // one reached by NAME must be too. Only loopback and literal private addresses — a
+        // container on the daemon's own bridge, a developer's local forge — may be plain http.
+        for (String outside : List.of("http://github.com/acme/app.git", "http://gitlab.example.com/a/b.git",
+                "http://8.8.8.8/a.git", "http://172.32.0.1/a.git", "http://[2001:db8::1]/a.git")) {
+            Map<String, String> env = env();
+            env.put("SPIRE_REMOTE_URI", outside);
+            assertTrue(refusal(env).getMessage().contains("plain http"), outside);
+        }
+        for (String inside : List.of("http://localhost:8929/a.git", "http://127.0.0.1/a.git",
+                "http://172.17.0.3/app.git", "http://10.1.2.3/a.git", "http://192.168.0.9:3000/a.git",
+                "http://[::1]/a.git", "http://[fd00::5]/a.git", "https://github.com/acme/app.git")) {
+            Map<String, String> env = env();
+            env.put("SPIRE_REMOTE_URI", inside);
+            assertEquals(inside, PublisherConfig.fromEnv(env).remoteUri(), inside);
+        }
+    }
+
+    @Test
+    void aGlobTheGateCannotApplyRefusesToStart() {
+        // Otherwise the first bundle — after the agent has run and been paid for — is where it fails.
+        Map<String, String> env = env();
+        env.put("SPIRE_PROTECTED_PATHS", "docs/**, infra/{a,b}.tf");
+        assertTrue(refusal(env).getMessage().contains("SPIRE_PROTECTED_PATHS"));
+    }
+
+    @Test
     void anUnboundedBundleCapIsRefused() {
         for (String bad : List.of("0", "-1", "lots")) {
             Map<String, String> env = env();

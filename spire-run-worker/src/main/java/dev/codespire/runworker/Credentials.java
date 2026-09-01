@@ -1,21 +1,41 @@
 package dev.codespire.runworker;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.command.MachineAccountCredential;
+import dev.codespire.contract.command.RunCommand;
+import dev.codespire.encryption.EncryptionService;
+import dev.codespire.harness.HarnessInvocation;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Unpacks the opaque, KEK-encrypted credentials a command carries into the environment each
- * container is given.
+ * Unpacks the opaque, KEK-encrypted credentials a command carries into what each container is
+ * given.
  *
  * <p><b>The split between a READ and a WRITE credential is the point, not an optimisation.</b> The
  * init container clones, which needs read; the publisher pushes, which needs write; the agent needs
  * neither and gets neither. Handing one token to all three would make ADR-038's containment
  * theatre — the agent could simply push.
+ *
+ * <p>Decryption happens here and nowhere else in the worker, with the AAD the orchestrator's
+ * {@code RunCredentials} bound the ciphertext to: the run id and the slot. A value lifted from one
+ * run's record — or from {@code dlq_entry.payload}, which is where an unwrapped token would have
+ * ended up — cannot be presented under another run, and the two slots cannot be swapped. The
+ * machine account's login arrives inside the envelope; this class names no account and no vendor
+ * variable — the harness arm decides what its own process calls the key.
  */
-public final class Credentials {
+@ApplicationScoped
+public class Credentials {
 
-    private Credentials() {
-    }
+    @Inject
+    EncryptionService encryption;
+
+    @Inject
+    ObjectMapper mapper;
 
     /**
      * A machine-account SCM credential, split by what each container may do with it.
@@ -43,29 +63,32 @@ public final class Credentials {
         }
     }
 
-    public static Scm scm(String packed) {
+    public Scm scm(String runId, String packed) {
         if (packed == null || packed.isBlank()) {
             throw new IllegalArgumentException("a run needs an SCM credential; none was packed");
         }
-        // M0: the orchestrator packs one machine-account token. Decryption lands with the
-        // orchestrator side; this call site already distinguishes the two uses.
-        return new Scm(MACHINE_ACCOUNT, packed, MACHINE_ACCOUNT, packed);
+        String json = encryption.decryptString(packed, RunCommand.scmCredentialAad(runId));
+        MachineAccountCredential account;
+        try {
+            account = mapper.readValue(json, MachineAccountCredential.class);
+        } catch (JsonProcessingException e) {
+            // Not chained with the text: the plaintext is the credential.
+            throw new IllegalArgumentException("the SCM credential for " + runId + " decrypted to something "
+                    + "that is not a machine-account credential");
+        }
+        return new Scm(account.username(), account.secret(), account.username(), account.secret());
     }
 
-    /** The name a forge expects beside a token. */
-    private static final String MACHINE_ACCOUNT = "spire-bot";
-
     /**
-     * The harness credential as environment entries.
-     *
-     * <p>Passed through {@code EnvironmentPolicy} by the adapter that receives it, so a name that
-     * would relocate the harness's config or redirect its endpoint is refused there rather than
-     * silently honoured here.
+     * The harness credential, under the SPI's neutral key. The arm's {@code environment()} maps it
+     * to whatever its process reads — the vendor's variable name is the arm's knowledge, not this
+     * module's — and {@code EnvironmentPolicy} still screens the result.
      */
-    public static Map<String, String> harnessEnv(String packed) {
+    public Map<String, String> harnessEnv(String runId, String packed) {
         if (packed == null || packed.isBlank()) {
             return Map.of();
         }
-        return Map.of("OPENAI_API_KEY", packed);
+        return Map.of(HarnessInvocation.CREDENTIAL,
+                encryption.decryptString(packed, RunCommand.harnessCredentialAad(runId)));
     }
 }

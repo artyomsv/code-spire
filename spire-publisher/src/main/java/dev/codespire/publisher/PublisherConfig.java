@@ -1,16 +1,13 @@
 package dev.codespire.publisher;
 
 import dev.codespire.workspace.GitCredential;
+import dev.codespire.workspace.PathGlob;
 import org.eclipse.jgit.lib.Repository;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Everything the publisher is told, read from the environment once and refused up front.
@@ -44,38 +41,17 @@ record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, S
     /** Where the run unit mounts the handoff volume — topology, not an operator's decision. */
     private static final String DEFAULT_HANDOFF_DIR = "/handoff";
 
-    private static final Set<String> REMOTE_SCHEMES = Set.of("https", "http");
-
     static PublisherConfig fromEnv(Map<String, String> env) {
-        String baseBranch = required(env, "SPIRE_BRANCH_BASE");
+        String baseBranch = Env.required(env, "SPIRE_BRANCH_BASE");
         return new PublisherConfig(
-                remoteUri(required(env, "SPIRE_REMOTE_URI")),
+                RemoteUri.validated(Env.required(env, "SPIRE_REMOTE_URI")),
                 baseBranch,
-                required(env, "SPIRE_BASE_COMMIT"),
-                branch(required(env, "SPIRE_BRANCH"), baseBranch),
+                Env.required(env, "SPIRE_BASE_COMMIT"),
+                branch(Env.required(env, "SPIRE_BRANCH"), baseBranch),
                 globs(env.get("SPIRE_PROTECTED_PATHS")),
-                bundleMaxBytes(required(env, "SPIRE_BUNDLE_MAX_BYTES")),
-                new GitCredential(required(env, "SPIRE_GIT_USERNAME"), required(env, "SPIRE_GIT_SECRET")),
+                bundleMaxBytes(Env.required(env, "SPIRE_BUNDLE_MAX_BYTES")),
+                new GitCredential(Env.required(env, "SPIRE_GIT_USERNAME"), Env.required(env, "SPIRE_GIT_SECRET")),
                 Path.of(env.getOrDefault("SPIRE_HANDOFF_DIR", DEFAULT_HANDOFF_DIR)));
-    }
-
-    private static String remoteUri(String value) {
-        URI uri;
-        try {
-            uri = new URI(value);
-        } catch (URISyntaxException e) {
-            // Not chained: URISyntaxException's message quotes the input, which may hold a secret.
-            throw new IllegalStateException("SPIRE_REMOTE_URI is not a valid URI");
-        }
-        if (uri.getScheme() == null || !REMOTE_SCHEMES.contains(uri.getScheme().toLowerCase(Locale.ROOT))) {
-            throw new IllegalStateException("SPIRE_REMOTE_URI must be an http(s) URL");
-        }
-        boolean authorityHasUserinfo = uri.getRawAuthority() != null && uri.getRawAuthority().contains("@");
-        if (uri.getRawUserInfo() != null || authorityHasUserinfo) {
-            throw new IllegalStateException("SPIRE_REMOTE_URI carries a credential in its userinfo; "
-                    + "the credential goes in SPIRE_GIT_USERNAME and SPIRE_GIT_SECRET, never in the URL");
-        }
-        return value;
     }
 
     private static String branch(String branch, String baseBranch) {
@@ -107,18 +83,21 @@ record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, S
         return bytes;
     }
 
+    /**
+     * Compiled here as well as in the gate, so a rule that could never match is a startup refusal
+     * rather than a crash at the first bundle — after the agent has already run and been paid for.
+     */
     private static List<String> globs(String raw) {
         if (raw == null || raw.isBlank()) {
             return List.of();
         }
-        return Arrays.stream(raw.split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
-    }
-
-    private static String required(Map<String, String> env, String name) {
-        String value = env.get(name);
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is required and was not set");
+        List<String> globs = Arrays.stream(raw.split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
+        try {
+            PathGlob.compileAll(globs);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("SPIRE_PROTECTED_PATHS holds a glob the gate cannot apply: "
+                    + e.getMessage());
         }
-        return value;
+        return globs;
     }
 }

@@ -61,34 +61,34 @@ public final class RunIds {
      */
     public static Parsed parse(String runId) {
         if (runId == null || !runId.startsWith(PREFIX)) {
-            throw new IllegalArgumentException("not a run id: " + runId);
+            throw new IllegalArgumentException("not a run id (must start with " + PREFIX + "): " + runId);
         }
         // -1 keeps trailing empty fields, so "run::github:a/b::1" is four parts with a BLANK
         // subject and is refused below, rather than three parts that fail for the wrong reason.
         String[] parts = runId.substring(PREFIX.length()).split(String.valueOf(SEPARATOR), -1);
         if (parts.length != 4) {
-            throw new IllegalArgumentException("not a run id: " + runId);
+            throw new IllegalArgumentException("not a run id (expected platform:workspace/slug:subject:attempt, four parts): " + runId);
         }
         ScmType scmType = ScmType.fromProviderType(parts[0])
                 .orElseThrow(() -> new IllegalArgumentException("unknown platform in run id: " + runId));
 
         int lastSlash = parts[1].lastIndexOf('/');
         if (lastSlash <= 0 || lastSlash == parts[1].length() - 1) {
-            throw new IllegalArgumentException("not a run id: " + runId);
+            throw new IllegalArgumentException("not a run id (the repository must be workspace/slug with both non-empty): " + runId);
         }
         String workspace = parts[1].substring(0, lastSlash);
         String slug = parts[1].substring(lastSlash + 1);
         if (parts[2].isBlank()) {
-            throw new IllegalArgumentException("not a run id: " + runId);
+            throw new IllegalArgumentException("not a run id (the subject is blank): " + runId);
         }
         int attempt;
         try {
             attempt = Integer.parseInt(parts[3]);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("not a run id: " + runId, e);
+            throw new IllegalArgumentException("not a run id (the attempt is not a number): " + runId, e);
         }
         if (attempt < 1) {
-            throw new IllegalArgumentException("not a run id: " + runId);
+            throw new IllegalArgumentException("not a run id (the attempt starts at 1): " + runId);
         }
         return new Parsed(scmType, workspace, slug, parts[2], attempt);
     }
