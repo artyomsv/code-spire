@@ -129,11 +129,12 @@ describe('AnalyticsOverview', () => {
     );
 
     await waitFor(() => expect(screen.getByText(/No findings recorded yet/i)).toBeTruthy());
-    expect(screen.getByText(/nothing was backfilled/i)).toBeTruthy();
-    // The confusion this caused in practice: a deployment with dozens of reviews, the author's own
-    // name on screen elsewhere, and this reading zero. The reason has to be stated — earlier
-    // reviews exist and genuinely contribute nothing, because their findings were never stored.
-    expect(screen.getByText(/earlier reviews exist/i)).toBeTruthy();
+    // The confusion this caused in practice: a deployment with dozens of reviews, findings COUNTS
+    // visible beside each one, and this reading zero. Saying only "nothing was backfilled" invited
+    // the wrong conclusion — that the data was lost. It is not. Each review still holds a round of
+    // findings; that round is refused because it is a snapshot with no verdicts, not history.
+    expect(screen.getByText(/single overwritten round/i)).toBeTruthy();
+    expect(screen.getByText(/no verdicts/i)).toBeTruthy();
   });
 
   /**

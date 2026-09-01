@@ -88,10 +88,11 @@ function Breakdown({ rows }: { rows: AnalyticsBreakdown[] }) {
   if (rows.length === 0) {
     return (
       <p className="prov-note">
-        No findings recorded yet. Findings began being stored only when this feature shipped, and
-        nothing was backfilled — so earlier reviews exist and still count nothing here. Their
-        findings were never written down anywhere to recover. The next review to run starts the
-        record.
+        No findings recorded yet, and earlier reviews are deliberately not counted here. Each review
+        stores a single overwritten round of findings with no verdicts — enough for the count beside
+        it on the reviews list, but not history: it cannot say what was raised in an earlier round,
+        or which findings were fixed, dismissed or acknowledged. This record keeps one row per
+        finding per round instead, and starts with the next review to run.
       </p>
     );
   }
