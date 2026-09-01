@@ -2,6 +2,7 @@ package dev.codespire.harness;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -63,6 +64,28 @@ public final class UsageReport {
     /** @return the measured buckets, or empty when the harness reported nothing. */
     public Optional<Map<TokenBucket, Long>> asMap() {
         return Optional.ofNullable(counts);
+    }
+
+    /**
+     * Value equality, because {@link RunEvent.Usage} is a record whose only interesting component is
+     * a report, and record equality delegates to its components. Left as inherited identity equality,
+     * two usage events carrying the same measurement compared unequal — so every test comparing a
+     * parsed event had to destructure by hand, and any dedup of usage events silently kept both.
+     */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof UsageReport that)) {
+            return false;
+        }
+        return Objects.equals(counts, that.counts);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(counts);
     }
 
     @Override

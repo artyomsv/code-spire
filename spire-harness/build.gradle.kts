@@ -28,6 +28,12 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    // TEST classpath only, and only for TokenBucketMatchesLedgerDimensionsTest. TokenBucket and the
+    // ledger's TokenType are deliberately separate enums — the factory tier does not inherit the
+    // review domain — so the guard against them drifting is the entire cost of that separation.
+    // A production dependency here would undo the separation it exists to protect.
+    testImplementation(project(":spire-contract"))
 }
 
 tasks.test {

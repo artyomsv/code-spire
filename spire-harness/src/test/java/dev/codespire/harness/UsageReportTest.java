@@ -7,6 +7,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,7 +78,30 @@ class UsageReportTest {
         assertFalse(UsageReport.of(Map.of(TokenBucket.INPUT, 3L)).toString().contains("UNKNOWN"));
         assertTrue(UsageReport.of(Map.of(TokenBucket.INPUT, 3L)).toString().contains("3"));
     }
-@Test
+
+    @Test
+    void twoReportsOfTheSameMeasurementAreEqual() {
+        // RunEvent.Usage is a record whose only interesting component is a report, and record
+        // equality delegates to its components. Left as inherited identity equality, two usage
+        // events carrying the same measurement compared unequal, so every test comparing a parsed
+        // event had to destructure by hand and any dedup of usage events silently kept both.
+        assertEquals(UsageReport.of(Map.of(TokenBucket.INPUT, 5L)),
+                UsageReport.of(Map.of(TokenBucket.INPUT, 5L)));
+        assertEquals(UsageReport.of(Map.of(TokenBucket.INPUT, 5L)).hashCode(),
+                UsageReport.of(Map.of(TokenBucket.INPUT, 5L)).hashCode());
+        assertEquals(UsageReport.unknown(), UsageReport.unknown());
+    }
+
+    @Test
+    void unknownIsNeverEqualToAMeasurement() {
+        // The distinction the whole type exists for must survive into equality: a report of zero
+        // is a measurement and unknown is not, so the two must never compare equal.
+        assertNotEquals(UsageReport.unknown(), UsageReport.of(Map.of(TokenBucket.INPUT, 0L)));
+        assertNotEquals(UsageReport.of(Map.of(TokenBucket.INPUT, 5L)),
+                UsageReport.of(Map.of(TokenBucket.INPUT, 6L)));
+    }
+
+    @Test
     void anEmptyCountMapIsNotAMeasurement() {
         // The front door to the same fabricated zero: an empty map builds a report whose
         // isUnknown() is false and whose every bucket reads 0. An adapter that fails to recognise
