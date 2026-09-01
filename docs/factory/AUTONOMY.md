@@ -35,6 +35,21 @@ endpoint that returns, a screen that renders, a test that runs.
 This is what makes `verify` meaningful. Without it, verification happens once at the end, which is
 the same as not having it.
 
+### How step N learns what step N-1 decided
+
+Fresh context per step is the point — it keeps every run inside the model's good zone. But the
+repository carries **what** was done, never **why**. Step 3 ("wire the API") needs step 1's choice
+("envelope shape X over Y, because Z"), which is invisible in the diff and predates the plan.
+
+So **each step's run ends by writing a structured summary** — decisions taken, alternatives rejected,
+deviations from the plan — stored on the work item and prepended to the next step's prompt (FR-F31).
+Without it, later steps re-derive or contradict earlier choices, and the completion gate has no record
+to judge against.
+
+The prior art names this problem and does not solve it — *"a killed script restarts from the beginning
+unless the script owns checkpointing"* — and the same research praises a run ledger as shared memory
+elsewhere. This is that ledger, applied where it was needed.
+
 ### Why `unverified` is a distinct outcome
 
 A step whose tests could not be run — missing toolchain, missing service, missing fixture — must
@@ -86,9 +101,25 @@ factory:
     protectedPaths: ["**/security/**", ".github/**", "deploy/**"]
 ```
 
-Gate modes are `auto` (proceed), `approve` (wait for a human) and `off` (do not run this phase).
+### Gate mode vocabularies are per phase
 
-## 3. The three rules that make labels safe
+The first draft declared one closed set — `auto | approve | off` — and then used `draft_pr`, `pr` and
+`auto_if_green` in the example above it. That is the closed-set-versus-runtime-value failure this
+document set lectures about elsewhere, committed three paragraphs apart. The vocabularies are:
+
+| Phase | Modes |
+|---|---|
+| `intake`, `spec`, `plan`, `build`, `verify`, `review` | `auto` · `approve` · `off` |
+| `deliver` | `off` · `draft_pr` · `pr` |
+| `land` | `off` · `approve` · `auto_if_green` |
+
+`auto` proceeds; `approve` waits for a human; `off` does not run the phase.
+
+**A phase omitted from a profile defaults to `off`, not to `auto`.** The `suggest` profile above omits
+`verify` and `review`, and defaulting an unnamed phase to "proceed" would mean a profile grew new
+autonomy every time a phase was added to the pipeline.
+
+## 3. The four rules that make labels safe
 
 A label is **untrusted control** arriving from a system Code Spire does not administer. Fencing it as
 untrusted *data* — the defence used for ticket bodies, review comments and `.codespire` — does not
@@ -109,15 +140,46 @@ If a label names a profile above the repository's ceiling, the selection is **cl
 ceiling** and the clamp is recorded as a timeline entry and an attention row. Visibly, always; never
 silently, and never upward.
 
-### Rule 3 — the labeller must be allowed
+### Rule 3 — the labeller must be allowed, and must be knowable
 
 Anyone with tracker write can apply a label, so the label is an authorization decision made outside
-Code Spire's trust boundary. The existing per-provider author allowlist is reused: **a label applied
-by an actor outside the allowlist does not select a profile.** Without this rule, a drive-by
-contributor opens an issue, labels it `spire:auto`, and the factory writes and merges their code
-using the operator's credentials.
+Code Spire's trust boundary. **A label applied by an actor outside the allowlist does not select a
+profile.** Without this rule, a drive-by contributor opens an issue, labels it `spire:auto`, and the
+factory writes and merges their code using the operator's credentials.
 
-### The rule these three generalise
+A review found the first draft got both halves of this wrong.
+
+**The allowlist is per work source, not the SCM author allowlist.** Reusing the SCM allowlist compares
+across identity spaces: a Jira labeller has a Jira account id and no SCM provider row at all. This
+project has already been bitten by that class — one workspace name registered on two SCMs cross-wired
+them until `ReviewProviderResolver` disambiguated by stored provider type — so each work-source
+registration carries its own allowlist of tracker actors.
+
+**An unattributable label selects nothing.** A set of label strings has no author. Only a webhook
+`labeled` event names a sender; a label discovered by **polling** — after downtime, on a backfill, on
+the first scan of an existing backlog — has no actor unless the adapter reads the tracker's own audit
+trail. So `WorkSource` exposes label *events with actors* (FR-F16a), and a label whose applier cannot
+be established selects **no profile at all**. Degrading quietly to "webhook-observed labels only"
+would leave the exact attack above working through every label the webhook did not witness — the rule
+would look enforced and not be.
+
+### Rule 4 — policy is re-resolved at every phase transition
+
+Reading policy once at intake leaves a work item running for hours under a decision that may no longer
+hold. Five concrete bypasses, all closed by a registry read per phase:
+
+| Situation | Without re-resolution | With it |
+|---|---|---|
+| operator lowers the ceiling | in-flight items keep the old profile | next transition clamps |
+| label removed mid-flight | automation continues | next transition finds no profile and stops |
+| two profile labels at once | undefined which wins | **lowest wins** |
+| profile definition edited | resolved gates proceed under an unknown version | the item carries the **version** it was admitted under; moving it is an explicit re-admission |
+| issue transferred to another repository | identity key changes; item orphaned and re-admitted fresh | the item is **retired**, not silently continued |
+
+ADR-024 had to enforce retirement at **six** separate paths because no single choke point saw them
+all. The same is true here, and the read is cheap.
+
+### The rule these rules generalise
 
 All three are instances of ADR-035:
 
@@ -165,7 +227,41 @@ The reasoning is not politeness. An agent that races a human produces conflictin
 review requests and a reviewer bot arguing with a maintainer in a public thread. The prior art is
 explicit that a repository's reputation is a safety control, not a growth throttle.
 
-## 5. Refusals
+## 5. The push gate
+
+A pushed branch is not inert. On every forge this project supports, pushing triggers the repository's
+CI **using the workflow files on the branch being pushed**, on an unsandboxed runner, holding the
+repository's secrets.
+
+So the design's own guaranteed output was its largest hole. The agent's prompt contains untrusted
+tracker text. An injected agent commits a modified `.github/workflows/*`. Salvage pushes it before
+anything reviews it. CI executes it. Every sandbox control is bypassed by the kernel's own promise.
+
+**Between commit and push, the run plane diffs the branch against its base and refuses a push that
+touches a protected path.** A refused push preserves the workspace, classifies the failure, and raises
+an attention row naming the paths. It is not a silent skip and it is not a teardown.
+
+**CI configuration is a floor no profile may lower:**
+
+```
+.github/workflows/**   .gitlab-ci.yml   .gitlab/**
+bitbucket-pipelines.yml   Jenkinsfile   .circleci/**
+```
+
+A profile may protect more. No profile may protect less. An operator who genuinely wants
+agent-authored CI changes enables that per repository, outside the profile mechanism, having read what
+it means.
+
+This mirrors the never-suppressed SECURITY floor in ADR-027: a learned preference may hide many kinds
+of finding and may never hide a security one, because the evidence qualifying a group is itself
+manufacturable. Same shape here — the input that would authorise the change is the input under
+suspicion.
+
+**The cost, stated plainly:** a run can do correct work and still deliver nothing, and an operator will
+sometimes disagree with a refusal. That is the right trade against a failure mode of arbitrary code
+execution on a runner holding production secrets.
+
+## 6. Refusals
 
 Every refusal is a **first-class terminal state with its own reason**, in the same vocabulary shape
 as ADR-025's `CapRefusal`: a reason, a timeline detail, and an operator note.
@@ -174,7 +270,12 @@ as ADR-025's `CapRefusal`: a reason, a timeline detail, and an operator note.
 |---|---|
 | `not_eligible` | no matching label, or the phase is `off` in the selected profile |
 | `ceiling_clamped` | informational — the item ran at a lower profile than its label asked for |
-| `labeller_not_allowed` | the label was applied by an actor outside the allowlist |
+| `labeller_not_allowed` | the label was applied by an actor outside the work source's allowlist |
+| `label_unattributable` | the label's applier could not be established, so it selects nothing |
+| `push_gate_refused` | the branch touches a protected path; the workspace is preserved |
+| `salvage_failed` | commit or push failed; the workspace is preserved, not torn down |
+| `fix_chain_exhausted` | this finding already has the maximum number of fix runs |
+| `item_retired` | the tracker issue moved or was deleted, changing the identity it is derived from |
 | `entitlement_missing` | the capability is not enabled for this deployment |
 | `credentials_exhausted` | the whole pool is out of quota; the row names when capacity returns |
 | `budget_exceeded` | a spend, call-count or wall-clock cap would be crossed |
@@ -187,7 +288,7 @@ JSON and renders through the default branch — which is the *success* branch �
 to check and every suite stays green. That has happened twice in this codebase; the second time, a
 refused review rendered as five green segments under "done".
 
-## 6. The review phase, and why it is not self-review
+## 7. The review phase, and why it is not self-review
 
 The factory's pull request is reviewed by the reviewer that already exists, with ADR-019
 reconciliation handling round two.
@@ -197,7 +298,7 @@ model reviewing its own output shares its blind spots — if it could tell good 
 have written the good version. The prior art is unanimous on this: independent reviewers on different
 harnesses, and adversarial review with a second model, precisely because they find different things.
 
-## 7. The measurement loop
+## 8. The measurement loop
 
 ```
 work item → agent builds → PR → reviewer finds N findings
@@ -217,7 +318,14 @@ That join — *an agent wrote it × the reviewer found N × a human dismissed M 
 tells an operator whether raising a repository's ceiling is safe. It is also the honest answer to the
 question every autonomy setting begs, and it comes from data the deployment already collects.
 
-## 8. Metrics
+**The loop is bounded, and that has to be stated rather than assumed.** A finding on PR-1 spawns a
+fix, whose review raises a finding, which spawns another fix. Each hop sits inside its own caps and
+the *chain* sits inside none of them — and a fix dispatched outside a work item has no item to count
+against. So a fix run records the **finding id** it addresses, and dispatch refuses past N fix runs
+for that finding (FR-F32), checked at the same choke point as `SpendGate`. One column, one check, and
+the difference between a measurement loop and a money loop.
+
+## 9. Metrics
 
 Adopted from the observed prior art because they are the right ones:
 

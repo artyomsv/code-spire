@@ -13,9 +13,9 @@ item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and
 bounded by an operator ceiling.
 
 It has its own document set because it is large enough to need one, and it does not change anything
-above: **[`docs/factory/`](factory/README.md)** — PRD (FR-F1..F26), architecture, module reference,
+above: **[`docs/factory/`](factory/README.md)** — PRD (FR-F1..F32), architecture, module reference,
 execution layer, autonomy model, product packaging, prior art, and the M0–M6 build order. Decisions
-are **ADR-028..ADR-035** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
+are **ADR-028..ADR-037** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
 produced it is
 [`superpowers/specs/2026-09-01-software-factory-design.md`](superpowers/specs/2026-09-01-software-factory-design.md).
 

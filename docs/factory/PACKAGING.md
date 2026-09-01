@@ -22,8 +22,8 @@ axes are orthogonal and both hold at once.
 | **Core** | webhook ingress, event store, provider registry, auth and RBAC, dashboard shell, **cost ledger and spend caps**, attention panel | ships |
 | **Review** | pull-request review, findings, conversation, reconciliation, prompt management, `.codespire` rules, code context, symbol index | ships |
 | **Knowledge** | external connectors, read side: Jira, Confluence, GitHub Issues, GitLab Issues | ships |
-| **Build** | workspace, sandbox, harness run, verify, branch push, pull request. Work item in → pull request out, **on demand** | new |
-| **Autonomy** | triggers and schedules, plan decomposition, patrol agents, and every rung of the ladder above "draft pull request" | new |
+| **Build** | workspace, sandbox, harness run, **spec, plan, verify**, branch push, pull request. Work item in → pull request out, **on demand** | new |
+| **Autonomy** | triggers and schedules, patrol agents, unattended progression through gates, and the `land` rungs above `approve` | new |
 | **Insight** | analytics, learned memory, audit export, per-author statistics, factory telemetry | partly ships |
 
 **Core is the chassis and is not sellable alone.** Everything else assumes it.
@@ -32,13 +32,26 @@ axes are orthogonal and both hold at once.
 
 They look like one capability and are not:
 
-- **Build** is *"I ask, it builds."* A human names the work.
-- **Autonomy** is *"it decides when to work."* Schedules, patrols, and unattended progression through
-  gates.
+- **Build** is *"I ask, it builds."* A human names the work and a human is present at every gate.
+- **Autonomy** is *"it decides when to work, and proceeds without me."* Schedules, patrols, and
+  unattended progression through gates.
 
 That is a real value line — a team may want on-demand runs long before it wants overnight ones. It
 is also the **scary** half, so gating it separately is a safety control that happens to also be a
 price line. A deployment can hold Build without ever being able to start work by itself.
+
+**The line is drawn at the human, not at the phase — a review found the first draft drawing it in the
+wrong place.** Plan decomposition (FR-F19) was assigned to Autonomy while being scheduled at M4 as
+ordinary work-item flow, which would have left a Build-only customer unable to handle any ticket
+larger than one prompt. And "every rung above draft pull request" put `deliver: pr` in Autonomy,
+crossing a purchase boundary in the middle of a single profile.
+
+Corrected: **`spec`, `plan`, `verify` and `deliver` are Build** — they are how a work item becomes a
+pull request, and a customer who bought "work item in, pull request out" has bought them. **Autonomy
+is the absence of the human**: anything that starts work without a person asking (schedules, patrols),
+and anything that passes a gate without a person answering it. Concretely, a Build-only deployment can
+run every phase and every profile, but `land` is capped at `approve` and nothing dispatches on a
+timer.
 
 ### Why Knowledge and Build share connectors but stay separate
 
@@ -55,6 +68,23 @@ deployment holds credentials that write. That distinction is enforced at the ada
 documented.
 
 ## 3. Entitlements
+
+### Two mechanisms, not one — and the first draft conflated them
+
+| | The **entitlement gate** | **Credential rights** |
+|---|---|---|
+| Answers | may this deployment do this at all? | what can this credential reach? |
+| Lives | **one place**: the saga, beside `SpendGate` | **per adapter** |
+| Fails as | `entitlement_missing`, a first-class refusal | an absent method |
+
+Saying both were "one gate" was a contradiction rather than a summary. They are different mechanisms
+with different failure modes, and both are needed: a policy check can be bypassed by reaching the code
+beneath it, and an absent method cannot. A Knowledge-tier tracker credential cannot transition an
+issue because the adapter it is handed has no transition — not because a check declined.
+
+**The gateway is a third surface and is honest about it.** It accepts tracker webhooks regardless of
+pack, because refusing at ingress would make an entitlement change look like a broken integration.
+The refusal happens at dispatch, where it can be explained.
 
 ### One gate, not scattered conditionals
 

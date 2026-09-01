@@ -1,7 +1,7 @@
 # Software Factory — Product Requirements
 
 > Extends [`../PRD.md`](../PRD.md), which owns the reviewer (FR-1..13). This document owns the
-> factory (FR-F1..F26). Where the two overlap, the reviewer's requirements are unchanged and the
+> factory (FR-F1..F32). Where the two overlap, the reviewer's requirements are unchanged and the
 > factory reuses them.
 
 ---
@@ -76,18 +76,27 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   repository with a prompt, a base ref, a harness, a model or credential selection, and caps. The run
   is admitted or refused synchronously; a refusal names its reason.
 - **FR-F2 — Isolated workspace [M0].** Each run receives a fresh clone or worktree at an explicit
-  base commit, on its own branch, writable only within the workspace.
+  base commit, writable only within the workspace. The workspace is always fresh; the **branch** is
+  not always new. A run creates its own branch by default, and checks out an existing branch when the
+  dispatch targets one (see FR-F27). Freshness of the checkout and novelty of the branch are separate
+  properties and must not be conflated.
 - **FR-F3 — Sandboxed execution [M0].** The harness process runs inside an isolation boundary the
   operator selected for the deployment, with declared CPU, memory, disk, wall-clock and network
   policy. Network egress defaults to deny.
 - **FR-F4 — Guaranteed output [M0].** A successful run's guaranteed artefact is a **pushed workspace
-  branch**. Everything after that is policy.
+  branch — unless the branch fails the push gate (FR-F28)**. Everything after the push is policy. The
+  caveat is load-bearing, not pedantry: an unqualified guarantee is what would make the push
+  unconditional, and an unconditional push is the vulnerability (ADR-036).
 - **FR-F5 — Live run events [M1].** A run emits a normalized event stream — reasoning, tool calls,
   tool results, output, state transitions — tailable live and retained for a bounded window.
 - **FR-F6 — Cancel and steer [M1].** A run can be cancelled at any time. Where the harness declares
   the capability, a run can also be steered mid-flight with an additional instruction.
 - **FR-F7 — Salvage before teardown [M1].** Before a sandbox is destroyed, the run is finalized:
-  commit, push, extract usage, collect artefacts. Teardown never precedes salvage.
+  commit, gate, push, extract usage, collect artefacts. Teardown never precedes salvage. **A failed
+  salvage blocks teardown**: an expired token, a protected branch, or the forge rejecting a committed
+  secret preserves the workspace, classifies the failure and raises an attention row. The workspace is
+  reclaimed by an operator action or by expiry — never by the failure path itself, which would destroy
+  exactly the work this requirement exists to keep.
 - **FR-F8 — Orphan reconciliation [M1].** A sandbox the control plane lost — restart, eviction, node
   loss — is discovered and reaped by a watchdog, not leaked.
 - **FR-F9 — Failure classification [M1].** Every failed run carries a discriminated cause from a
@@ -117,6 +126,12 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 - **FR-F16 — Work source [M3].** A tracker is readable as a work queue: list candidates, read one,
   comment, transition, and read labels. No issue is mirrored into Code Spire's database; only its own
   run bookkeeping is stored, keyed by `(provider, repository, issue id)`.
+- **FR-F16a — Attributable labels [M3].** A work source exposes label **events carrying the actor who
+  applied them**, either from a webhook or by reading the tracker's own audit trail. A bare set of
+  label strings is not sufficient, because FR-F24 must know who applied a label. A label whose applier
+  cannot be attributed **selects no profile**. Without this, enforcement silently degrades to
+  "labels the webhook happened to witness", and every label found by polling — after downtime, on a
+  backfill, on the first scan of an existing backlog — bypasses the check entirely.
 - **FR-F17 — Eight phases [M3/M4].** A work item moves through `intake → spec → plan → build →
   verify → review → deliver → land`. Each phase is separately gateable.
 - **FR-F18 — Specification phase [M4].** A vague ticket is refined into an outcome, context and
@@ -134,8 +149,48 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   suspends automation for that work item until an operator resumes it.
 - **FR-F27 — Fix a finding [M2].** An existing review finding can be dispatched as a run without a
   tracker. The finding already carries repository, commit, file, line, message and suggestion, so it
-  is a complete task specification; the run's output is a branch and a pull request that the reviewer
-  then reviews. This is what makes M0–M2 a product rather than infrastructure.
+  is a complete task specification. This is what makes M0–M2 a product rather than infrastructure.
+
+  **The target depends on where the finding lives, and this is not cosmetic.** Reconciliation is
+  keyed per review, and a review id is derived from `workspace/slug#prId`. A fix delivered as a *new*
+  pull request is a *new* review with no prior run, so the original finding could never reconcile and
+  would stay open forever.
+
+  | Finding is on | Target | Reconciliation |
+  |---|---|---|
+  | an open pull request in the same repository | **that pull request's source branch** | round two joins; the finding resolves |
+  | an open pull request from a fork | new branch + new pull request | does not join — stated, not hidden |
+  | a merged commit or the default branch | new branch + new pull request | no prior run to join |
+
+- **FR-F28 — Push gate [M0].** Between commit and push, the run plane diffs the branch against its
+  base and **refuses the push** when the change touches a protected path. A refused push is a
+  classified failure that preserves the workspace and raises an attention row naming the paths.
+  **CI-configuration paths are a floor no profile may lower** (`.github/workflows/**`,
+  `.gitlab-ci.yml`, `.gitlab/**`, `bitbucket-pipelines.yml`, `Jenkinsfile`, `.circleci/**`).
+  Without this, a pushed branch executes agent-authored workflow files on the repository's own CI —
+  unsandboxed, with repository secrets — and every sandbox control in this document is bypassed by
+  the kernel's own guaranteed output (ADR-036).
+- **FR-F29 — Factory identity [M0].** The factory pushes and opens pull requests as a **dedicated
+  machine account**, registered separately from the review bot. `factory_run` records the identity it
+  pushed as, and a factory-authored pull request is marked by an **attribute**, never inferred from an
+  account name. Without a separate identity, allowlisting the factory would grant the review bot
+  allowed-author rights on every command surface — the widening ADR-035 forbids — and human takeover
+  (FR-F22) would have no reliable way to tell a person from an agent (ADR-037).
+- **FR-F30 — Policy is re-resolved per phase [M3].** Profile, ceiling and allowlist are re-read at
+  **every phase transition**, not once at intake. The profile **version** is pinned at admission, so
+  an edited definition does not retroactively change an in-flight item; moving it is an explicit
+  re-admission. A work item whose tracker issue is transferred to another repository — which changes
+  the identity it is derived from — is retired, not silently continued.
+- **FR-F31 — Step continuity [M4].** Each plan step's run ends by writing a structured summary —
+  decisions taken, alternatives rejected, deviations from the plan — stored on the work item and
+  prepended to the next step's prompt. Fresh context per step is the point (it keeps every run in the
+  model's good zone), but the repository carries *what* was done and never *why*, so without this a
+  later step re-derives or contradicts an earlier choice and the completion gate has no record to
+  judge against.
+- **FR-F32 — Bounded fix chains [M2].** A fix run records the finding id it addresses, and dispatch
+  refuses when that finding already has N fix runs. Otherwise a finding on PR-1 spawns PR-2, whose
+  review raises a finding that spawns PR-3, indefinitely — each hop individually within its caps,
+  and a fix dispatched outside a work item having no item to count against.
 
 ### 4.4 Autonomy, gates and policy
 
@@ -144,8 +199,12 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   paths.
 - **FR-F24 — Label-selected autonomy [M3].** A work item selects a profile by tracker label. A label
   may only select a profile at or below the repository's operator-set ceiling; a higher selection is
-  clamped visibly, never silently, and never upward. A label applied by an actor outside the
-  allowlist does not count.
+  clamped visibly, never silently, and never upward. Where several profile labels are present, the
+  **lowest wins**. A label applied by an actor outside the **work source's own** allowlist does not
+  count, and neither does one whose applier cannot be attributed (FR-F16a).
+  The allowlist is registered **per work source**, not reused from the SCM author allowlist: a Jira
+  labeller has a Jira account id and no SCM provider row, so comparing them crosses identity spaces —
+  the class of bug that once cross-wired two SCMs sharing a workspace name.
 - **FR-F25 — Durable gates [M3].** An `approve` phase persists an approval request that appears in the
   attention panel and can be answered from the dashboard, a tracker comment, or a pull-request review.
   Gates expire into a terminal state rather than holding a reservation indefinitely.
@@ -185,13 +244,17 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 
 | Milestone | Delivers | FRs |
 |---|---|---|
-| **M0** | Walking skeleton: dispatch → sandbox → harness → pushed branch | FR-F1..F4, F11, F13 |
+| **M0** | Walking skeleton: dispatch → sandbox → harness → **gated** push | FR-F1..F4, F11, F13, F28, F29 |
 | **M1** | Real lifecycle: events, cancel, salvage, watchdog, taxonomy, credential pool | FR-F5..F10, F12, F14 |
-| **M2** | Fix a finding; deliver a pull request; the existing reviewer reviews it | FR-F21, F27 |
-| **M3** | Work source, labels, autonomy profiles, gates, human takeover | FR-F16, F17, F22..F25 |
-| **M4** | Specification, plan and verify phases | FR-F18..F20 |
+| **M2** | Fix a finding; deliver a pull request; the existing reviewer reviews it | FR-F21, F27, F32 |
+| **M3** | Work source, labels, autonomy profiles, gates, human takeover | FR-F16, F16a, F17, F22..F25, F30 |
+| **M4** | Specification, plan and verify phases | FR-F18..F20, F31 |
 | **M5** | Second harness arm; Kubernetes runtime arm | FR-F15 |
 | **M6** | Entitlements, per-capability metering, factory telemetry | FR-F26 |
+
+**FR-F28 and FR-F29 are in M0 deliberately.** Both were added after a review found the walking
+skeleton's exit criterion celebrating an ungated push by an unspecified identity. Retrofitting either
+means M0 ships the vulnerability and M2 inherits an identity decision it cannot change.
 
 **M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
 tracker, no plan engine and no gates. That is what makes the build order safe: the risky
@@ -210,12 +273,22 @@ infrastructure is paid for by a feature that stands alone.
    the operator's image to build; Code Spire supplies the contract, not every stack.
 5. Vendor terms for automated use changed twice during 2026. Every finding is recorded with its
    retrieval date and re-checked before a harness ships.
+6. **Unverified:** whether Codex's own `workspace-write` sandbox initializes inside a container. It is
+   Landlock/seccomp-based and host-kernel-dependent, and the common containerized practice is to
+   disable it and let the container be the sole boundary. M0's exit criterion names that exact
+   invocation, so this is a **spike before M0 planning settles**, not an assumption to carry.
+7. **Unverified:** that a deny-by-default egress allowlist can be made complete enough for a real
+   `verify` phase. A Gradle or npm build reaches plugin portals, CDNs and transitive registries; an
+   incomplete allowlist turns infrastructure noise into `unverified` results and spends FR-F20's
+   honesty budget on the wrong thing.
 
 ## 8. Success criteria
 
 **M0** — a dispatched run against a real repository produces a branch on the real remote containing a
-commit the agent wrote, with the container destroyed afterwards and no credential in any layer, log
-or event.
+commit the agent wrote **and authored by the dedicated machine account**, with the container destroyed
+afterwards and no credential in any layer, log or event. A second run whose agent modifies a
+CI-configuration file is **refused at the push gate**, preserves its workspace, and raises an
+attention row. Both halves are required: the first alone celebrates the ungated path.
 
 **M1** — killing the control plane mid-run loses no completed work and creates no duplicate charge;
 killing the sandbox mid-run yields a classified failure, not a stall; exhausting one credential
@@ -238,3 +311,5 @@ rate, issue-to-merge lead time, where runs die, and what each capability cost.
 | Execution layer | ADR-029, ADR-030, ADR-031 | [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) |
 | Work items, phases, gates | ADR-032, ADR-035 | [AUTONOMY.md](./AUTONOMY.md) |
 | Packaging and entitlement | ADR-034 | [PACKAGING.md](./PACKAGING.md) |
+| Push gate and CI floor | **ADR-036** | [AUTONOMY.md](./AUTONOMY.md) §5 |
+| Factory identity | **ADR-037** | [ARCHITECTURE.md](./ARCHITECTURE.md) §4 |

@@ -34,7 +34,7 @@ anything a human would call a policy.
 |---|---|---|
 | `spire-gateway` | webhook ingress → `cs.integration` | tracker webhooks (issue labelled, issue commented) on the existing keyed registry edge |
 | `spire-orchestrator` | deciders, sagas, event store, dashboard APIs | `WorkItemLifecycle` decider, `RunSaga`, gate handling, entitlement check |
-| `spire-review-worker` | commands → SCM/LLM adapters → results | unchanged; later an optional `HarnessReviewer` review mode |
+| `spire-review-worker` | commands → SCM/LLM adapters → results | unchanged (see note below) |
 | **`spire-run-worker`** | — | **new**: the only component that opens a sandbox |
 
 `spire-run-worker` is a separate deployable for three reasons, each of which independently decides it:
@@ -44,8 +44,9 @@ anything a human would call a policy.
 2. **Blast radius.** The run worker needs a Docker socket or Kubernetes API access. That privilege
    must not sit in the process that posts review comments.
 3. **Poison isolation.** One stalled run must not stall every review. The project has already paid
-   for this exact failure: a slow LLM call once outran the SmallRye ack threshold and dead-lettered a
-   consumer that then re-stalled on every restart.
+   for this exact failure: a slow LLM call once outran the SmallRye ack threshold and stalled a
+   consumer that re-stalled on every restart and needed a manual consumer-group seek. It was never
+   dead-lettered — the manual seek was necessary *because* the record never reached `cs.dlq`.
 
 ## 3. Seams
 
@@ -101,20 +102,74 @@ failed runs was **dropped commit** — the agent did the work and the container 
 ```java
 public interface WorkSource {
     WorkSourceType type();
-    WorkSourceCapabilities capabilities();   // supportsLabels, supportsTransitions, supportsPlans
+    WorkSourceCapabilities capabilities();   // supportsTransitions, supportsPlans, supportsLabelAudit
     List<WorkItemRef> candidates(WorkQuery q);
     WorkItem fetch(WorkItemRef ref);
     void comment(WorkItemRef ref, String body);
     void transition(WorkItemRef ref, String state);
-    Set<String> labels(WorkItemRef ref);
+
+    /** Labels WITH the actor who applied each one. A label whose applier is unknown carries
+     *  {@code Actor.UNKNOWN} and selects no autonomy profile — never a silent fallback. */
+    List<LabelEvent> labelEvents(WorkItemRef ref);
 }
+
+record LabelEvent(String label, Actor appliedBy, Instant at, Origin origin) {}
+enum Origin { WEBHOOK, AUDIT_TRAIL, UNATTRIBUTED }
 ```
+
+`labelEvents` replaced a `Set<String> labels(ref)` after a review showed the safety rule built on it
+was unimplementable. A set of strings has no author, and FR-F24 must know who applied a label. Only a
+webhook names a sender; a label found by polling needs the tracker's own audit trail (GitHub's timeline
+API, Jira's changelog), which `supportsLabelAudit` declares. Where neither is available the label is
+`UNATTRIBUTED` and **selects nothing** — the honest degradation, rather than quietly enforcing the rule
+only for labels a webhook happened to witness.
 
 Arms: GitHub Issues, GitLab Issues, Jira — reusing the HTTP clients the `spire-context-*` modules
 already have. Same hosts, same registry, wider rights (see [PACKAGING.md](./PACKAGING.md) §Knowledge
 vs Build).
 
-## 4. Identity — derive, never register
+### 3.4 `PullRequestSink` — the port that does not exist yet
+
+**There is no `Forge` type in this codebase.** An earlier draft of these documents said M2 would open
+pull requests "via the existing `Forge` seam"; that name was imported from prior art and does not
+appear in a single Java file here. The real SCM ports are `ScmIngress`, `DiffSource`, `CommentSink`,
+`ThreadSource`, `IdentitySource` and `PrUrlParser`, and **none of them can create a pull request** —
+nothing in Code Spire ever has.
+
+So M2 owns real work, not wiring:
+
+```java
+public interface PullRequestSink {          // new port, three implementations
+    PullRequestRef open(RepoRef repo, String head, String base, PrBody body);
+    Optional<PullRequestRef> findByHead(RepoRef repo, String head);   // idempotency
+}
+```
+
+plus **git-push credentials**, which are also new: today the registry token is brokered per command
+for API calls only, and nothing in the system has ever pushed a commit. Whether that token doubles as
+the push credential is decided at M2, per forge.
+
+## 4. Identity
+
+### 4.1 The factory's own identity
+
+The factory pushes and opens pull requests as a **dedicated machine account**, registered separately
+from the review bot (ADR-037).
+
+The alternative fails on inspection. The only SCM credential a deployment holds today resolves to the
+review bot, so a factory pull request would be bot-authored — and `IntegrationSaga` gates pull-request
+events on the per-provider author allowlist (*"unlisted authors never get touched"*). On any
+deployment with a non-empty allowlist, which is what this design's own threat model encourages, the
+reviewer would **silently skip every factory pull request**, defeating M2 entirely. Allowlisting the
+bot to fix that grants it allowed-author authority on `/review`, `/finding` and `/fix` — the bot could
+command itself, which is the widening ADR-035 forbids.
+
+`factory_run` records the identity it pushed as, and the review row carries a **factory-authored
+attribute**. Neither is inferred from an account name: an account can be renamed, reassigned or
+shared, and an attribute written at authorship cannot drift. Same reasoning that made `pr_state` its
+own column and `origin` a field on a conversation-derived finding.
+
+### 4.2 Run and work-item ids — derive, never register
 
 `ReviewIds.parse` exists because an in-memory registry loses everything on restart. The same rule
 holds, and the platform goes into the key **from day one**:
@@ -145,7 +200,32 @@ live tailers and a lifecycle bus for durable consumers, and it is ADR-011/ADR-01
 one level up.
 
 Topics after the change: `cs.integration`, `cs.commands`, `cs.events`, `cs.results`, **`cs.run-events`**,
-`cs.dlq`. All keyed by their aggregate id.
+**`cs.run-control`**, `cs.dlq`.
+
+### 5.1 The run worker cannot inherit the review worker's consumption model
+
+The review worker's `commands-in` channel is ordered and blocking, with `max.poll.records` pinned to
+`1`, a queue factor of `1`, and a 900-second unacknowledged-record ceiling that `LlmTimeoutBudget`
+refuses to start below. An hour-long run breaks all three assumptions, and one consequence is fatal
+rather than merely awkward:
+
+> **A `CancelRun` keyed to the same aggregate lands on the same partition as the `ExecuteRun` it is
+> meant to cancel — so it would be consumed only after that run finished.** Cancel that cannot
+> cancel.
+
+So the run worker's semantics are specified rather than inherited:
+
+| Concern | Review worker | Run worker |
+|---|---|---|
+| ack | after processing | **on receipt**, once `run_claim` is written |
+| idempotency unit | the unacked record | **the `run_claim` row**, sole mechanism |
+| liveness | the blocking consumer | `factory_run` state + `workspace_lease` heartbeat |
+| cancel / steer | n/a | **`cs.run-control`**, consumed by a non-blocking listener beside the executor |
+
+Acking on receipt moves the redelivery guarantee from Kafka to the claim row, which is why FR-F10's
+intent journalling matters more here than it does for a review: after early ack, a lost dispatch
+response cannot be recovered by redelivery, so an ambiguous outcome must fail closed into
+`dispatch_uncertain`.
 
 ## 6. Command and event vocabulary (sketch)
 
@@ -180,13 +260,37 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 | Table | Holds |
 |---|---|
 | `run_claim` | idempotency claim per `(run_id, slot)` — same shape as `comment_idempotency` |
-| `workspace_lease` | which sandbox owns which workspace, for the orphan watchdog |
+| `workspace_lease` | sandbox ↔ workspace, **plus owner id and heartbeat** — see below |
 | `harness_credential_state` | pool member health: available / rate-limited-until / rejected / disabled |
 
-**Changed**
+**The orphan definition, because "somebody's job" is not a design.** With more than one run-worker
+replica on one Docker daemon or in one namespace, `discoverOrphans()` enumerates *every* sandbox,
+including a sibling's healthy hour-long run. Reap eagerly and the watchdog kills live work — worse
+than the leak it prevents; reap lazily and an eviction leaks forever. So:
 
-`llm_charge` gains `capability` and `credential_ref`. Cheap now, **impossible to backfill** — the
-same lesson as `review_finding` shipping with no backfill.
+> An **orphan** is a sandbox whose `workspace_lease` row is absent, or whose lease heartbeat is older
+> than N missed intervals. Reaping an orphan always runs `finalize` (salvage) before `destroy`.
+
+Leases carry `owner_id` and `heartbeat_at`; a live replica renews, a dead one stops. ADR-024 needed
+six enforcement paths because no single choke point saw them all — this is the same shape, and it
+needs stating rather than assuming.
+
+**Changed: `llm_charge` needs more than two columns.**
+
+The first draft said the ledger "gains `capability` and `credential_ref`", which hid real schema work.
+The table's spine is review-shaped in three places, all verified: `review_id TEXT NOT NULL` (a run has
+no reviewId); `CHECK (kind IN ('REVIEW','RECONCILE','FOLLOWUP'))`, whose own comment notes that an
+unrecognised literal *dead-letters the result at INSERT time*; and `call_ref` identity derived from
+reviewId + slot + commit.
+
+A run charge therefore needs a **neutral subject key** (a run id or a review id, one column, with the
+kind disambiguating), the `kind` set extended for run work, and a `call_ref` scheme derived from
+`runId + attempt` in the ADR-023 style. ADR-026 already flagged this shape when it noted that
+embedding spend had no `call_ref` scheme under ADR-023.
+
+`capability` and `credential_ref` join in the same migration, **at M0**, because they cannot be
+backfilled and M0 already spends real money — the same lesson as `review_finding` shipping with no
+backfill.
 
 ## 8. Encryption boundary
 
@@ -214,6 +318,20 @@ than mitigated away. The Kubernetes arm removes it.
 ## 10. What the build enforces
 
 `spire-arch` today fails the build when a core module names an SCM or context provider outside a
-reasoned allowlist. It is extended to **harness, runtime and work-source** names on the same terms,
-**in the same commit as the first seam** — not after the first leak. The SCM version of this check
-found three real leaks, one of which was a live defect returning 500 instead of 404.
+reasoned allowlist. It is extended to **harness, runtime and work-source** names **in the same commit
+as the first seam** — not after the first leak. The SCM version of this check found three real leaks,
+one of which was a live defect returning 500 instead of 404.
+
+**It is not "the same terms", and pretending otherwise would break the build on day one.** The
+existing pattern is `(?i)(bitbucket|github|gitlab|jira|confluence)` — deliberately **unanchored**, with
+a comment explaining that anchoring would miss `githubConfig`. The new names break that both ways:
+
+| Name | Problem | Match mode |
+|---|---|---|
+| `codex`, `opencode`, `kubernetes`, `worksource` | none | substring, as today |
+| `pi` | matches `spire`, `api`, `pipeline` — would fail the build on the project's own name | **qualified forms only**: `harness.pi`, `PiHarness`, `"pi"` as a whole quoted literal |
+| `docker` | appears legitimately in deployment-adjacent core text | substring, with the deploy-facing files allowlisted |
+
+The reduced sensitivity for short names is **recorded as a known limit**, not pretended away.
+Switching to an import-graph scan was considered and rejected: the leak class that motivated a text
+scan includes string literals, which no import graph can see.

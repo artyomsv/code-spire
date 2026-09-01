@@ -93,9 +93,13 @@ pipeline concern, not a footnote — NFR-F10.
 
 No OpenAI document was found that **affirmatively permits** using a ChatGPT subscription for
 unattended automation. It is not prohibited in writing, and OpenAI's own documentation steers to API
-keys. The deployment decision to use subscription auth for Codex is the operator's, recorded in
-[`../DECISIONS.md`](../DECISIONS.md) with its own provenance. The design supports it; the design does
-not assert that it is sanctioned.
+keys.
+
+The deployment decision to use subscription auth for Codex is the operator's, taken on a confirmation
+obtained outside this research. **That confirmation is not yet recorded anywhere a future reader can
+check it.** ADR-030 carries a placeholder for its source, channel and date, to be completed before the
+Codex arm ships. Until then the position rests on nothing verifiable, and this paragraph is the honest
+statement of that — the design supports the mode; the design does not assert it is sanctioned.
 
 ## 3. Credentials
 
@@ -113,9 +117,23 @@ available ──429 / window exhausted──► rate_limited(until) ──expiry
 
 Four rules:
 
-1. **Rotation is not a new call.** A rotated retry is the *same* logical call and must reuse its
-   charge identity. The ledger already had to distinguish a re-run (new identity) from an auto-retry
-   (shared identity); rotation is the second kind. Getting it wrong inflates every run.
+1. **Rotation's charge identity depends on what was rotated, and the two cases are opposite.**
+   An earlier draft said flatly that "a rotated retry is the same logical call and must reuse its
+   charge identity". That is right for one **call** refused with 429 and never billed, and wrong for a
+   **run**.
+
+   | Rotated unit | Charge identity | Why |
+   |---|---|---|
+   | one model call, refused and unbilled | **shared** — same `call_ref` | nothing was delivered; a new identity would inflate spend |
+   | a run restarted after mid-run exhaustion | **new** — its own `call_ref` per attempt | on a metered arm everything the first attempt consumed *was* delivered and billed; sharing under-records real vendor spend |
+
+   The second is the mirror image of the double-charge the review round of ADR-023 fixed, and it is
+   the distinction `ReviewRuns` exists to keep straight: silently-lost money and silently-inflated
+   money are different bugs and need opposite treatment.
+
+   **Mid-run exhaustion on a resume-less harness is a classified run failure, not a transparent
+   rotation.** Codex declares `resume: no`, so there is nothing to resume — the run restarts from
+   scratch, and pretending otherwise would hide both the lost work and the spend.
 2. **Exhaustion is a fact, not a failure.** `ALL_CREDENTIALS_EXHAUSTED` is a first-class refusal with
    its own status and an attention row naming **when capacity returns** — the same shape as
    `CAP_REACHED`. Not a crash, not a retry storm.
@@ -174,10 +192,22 @@ images are **reference implementations of a published contract**, and any image 
 | exit non-zero on failure, and only then | the outcome is an exit code |
 | contain no credential | credentials are injected |
 
-**`spire agent-image verify <ref>`** boots any image and passes or fails it against that contract.
-This follows the house rule that a seam is not done until a gate enforces it, and matches how the
-comparable wire protocols in this space prove an implementation — with a conformance suite, not a
-grep.
+**`spire agent-image verify <ref>` reports two classes, and says which is which.** An earlier draft
+claimed it "boots any image and passes or fails it against that contract". Three clauses are not
+boot-verifiable, and claiming otherwise would stamp violating images as verified — converting
+*unknown* into *verified*, the failure shape this document set cites everywhere else.
+
+| Clause | Class | Why |
+|---|---|---|
+| harness on `PATH`, non-root UID, `git` + shell, `SPIRE_WORKSPACE`, proxy/CA vars | **verified** | testable by booting the image with a stub command |
+| writes the event stream to the declared descriptor | **declared** | that is *harness* behaviour; proving it needs a real invocation, a credential and a paid call — verifiable once a no-network stub-model mode exists |
+| exits non-zero on failure, and only then | **declared** | a universal claim over all failures; a boot test can only sample it |
+| contains no credential | **declared** | unfalsifiable by scanning |
+
+Honest partial coverage is the point. A suite that reports what it did not check is a gate; one that
+implies coverage it lacks is worse than none. This follows the house rule that a seam is not done
+until a gate enforces it, and matches how the comparable wire protocols in this space prove an
+implementation — with a conformance suite, not a grep.
 
 ### 4.2 Shipped images
 
@@ -190,8 +220,9 @@ spire-agent-base            git, CA certs, non-root user, workspace layout, run 
 ```
 
 One base with thin layers, not four independent images: four images means four places to patch a CVE
-and four entrypoints that drift. This repository already carries three separate tech-debt entries
-that are literally *"duplicated with no drift guard"*.
+and four entrypoints that drift. This repository already carries two tech-debt entries named
+*duplicated with no drift guard*, and two more of the same class — a per-service authorization guard,
+and the SCM clients' copied redirect loop.
 
 All images are digest-pinnable, signed, and published with an SBOM — because an enterprise mirrors
 them into their own registry and runs them through an approval process before anything else can
@@ -233,8 +264,23 @@ because a customer who needs it today can build an image that passes the suite.
 | **`kubernetes`** (M5) | one Pod per run | no socket, real `NetworkPolicy`, real limits, TTL cleanup; lands into the Helm/kustomize artefacts that already exist |
 
 Egress is deny-by-default with an allowlist for the model endpoint, the git host and the package
-registries the repository needs. Codex helps here: `workspace-write` already has network off unless
-enabled.
+registries the repository needs.
+
+### 5.1 Two things here are unverified, and both must be settled before M0
+
+**Does Codex's own sandbox work inside a container?** `workspace-write` is enforced by Landlock and
+seccomp, which are host-kernel-dependent; inside a container that mechanism is commonly unavailable,
+and the usual containerized practice is to run Codex with its own sandbox **disabled** and let the
+container be the boundary. This design counted the inner sandbox as a defence layer, and **M0's exit
+criterion names that exact invocation.** A half-day spike decides which of the two is the enforcement
+boundary, and the answer is written back into this section. The project's own precedent applies: a
+spike preceded the auth work for the same reason, and it overturned two of that plan's predictions.
+
+**Is a deny-by-default egress allowlist completable?** "The package registries the repository needs"
+understates it: one Gradle or npm `verify` run touches plugin portals, CDNs and transitive registries,
+and an incomplete allowlist turns infrastructure noise into `unverified` results — spending FR-F20's
+honesty budget on the wrong thing. The likely shape is a per-repository allowlist seeded from a first
+observed run, but that is a decision, not an assumption, and it belongs with the spike.
 
 ## 6. Implementation order and why
 

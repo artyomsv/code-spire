@@ -40,19 +40,41 @@ M0–M2 would still be something nobody else ships.
 | does credential injection work? | the run authenticates without a credential in any layer or log |
 | does the branch land? | a real commit reaches a real remote |
 
+**Precondition — a spike, before this milestone's plan is written.** Does Codex's `workspace-write`
+sandbox initialize inside a container? It is Landlock/seccomp-based and host-kernel-dependent, and the
+common containerized practice is to disable it and let the container be the boundary. The exit
+criterion below names that exact invocation, so the answer changes what M0 builds. Half a day. The
+same house rule that put a spike before the auth work, where it overturned two of that plan's
+predictions.
+
 **Delivers.** `POST /api/runs` with a fixed prompt → `spire-run-worker` → `spire-runtime-docker` →
-`spire-agent-codex` → workspace at an explicit base commit → **pushed branch**. No tracker, no gates,
-no plan, no UI beyond a run row.
+`spire-agent-codex` → workspace at an explicit base commit → **gated push**. No tracker, no gates, no
+plan, no UI beyond a run row.
+
+Three things land here that look like they belong later, and do not:
+
+- **The push gate (FR-F28).** Retrofitting it means M0 ships the vulnerability and its exit criterion
+  celebrates the ungated path.
+- **The dedicated machine account (FR-F29).** Everything from M2 onward inherits this identity, and
+  the credential work is M0's anyway.
+- **`llm_charge`'s run shape** — neutral subject key, extended kind, `runId+attempt` call_ref, plus
+  `capability` and `credential_ref`. M0 spends real money, and none of these can be backfilled. The
+  argument that put them in M1 applies to M0 with more force.
 
 **Modules.** `spire-harness`, `spire-harness-codex`, `spire-runtime`, `spire-runtime-docker`,
 `spire-workspace`, `spire-run-worker`. `spire-arch` neutrality check extended **in the same commit as
-the first seam**.
+the first seam**, with the per-name match modes ARCHITECTURE §10 specifies — an unanchored `pi` would
+fail the build on the project's own name.
 
-**Exit criterion.** A dispatched run against a real repository produces a branch on the real remote
-containing a commit the agent wrote, with the container destroyed afterwards and no credential in any
-image layer, log line or event payload.
+**Exit criteria — both halves, because the first alone celebrates the ungated path.**
 
-**FRs:** FR-F1..F4, F11, F13.
+1. A dispatched run against a real repository produces a branch on the real remote containing a commit
+   the agent wrote and **authored by the machine account**, with the container destroyed afterwards
+   and no credential in any image layer, log line or event payload.
+2. A second run whose agent modifies a CI-configuration file is **refused at the push gate**,
+   preserves its workspace, and raises an attention row naming the paths.
+
+**FRs:** FR-F1..F4, F11, F13, F28, F29.
 
 ---
 
@@ -64,15 +86,20 @@ image layer, log line or event payload.
 
 - Normalized run event stream on `cs.run-events`, tailable live, retained with a TTL.
 - **Cancel**; steer where the harness declares the capability.
-- **`finalize` before `destroy`** — commit, push, extract usage, collect artefacts.
-- **Orphan watchdog** — sandboxes the control plane lost are found and reaped.
+- **`finalize` before `destroy`** — commit, gate, push, extract usage, collect artefacts. **A failed
+  salvage blocks teardown** and preserves the workspace; destroying on a failed push is exactly the
+  loss this step exists to prevent.
+- **Orphan watchdog** with a real orphan definition: leases carry `owner_id` and `heartbeat_at`, and
+  an orphan is a sandbox whose lease is absent or stale past N intervals. Without that, two replicas
+  on one daemon means the watchdog reaps a sibling's live hour-long run.
+- **Run-worker channel semantics** — ack on receipt, `run_claim` as the sole idempotency mechanism,
+  and cancel/steer over `cs.run-control` so a cancel does not queue behind the run it cancels.
 - **Failure-cause discriminator** as a column, from a closed set.
 - **Credential pool** with least-recently-exhausted rotation, `rejected` versus `rate_limited`
   distinguished, and `ALL_CREDENTIALS_EXHAUSTED` as a first-class refusal with an attention row.
 - Idempotency: intent journalled before dispatch, ambiguity failing closed.
-- `llm_charge.capability` and `.credential_ref` — added now because they cannot be backfilled.
 - Enterprise image environment: CA bundle, proxy variables, private registry credentials.
-- `spire agent-image verify` conformance command.
+- `spire agent-image verify`, reporting **verified** and **declared** clauses separately.
 
 **Exit criteria.** Killing the control plane mid-run loses no completed work and creates no duplicate
 charge. Killing the sandbox mid-run yields a classified failure, not a stall. Exhausting one
@@ -93,25 +120,43 @@ reviewer reviews the result.
   a `/fix` comment on the pull request. The finding already carries repository, commit, file, line,
   message and suggestion, so it is a complete task specification with no tracker involved. This is
   what turns M0–M2 from infrastructure into a feature.
-- Branch → pull request via the existing `Forge` seam. The reviewer reviews it; ADR-019
-  reconciliation handles round two unchanged. Run cost posted on the pull request.
+- **A new `PullRequestSink` port and three adapter implementations.** There is no `Forge` type in this
+  codebase — that name came from prior art. The real ports are `ScmIngress` / `DiffSource` /
+  `CommentSink`, and **none can open a pull request**; nothing here ever has. This is real work, not
+  wiring, and the "M0–M2 is mostly plumbing" argument was too cheap before it was listed.
+- **Git-push credentials**, also new: the registry token is brokered today for API calls only, and
+  under ADR-037 the push credential belongs to the machine account. Whether one token serves both is
+  decided here, per forge.
+- The reviewer reviews the result; ADR-019 reconciliation handles round two unchanged. Run cost posted
+  on the pull request.
+- **Fix-chain accounting (FR-F32)** — a fix run records the finding id it addresses, and dispatch
+  refuses past N fix runs for that finding.
 - `factory_run` read model and the Runs screen: lifecycle strip, live event stream, budget panel,
   prompt.
+
+**The fix target is not always a new pull request.** A fix for a finding on an open same-repository
+pull request pushes to **that pull request's source branch**, because reconciliation is keyed per
+review and a new pull request is a new review with no prior run — the original finding could never
+resolve. Fork pull requests and default-branch findings get a new branch and a new pull request, and
+the documents say plainly that reconciliation does not join there.
 
 **Configuration rule enforced here:** the review model and prompt must differ from the build model
 and prompt.
 
-**Guards inherited, not reinvented.** A `/fix` command is gated exactly as `/review` and `/finding`
-already are — author allowlist first, ahead of the command switch, so a future command cannot arrive
-ungated. It also inherits the known gap that neither existing command checks observe mode
-(`techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`); `/fix` must not widen it from three
-paths to four, because a factory that writes code in observe mode is a different failure from a
-reviewer that comments in it.
+**`/fix` is gated, and does not inherit the observe-mode gap.** It follows `/review` and `/finding` in
+checking the author allowlist ahead of the command switch, so a future command cannot arrive ungated.
+It differs from them in one respect, deliberately: **`/fix` checks `policy.observeOnly()` and
+refuses.** An earlier draft said it "inherits the known gap… and must not widen it from three paths to
+four", which are the same thing said twice with opposite consequences. A reviewer commenting in
+observe mode is a bug
+(`techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`); a factory *writing and pushing code*
+in observe mode is a different order of failure, and it is not inherited here.
 
-**Exit criterion.** A finding raised by the reviewer is dispatched as a run without a tracker,
-produces a pull request, and a second review round reconciles the original finding as resolved.
+**Exit criterion.** A finding raised on an open pull request is dispatched as a fix run without a
+tracker, pushes to that pull request's source branch, and the next review round reconciles the
+original finding as resolved.
 
-**FRs:** FR-F21, FR-F27.
+**FRs:** FR-F21, F27, F32.
 
 **This is the shippable boundary.** Everything before it is infrastructure; everything after it is
 scope.
@@ -124,15 +169,25 @@ scope.
 
 **Delivers.** `spire-worksource` plus GitHub Issues, GitLab Issues and Jira arms, reusing the
 existing context adapters' clients. Tracker webhooks on the gateway's keyed registry edge.
-`work_item` bookkeeping — **not** a mirror. Autonomy profiles, label mapping, the operator ceiling
-and the labeller allowlist. Durable gates answerable from the dashboard, the tracker or a
-pull-request review, with expiry. Human takeover. The Work items and Approvals screens.
+`work_item` bookkeeping — **not** a mirror. Autonomy profiles, label mapping, the operator ceiling,
+and a **per-work-source** actor allowlist. Durable gates answerable from the dashboard, the tracker or
+a pull-request review, with expiry. Human takeover. The Work items and Approvals screens.
+
+Two things the first draft assumed and had to be designed instead:
+
+- **`labelEvents` carrying the actor**, not a bare set of label strings. A set has no author, and the
+  allowlist rule needs one. Where neither a webhook nor a tracker audit trail can attribute a label,
+  it is `UNATTRIBUTED` and **selects nothing** — the alternative is a rule that quietly applies only
+  to labels a webhook happened to witness.
+- **Policy re-resolved at every phase transition** (FR-F30), with the profile version pinned at
+  admission, lowest-label-wins, and retirement when a tracker issue moves repository.
 
 **Exit criteria.** A ticket labelled at each of three profiles produces three visibly different
 journeys. A label naming a profile above the ceiling is clamped and says so. A label applied by an
-actor outside the allowlist is ignored.
+actor outside the allowlist is ignored, **and so is one whose applier cannot be determined**. Lowering
+the ceiling stops an in-flight item at its next phase.
 
-**FRs:** FR-F16, F17, F22..F25.
+**FRs:** FR-F16, F16a, F17, F22..F25, F30.
 
 ---
 
@@ -146,10 +201,17 @@ one run per step, with a completion gate between steps and an empty-step rule so
 to commit does not deadlock. The `verify` phase — repository-declared back-pressure, with
 **`unverified`** as a distinct outcome from *passing*.
 
-**Exit criterion.** A ticket with no acceptance criteria becomes a specification, then a plan of
-three or more steps, then three branches that each verify, then one pull request.
+Plus **step continuity (FR-F31)**: each step's run ends by writing a structured summary — decisions
+taken, alternatives rejected, deviations — stored on the work item and prepended to the next step's
+prompt. Fresh context per step is the point, but the repository carries *what* was done and never
+*why*, so without this a later step contradicts an earlier choice and the completion gate has nothing
+to judge against.
 
-**FRs:** FR-F18..F20.
+**Exit criterion.** A ticket with no acceptance criteria becomes a specification, then a plan of
+three or more steps, then three branches that each verify, then one pull request — **and step 3's
+prompt demonstrably contains step 1's recorded decision.**
+
+**FRs:** FR-F18..F20, F31.
 
 ---
 
@@ -202,6 +264,20 @@ Each entry names why, and what would change the answer.
 | **MCP server management** | Project tooling the agent starts inside the sandbox, with credentials the project supplies. | — |
 | **Behaviour validation contracts / monitoring agents** | Recorded from the prior art as a real idea. Nothing to monitor until the factory runs continuously. | The factory running unattended for long enough that drift is a real risk. |
 | **Mode-collapse mitigation (generation wiping)** | Only matters for open-ended iterative work, which is not a phase here. | An autonomy workload that iterates towards a goal rather than completing a work item. |
+
+## Must be answered before M0 starts
+
+These are not "questions to settle at M4". Each one changes what M0 builds, and an adversarial review
+found every one of them assumed rather than decided.
+
+| # | Question | Why it cannot wait |
+|---|---|---|
+| 1 | **Does Codex's sandbox initialize inside a container?** | M0's exit criterion names that exact invocation. A half-day spike. |
+| 2 | **Whose credential pushes** — confirmed as a dedicated machine account (ADR-037), so: how is it registered, and does one token serve both API and git push? | M0 does the credential work; M2 cannot change the identity afterwards. |
+| 3 | **Is the push gated?** Settled as yes (ADR-036, FR-F28). Remaining: the exact protected-path matcher and how a refusal surfaces. | Retrofitting means M0 ships the vulnerability. |
+| 4 | **The run charge row's shape** — subject key, kind, `call_ref` scheme. | M0 spends real money into a ledger whose spine is review-shaped and rejects unknown kinds at INSERT. |
+| 5 | **The run worker's channel semantics** — ack model and the cancel path. | It decides whether `cs.commands` is even the right topic, before the first consumer is written. |
+| 6 | **Record the subscription-decision provenance**, or stop claiming it is recorded. | One sentence, and it is what protects the position if the policy moves. |
 
 ## Open questions
 

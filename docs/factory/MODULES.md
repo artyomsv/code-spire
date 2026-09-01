@@ -148,8 +148,11 @@ kind of logic that deserves tests without a container. It is also the natural ho
 `empty push` signal that a plan step with nothing to commit must produce, or a plan deadlocks
 waiting for a pull request that never opens.
 
-**Depends on** the existing `Forge`-side credential brokering for push authentication; it never mints
-a credential itself.
+**Depends on** a git-push credential brokered to it; it never mints one itself. **That brokering does
+not exist yet.** Today the provider registry token is handed to a command for API calls only, and
+nothing in Code Spire has ever pushed a commit — so "whether the registry token doubles as the push
+credential, per forge" is an M2 decision, not an assumption. Under ADR-037 the credential belongs to
+the **dedicated machine account**, not to the review bot.
 
 ---
 

@@ -103,7 +103,11 @@ must build from an approved golden base and mirror into a private registry.
 
 ## 7. Open questions carried forward
 
-Tracked in [`../../factory/ROADMAP.md`](../../factory/ROADMAP.md) §Open questions:
+The review promoted six items from "open question" to **must be answered before M0** — they change
+what the first milestone builds, and each had been assumed rather than decided. They are tabled in
+[`../../factory/ROADMAP.md`](../../factory/ROADMAP.md) §Must be answered before M0 starts.
+
+The genuinely deferrable ones remain in that file's §Open questions:
 
 1. Where the `spec` phase writes — tracker comment, repository file, or both.
 2. Whether `verify` can fail a work item or only a step.
@@ -120,7 +124,48 @@ are re-read from the primary source and the finding is updated in
 The Codex subscription decision in particular rests on a confirmation obtained outside this research;
 its provenance — who, where, when — belongs in `docs/DECISIONS.md` alongside ADR-030.
 
-## 9. Next step
+## 9. The adversarial review, and what it changed
+
+An adversarial pass (fable-5) was run over the committed document set the same day. It produced
+**24 findings — 2 critical, 6 high, 11 medium, 5 low** — and separately verified **17 load-bearing
+claims about the existing codebase as correct**. Six of the most consequential were re-verified
+independently against source before being accepted; all six held. All 24 are resolved in the current
+text.
+
+**The two critical findings each became an ADR**, because neither was a wording fix.
+
+*The guaranteed output executed agent code outside the sandbox.* Pushing a branch triggers the
+repository's CI **using the workflow files on that branch**, on an unsandboxed runner with repository
+secrets. An injected agent modifies a workflow file; salvage pushes it before anything reviews it; CI
+runs it. Every sandbox control in the design was bypassed by the kernel's own promise, and the only
+defence present was `.github/**` appearing in a `protectedPaths` *example* with no statement of where
+protected paths are enforced. → **ADR-036**: the push is gated, CI configuration is a floor no profile
+may lower, and a failed salvage blocks teardown.
+
+*The label-allowlist rule was unimplementable.* `WorkSource.labels()` returned a set of strings, which
+has no author, so a label found by polling could never be attributed — the rule would silently apply
+only to labels a webhook witnessed. And "reuse the existing per-provider author allowlist" compared
+across identity spaces, since a Jira labeller has no SCM provider row. → **ADR-037** for the identity
+half, `labelEvents` with actors for the attribution half, and a per-work-source allowlist.
+
+**The most valuable class of finding was factual.** `Forge` — named in three places as "the existing
+seam" that would open pull requests — **does not exist in this codebase**. It was imported from prior
+art. The real ports cannot open a pull request and nothing here ever has, which means M2 owns a new
+port, three adapters and git-push credentials that no milestone had scheduled. Two more of the same
+kind: `llm_charge`'s spine is review-shaped and rejects unknown kinds at INSERT, so "gains two
+columns" hid real schema work; and the `spire-arch` scan is deliberately unanchored, so adding `pi`
+would have failed the build on the project's own name.
+
+**Four findings were the design violating a rule it had just cited.** Gate modes declared a closed set
+and then used three values outside it. `agent-image verify` would have converted *unknown* into
+*verified*. Entitlement enforcement was described as one gate in one document and two in another.
+Policy was read once at intake, in a document that cites ADR-024 needing six enforcement paths.
+
+The generalisable lesson, recorded because it will recur: **a design document that names an existing
+type is making a checkable claim, and citing a rule is not the same as applying it.** Both classes are
+invisible to a careful re-read by the author and cheap for an adversarial reader to find.
+
+## 10. Next step
 
 Implementation planning for **M0** only — the walking skeleton in
 [`../../factory/ROADMAP.md`](../../factory/ROADMAP.md). It proves the four unknowns that could sink

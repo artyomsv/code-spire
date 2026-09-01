@@ -35,7 +35,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
-| `docs/factory/` | **Designed, not started (2026-09-01).** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F26), architecture, module reference, execution layer (harness terms quoted with retrieval dates), autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-028..ADR-035 |
+| `docs/factory/` | **Designed, not started (2026-09-01).** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-028..ADR-037 |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 

@@ -27,7 +27,7 @@ tracker issue
               may set to auto, approve (human), or off
                                   │
                                   ▼
-              guaranteed output: a pushed workspace branch
+              guaranteed output: a branch that PASSED the push gate
               everything past it is policy, not the kernel
 ```
 
@@ -57,11 +57,16 @@ output**, and ADR-019 reconciliation already handles the second round. That clos
 loop — *an agent wrote this × the reviewer found N × a human dismissed M × it cost X* — that the
 closest prior art (Warren's corpus-flywheel record) describes at length and lists as unscheduled.
 
+> **Reviewed 2026-09-01.** An adversarial pass over this document set produced 24 findings — 2
+> critical, 6 high, 11 medium, 5 low — and verified 17 load-bearing claims about the existing codebase
+> as correct. All 24 are resolved in the current text; the two critical ones added ADR-036 (the push
+> gate) and ADR-037 (the factory identity). The review record is in the design spec.
+
 ## Reading order
 
 | Document | Answers |
 |---|---|
-| [PRD.md](./PRD.md) | Who it is for, functional requirements FR-F1..F26, NFRs, success criteria |
+| [PRD.md](./PRD.md) | Who it is for, functional requirements FR-F1..F32, NFRs, success criteria |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Planes, seams, services, topics, identity, data tiers |
 | [MODULES.md](./MODULES.md) | Every new module: purpose, interface, dependencies, licence |
 | [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) | Harnesses, vendor terms with quotes, credential pooling, agent images |
@@ -70,14 +75,14 @@ closest prior art (Warren's corpus-flywheel record) describes at length and list
 | [RESEARCH.md](./RESEARCH.md) | The prior art this design is built on, with sources |
 | [ROADMAP.md](./ROADMAP.md) | M0–M6 build order, and what is deliberately not built |
 
-Decisions are recorded as **ADR-028 through ADR-035** in [`../DECISIONS.md`](../DECISIONS.md),
+Decisions are recorded as **ADR-028 through ADR-037** in [`../DECISIONS.md`](../DECISIONS.md),
 alongside every earlier decision. The design record for the session that produced this directory is
 [`../superpowers/specs/2026-09-01-software-factory-design.md`](../superpowers/specs/2026-09-01-software-factory-design.md).
 
 ## The rule that recurs
 
-Three separate defences in this codebase turn out to be the same rule, and the factory needs it a
-fourth time:
+Two existing defences — one this project built, one found in another vendor's tool — turn out to be
+the same rule, and the factory needs it twice more:
 
 - `.codespire` is read from the **target branch, never the reviewed commit** — a pull request must
   not rewrite the instructions of the reviewer judging it.
