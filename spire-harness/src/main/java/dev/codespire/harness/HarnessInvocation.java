@@ -20,10 +20,39 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
     public HarnessInvocation {
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(prompt, "prompt");
-        Objects.requireNonNull(workspacePath, "workspacePath");
-        Objects.requireNonNull(model, "model");
         Objects.requireNonNull(wallClock, "wallClock");
         credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials"));
+
+        // model and workspacePath both become argv elements, so their shape is checked here once
+        // rather than by every arm. Neither is an injection risk on its own — argv is a list, so
+        // "--model <value>" consumes exactly one element and nothing re-splits it — but both are
+        // control:
+        //
+        //   model         ADR-035 says a repository may never select the model endpoint. Nothing
+        //                 enforces that yet; when the per-repo override ladder is built, free text
+        //                 lands here. A blank or flag-shaped value is a configuration fault that
+        //                 should fail before a container starts, not as a CLI parse error inside it.
+        //   workspacePath chooses the directory the agent operates in, and the agent runs
+        //                 unconfined because the container is the boundary (ADR-038). A relative
+        //                 path resolves against whatever the child's working directory happens to
+        //                 be; "/" would hand it everything mounted.
+        requireArgumentSafe(model, "model");
+        requireArgumentSafe(workspacePath, "workspacePath");
+        if (!workspacePath.startsWith("/")) {
+            throw new IllegalArgumentException("workspacePath must be absolute, was: " + workspacePath);
+        }
+    }
+
+    private static void requireArgumentSafe(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " must not be blank");
+        }
+        if (value.startsWith("-")) {
+            throw new IllegalArgumentException(field + " must not look like a flag, was: " + value);
+        }
+        if (value.indexOf('\0') >= 0 || value.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException(field + " must not contain a NUL or a newline");
+        }
     }
 
     @Override

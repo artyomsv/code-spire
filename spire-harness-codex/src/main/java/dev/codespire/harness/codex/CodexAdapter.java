@@ -1,7 +1,9 @@
 package dev.codespire.harness.codex;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.harness.EnvironmentPolicy;
 import dev.codespire.harness.FailureCause;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessCapabilities;
@@ -16,7 +18,6 @@ import dev.codespire.harness.UsageReport;
 
 import java.time.Instant;
 import java.util.EnumMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +45,9 @@ public final class CodexAdapter implements HarnessAdapter {
      * later renderer.
      */
     private static final int MAX_SUMMARY_CHARS = 2_000;
+
+    /** What this arm sets itself. A credential of the same name is a collision, not an override. */
+    private static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
 
     @Override
     public HarnessType type() {
@@ -98,11 +102,15 @@ public final class CodexAdapter implements HarnessAdapter {
                 "-");
     }
 
+    /**
+     * The credential map, plus this arm's own settings, checked by {@link EnvironmentPolicy}.
+     *
+     * <p>Stdin closed configuration override through argv; the environment is the same door one
+     * over, and CODEX_HOME is the specific key that reopens it.
+     */
     @Override
     public Map<String, String> environment(HarnessInvocation invocation) {
-        Map<String, String> env = new LinkedHashMap<>(invocation.credentials());
-        env.put("CODEX_QUIET_MODE", "1");
-        return Map.copyOf(env);
+        return EnvironmentPolicy.merge(invocation.credentials(), OWN_SETTINGS);
     }
 
     /**
@@ -120,7 +128,7 @@ public final class CodexAdapter implements HarnessAdapter {
         JsonNode node;
         try {
             node = JSON.readTree(line);
-        } catch (Exception e) {
+        } catch (JsonProcessingException e) {
             return Optional.empty(); // a line we cannot read is skipped, never fatal
         }
         if (node == null || !node.isObject()) {

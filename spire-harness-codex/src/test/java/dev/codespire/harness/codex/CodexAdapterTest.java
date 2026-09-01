@@ -1,6 +1,7 @@
 package dev.codespire.harness.codex;
 
 import dev.codespire.harness.FailureCause;
+import dev.codespire.harness.HarnessCapabilities;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.HarnessType;
 import dev.codespire.harness.PromptDelivery;
@@ -20,6 +21,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -361,6 +363,120 @@ class CodexAdapterTest {
 
         assertEquals(900L, report.tokens(TokenBucket.INPUT));
         assertEquals(45L, report.tokens(TokenBucket.OUTPUT));
+    }
+
+    @Test
+    void theArmDeclaresExactlyWhatItCanDo() {
+        // Asserted by value, not merely non-null. capabilities() is five positional booleans, so a
+        // swapped pair compiles and reads plausibly; only an equality check catches it.
+        assertEquals(new HarnessCapabilities(true, true, false, false, true), adapter.capabilities());
+    }
+
+    @Test
+    void aLifecycleEnvelopeBecomesAStateChange() {
+        // thread.started and turn.started are real, observed envelopes with nothing the domain
+        // models. They must still appear on the timeline rather than vanish.
+        assertEquals("thread.started", assertInstanceOf(RunEvent.StateChange.class,
+                adapter.parse("""
+                        {"type":"thread.started","thread_id":"01a0"}""").orElseThrow()).state());
+        assertEquals("turn.started", assertInstanceOf(RunEvent.StateChange.class,
+                adapter.parse("""
+                        {"type":"turn.started"}""").orElseThrow()).state());
+    }
+
+    @Test
+    void anUnknownItemTypeIsRecordedRatherThanDropped() {
+        // The CLI adds item types over time. An unrecognised one must surface as a state change
+        // naming it, so a new shape is visible instead of silently absent.
+        RunEvent event = adapter.parse("""
+                {"type":"item.completed","item":{"id":"i","type":"web_search"}}""").orElseThrow();
+
+        RunEvent.StateChange state = assertInstanceOf(RunEvent.StateChange.class, event);
+        assertEquals("item.completed", state.state());
+        assertEquals("web_search", state.detail());
+    }
+
+    @Test
+    void reasoningBecomesThinkingOnlyWhenItCompletes() {
+        assertInstanceOf(RunEvent.Thinking.class, adapter.parse("""
+                {"type":"item.completed","item":{"type":"reasoning","text":"weighing options"}}""")
+                .orElseThrow());
+        assertTrue(adapter.parse("""
+                {"type":"item.started","item":{"type":"reasoning","text":""}}""").isEmpty(),
+                "the started half would duplicate every thought on the timeline");
+    }
+
+    @Test
+    void aJsonObjectWithNoTypeIsSkipped() {
+        // Reaches the same empty as a blank line, but by a different path: path("type") answers a
+        // MissingNode whose asText("") is "", landing on the empty-envelope case.
+        assertTrue(adapter.parse("""
+                {"foo":"bar"}""").isEmpty());
+    }
+
+    @Test
+    void anEmptyCredentialMapStillCarriesTheAdaptersOwnSettings() {
+        Map<String, String> env = adapter.environment(new HarnessInvocation("run_abc", "do it",
+                "/workspace", "gpt-5.6", Map.of(), Duration.ofMinutes(30)));
+
+        assertEquals(Map.of("CODEX_QUIET_MODE", "1"), env);
+    }
+
+    @Test
+    void aNonNumericUsageFieldIsUnknownNotZero() {
+        // A proxy sending {"input_tokens":"oops"} is not reporting zero, and the two must not be
+        // indistinguishable. Read as 0 the turn becomes a measured-free run; read as unmeasurable
+        // it becomes UNKNOWN, which is the honest answer.
+        assertTrue(adapter.parse("""
+                {"type":"turn.completed","usage":{"input_tokens":"oops","output_tokens":10}}""")
+                .isEmpty());
+    }
+
+    @Test
+    void aNonObjectJsonLineIsSkipped() {
+        // Valid JSON that is not an event: an array, a bare string, a number. Each must be skipped
+        // as unreadable rather than parsed into a state change named "".
+        assertTrue(adapter.parse("[1,2,3]").isEmpty());
+        assertTrue(adapter.parse("\"just a string\"").isEmpty());
+        assertTrue(adapter.parse("42").isEmpty());
+    }
+
+    @Test
+    void aBlankLineIsSkippedWithoutRelyingOnTheParserToThrow() {
+        // The guard for this was vacuous while parse caught Exception broadly: deleting it changed
+        // nothing, because Jackson's own failure on empty input produced the same empty result. The
+        // catch is now narrowed to JsonProcessingException, so the guard carries its own weight.
+        assertTrue(adapter.parse("").isEmpty());
+        assertTrue(adapter.parse("   ").isEmpty());
+        assertTrue(adapter.parse("\t\n").isEmpty());
+        assertTrue(adapter.parse(null).isEmpty());
+    }
+
+    @Test
+    void anEnvironmentKeyThatWouldHijackTheChildIsRefused() {
+        // Stdin closed config override through argv. The environment is the same door one over:
+        // CODEX_HOME relocates config.toml, OPENAI_BASE_URL redirects the endpoint — the exact
+        // outcome PromptDelivery exists to prevent — and LD_PRELOAD, PATH or NODE_OPTIONS hijack
+        // the child process itself. Refused rather than silently dropped, because a credential an
+        // operator believes is set and which vanished is worse than a run that will not start.
+        for (String hostile : List.of("PATH", "LD_PRELOAD", "NODE_OPTIONS", "CODEX_HOME",
+                "OPENAI_BASE_URL", "HOME", "http_proxy")) {
+            HarnessInvocation invocation = new HarnessInvocation("run_abc", "do it", "/workspace",
+                    "gpt-5.6", Map.of(hostile, "anything"), Duration.ofMinutes(30));
+
+            assertThrows(IllegalArgumentException.class, () -> adapter.environment(invocation),
+                    hostile + " must be refused");
+        }
+    }
+
+    @Test
+    void anEnvironmentKeyCollidingWithTheAdaptersOwnIsRefused() {
+        // A silent overwrite means the operator's value is discarded with no signal, and which side
+        // wins is an implementation detail nobody reading the registry can see.
+        HarnessInvocation invocation = new HarnessInvocation("run_abc", "do it", "/workspace",
+                "gpt-5.6", Map.of("CODEX_QUIET_MODE", "0"), Duration.ofMinutes(30));
+
+        assertThrows(IllegalArgumentException.class, () -> adapter.environment(invocation));
     }
 
     // ---- classification ---------------------------------------------------------------------

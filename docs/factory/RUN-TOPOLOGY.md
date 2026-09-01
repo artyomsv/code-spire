@@ -386,11 +386,21 @@ data we get rather than whether the mechanism exists.
 
 ### Measured — 2026-09-01, codex-cli 0.146.0
 
-**Usage is reported per turn, on `turn.completed`, and each report is that turn's cumulative
-totals rather than an increment.** So a run killed mid-turn loses only the turn in flight, and the
-`/handoff` mechanism above captures the rest. A multi-turn run therefore yields near-complete
-telemetry, and `usage()` takes the **last** report — summing them would multiply a run's totals by
-roughly its turn count.
+**Usage is reported on `turn.completed`, one report per turn.** That much is measured. So a run
+killed mid-turn loses only the turn in flight, and the `/handoff` mechanism above captures the rest.
+
+**Whether each report is CUMULATIVE or an INCREMENT is not measured — it is inferred**, and the
+distinction is flagged here rather than buried because the two readings differ by a factor of
+roughly the turn count. Both captured runs contained exactly one turn, and a single-turn
+observation cannot tell the two apart: it takes counts growing across two turns of one real run.
+`CodexAdapter.usage()` takes the **last** report, which is correct under the cumulative reading and
+under-reports a multi-turn run under the other.
+
+Rather than leave the assumption unguarded, the adapter **falsifies it where it can**: cumulative
+totals are non-decreasing, so a report smaller than one before it disproves the reading, and the run
+is then recorded as an unreconciled `TOTAL` instead of silently taking whichever number the
+assumption selects. That converts a wrong guess into a visible degradation. It does not convert it
+into a right answer — a multi-turn run is still the measurement needed.
 
 The real event vocabulary, captured from two live runs rather than read from documentation:
 
@@ -416,13 +426,20 @@ The real event vocabulary, captured from two live runs rather than read from doc
   call that used 14064 — a 71% overstatement, worst on the runs that were cheapest.
   `TokenUsageMapper.openAi` in spire-llm already subtracts for this reason; `CodexAdapter` follows it.
 
-**Two limits left open, deliberately.** Codex reports **no total**, so the independent cross-check
-`TokenUsageMapper` performs against `totalTokenCount()` is unavailable here — a mis-partition cannot
-be caught by arithmetic, only by a contradiction between the vendor's own fields. And
+**Three limits left open, deliberately.** The cumulative-versus-incremental question above is the
+first. Second, Codex reports **no total**, so the independent cross-check `TokenUsageMapper`
+performs against `totalTokenCount()` is unavailable here — a mis-partition cannot be caught by
+arithmetic, only by a contradiction between the vendor's own fields. Third,
 `cache_write_input_tokens` is treated as *additional* to input rather than a subset of it, matching
 what the name describes and how Anthropic reports the same concept; every run observed so far
-reported zero, so measurement has not ruled out the alternative. A run with a non-zero cache write
-would settle it.
+reported zero, so measurement has not ruled out the alternative — and the contradiction gate cannot
+catch a wrong choice here, because `cacheWrite` is compared against nothing. A run with a non-zero
+cache write would settle it.
+
+**What would settle two of the three: one deliberate multi-turn run**, captured with `--json`, its
+`turn.completed` lines compared against each other. That is a run to make on purpose, not a thing to
+wait for. Until it exists, neither the cumulative reading nor the cache-write reading may be cited
+as measured — and this section is the record of which is which.
 
 **Version note.** The plan states its flag set was verified against codex-cli **0.152.0**; the
 binary available for this measurement was **0.146.0**. Every flag the adapter uses was re-checked
