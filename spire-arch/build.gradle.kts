@@ -52,6 +52,17 @@ tasks.test {
     inputs.files(
         rootProject.file("settings.gradle.kts"),
         rootProject.file("build.gradle.kts"),
-        rootProject.file("Dockerfile")
+        rootProject.file("Dockerfile"),
+        rootProject.file("LICENSING.md")
     ).withPropertyName("buildDeclarations").withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // ModuleLicensingIsDeclaredTest reads every module LICENSE. Undeclared they are invisible to
+    // the up-to-date check, and the check then reports a CACHED PASS over a licence file that was
+    // just made wrong — measured, not assumed: with this block absent, restoring the exact
+    // copy-paste bug the test was written for produced BUILD SUCCESSFUL.
+    inputs.files(
+        fileTree(rootProject.projectDir) {
+            include("spire-*/LICENSE")
+        }
+    ).withPropertyName("moduleLicences").withPathSensitivity(PathSensitivity.RELATIVE)
 }

@@ -28,6 +28,14 @@ public final class UsageReport {
     }
 
     public static UsageReport of(Map<TokenBucket, Long> counts) {
+        if (counts.isEmpty()) {
+            // An empty map is not a measurement. Allowing it would build a report whose
+            // isUnknown() is false and whose every bucket reads 0 — the same fabricated zero,
+            // through the front door. An adapter that does not recognise a vendor usage shape
+            // must answer unknown(), not an empty measurement.
+            throw new IllegalArgumentException(
+                    "an empty count map is not a measurement — use UsageReport.unknown()");
+        }
         Map<TokenBucket, Long> copy = new EnumMap<>(TokenBucket.class);
         counts.forEach((bucket, value) -> {
             if (value == null || value < 0) {

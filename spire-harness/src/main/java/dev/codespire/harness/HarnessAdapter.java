@@ -8,7 +8,9 @@ import java.util.Optional;
  * Drives one agent harness. Two contract rules that are not obvious:
  *
  * <ul>
- *   <li>{@link #usage} returning empty means UNKNOWN, never zero.</li>
+ *   <li>{@link #usage} answers {@link UsageReport#unknown()} when the harness did not say. It is
+ *       NOT Optional: two ways to spell one fact gives a caller an {@code orElse(0L)} door that
+ *       reads as careful code and fabricates the very zero ADR-023 exists to prevent.</li>
  *   <li>{@link #command} returns argv, never a shell string — a prompt is untrusted text.</li>
  * </ul>
  */
@@ -27,5 +29,9 @@ public interface HarnessAdapter {
 
     TerminalOutcome classify(int exitCode, RunEventSummary seen);
 
-    Optional<UsageReport> usage(RunEventSummary seen);
+    /**
+     * @return what the run consumed. Never null; {@link UsageReport#unknown()} when the harness
+     *         reported nothing this adapter recognises — never a zeroed report.
+     */
+    UsageReport usage(RunEventSummary seen);
 }

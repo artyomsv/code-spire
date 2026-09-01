@@ -67,4 +67,22 @@ class UsageReportTest {
 
         assertEquals(5L, report.tokens(TokenBucket.INPUT), "usage must be a snapshot, not a view");
     }
+
+    @Test
+    void toStringSaysUnknownRatherThanRenderingAnEmptyMap() {
+        // A diagnostic line reading "UsageReport{}" is indistinguishable from a run that measured
+        // nothing, which is the same confusion the type exists to remove.
+        assertTrue(UsageReport.unknown().toString().contains("UNKNOWN"),
+                UsageReport.unknown().toString());
+        assertFalse(UsageReport.of(Map.of(TokenBucket.INPUT, 3L)).toString().contains("UNKNOWN"));
+        assertTrue(UsageReport.of(Map.of(TokenBucket.INPUT, 3L)).toString().contains("3"));
+    }
+@Test
+    void anEmptyCountMapIsNotAMeasurement() {
+        // The front door to the same fabricated zero: an empty map builds a report whose
+        // isUnknown() is false and whose every bucket reads 0. An adapter that fails to recognise
+        // a vendor's usage field names would reach it by accident, and the ledger would price the
+        // run at zero. Refused at the boundary rather than guarded by every caller.
+        assertThrows(IllegalArgumentException.class, () -> UsageReport.of(Map.of()));
+    }
 }
