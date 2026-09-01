@@ -163,6 +163,7 @@ val fastTestModules = listOf(
     "spire-harness",
     "spire-harness-codex",
     "spire-workspace",
+    "spire-runtime",
 )
 
 val serviceTestModules = listOf(
