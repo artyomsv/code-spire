@@ -65,6 +65,9 @@ public class AttentionQueries {
     @Inject
     SpendWindow spendWindow;
 
+    @Inject
+    RunAttentionRows runRows;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -76,6 +79,7 @@ public class AttentionQueries {
             scmProviderRows(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
+            runRows.collect(c, rows);
             credentialRows(c, rows);
             costRows(c, rows);
         } catch (SQLException e) {

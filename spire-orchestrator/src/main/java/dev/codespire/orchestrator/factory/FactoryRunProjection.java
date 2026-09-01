@@ -142,6 +142,22 @@ public class FactoryRunProjection {
     }
 
     /**
+     * Clears the run's attention row. Only {@code attention_ack_at} moves — the row's own timestamps
+     * stay, so the predicate {@code ended_at > attention_ack_at} keeps its meaning.
+     *
+     * @return false when no such run exists
+     */
+    public boolean acknowledgeAttention(String runId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE factory_run SET attention_ack_at = now() WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to acknowledge attention for run " + runId, e);
+        }
+    }
+
+    /**
      * A terminal-state write that touches no row is a REDELIVERY, not an error — the first delivery
      * already moved the row. Logged at debug so a genuine ordering fault is still traceable.
      */

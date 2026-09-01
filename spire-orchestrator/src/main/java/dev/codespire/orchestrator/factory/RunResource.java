@@ -4,6 +4,8 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.orchestrator.llm.LlmProviderConfig;
+import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -22,6 +24,8 @@ import jakarta.ws.rs.core.Response;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -67,9 +71,16 @@ public class RunResource {
     @Inject
     FactoryConfig config;
 
+    @Inject
+    LlmProviderRegistry llmProviders;
+
+    /**
+     * @param llmProviderId the registered LLM provider whose key the harness runs with; blank means
+     *                      the deployment's default. The key itself never travels in a request.
+     */
     public record DispatchRequest(String workspace, String slug, String providerType, String baseBranch,
                                   String baseCommit, String prompt, String harness, String model,
-                                  String subject) {
+                                  String subject, String llmProviderId) {
     }
 
     @POST
@@ -100,12 +111,11 @@ public class RunResource {
         String subject = subject(req.subject(), baseCommit);
 
         ScmProvider account = machineAccounts.resolve(scmType, workspace)
-                .orElseThrow(() -> new ClientErrorException(Response.status(Response.Status.CONFLICT)
-                        .entity("No FACTORY-role provider is registered for "
-                                + scmType.providerType() + "/" + workspace + ". Register the machine "
-                                + "account under Settings -> Providers with role FACTORY (ADR-037). "
-                                + "The factory never pushes as the review bot.")
-                        .build()));
+                .orElseThrow(() -> conflict("No FACTORY-role provider is registered for "
+                        + scmType.providerType() + "/" + workspace + ". Register the machine "
+                        + "account under Settings -> Providers with role FACTORY (ADR-037). "
+                        + "The factory never pushes as the review bot."));
+        LlmProviderConfig llm = harnessCredentialSource(req.llmProviderId(), harness);
 
         RepoRef repo = new RepoRef(workspace, slug);
         String runId = RunIds.of(scmType, workspace, slug, subject, FIRST_ATTEMPT);
@@ -120,7 +130,7 @@ public class RunResource {
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(runId, repo,
                 FactoryCloneUrls.cloneUrl(scmType, account.baseUrl(), repo),
                 baseBranch, baseCommit, branch, prompt, harness, model, agentImage,
-                List.of(), config.wallClockSeconds(), account.secret(), null);
+                List.of(), config.wallClockSeconds(), account.secret(), llm.apiKey());
         try {
             emitter.dispatch(command);
         } catch (IllegalStateException e) {
@@ -152,10 +162,51 @@ public class RunResource {
         return subject;
     }
 
+    /**
+     * The harness runs with a key from the LLM provider registry — the named provider, else the
+     * deployment's default — because that registry is where operator keys live, encrypted, and a
+     * request body is not. 409 when neither exists: dispatching anyway would start and pay for a
+     * container that fails at its first model call. Whether the key suits the arm (an OpenAI key
+     * for codex) is the operator's to know at M0; the message says so.
+     */
+    private LlmProviderConfig harnessCredentialSource(String llmProviderId, String harness) {
+        Optional<LlmProviderConfig> found;
+        if (llmProviderId == null || llmProviderId.isBlank()) {
+            found = llmProviders.resolveDefault();
+        } else {
+            UUID id;
+            try {
+                id = UUID.fromString(llmProviderId);
+            } catch (IllegalArgumentException e) {
+                throw badRequest("llmProviderId must be a UUID");
+            }
+            found = llmProviders.resolveById(id);
+        }
+        return found.orElseThrow(() -> conflict("No LLM provider supplies the harness credential: set a "
+                + "default LLM provider under Settings -> LLM, or pass llmProviderId. Its key must be "
+                + "one the '" + harness + "' harness accepts."));
+    }
+
+    private static ClientErrorException conflict(String message) {
+        return new ClientErrorException(
+                Response.status(Response.Status.CONFLICT).entity(message).build());
+    }
+
     /** A 400 whose body says why — the bare exception's message never reaches the client. */
     private static BadRequestException badRequest(String message) {
         return new BadRequestException(
                 Response.status(Response.Status.BAD_REQUEST).entity(message).build());
+    }
+
+    /** Clears the run's attention row (a gate refusal). Both roles: reading a refusal spends nothing. */
+    @POST
+    @Path("/{runId:.+}/attention-ack")
+    @RolesAllowed({"spire-viewer", "spire-admin"})
+    public Response acknowledgeAttention(@PathParam("runId") String runId) {
+        if (!projection.acknowledgeAttention(runId)) {
+            throw new NotFoundException("no such run: " + runId);
+        }
+        return Response.noContent().build();
     }
 
     @GET

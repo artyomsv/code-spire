@@ -1,6 +1,8 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.orchestrator.llm.LlmProviderInput;
+import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.provider.ProviderInput;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import io.quarkus.test.junit.QuarkusMock;
@@ -9,6 +11,10 @@ import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,11 +41,71 @@ class RunResourceTest {
                 """.formatted(workspace);
     }
 
+    @Inject
+    DataSource dataSource;
+
+    /** Obviously synthetic, and not the repo-wide TEST-MODEL: priceability lives in a shared table. */
+    private static final String MODEL = "TEST-RUN-MODEL";
+
+    private void sql(String statement) {
+        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
+            s.executeUpdate(statement);
+        } catch (SQLException e) {
+            throw new IllegalStateException("setup failed: " + statement, e);
+        }
+    }
+
+    @Inject
+    LlmProviderRegistry llmProviders;
+
+    /**
+     * A default LLM provider — the harness credential's source. Created through the registry so the
+     * key is encrypted the way a real one is (a raw INSERT of a plaintext key does not read back:
+     * resolution decrypts). The catalog row is what the registry's priceability guard requires.
+     */
+    private UUID defaultLlmProvider() {
+        sql("DELETE FROM llm_provider WHERE name = 'TEST-run-llm'");
+        sql("DELETE FROM llm_model WHERE name = '" + MODEL + "'");
+        sql("INSERT INTO llm_model (id, type, name, label, pricing_mode) VALUES ('" + UUID.randomUUID()
+                + "', 'openai', '" + MODEL + "', '" + MODEL + "', 'UNMETERED')");
+        return UUID.fromString(llmProviders.create(new LlmProviderInput("TEST-run-llm", "openai", "https://api.openai.com",
+                "TEST-harness-key", MODEL, null, null, true, true)).id());
+    }
+
     private String workspaceWithFactoryAccount() {
+        defaultLlmProvider();
         String workspace = "TEST-ws-" + UUID.randomUUID().toString().substring(0, 8);
         providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "factory-bot", null, "FACTORY"));
         return workspace;
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void theHarnessCredentialComesFromTheLlmRegistryNeverTheRequest() {
+        // No default provider: refused, naming what to configure. A named provider: accepted. The
+        // key itself is never in the body — the registry is where operator keys live, encrypted.
+        String workspace = workspaceWithFactoryAccount();
+        sql("DELETE FROM llm_provider");
+        given().contentType("application/json").body(body(workspace))
+                .when().post("/api/runs")
+                .then().statusCode(409)
+                .body(containsString("LLM provider"));
+
+        UUID id = defaultLlmProvider();
+        sql("UPDATE llm_provider SET is_default = false WHERE id = '" + id + "'");
+        given().contentType("application/json").body(body(workspace))
+                .when().post("/api/runs")
+                .then().statusCode(409);
+        given().contentType("application/json")
+                .body(body(workspace).replace("\"harness\"", "\"llmProviderId\":\"" + id + "\",\"harness\""))
+                .when().post("/api/runs")
+                .then().statusCode(201);
+
+        given().contentType("application/json")
+                .body(body(workspace).replace("\"harness\"", "\"llmProviderId\":\"not-a-uuid\",\"harness\""))
+                .when().post("/api/runs")
+                .then().statusCode(400);
     }
 
     @Test
