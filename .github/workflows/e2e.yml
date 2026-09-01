@@ -37,8 +37,13 @@ jobs:
       # real Gradle task in spire-encryption — a random base64 string is NOT a valid keyset.
       - name: Generate keysets
         run: |
-          echo "MASTER_KEYSET=$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" >> "$GITHUB_ENV"
-          echo "WEBHOOK_KEYSET=$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)" >> "$GITHUB_ENV"
+          MASTER_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          WEBHOOK_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          # Masked so a later step that dumps the environment cannot print them into a public log.
+          echo "::add-mask::$MASTER_KEYSET"
+          echo "::add-mask::$WEBHOOK_KEYSET"
+          echo "MASTER_KEYSET=$MASTER_KEYSET" >> "$GITHUB_ENV"
+          echo "WEBHOOK_KEYSET=$WEBHOOK_KEYSET" >> "$GITHUB_ENV"
 
       # Every value below is obviously synthetic. The realm ships the same three client secrets, and no
       # real credential enters CI.
@@ -94,3 +99,157 @@ jobs:
       - name: Down
         if: always()
         run: docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env down -v
+
+  # The review loop, against a REAL GitLab.
+  #
+  # Separate from round-trip above because their subjects differ: that one checks the published
+  # artifact's topology, this one drives the whole review loop — webhook to comment to reconciliation
+  # — through a containerised gitlab-ce. It BUILDS from the checkout rather than pulling :edge,
+  # because the code under test is the branch's.
+  gitlab-loop:
+    runs-on: ubuntu-latest
+    # gitlab-ce alone is a five-minute boot on a warm cache and longer on a cold one, and the chain
+    # then runs four merge requests through real webhook delivery with two model calls per round.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      # Two independent keysets per run, so none is ever committed or reused. The generator is a real
+      # Gradle task — a random base64 string is NOT a valid Tink keyset.
+      - name: Generate keysets
+        run: |
+          MASTER_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          WEBHOOK_KEYSET="$(./gradlew -q :spire-encryption:generateKeyset --console=plain | tail -1)"
+          # Masked so a later step that dumps the environment cannot print them into a public log.
+          echo "::add-mask::$MASTER_KEYSET"
+          echo "::add-mask::$WEBHOOK_KEYSET"
+          echo "MASTER_KEYSET=$MASTER_KEYSET" >> "$GITHUB_ENV"
+          echo "WEBHOOK_KEYSET=$WEBHOOK_KEYSET" >> "$GITHUB_ENV"
+
+      # Every value below is obviously synthetic. No real credential enters CI, and the GitLab this
+      # creates is destroyed with the runner.
+      - name: Write the environment
+        run: |
+          cat > deploy/.env <<ENV
+          SPIRE_UI_PORT=34800
+          SPIRE_KEYCLOAK_PORT=34867
+          POSTGRES_DB=spire
+          POSTGRES_USER=spire
+          POSTGRES_PASSWORD=TEST-postgres-password
+          GATEWAY_POSTGRES_USER=gateway
+          GATEWAY_POSTGRES_PASSWORD=TEST-gateway-password
+          SPIRE_ENCRYPTION_KEYSET=${MASTER_KEYSET}
+          SPIRE_ENCRYPTION_WEBHOOK_KEYSET=${WEBHOOK_KEYSET}
+          SPIRE_OIDC_AUTH_SERVER_URL=http://host.docker.internal:34867/realms/spire
+          SPIRE_OIDC_ORCHESTRATOR_SECRET=dev-only-orchestrator-secret
+          SPIRE_OIDC_GATEWAY_SECRET=dev-only-gateway-secret
+          SPIRE_OIDC_WORKER_SECRET=dev-only-worker-secret
+          KEYCLOAK_ADMIN_USER=admin
+          KEYCLOAK_ADMIN_PASSWORD=TEST-keycloak-admin-password
+          SPIRE_TRUSTED_PROXIES=172.16.0.0/12
+          SPIRE_PUBLIC_HOST=
+          SPIRE_VERSION=edge
+          E2E_GITLAB_ROOT_PASSWORD=TEST-gitlab-root-password
+          E2E_GITLAB_PORT=34880
+          E2E_LLM_MOCK_PORT=34881
+          DEV_OPERATOR_PASSWORD=dev-operator
+          DEV_VIEWER_PASSWORD=dev-viewer
+          ENV
+
+      - name: Start the stack
+        run: |
+          docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml \
+            --env-file deploy/.env up -d --build
+
+      # Polled, not slept. GitLab's first boot runs database migrations whose duration depends on the
+      # runner, and a fixed sleep is either wasteful or wrong.
+      - name: Wait for GitLab
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS --max-time 10 http://localhost:34880/users/sign_in >/dev/null 2>&1; then
+              echo "GitLab ready"; exit 0
+            fi
+            sleep 20
+          done
+          echo "GitLab never became ready"
+          docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml \
+            --env-file deploy/.env logs gitlab --tail 100
+          exit 1
+
+      - name: Run the suite
+        run: |
+          set -a; . deploy/.env; set +a
+          ./gradlew testE2e --no-daemon --console=plain
+
+      # Visible in the run's own page, so the answer to "what was tested and what happened" does not
+      # require downloading an artifact and opening it. Reads the JUnit XML rather than the log,
+      # because the log is a grep away from being wrong about which suite a failure belonged to.
+      - name: Summarise the run
+        if: always()
+        run: |
+          results="spire-e2e/build/test-results/test"
+          if [ ! -d "$results" ]; then
+            echo "No test results — the suite did not get as far as running." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## GitLab end-to-end suite"
+            echo
+            echo "| Suite | Tests | Failures | Skipped |"
+            echo "|---|--:|--:|--:|"
+            for f in "$results"/TEST-*.xml; do
+              name="$(basename "$f" .xml)"; name="${name#TEST-dev.codespire.e2e.}"
+              head="$(head -c 2000 "$f")"
+              t="$(printf '%s' "$head" | grep -o 'tests="[0-9]*"'    | head -1 | tr -dc 0-9)"
+              fa="$(printf '%s' "$head" | grep -o 'failures="[0-9]*"' | head -1 | tr -dc 0-9)"
+              s="$(printf '%s' "$head" | grep -o 'skipped="[0-9]*"'  | head -1 | tr -dc 0-9)"
+              echo "| $name | ${t:-0} | ${fa:-0} | ${s:-0} |"
+            done
+            echo
+            echo "Failed cases, if any:"
+            echo
+            grep -ho '<testcase name="[^"]*"' "$results"/TEST-*.xml >/dev/null 2>&1 || true
+            if grep -lq '<failure' "$results"/TEST-*.xml 2>/dev/null; then
+              grep -h -B 1 '<failure' "$results"/TEST-*.xml \
+                | grep -o 'testcase name="[^"]*"' | sed 's/testcase name=/- /' || true
+            else
+              echo "- none"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ALWAYS, not just on failure. Without this a nightly run left no record of what it actually
+      # exercised — a green square and nothing behind it, and on a red one only the container logs.
+      # The report is the answer to "what was tested and what happened", which is the whole point of
+      # running the suite unattended.
+      - name: Upload the test report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gitlab-loop-test-report
+          path: |
+            spire-e2e/build/reports/tests/test
+            spire-e2e/build/test-results/test
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gitlab-loop-diagnostics
+          path: spire-e2e/build/e2e-diagnostics
+          if-no-files-found: warn
+          # Bounded rather than the 90-day repo default: the bundle is fixture-only today, but its
+          # contract is "capture everything a failed run needs", which makes it a standing channel.
+          retention-days: 7
+
+      - name: Down
+        if: always()
+        run: |
+          docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml \
+            --env-file deploy/.env down -v

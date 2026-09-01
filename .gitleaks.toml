@@ -63,3 +63,24 @@ secretGroup = 1
     '''(TEST|CANARY)-[A-Za-z0-9-]+''',
     '''(CHANGE_ME|REPLACE_ME)''',
   ]
+
+  [[rules.allowlists]]
+  description = """
+  A retired fixture password, present only in this repository's HISTORY.
+
+  It was the GitLab account password in spire-e2e's user bootstrap: structured noise chosen to get
+  past GitLab's "no common sequences" validator, for accounts on a throwaway container that is
+  destroyed after every run. Nothing ever authenticated with it — every call in that harness is
+  token-authenticated — which is exactly why it is now GENERATED inside the Rails script and never
+  returned, so the working tree contains no such value at all.
+
+  Gitleaks was right to flag it: at entropy 4.32 an entropy rule cannot tell a throwaway fixture from
+  a live credential, and the value broke this project's own TEST-/CANARY- convention, which is the
+  convention that exists so it would not have needed flagging. Allowlisted by the literal VALUE rather
+  than by fingerprint, per the rule at the top of this file: a value does not move between commits, so
+  this cannot become a treadmill or silently stop matching.
+
+  Removable once this branch's history is squashed or expired.
+  """
+  regexTarget = "match"
+  regexes = ['''Zx9Qv-Kp3Rw-Ln7Bd-Tq2Ms''']

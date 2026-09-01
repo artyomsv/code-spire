@@ -1262,6 +1262,77 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Measured, not estimated: **1732 Java tests across 217 suites** (`testFast` 666/81 + `testServices` —
   gateway 73/11, orchestrator 767/98, worker 226/27); **415 `spire-ui` vitest tests across 55 files**;
   `tsc --noEmit` silent.
+- **The Mode G runbook is now a job (`spire-e2e`, 2026-08-30):** the S1–S11 parity script runs
+  unattended against a **real containerised GitLab**, closing the gap that every automated test below
+  the SCM boundary ran against WireMock — which is *our belief about the API*, authored by whoever
+  held the wrong model of it. GitLab is the only one of the three providers this is possible for, and
+  the reason is worth recording so nobody retries it: GitHub Enterprise Server is a licensed appliance
+  VM, and the self-hostable Bitbucket is **Data Center**, whose `/rest/api/1.0` is a *different API
+  family* from the Cloud `/2.0` our adapter targets — self-hosting it would exercise an adapter we do
+  not ship. Gitea/Forgejo are a trap for the same reason one level down: GitHub-shaped, and divergent
+  in exactly the places this project has been bitten. GitHub and Bitbucket stay on the manual runbook.
+  New third CI tier `testE2e` (nightly, never the PR path) beside `testFast`/`testServices`; the split
+  is by what a module's tests **own**, since a service test boots what it talks to while an e2e test is
+  handed a running stack. `deploy/compose.e2e.yml` adds `gitlab-ce` + a WireMock LLM to the packaged
+  stack under **its own compose project**, because compose treats a same-named project as the same
+  stack and would otherwise reconfigure a developer's running deployment underneath them.
+  - **Everything is on one Docker network, which is what removes the tunnel** — GitLab POSTs straight
+    at `ui:8080/webhooks/gitlab/{key}`. Inbound reach to an ephemeral runner is the single reason the
+    other two tiers cannot be automated this way.
+  - **The mock is steered by the fixture repository, not by reconfiguration.** It tells the three call
+    kinds apart by `PromptCatalog.lockedSystemSuffix` — chosen because it is *locked*, so a per-repo
+    prompt override (a supported feature) cannot break the suite — and a defect marker counts only on
+    an **added** line. Two shapes matter and differ: the review prompt renders `<lineNumber> +content`
+    (`DiffRenderer`), while the reconcile prompt carries a **raw** unified diff, because
+    `ReviewWorker.reconcile` passes the incremental compare through unrendered. A pattern written for
+    one matches nothing in the other, and the mock then answers with a fallback that reads exactly
+    like "nothing was fixed". The fallback verdict is `UNCHANGED`, never `RESOLVED`: a `/review` re-run
+    happens on the *same commit*, and while it said resolved it closed every finding and posted
+    "Fixed in `<sha>`" against untouched code.
+  - **S9b is the load-bearing assertion.** Asserting that *untouched* findings stay `UNCHANGED` proves
+    nothing — when the incremental diff parses to zero files every file reads as untouched, so they
+    still read `UNCHANGED`. Only a **touched-but-unfixed** finding surviving as `STILL_OPEN` can fail
+    under that regression, which is the one that made ADR-019 inert on GitLab alone. Mutation-verified,
+    as were the added-lines-only rule and the tier guard.
+  - **The rename question is settled.** `SMOKE-TEST.md` called finding-identity churn a known
+    limitation and cited a `techdebt/` entry that does not exist, while `CLAUDE.md` recorded a pass
+    where a 100%-similarity rename did *not* churn. `RenameTest` decides it against a real GitLab —
+    findings follow the file, nothing reports `SUPERSEDED`, nothing returns as new — and the runbook
+    is corrected in place.
+  - **Six defects the existing suite could not see**, each fixed: adding a module to
+    `settings.gradle.kts` broke **every production image build** (the `Dockerfile` names each module by
+    hand for its dependency layer; now guarded both ways by `ImageBuildSeesEveryModuleTest`); Java's
+    `HttpClient` opens a plaintext origin with an h2c upgrade that nginx does not answer, so every
+    proxied call hung its full 60s while curl returned in 60ms; `grafana['enable']` was dropped from
+    Omnibus in 16.3 and an unknown key *aborts* reconfigure, restart-looping the container with no
+    symptom outside its own logs; GitLab's health endpoints are restricted to `monitoring_whitelist`
+    so `/-/readiness` answers 404 from the host whether it is up or not; GitLab's root seeding did not
+    run and left an instance with **zero users** that serves every page normally; and a duplicate
+    registry name reaches the client as a bare **500** rather than a 409 (the class already tracked in
+    `techdebt/spire-orchestrator/3-3-…`).
+  - **One scenario is disabled with an UNEXPLAINED failure, and the first explanation was wrong.** The
+    code-context probes fail against the containerised GitLab: the provider runs, extracts identifiers,
+    and resolves none (`Context resolution for CODE: extracted=17 resolved=0`), leaving
+    `worker.context_blob` empty. Nothing throws, because context providers fail soft — so a failing
+    provider and a pull request with genuinely no context are indistinguishable, which is the
+    operator-facing risk that outlives the specific bug. Filed as
+    `techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md` with the reproduction.
+    The first diagnosis — that `PinnedJsonClient`'s SSRF guard refuses site-local addresses on every
+    request — is **false**: `isPrivateAddress` is reachable only from `requireSafeRedirectTarget`,
+    which runs only on a 3xx and exempts same-host targets, and its javadoc says outright that dev/test
+    run against localhost. It reached five documents before anyone read the guard, and a four-lens
+    review did not uniformly catch it (the security lens called the diagnosis accurate; the QA lens
+    read the code and found it unreachable) — **agents agreeing is not evidence**. Separately, an
+    earlier version of those probes **passed for the wrong reason**: the definition sat inside the
+    merge request's own diff, so its body reached the model whether or not anything retrieved it.
+    Moving it to the target branch is what made the assertion real.
+
+  Measured, not estimated: **1735 Java tests across 218 suites** on the PR path (`testFast` 669/82 +
+  `testServices` — gateway 73/11, orchestrator 767/98, worker 226/27), plus the new nightly tier
+  **`testE2e` — 44 tests across 9 suites, 2 skipped**, which is the whole S1–S11 chain, the rename
+  scenario, the mock's own contract and the harness's self-tests. Verified on a GitHub runner as well
+  as locally (run 33341378597): identical counts, 16m41s including a cold GitLab boot, so nothing was
+  passing by accident on one machine. `spire-ui` untouched.
 - **Operator SCM sign-in, and the P4 dashboard screens fixed (ADR-028, 2026-08-30):** the P4 screens
   were checked on a live stack and five defects came back, three of them the same shape as failures
   this project has already paid for.
@@ -1318,6 +1389,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
   Measured, not estimated: **1779 Java tests across 224 suites**; **440 `spire-ui` vitest tests
   across 58 files**; `tsc --noEmit` silent.
+||||||| 85096b5
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
@@ -1355,6 +1427,33 @@ docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d      # fr
 ./deploy/helm/spire/tests/render.sh --self-test                             # chart invariants
 ./deploy/render-manifests.sh --check                                        # rendered-manifest drift
 ```
+
+**The GitLab end-to-end suite** (`spire-e2e`, host ports 348xx — its own compose project, so it can
+run alongside a packaged stack):
+
+```bash
+# Bring it up ONCE. GitLab needs ~6 minutes before it answers; poll rather than guess:
+docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml --env-file deploy/.env up -d --build
+until curl -fsS http://localhost:34880/users/sign_in >/dev/null 2>&1; do sleep 15; done
+
+set -a; . deploy/.env; set +a     # the suite reads POSTGRES_*, SPIRE_OIDC_*, DEV_OPERATOR_PASSWORD
+./gradlew testE2e                 # re-runnable in seconds against the warm stack
+
+# Tear it down when you are finished — this does NOT happen automatically.
+docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml --env-file deploy/.env down -v
+```
+
+**The stack deliberately outlives the run.** Nothing in `testE2e` starts or stops a container: GitLab
+is a six-minute boot, so tearing down per run would make the iteration loop unusable and every local
+failure expensive to reproduce. CI does the opposite — `.github/workflows/e2e.yml` ends with
+`down -v` under `if: always()`, because a runner is thrown away and a leaked volume is nobody's
+convenience. If you are wondering why `docker ps` still shows a GitLab: that is why, and the line
+above is the cure.
+
+Results land in `spire-e2e/build/reports/tests/test/index.html` locally; the nightly job uploads the
+same report plus the JUnit XML as an artifact, and writes a per-suite pass/fail table into the run
+summary. On a red run it additionally uploads `deploy/e2e-diagnostics.sh`'s capture — service logs,
+the LLM mock's request journal, and GitLab's own webhook-delivery history.
 
 ## Conventions (enforced by design docs — do not regress)
 

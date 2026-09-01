@@ -129,11 +129,16 @@ tasks.register("cleanDevServices") {
 }
 
 /**
- * The two CI test tiers, split by whether a module's tests need Docker.
+ * The three CI test tiers, split by what a module's tests OWN.
  *
  * `fastTestModules` run on a bare JVM. The three deployables in `serviceTestModules` boot Postgres
  * and Kafka through Quarkus Dev Services and are the slow half of the suite, so CI runs them as their
  * own job rather than making a typo fix wait behind them.
+ *
+ * `e2eTestModules` is not simply "even slower". A service test BOOTS what it talks to, so it is
+ * hermetic and belongs on the PR path; an e2e test is HANDED a running stack and a containerised
+ * GitLab, so it can only run where one exists. That is the line between the second tier and the
+ * third, and it is why the third is nightly.
  *
  * Declared here rather than as a list of module paths inside a workflow file for two reasons. It stays
  * runnable locally — `./gradlew testFast` is the pre-commit loop — and `TestTierCoverageTest` in
@@ -163,6 +168,18 @@ val serviceTestModules = listOf(
     "spire-review-worker",
 )
 
+/**
+ * Modules whose tests drive a RUNNING packaged stack (deploy/compose.yml plus deploy/compose.e2e.yml)
+ * rather than booting their own dependencies. They start nothing: a stack that is not up is a fast,
+ * loud failure, not a five-minute wait behind a GitLab boot.
+ *
+ * CI runs this tier nightly, never on the PR path — see .github/workflows/e2e.yml and
+ * docs/superpowers/specs/2026-08-29-gitlab-e2e-suite-design.md.
+ */
+val e2eTestModules = listOf(
+    "spire-e2e",
+)
+
 tasks.register("testFast") {
     group = "verification"
     description = "Runs every module whose tests need no Docker. The fast half of CI."
@@ -173,4 +190,10 @@ tasks.register("testServices") {
     group = "verification"
     description = "Runs the three deployables' tests (Quarkus Dev Services: Postgres + Kafka)."
     dependsOn(serviceTestModules.map { ":$it:test" })
+}
+
+tasks.register("testE2e") {
+    group = "verification"
+    description = "Drives a running packaged stack + containerised GitLab. Nightly; needs the stack up."
+    dependsOn(e2eTestModules.map { ":$it:test" })
 }

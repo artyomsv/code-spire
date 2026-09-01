@@ -1,0 +1,106 @@
+// Drives a RUNNING packaged stack from outside: HTTP to the dashboard's nginx, HTTP to a
+// containerised GitLab, and `docker compose exec postgres psql` for the read model.
+//
+// Depends on NO module in this repo, deliberately. Two reasons, and both matter: LICENSING.md forbids
+// an Apache-2.0 module depending on a service module, and a harness that can import our types can
+// assert things no operator could observe — which is exactly the self-confirming test this suite
+// exists to replace.
+// `java` names the Gradle extension inside this script, which shadows the java.* package — so the
+// Duration below has to arrive by import rather than fully qualified.
+import java.time.Duration
+
+plugins {
+    java
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+}
+
+tasks.test {
+    useJUnitPlatform()
+
+    // A scenario waits on real webhook delivery and two model calls per round. The default (no
+    // timeout) would hang a nightly job forever on a wedged stack; Await's own per-step deadlines are
+    // the real bound and are much tighter.
+    timeout = Duration.ofMinutes(45)
+
+    // Never cache a pass. The inputs to these tests are a running stack and a live GitLab, neither of
+    // which Gradle can see, so an up-to-date check here would report a cached green against a stack
+    // that has since changed underneath it.
+    outputs.upToDateWhen { false }
+
+    // Psql runs `docker compose` with repo-relative -f paths, so it needs the root explicitly rather
+    // than guessing from the working directory — which differs between Gradle and an IDE run.
+    systemProperty("spire.repoRoot", rootProject.projectDir.absolutePath)
+
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+    }
+
+    finalizedBy("captureE2eDiagnostics")
+}
+
+/**
+ * `check` must NOT reach the e2e tier.
+ *
+ * `./gradlew build` is a documented command in CLAUDE.md, and `build` depends on `check`, which
+ * depends on `test` in every subproject. Without this, `build` runs the e2e suite on any machine that
+ * does not happen to have the packaged stack plus a booted GitLab up — and `outputs.upToDateWhen
+ * { false }` guarantees it re-runs and re-fails every time. `testE2e` is the only way in, by design.
+ */
+tasks.named("check") { setDependsOn(emptyList<Any>()) }
+
+/**
+ * Captures service logs and GitLab's own delivery history when the suite goes red.
+ *
+ * <p>A FINALIZER, not a `doLast` on the test task. A failing `Test` task throws from inside its own
+ * task action, and Gradle then skips every remaining action — so the `doLast` this replaces never ran
+ * on a failure, which is precisely and only when it was wanted. Found empirically rather than by
+ * reading: the diagnostics directory in the worktree was two hours older than the failing run that
+ * should have written it, while the nightly's upload step would have shipped an empty artifact.
+ *
+ * <p>A finalizer's `onlyIf` is evaluated after the test task has finished, so it can see
+ * `state.failure` — which a `doLast` on the same task cannot, since the state is not yet final.
+ */
+tasks.register("captureE2eDiagnostics") {
+    val repoRoot = rootProject.projectDir
+    // REPO-RELATIVE, and deliberately so. The script runs with its working directory set to the repo
+    // root, and handing a Windows absolute path (`E:\...`) to a bash script makes `mkdir -p` create a
+    // single directory whose name is the path with its separators stripped — which is exactly what
+    // happened, in the repo root, and very nearly got committed.
+    val diagnosticsDir = "spire-e2e/build/e2e-diagnostics"
+    val testTask = tasks.named<Test>("test")
+
+    // A passing run has nothing worth keeping, and an hour of logs every time would bury the one run
+    // that matters.
+    onlyIf { testTask.get().state.failure != null }
+
+    doLast {
+        try {
+            ProcessBuilder("bash", "deploy/e2e-diagnostics.sh", diagnosticsDir)
+                .directory(repoRoot)
+                .redirectErrorStream(true)
+                .start()
+                .waitFor()
+            logger.lifecycle("e2e diagnostics written to $diagnosticsDir")
+        } catch (e: Exception) {
+            // Never mask the test failure with a diagnostics failure — the test result is the report.
+            logger.warn("could not capture e2e diagnostics: $e")
+        }
+    }
+}

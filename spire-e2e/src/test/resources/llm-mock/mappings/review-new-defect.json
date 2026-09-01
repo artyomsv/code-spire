@@ -1,0 +1,32 @@
+{
+  "priority": 2,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [
+      { "contains": "one-paragraph overall assessment" },
+      { "contains": "E2E-FINDING-" },
+      { "matches": "(?s).*\\d+ \\+[^\"\\\\]*E2E-DEFECT-D.*" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-review-new-defect",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"summary\":\"E2E fixture re-review: one new defect introduced by this round.\",\"findings\":[{\"path\":\"src/ui/defects.ts\",\"line\":9,\"endLine\":9,\"severity\":\"MAJOR\",\"message\":\"E2E-FINDING-D parameter widened to any.\",\"suggestion\":null}]}"
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 1500, "completion_tokens": 70, "total_tokens": 1570 }
+    }
+  }
+}
