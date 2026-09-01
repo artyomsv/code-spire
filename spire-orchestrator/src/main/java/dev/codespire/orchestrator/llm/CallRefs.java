@@ -86,4 +86,23 @@ public final class CallRefs {
         }
         return threadRef + ':' + triggeringCommentId;
     }
+
+    /**
+     * A run's charge identity.
+     *
+     * <p>{@code attempt} is what distinguishes a genuine second run from a redelivery — the same
+     * distinction ReviewRuns draws for reviews, and getting it backwards is the difference between
+     * silently-lost money and silently-inflated money. A re-run must NOT reuse the first run's key,
+     * or its charges collide and are discarded by ON CONFLICT DO NOTHING; an auto-retry of the same
+     * run MUST reuse it, or one paid call is charged twice.
+     *
+     * <p>The runId already carries its platform, so unlike the review ledger this key cannot
+     * confuse two repositories that share a workspace name on different SCMs.
+     */
+    public static String forRun(String runId, int attempt, String seq) {
+        if (attempt < 1) {
+            throw new IllegalArgumentException("attempt starts at 1: " + attempt);
+        }
+        return "run:" + runId + ":" + attempt + ":" + seq;
+    }
 }
