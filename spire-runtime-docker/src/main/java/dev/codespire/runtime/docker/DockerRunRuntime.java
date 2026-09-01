@@ -128,7 +128,13 @@ public final class DockerRunRuntime implements RunRuntime {
 
         String publisherId = createContainer(spec, spec.publisher(), PUBLISHER);
         String agentId = createContainer(spec, spec.agent(), AGENT);
-        client.startContainerCmd(publisherId).exec();   // sidecar first, so it misses nothing
+        // Publisher first, but ONLY as a defensive habit — nothing depends on it. The handoff is a
+        // FILE, so it persists: a publisher that started late still sees every bundle already
+        // written, which HandoffWatcher covers directly. A mutation swapping these two lines was
+        // caught by no test, and that is correct rather than a gap — pinning the order would pin an
+        // implementation detail. It would become load-bearing only if the handoff were ever a
+        // stream instead of a directory.
+        client.startContainerCmd(publisherId).exec();
         client.startContainerCmd(agentId).exec();
 
         return new RunHandle(spec.runId(), agentId);
