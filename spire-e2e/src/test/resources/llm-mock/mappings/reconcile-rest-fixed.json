@@ -1,0 +1,31 @@
+{
+  "priority": 4,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions",
+    "bodyPatterns": [
+      { "contains": "Respond ONLY with JSON:" },
+      { "matches": "(?s).*\\\\n-[^\"\\\\]*E2E-DEFECT-B.*" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-reconcile-rest-fixed",
+      "object": "chat.completion",
+      "model": "e2e-mock-model",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"verdicts\":[{\"id\":1,\"status\":\"resolved\",\"note\":\"E2E: addressed by this round.\"},{\"id\":2,\"status\":\"resolved\",\"note\":\"E2E: addressed by this round.\"},{\"id\":3,\"status\":\"resolved\",\"note\":\"E2E: addressed by this round.\"}]}"
+          }
+        }
+      ],
+      "usage": { "prompt_tokens": 800, "completion_tokens": 80, "total_tokens": 880 }
+    }
+  }
+}

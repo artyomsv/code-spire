@@ -116,6 +116,25 @@ check_manifests() {
 check_repo_config() {
     local conf; conf="$(cat "$NGINX")"
 
+    # 0 — the e2e suite's SSRF-guard relaxation must never reach a packaged run.
+    #
+    # deploy/compose.e2e.yml sets SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS=true so a
+    # Docker-network GitLab can be registered. That is correct THERE and nowhere else: an operator
+    # who inherited it would be running with the guard on operator-supplied provider base URLs
+    # switched off, and nothing would say so. It is a literal rather than ${VAR} in the overlay
+    # precisely so no .env value can turn it on — this asserts the other half, that the string does
+    # not appear in the files a packaged deployment is built from.
+    local packaged
+    for packaged in "$REPO/deploy/compose.yml" "$REPO/deploy/compose.ghcr.yml" \
+                    "$REPO/deploy/.env.example"; do
+        if grep -q 'SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS' "$packaged" 2>/dev/null; then
+            fail "$(basename "$packaged") mentions SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS — that "\
+"relaxation belongs to deploy/compose.e2e.yml alone"
+        else
+            pass "$(basename "$packaged") does not relax the provider-URL guard"
+        fi
+    done
+
     # 6 — the nginx template: every prefix routed, /webhooks before the SPA fallback, the six proxied
     # headers set on the server block with the right values and set NOWHERE else, an unpinned Host
     # forwarded with its port, Connection answered per request, and X-Forwarded-Proto NOT derived

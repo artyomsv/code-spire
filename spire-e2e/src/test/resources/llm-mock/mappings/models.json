@@ -1,0 +1,12 @@
+{
+  "priority": 1,
+  "request": { "method": "GET", "urlPath": "/v1/models" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "object": "list",
+      "data": [{ "id": "e2e-mock-model", "object": "model", "owned_by": "e2e" }]
+    }
+  }
+}

@@ -1,0 +1,95 @@
+# End-to-end overlay: a REAL GitLab and a fixture LLM, layered over the packaged stack.
+#
+#   docker compose -f deploy/compose.yml -f deploy/compose.e2e.yml --env-file deploy/.env up -d --build
+#
+# Everything here exists because a WireMock stub of an SCM is our belief about that SCM's API, and the
+# defect log in CLAUDE.md is a list of places that belief was wrong. GitLab is the only one of the
+# three providers that can be self-hosted on the API our adapter actually targets — GitHub Enterprise
+# Server is a licensed appliance VM, and the self-hostable Bitbucket is Data Center, whose REST API is
+# a different family from Cloud's. See docs/superpowers/specs/2026-08-29-gitlab-e2e-suite-design.md §2.
+#
+# Both new services sit on the stack's own network, which is what removes the webhook tunnel: GitLab
+# POSTs straight at http://ui:8080/webhooks/gitlab/{key}. Inbound reach to an ephemeral CI runner is
+# the single reason the GitHub and Bitbucket tiers cannot be automated the same way.
+
+# Its OWN project, not the packaged stack's.
+#
+# compose.yml declares `name: spire`, so without this the overlay would adopt a developer's existing
+# packaged stack and reconfigure its containers underneath them — silently, since compose treats a
+# same-named project as the same stack. A distinct name also means distinct volumes, so an e2e run
+# never writes into the Postgres a developer is reading. The ports move with it (348xx here against
+# 347xx there) because two projects cannot bind the same host port.
+name: spire-e2e
+
+services:
+  # SECURITY DEVIATION, deliberate and scoped. PublicHttpsGuard requires an https base URL resolving
+  # to a PUBLIC address; a container GitLab is RFC1918, so provider registration would be refused and
+  # no scenario could start. An https certificate does NOT help — the private-address check is the
+  # wall, not the scheme.
+  #
+  # The guard fires at provider create/update only, never on the review path, so this relaxes exactly
+  # one setup call. Its production behaviour is NOT covered by this suite; ProviderUrlValidationTest
+  # in testServices remains its only coverage, and must stay.
+  orchestrator:
+    environment:
+      SPIRE_SECURITY_ALLOW_INSECURE_PROVIDER_URLS: "true"
+
+  gitlab:
+    # Pinned by tag. Detecting GitLab's own drift is a goal of this suite, but an unpinned nightly
+    # failure is unreproducible — so a bump is a commit someone makes on purpose, and a suite that
+    # breaks on that bump is the signal rather than the noise.
+    image: gitlab/gitlab-ce:17.11.1-ce.0
+    hostname: gitlab
+    environment:
+      GITLAB_ROOT_PASSWORD: ${E2E_GITLAB_ROOT_PASSWORD:?set in deploy/.env}
+      # Trim everything this suite does not use. The default image also starts a container registry,
+      # a Prometheus stack, Mattermost and the agent server; on a shared 4-vCPU CI runner they are
+      # the difference between a five-minute boot and a job that times out.
+      #
+      # This list is COUPLED TO THE PINNED VERSION, and getting it wrong is not a warning: an unknown
+      # key aborts `gitlab-ctl reconfigure`, so the container restart-loops and the only symptom
+      # outside its logs is a readiness probe that never turns green. `grafana['enable']` was here
+      # first and had to be removed — Omnibus dropped Grafana in 16.3. Re-check this block whenever
+      # the image tag above is bumped.
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        registry['enable'] = false
+        prometheus_monitoring['enable'] = false
+        mattermost['enable'] = false
+        gitlab_kas['enable'] = false
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 9
+        gitlab_rails['initial_root_password'] = ENV['GITLAB_ROOT_PASSWORD']
+    ports:
+      # Loopback only. This GitLab holds an admin token whose value is a public constant in this
+      # repo and has private-network webhook targets enabled, so a published-on-all-interfaces bind
+      # would let anyone who can reach the port authenticate as admin and pivot into the stack.
+      - "127.0.0.1:${E2E_GITLAB_PORT:-34880}:80"
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/-/readiness"]
+      # start_period, not a long interval. Readiness genuinely takes minutes, and without it every
+      # early probe counts as a failure and the container is reported unhealthy before it ever had a
+      # chance to answer — which then blocks anything that waits on its health.
+      start_period: 10m
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  llm-mock:
+    # The fixture LLM. It speaks the OpenAI-compatible wire, so spire-llm's FindingsParser,
+    # TokenUsageMapper and finishReason -> outputCapped mapping all stay under test — the layer that
+    # `spire.llm.provider=stub` would skip, and the layer the 2026-08-28 defects lived in.
+    #
+    # It is ALSO the prompt observer: WireMock's request journal is how the code-context probes read
+    # what the worker actually sent the model, which removes any need to enable PromptLog for a test.
+    image: wiremock/wiremock:3.13.2
+    command: ["--port", "8080", "--verbose", "--disable-banner"]
+    volumes:
+      - ../spire-e2e/src/test/resources/llm-mock:/home/wiremock:ro
+    ports:
+      # Loopback only: WireMock`s /__admin API is unauthenticated, and POST /__admin/mappings with a
+      # proxyBaseUrl would turn this into a forward proxy onto the stack`s own network.
+      - "127.0.0.1:${E2E_LLM_MOCK_PORT:-34881}:8080"
+    restart: unless-stopped

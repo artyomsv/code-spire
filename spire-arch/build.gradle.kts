@@ -45,8 +45,13 @@ tasks.test {
     // TestTierCoverageTest reads these two files as text. Undeclared, they are invisible to the
     // up-to-date check, so adding a module to settings.gradle.kts without assigning it a CI tier
     // would report a cached PASS — from the very edit the check exists to catch.
+    // TestTierCoverageTest reads the first two as text, and ImageBuildSeesEveryModuleTest reads
+    // settings against the Dockerfile. Undeclared, they are invisible to the up-to-date check, so
+    // adding a module without assigning it a CI tier — or without copying it into the image's
+    // dependency layer — would report a cached PASS from the very edit the checks exist to catch.
     inputs.files(
         rootProject.file("settings.gradle.kts"),
-        rootProject.file("build.gradle.kts")
+        rootProject.file("build.gradle.kts"),
+        rootProject.file("Dockerfile")
     ).withPropertyName("buildDeclarations").withPathSensitivity(PathSensitivity.RELATIVE)
 }

@@ -491,9 +491,17 @@ a single finding that another reports separately — compare the set of defects 
 
 **Prep.** Every provider registered and **enabled** (a shared workspace name across SCMs is fine and
 worth testing — resolution disambiguates by the review's stored SCM type). Tunnel up, webhooks
-registered. **Do not rename or move the file** before S10's last round: a rename churns finding
-identity, a separate known limitation (`techdebt/`), and mixing it in earlier muddies every verdict
-after it.
+registered. **Do not rename or move the file** before S10's last round: mixing a rename in earlier
+muddies every verdict after it, because a changed path is one more thing each later verdict could be
+reacting to.
+
+> **Corrected 2026-08-30.** This paragraph used to say a rename "churns finding identity, a separate
+> known limitation (`techdebt/`)". That claim was wrong twice over: the cited entry does not exist,
+> and `CLAUDE.md` separately recorded a 2026-07-26 pass where a 100%-similarity rename did *not*
+> churn identity — so the runbook and the status notes contradicted each other and nobody knew which
+> held. `RenameTest` in `spire-e2e` now decides it against a real GitLab: the findings follow the
+> file to its new path, nothing reports `SUPERSEDED`, and no defect returns as a new finding. The
+> reason to keep the rename last is ordering hygiene, not a defect.
 
 **Before you start, make sure the running services actually contain the code you think they do.**
 `docker compose restart` does NOT pick up host edits — the dev containers have no source bind-mount, so

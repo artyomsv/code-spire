@@ -1,0 +1,587 @@
+package dev.codespire.e2e;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import dev.codespire.e2e.gitlab.GitLabDriver.FileAction;
+import dev.codespire.e2e.spire.LlmMock;
+import dev.codespire.e2e.support.Await;
+import dev.codespire.e2e.support.Fixtures;
+import dev.codespire.e2e.support.ReadModel;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.time.Duration;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * MR 1: Mode G's S1–S11, in Mode G's order.
+ *
+ * <p>ONE ORDERED CHAIN, not twelve independent tests — S5 needs S4's turns, S9 needs S1's findings. A
+ * break in S1 reddens everything after it, which is accepted because the alternative is not testing
+ * the conversation at all. The mitigations are that every failure message leads with the step name,
+ * that diagnostics are captured on failure, and that the two riskiest concerns (per-language code
+ * context, and the rename) live in their own merge requests rather than inside this chain.
+ *
+ * <p>The fixture files are ADDED by the merge request rather than edited on it, because the mock keys
+ * on a marker appearing as an ADDED diff line — which is also what a real first review sees.
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+class ReviewChainTest {
+
+    private static final String JAVA_PATH = "src/main/java/e2e/Defects.java";
+
+    private static final String TS_PATH = "src/ui/defects.ts";
+
+    private static final String BRANCH = "e2e-topic";
+
+    /**
+     * Sits at the END of the mocked follow-up answer, past the 160-character preview boundary, so an
+     * endpoint that returned the stored preview instead of the full thread would fail S2.
+     */
+    private static final String FOLLOWUP_TAIL_MARKER = "E2E-FULL-THREAD-TAIL-MARKER";
+
+    private static Environment env;
+
+    private static long mrIid;
+
+    private static String reviewId;
+
+    @BeforeAll
+    static void openTheMergeRequest() {
+        LlmMock.reset();
+        env = Environment.provision("e2e-chain");
+
+        env.human().commit(env.projectId(), "main", null, "Add a starter file",
+                List.of(FileAction.create("README.md", "E2E chain fixture.\n")));
+
+        env.human().commit(env.projectId(), BRANCH, "main", "Introduce the marked defects", List.of(
+                FileAction.create(JAVA_PATH, Fixtures.read("fixtures/chain/" + JAVA_PATH)),
+                FileAction.create(TS_PATH, Fixtures.read("fixtures/chain/" + TS_PATH))));
+
+        mrIid = env.human().openMergeRequest(env.projectId(), BRANCH, "main", "E2E chain");
+        reviewId = env.reviewId(mrIid);
+    }
+
+    @Test
+    @Order(1)
+    void s1_theReviewPostsOneInlineCommentPerFindingAndOneSummary() {
+        Await.until("S1 review completed", () ->
+                "completed".equals(ReadModel.status(reviewId)) ? Optional.of(true) : Optional.empty());
+
+        assertEquals(3, ReadModel.findingsCount(reviewId),
+                "S1 — the mock returns three findings for this fixture");
+
+        // Our side: exactly one summary thread, and one thread per finding anchored at its own line.
+        //
+        // Deliberately NOT filtered by isOurs. markSummaryThread does not set it — the flag governs
+        // conversation scope (which threads the bot answers), and the summary comment is answered
+        // through the summary path rather than by being "ours". Asserting isOurs here would be
+        // asserting an implementation detail the code documents as intentionally absent.
+        List<ReadModel.Thread> threads = ReadModel.threads(reviewId);
+        assertEquals(1, threads.stream().filter(ReadModel.Thread::isSummary).count(),
+                "S1 — exactly one summary comment: " + threads);
+        assertEquals(List.of("7", "11", "6"),
+                threads.stream().filter(thread -> !thread.isSummary())
+                        .map(ReadModel.Thread::line).toList(),
+                "S1 — each finding is anchored at the line its marker sits on: " + threads);
+
+        // GitLab's side. The read model saying we posted is not proof that GitLab has it, and the two
+        // disagreeing is precisely the class of defect this suite exists to catch.
+        assertEquals(4, botDiscussions(),
+                "S1 — three inline findings plus one summary, present on GitLab itself");
+
+        assertTrue(LlmMock.prompts().size() >= 1, "S1 — the worker actually called the model");
+    }
+
+    @Test
+    @Order(2)
+    void s3_aReplyUnderAFindingIsAnsweredInThatThreadWithFencedCode() {
+        String discussionId = firstFindingDiscussionId();
+        long before = botNotesIn(discussionId);
+
+        env.human().replyToDiscussion(env.projectId(), mrIid, discussionId,
+                "Why is this a problem when the denominator is validated upstream?");
+
+        long expected = before + 1;
+        Await.until("S3 the bot answered in the finding thread",
+                () -> botNotesIn(discussionId) >= expected ? Optional.of(true) : Optional.empty());
+
+        String answer = lastBotNoteIn(discussionId);
+        assertTrue(answer.contains("```"),
+                "S3 — the locked FOLLOWUP contract requires a fence. Indented code renders as prose on "
+                        + "the SCM, which this project shipped once: " + answer);
+    }
+
+    /**
+     * Runs AFTER S3 on purpose: there is nothing to expand until a conversation exists, and the
+     * findings card shows a finding's own text in full with no expander.
+     */
+    @Test
+    @Order(3)
+    void s2_theThreadEndpointReturnsTheFullConversationNotThePreview() {
+        String discussionId = firstFindingDiscussionId();
+
+        String thread = env.spire().get("/api/reviews/" + env.workspace() + "/" + env.slug()
+                + "/" + mrIid + "/threads/" + discussionId).toString();
+
+        // Asserted on the TAIL, not on "E2E fixture reply". That phrase opens the answer, so it sits
+        // inside the stored <=160-char preview too — making the endpoint return the preview, which is
+        // the exact regression this step names, would have left the assertion green.
+        assertTrue(thread.contains(FOLLOWUP_TAIL_MARKER),
+                "S2 — the endpoint must return the bot's full answer, not the <=160-char preview the "
+                        + "card used to show: " + thread);
+    }
+
+    @Test
+    @Order(4)
+    void s4_repliesToTheBotsOwnAnswerStayInOneConversation() {
+        String discussionId = firstFindingDiscussionId();
+
+        for (int turn = 1; turn <= 2; turn++) {
+            long before = botNotesIn(discussionId);
+            env.human().replyToDiscussion(env.projectId(), mrIid, discussionId,
+                    "Follow-up question number " + turn + "?");
+            long expected = before + 1;
+            Await.until("S4 the bot answered turn " + turn,
+                    () -> botNotesIn(discussionId) >= expected ? Optional.of(true) : Optional.empty());
+        }
+
+        // Turns accumulate on the conversation ROOT. A row per answer would reset the count, which is
+        // how multi-turn conversations died on Bitbucket: the cap could never fire and later turns
+        // were stored under a non-finding ref.
+        List<ReadModel.Thread> withTurns = ReadModel.threads(reviewId).stream()
+                .filter(thread -> thread.turnCount() > 0)
+                .toList();
+        assertEquals(1, withTurns.size(),
+                "S4 — one conversation root carries every turn, not one row per answer: " + withTurns);
+        assertTrue(withTurns.getFirst().turnCount() >= 3,
+                "S4 — three exchanges so far (S3 plus two here): " + withTurns);
+    }
+
+    @Test
+    @Order(5)
+    void s5_theTurnCapPostsOneNoticeAndAMentionOverridesIt() {
+        String discussionId = firstFindingDiscussionId();
+
+        // Reply until the cap fires, ONE EXCHANGE AT A TIME. Posting on Await's own 3s interval
+        // queued replies far faster than a follow-up round trip completes, so a backlog of pre-cap
+        // answers was still landing during the assertions below — and the @-mention step could then
+        // be satisfied by a queued answer rather than by the mention.
+        Await.until("S5 the turn cap fired", Duration.ofMinutes(8), () -> {
+            if (ReadModel.events(reviewId, "TurnCapNotified") >= 1) {
+                return Optional.of(true);
+            }
+            long before = botNotesIn(discussionId);
+            env.human().replyToDiscussion(env.projectId(), mrIid, discussionId, "And another question?");
+            // Wait for THIS exchange to resolve — either an answer, or the notice that ends them.
+            Await.until("S5 the exchange resolved", Duration.ofMinutes(2), () ->
+                    botNotesIn(discussionId) > before || ReadModel.events(reviewId, "TurnCapNotified") >= 1
+                            ? Optional.of(true) : Optional.empty());
+            return Optional.empty();
+        });
+
+        long noticesAtCap = ReadModel.events(reviewId, "TurnCapNotified");
+
+        // The property the cap exists for: a further plain reply gets NO answer. Asserting only that
+        // no second notice appears would pass with the cap removed entirely — the notice is claimed
+        // once per thread, so it fires once either way while every reply keeps being answered.
+        env.human().replyToDiscussion(env.projectId(), mrIid, discussionId, "One more plain reply.");
+        Await.absent("S5 a capped thread gets no further answers", () -> botNotesIn(discussionId));
+        assertEquals(noticesAtCap, ReadModel.events(reviewId, "TurnCapNotified"),
+                "S5 — the hand-off notice is posted once per thread, never repeated");
+
+        // Snapshot AFTER the quiet period, so nothing in flight can satisfy the mention's assertion.
+        long answersBeforeMention = botNotesIn(discussionId);
+        env.human().replyToDiscussion(env.projectId(), mrIid, discussionId,
+                "@" + Environment.BOT_USERNAME + " please answer this one.");
+        Await.until("S5 an @-mention overrides the cap", () ->
+                botNotesIn(discussionId) > answersBeforeMention ? Optional.of(true) : Optional.empty());
+    }
+
+    @Test
+    @Order(6)
+    void s6_aMentionOnAnUnflaggedLineIsAnsweredAndCreatesNoFinding() {
+        long findingsBefore = ReadModel.findingsCount(reviewId);
+        long botNotesBefore = allBotNotes();
+
+        env.human().createDiscussionOnLine(env.projectId(), mrIid, JAVA_PATH, 1,
+                "@" + Environment.BOT_USERNAME + " what does this package do?");
+
+        Await.until("S6 the bot answered a mention on an unflagged line",
+                () -> allBotNotes() > botNotesBefore ? Optional.of(true) : Optional.empty());
+
+        assertEquals(findingsBefore, ReadModel.findingsCount(reviewId),
+                "S6 — answering a mention must not create a finding");
+    }
+
+    /**
+     * Mode G words this as "answered in the summary thread", which is GitHub's shape: there, the
+     * summary comment owns a real thread a reply can land inside. GitLab has no threading under an
+     * individual note — a plain merge-request comment and the bot's answer are both individual notes
+     * — so the assertion is the behaviour rather than the container: the comment is answered at merge
+     * request level, and NOT turned into a new inline thread. Mode G's own "where providers
+     * legitimately differ" list is for exactly this.
+     */
+    @Test
+    @Order(7)
+    void s7_aPlainMergeRequestCommentIsAnsweredAtMergeRequestLevel() {
+        long anchoredBefore = anchoredBotDiscussions();
+        long topLevelBefore = topLevelBotNotes();
+
+        env.human().addNote(env.projectId(), mrIid, "Is this change safe to merge on a Friday?");
+
+        Await.until("S7 a plain merge-request comment is answered",
+                () -> topLevelBotNotes() > topLevelBefore ? Optional.of(true) : Optional.empty());
+
+        assertEquals(anchoredBefore, anchoredBotDiscussions(),
+                "S7 — answering a plain comment must not open a new inline thread");
+    }
+
+    /** Bot notes that are not anchored to a file: the summary and any merge-request-level answer. */
+    private static long topLevelBotNotes() {
+        long count = 0;
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            for (JsonNode note : discussion.get("notes")) {
+                boolean ours = Environment.BOT_USERNAME
+                        .equals(note.get("author").get("username").asText());
+                if (ours && !note.hasNonNull("position")) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private static long anchoredBotDiscussions() {
+        long count = 0;
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            JsonNode first = discussion.get("notes").get(0);
+            if (Environment.BOT_USERNAME.equals(first.get("author").get("username").asText())
+                    && first.hasNonNull("position")) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Test
+    @Order(8)
+    void s8_slashReviewUpdatesTheSummaryInPlace() {
+        long runsBefore = ReadModel.events(reviewId, "ReviewRequested");
+        String refBefore = summaryThreadRef();
+
+        env.human().addNote(env.projectId(), mrIid, "/review");
+
+        Await.until("S8 a second run completed", () -> {
+            boolean rerun = ReadModel.events(reviewId, "ReviewRequested") > runsBefore;
+            return rerun && "completed".equals(ReadModel.status(reviewId))
+                    ? Optional.of(true) : Optional.empty();
+        });
+
+        // Counting discussions that carry the summary's id could not fail: GitLab ids are unique, so
+        // that count is always 1. A worker that posted a SECOND summary would write a second
+        // is_summary row with a new ref, and summaryThreadRef() — findFirst by seq — would still
+        // return the old one, whose discussion still exists. Both halves below can actually go red.
+        assertEquals(1, ReadModel.threads(reviewId).stream()
+                        .filter(ReadModel.Thread::isSummary).count(),
+                "S8 — a second summary comment would be a second is_summary row: "
+                        + ReadModel.threads(reviewId));
+        assertEquals(refBefore, summaryThreadRef(),
+                "S8 — the summary is edited in place, so its ref must not move");
+    }
+
+    /**
+     * S9a and S9b in one commit, because they are one round.
+     *
+     * <p>S9b is the load-bearing assertion of the whole suite. Asserting that UNTOUCHED findings stay
+     * UNCHANGED proves nothing: {@code downgradeUntouched} only rewrites findings whose hunks the
+     * incremental diff says were touched, so when that diff parses to zero files EVERY file reads as
+     * untouched and untouched findings still read UNCHANGED. Only a TOUCHED-but-unfixed finding
+     * surviving as STILL_OPEN can fail under that regression — which is the exact defect that made
+     * ADR-019's reconciliation inert on GitLab alone.
+     */
+    @Test
+    @Order(9)
+    void s9_aFullFixResolvesAndAPartialFixStaysOpen() {
+        long runsBefore = ReadModel.events(reviewId, "ReviewRequested");
+
+        // Defect A removed outright. Defect B's hunk is TOUCHED — a bound is added — but the defect
+        // remains, which is what makes its verdict meaningful.
+        env.human().commit(env.projectId(), BRANCH, null, "Fix A fully, B partially",
+                List.of(FileAction.update(JAVA_PATH, """
+                        package e2e;
+
+                        /** E2E fixture. Every defect here is deliberate and marked. */
+                        public final class Defects {
+
+                            public static int divide(int numerator, int denominator) {
+                                return denominator == 0 ? 0 : numerator / denominator;
+                            }
+
+                            public static String at(String[] values, int index) {
+                                if (index >= values.length) {
+                                    return null;
+                                }
+                                return values[index];  // E2E-DEFECT-B
+                            }
+                        }
+                        """)));
+
+        awaitRunAfter("S9 the reconciling run completed", runsBefore);
+
+        List<String> statuses = verdictStatuses();
+        assertTrue(statuses.contains("RESOLVED"),
+                "S9a — the fully fixed finding resolves: " + statuses);
+        assertTrue(statuses.contains("STILL_OPEN"),
+                "S9b — a TOUCHED but unfixed finding must survive as STILL_OPEN. If this reads "
+                        + "UNCHANGED, the incremental diff parsed to zero files and downgradeUntouched "
+                        + "rewrote it — the exact regression that made reconciliation inert on GitLab: "
+                        + statuses);
+
+        assertTrue(ReadModel.events(reviewId, "ThreadResolved") >= 1,
+                "S9a — ThreadResolved is written only when the adapter reported resolved:true, so its "
+                        + "presence is proof the SCM-side resolve landed rather than degrading to a reply");
+        assertTrue(anyThreadResolvedOnGitLab(),
+                "S9a — and GitLab itself must agree the thread is resolved");
+    }
+
+    @Test
+    @Order(10)
+    void s10_theRemainingFixesCloseOutAndANewDefectIsRaised() {
+        long runsBefore = ReadModel.events(reviewId, "ReviewRequested");
+        long findingsBefore = ReadModel.findingsCount(reviewId);
+
+        env.human().commit(env.projectId(), BRANCH, null, "Fix the rest and introduce a new defect",
+                List.of(
+                        FileAction.update(JAVA_PATH, """
+                                package e2e;
+
+                                /** E2E fixture. Every defect here is deliberate and marked. */
+                                public final class Defects {
+
+                                    public static int divide(int numerator, int denominator) {
+                                        return denominator == 0 ? 0 : numerator / denominator;
+                                    }
+
+                                    public static String at(String[] values, int index) {
+                                        if (index < 0 || index >= values.length) {
+                                            return null;
+                                        }
+                                        return values[index];
+                                    }
+                                }
+                                """),
+                        FileAction.update(TS_PATH, """
+                                export interface Row {
+                                  id: string;
+                                }
+
+                                export function count(rows: Row[]): number {
+                                  return rows.length;
+                                }
+
+                                export function widened(rows: any): number {  // E2E-DEFECT-D
+                                  return rows.length;
+                                }
+                                """)));
+
+        awaitRunAfter("S10 the closing run completed", runsBefore);
+
+        // Two assertions, never a disjunction. As an OR this could not fail: the S10 commit removes
+        // the second marker, so the reconcile fixture answers "all resolved" and the right-hand side
+        // was true by construction — and allMatch on an empty list is true as well, so an empty
+        // reconciliation passed too. Deleting the entire raise-a-new-finding path left it green.
+        assertEquals(findingsBefore + 1, ReadModel.findingsCount(reviewId),
+                "S10 — the newly introduced defect is raised as its own finding: " + verdictStatuses());
+
+        List<String> statuses = verdictStatuses();
+        assertFalse(statuses.isEmpty(), "S10 — there must be prior findings to close out");
+        assertTrue(statuses.stream().allMatch("RESOLVED"::equals),
+                "S10 — every prior finding closes out by the end of the chain: " + statuses);
+    }
+
+    @Test
+    @Order(11)
+    void s11_mergingFlipsTheBadgeAndStartsNoNewWork() {
+        // GitLab computes mergeability asynchronously after a push, and S10 pushed moments ago.
+        // Merging while the status is still `checking` answers 405, which the driver turns into a
+        // hard failure — a live flake in the chain's last step, where it costs the whole run's signal.
+        Await.until("S11 the merge request became mergeable", () -> {
+            String status = env.human().get("/projects/" + env.projectId()
+                    + "/merge_requests/" + mrIid).path("detailed_merge_status").asText("");
+            return "mergeable".equals(status) ? Optional.of(true) : Optional.empty();
+        });
+
+        env.human().mergeMergeRequest(env.projectId(), mrIid);
+
+        // The POSITIVE signal first. Asserting the absence immediately would pass against a system
+        // that simply has not processed the merge yet, which is not an assertion at all.
+        Await.until("S11 the merge-request state flips to MERGED", () ->
+                "MERGED".equals(ReadModel.prState(reviewId)) ? Optional.of(true) : Optional.empty());
+
+        assertEquals("completed", ReadModel.status(reviewId),
+                "S11 — the merge-request state is its own axis; merging does not change review status");
+
+        Await.absent("S11 no new review run after the merge",
+                () -> ReadModel.events(reviewId, "ReviewRequested"));
+    }
+
+    private static void awaitRunAfter(String step, long runsBefore) {
+        Await.until(step, () -> {
+            boolean newRun = ReadModel.events(reviewId, "ReviewRequested") > runsBefore;
+            return newRun && "completed".equals(ReadModel.status(reviewId))
+                    ? Optional.of(true) : Optional.empty();
+        });
+    }
+
+    /**
+     * Verdicts come from the REST detail view, not psql: reconciliation_json is Tink-encrypted with
+     * the review id as AAD, so the database holds ciphertext.
+     */
+    private static List<String> verdictStatuses() {
+        List<String> statuses = new ArrayList<>();
+        for (JsonNode row : env.spire().reviewSummary(env.workspace(), env.slug(), mrIid)
+                .withArray("reconciliation")) {
+            // The detail view renders these for DISPLAY — lower-case, and with the underscore in
+            // STILL_OPEN spelled as a space. Normalised back to the aggregate's own vocabulary so the
+            // assertions read in the domain's terms rather than the dashboard's.
+            statuses.add(row.get("status").asText()
+                    .toUpperCase(java.util.Locale.ROOT)
+                    .replace(' ', '_'));
+        }
+        return statuses;
+    }
+
+    private static boolean anyThreadResolvedOnGitLab() {
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            for (JsonNode note : discussion.get("notes")) {
+                if (note.path("resolved").asBoolean(false)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static String summaryThreadRef() {
+        return ReadModel.threads(reviewId).stream()
+                .filter(ReadModel.Thread::isSummary)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no summary thread recorded"))
+                .threadRef();
+    }
+
+    /**
+     * The summary comment's recorded ref is GitLab's NOTE id, not a discussion id — an inline finding
+     * gets a threaded discussion with a hash id, while a plain merge-request comment is an individual
+     * note. Comparing the recorded ref against discussion ids therefore matched nothing, and the
+     * counts on both sides of the S8 assertion were zero: it held as 0 == 0 while proving nothing.
+     * That is why this resolves the note id to its owning discussion instead.
+     */
+    private static String summaryDiscussionId() {
+        String ref = summaryThreadRef();
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            if (ref.equals(discussion.get("id").asText())) {
+                return ref;
+            }
+            for (JsonNode note : discussion.get("notes")) {
+                if (ref.equals(note.get("id").asText())) {
+                    return discussion.get("id").asText();
+                }
+            }
+        }
+        throw new AssertionError("the recorded summary ref " + ref
+                + " matches no discussion or note on the merge request");
+    }
+
+    private static long discussionsWithRef(String ref) {
+        long count = 0;
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            if (ref.equals(discussion.get("id").asText())) {
+                count++;
+            }
+        }
+        if (count == 0) {
+            throw new AssertionError("no discussion has id " + ref + " — a count of zero on both "
+                    + "sides of a comparison proves nothing");
+        }
+        return count;
+    }
+
+    private static long allBotNotes() {
+        long count = 0;
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            for (JsonNode note : discussion.get("notes")) {
+                if (Environment.BOT_USERNAME.equals(note.get("author").get("username").asText())) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /** The first inline (position-anchored) discussion the bot opened. */
+    private static String firstFindingDiscussionId() {
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            JsonNode note = discussion.get("notes").get(0);
+            boolean ours = Environment.BOT_USERNAME.equals(note.get("author").get("username").asText());
+            if (ours && note.hasNonNull("position")) {
+                return discussion.get("id").asText();
+            }
+        }
+        throw new AssertionError("no inline finding discussion found on the merge request");
+    }
+
+    private static long botNotesIn(String discussionId) {
+        long count = 0;
+        for (JsonNode note : notesIn(discussionId)) {
+            if (Environment.BOT_USERNAME.equals(note.get("author").get("username").asText())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static String lastBotNoteIn(String discussionId) {
+        String last = "";
+        for (JsonNode note : notesIn(discussionId)) {
+            if (Environment.BOT_USERNAME.equals(note.get("author").get("username").asText())) {
+                last = note.get("body").asText();
+            }
+        }
+        return last;
+    }
+
+    private static List<JsonNode> notesIn(String discussionId) {
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            if (discussionId.equals(discussion.get("id").asText())) {
+                List<JsonNode> notes = new ArrayList<>();
+                discussion.get("notes").forEach(notes::add);
+                return notes;
+            }
+        }
+        return List.of();
+    }
+
+    /** Discussions whose opening note the bot wrote. */
+    private static long botDiscussions() {
+        long count = 0;
+        for (JsonNode discussion : env.human().discussions(env.projectId(), mrIid)) {
+            JsonNode first = discussion.get("notes").get(0);
+            if (Environment.BOT_USERNAME.equals(first.get("author").get("username").asText())) {
+                count++;
+            }
+        }
+        return count;
+    }
+}
