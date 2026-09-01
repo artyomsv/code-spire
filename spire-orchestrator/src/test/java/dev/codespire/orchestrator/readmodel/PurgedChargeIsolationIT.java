@@ -134,7 +134,7 @@ class PurgedChargeIsolationIT {
 
     /** What the future purge will do in the same transaction as the delete below. */
     private void stampEveryCharge(String reviewId) {
-        update("UPDATE llm_charge SET archived_at = now() WHERE review_id = ?", reviewId);
+        update("UPDATE llm_charge SET archived_at = now() WHERE subject_id = ?", reviewId);
     }
 
     private void deleteTheReviewRowAsAPurgeWould(String reviewId) {

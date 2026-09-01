@@ -1501,17 +1501,21 @@ public class ReviewProjection {
         String sql = """
                 SELECT rs.*,
                        (SELECT model FROM llm_charge c
-                         WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
+                         WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
+                           AND c.archived_at IS NULL
                          ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
                        (SELECT m.type FROM llm_model m
                          WHERE m.name = (SELECT model FROM llm_charge c
-                                          WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
+                                          WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
+                                            AND c.archived_at IS NULL
                                           ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
                        COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
-                                  WHERE c.review_id = rs.review_id AND c.archived_at IS NULL), 0)
+                                  WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
+                                    AND c.archived_at IS NULL), 0)
                                                                                                   AS total_cost_millicents,
                        COALESCE((SELECT COUNT(DISTINCT c.call_ref) FROM llm_charge c
-                                  WHERE c.review_id = rs.review_id AND c.archived_at IS NULL
+                                  WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
+                                    AND c.archived_at IS NULL
                                     AND c.pricing_mode = 'UNKNOWN'), 0)                          AS unpriced_calls
                   FROM review_status rs
                  WHERE (? OR rs.archived_at IS NULL)
@@ -1765,7 +1769,7 @@ public class ReviewProjection {
         String sql = """
                 SELECT call_ref, kind, model, token_type, tokens,
                        cost_millicents, pricing_mode, priced_at
-                  FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
+                  FROM llm_charge WHERE subject_kind = 'REVIEW' AND subject_id = ? AND archived_at IS NULL
                  ORDER BY priced_at, token_type
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -1805,9 +1809,9 @@ public class ReviewProjection {
             return; // nothing to write, so nothing to broadcast either
         }
         String sql = """
-                INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode,
+                INSERT INTO llm_charge (id, subject_id, subject_kind, call_ref, kind, model, pricing_mode,
                         token_type, tokens, rate_millicents_per_million, cost_millicents)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (call_ref, token_type) DO NOTHING
                 """;
         try (Connection c = dataSource.getConnection()) {
@@ -1835,14 +1839,19 @@ public class ReviewProjection {
             throws SQLException {
         ps.setObject(1, java.util.UUID.randomUUID());
         ps.setString(2, call.reviewId());
-        ps.setString(3, call.callRef());
-        ps.setString(4, call.kind().name());
-        ps.setString(5, call.model());
-        ps.setString(6, line.mode().name());
-        ps.setString(7, line.tokenType().name());
-        ps.setInt(8, line.tokens());
-        setNullableLong(ps, 9, line.rateMillicentsPerMillion());
-        setNullableLong(ps, 10, line.costMillicents());
+        // Named rather than left to the column default. A default is a migration artefact for rows
+        // that already exist; a WRITER that relies on one mislabels every row it inserts the day
+        // the default changes, and a charge with the wrong subject kind is money attributed to the
+        // wrong thing.
+        ps.setString(3, "REVIEW");
+        ps.setString(4, call.callRef());
+        ps.setString(5, call.kind().name());
+        ps.setString(6, call.model());
+        ps.setString(7, line.mode().name());
+        ps.setString(8, line.tokenType().name());
+        ps.setInt(9, line.tokens());
+        setNullableLong(ps, 10, line.rateMillicentsPerMillion());
+        setNullableLong(ps, 11, line.costMillicents());
     }
 
     /**
@@ -1885,9 +1894,9 @@ public class ReviewProjection {
         String sql = """
                 SELECT COALESCE(SUM(cost_millicents), 0)                                    AS known_cost,
                        COUNT(DISTINCT CASE WHEN pricing_mode = 'UNKNOWN' THEN call_ref END) AS unpriced_calls,
-                       (SELECT model FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
+                       (SELECT model FROM llm_charge WHERE subject_kind = 'REVIEW' AND subject_id = ? AND archived_at IS NULL
                          ORDER BY priced_at DESC LIMIT 1)                                    AS last_model
-                  FROM llm_charge WHERE review_id = ? AND archived_at IS NULL
+                  FROM llm_charge WHERE subject_kind = 'REVIEW' AND subject_id = ? AND archived_at IS NULL
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
@@ -2134,7 +2143,7 @@ public class ReviewProjection {
     private long cumulativeCost(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT COALESCE(SUM(cost_millicents), 0) FROM llm_charge"
-                        + " WHERE review_id = ? AND archived_at IS NULL")) {
+                        + " WHERE subject_kind = 'REVIEW' AND subject_id = ? AND archived_at IS NULL")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong(1) : 0L;
@@ -2146,7 +2155,7 @@ public class ReviewProjection {
      *  no longer carries a model column, so this is now the only source for it. */
     private String latestModelFor(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT model FROM llm_charge WHERE review_id = ? AND archived_at IS NULL"
+                "SELECT model FROM llm_charge WHERE subject_kind = 'REVIEW' AND subject_id = ? AND archived_at IS NULL"
                         + " ORDER BY priced_at DESC LIMIT 1")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -2159,7 +2168,7 @@ public class ReviewProjection {
      *  {@link #listSummaries}'s join, computed separately for the {@link #broadcast} path's single row. */
     private int unpricedCallsFor(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE review_id = ?"
+                "SELECT COUNT(DISTINCT call_ref) FROM llm_charge WHERE subject_kind = 'REVIEW' AND subject_id = ?"
                         + " AND archived_at IS NULL AND pricing_mode = 'UNKNOWN'")) {
             ps.setString(1, reviewId);
             try (ResultSet rs = ps.executeQuery()) {

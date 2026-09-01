@@ -262,7 +262,7 @@ class AttentionQueriesCostTest {
 
     private void insert(String reviewId, String callRef, String model, String pricingMode,
                         String tokenType, String rate, String cost) {
-        sql("INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+        sql("INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), '" + reviewId + "', '" + callRef + "', 'REVIEW', '" + model
                 + "', '" + pricingMode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")");

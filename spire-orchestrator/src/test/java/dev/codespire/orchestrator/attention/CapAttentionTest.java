@@ -171,7 +171,7 @@ class CapAttentionTest {
 
     /** What the passage of time does to a rolling window: the charge falls outside it entirely. */
     private void backdateCharges(String reviewId) {
-        String sql = "UPDATE llm_charge SET priced_at = now() - interval '2 days' WHERE review_id = ?";
+        String sql = "UPDATE llm_charge SET priced_at = now() - interval '2 days' WHERE subject_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
             ps.executeUpdate();
