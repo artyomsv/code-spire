@@ -265,31 +265,65 @@ Each entry names why, and what would change the answer.
 | **Behaviour validation contracts / monitoring agents** | Recorded from the prior art as a real idea. Nothing to monitor until the factory runs continuously. | The factory running unattended for long enough that drift is a real risk. |
 | **Mode-collapse mitigation (generation wiping)** | Only matters for open-ended iterative work, which is not a phase here. | An autonomy workload that iterates towards a goal rather than completing a work item. |
 
-## Must be answered before M0 starts
+## Pre-M0 questions — closed 2026-09-01
 
-These are not "questions to settle at M4". Each one changes what M0 builds, and an adversarial review
-found every one of them assumed rather than decided.
+An adversarial review promoted six items from "open question" to "must answer before M0". Five are now
+decided; the sixth needs a fact only the operator holds.
 
-| # | Question | Why it cannot wait |
-|---|---|---|
-| 1 | **Does Codex's sandbox initialize inside a container?** | M0's exit criterion names that exact invocation. A half-day spike. |
-| 2 | **Whose credential pushes** — confirmed as a dedicated machine account (ADR-037), so: how is it registered, and does one token serve both API and git push? | M0 does the credential work; M2 cannot change the identity afterwards. |
-| 3 | **Is the push gated?** Settled as yes (ADR-036, FR-F28). Remaining: the exact protected-path matcher and how a refusal surfaces. | Retrofitting means M0 ships the vulnerability. |
-| 4 | **The run charge row's shape** — subject key, kind, `call_ref` scheme. | M0 spends real money into a ledger whose spine is review-shaped and rejects unknown kinds at INSERT. |
-| 5 | **The run worker's channel semantics** — ack model and the cancel path. | It decides whether `cs.commands` is even the right topic, before the first consumer is written. |
-| 6 | **Record the subscription-decision provenance**, or stop claiming it is recorded. | One sentence, and it is what protects the position if the policy moves. |
+| # | Question | Answer | Where |
+|---|---|---|---|
+| 1 | Does Codex's sandbox initialize inside a container? | **Measured: yes here** — Landlock ABI v7 under Docker's *default* seccomp profile, kernel 6.18/WSL2. But it is host-dependent, so neither answer is hard-coded: the runtime **probes at boot** and declares `innerSandbox`. Absent ⇒ container is the sole boundary **and an attention row says so**. | [EXECUTION-LAYER §5.1](./EXECUTION-LAYER.md) |
+| 2 | Does one token serve both forge API and git push? | **Yes on all three forges** — GitHub App installation token, GitHub PAT, GitLab PAT with `write_repository`, Bitbucket API token. One credential per (machine account, provider); `separatePushCredential` is a declared capability, false everywhere today, so a forge that splits them later is an adapter change. Never the review bot's credential; injected per run; never URL-embedded. | [EXECUTION-LAYER §3.4](./EXECUTION-LAYER.md) |
+| 3 | The protected-path matcher and refusal surface | **Reuse `PathGlobs`** (promoted out of the orchestrator's memory package — one glob dialect per product). Match the changed-path set against base, **both sides of a rename**, **deletions included**; the CI floor matches **case-insensitively**. Refusal is `push_gate_refused`, naming every blocked path. | [AUTONOMY §5](./AUTONOMY.md) |
+| 4 | The run charge row's shape | `review_id` → **`subject_id` + `subject_kind`** (`REVIEW`\|`RUN`); `kind` CHECK extended with `SPEC`, `PLAN`, `BUILD`, `FIX`; `CallRefs` gains `run:{runId}:{attempt}:{seq}`. Ten existing reads updated in the same migration. A run id in a column named `review_id` was rejected outright. | [ARCHITECTURE §7](./ARCHITECTURE.md) |
+| 5 | The run worker's channel semantics | `cs.commands` stays the dispatch topic; the worker **writes `run_claim` then acks** (that order — the reverse loses the command on a crash); `cs.run-control` carries cancel and steer to a non-blocking listener; concurrency is a bounded executor, not consumer parallelism. | [ARCHITECTURE §5.1](./ARCHITECTURE.md) |
+| 6 | Subscription-decision provenance | **Still open — needs the operator.** ADR-030 carries a marked placeholder for source, channel and date. Blocks the Codex arm, nothing else. | [ADR-030](../DECISIONS.md) |
 
-## Open questions
+## Design questions — closed 2026-09-01
 
-1. **Where does the spec phase write?** Back to the tracker as a comment, or into the repository as a
-   file? A comment is visible where the work lives; a file is versioned and reviewable. Likely both,
-   decided at M4 by which one the reviewer can cite.
-2. **Should `verify` be able to fail a work item, or only a step?** A step that cannot verify is
-   clear. A work item whose final state is unverified is a judgment call.
-3. **How are entitlements delivered** — signed licence file, registry entry, or operator toggle? All
-   three fit behind the same type; the choice does not change a boundary.
-4. **Does the plan phase need its own harness invocation, or is it a single model call?** Planning is
-   context-light and mostly reasoning, which argues for the cheaper path.
-5. **Licence provenance for generated code** (NFR-F10) — a scanner in `verify`, a gate at `deliver`,
-   or a report only? OpenAI's own terms say the output may carry third-party licences; the pipeline
-   needs a place for that, and which place is undecided.
+All five carried from the first draft are now decided. Each is written here so the reason survives; a
+reopened question needs new evidence, not a fresh opinion.
+
+**1. The `spec` phase writes to the tracker, and not to the repository.** A comment on the work item,
+plus the structured form on `work_item` for the pipeline's own use. Writing a spec file into the
+repository would create a second source of truth against ADR-028, and — worse — a diff the reviewer
+must then review, so every specification would cost a review round before any code existed. The
+tracker is where the work lives and where the humans already are.
+
+**2. `verify` fails a step, never a work item.** A failed step fails its step; the plan coordinator
+spends its retry budget, and what happens after that is a gate decision, not an automatic verdict.
+Letting one failed verification kill the work item would discard every completed step, which is the
+mistake the plan-run child-retry model already avoids. `unverified` propagates upward as a fact the
+gate sees, not as a failure that pre-empts it.
+
+**3. Entitlements are a registry entry the operator sets** — see
+[PACKAGING §6](./PACKAGING.md). Not a signed licence file, and the reasoning is worth keeping: a
+signed file implies technical enforcement against the operator, needs key management and a revocation
+story, and would be theatre on self-hosted software whose database the operator owns. The FSL text is
+the enforcement; entitlements make the shape legible and the billing honest.
+
+**4. `spec` and `plan` are single model calls through the existing `LlmProvider`. No sandbox, no
+harness.** Both are context-light reasoning that edits no files, and the context they need — the
+repository's rules, the symbol index, linked issues — already arrives through `ContextProvider`.
+Spending a container and a tool loop on them buys nothing.
+
+Two consequences worth stating. `spec` and `plan` are **metered** through the existing ledger even on
+an unmetered Codex deployment, so a deployment always has some real cost signal. And only `build` and
+`verify` need a harness at all, which means an operator can run the planning half of the factory
+before ever configuring a sandbox.
+
+**5. Licence provenance is a report at `verify`, not a gate at `deliver`** — for now, and the "for
+now" is the honest part. A blocking gate needs a scanner with a false-positive rate nobody has
+measured, and a gate that cries wolf gets disabled, which is worse than a report nobody promised. So:
+`verify` runs a provenance report, the run records its harness and model so any finding is
+attributable, and the report rides on the pull request where a human sees it. It becomes a gate when
+there is evidence about its accuracy — the same evidence-before-enforcement ladder used everywhere
+else here. OpenAI's own terms are why the step exists at all: *"Output generated by code generation
+features of our Services, including OpenAI Codex, may be subject to third party licenses."*
+
+## Still open
+
+One item, and it needs a fact rather than a decision:
+
+- **The provenance of the Codex-subscription confirmation** — source, channel and date. ADR-030 has a
+  marked placeholder. It blocks the Codex arm shipping and nothing else.

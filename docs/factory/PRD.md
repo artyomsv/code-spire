@@ -135,13 +135,22 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 - **FR-F17 — Eight phases [M3/M4].** A work item moves through `intake → spec → plan → build →
   verify → review → deliver → land`. Each phase is separately gateable.
 - **FR-F18 — Specification phase [M4].** A vague ticket is refined into an outcome, context and
-  acceptance criteria, written back to the tracker.
+  acceptance criteria, **written back to the tracker as a comment** — never into the repository,
+  which would create a second source of truth and a diff the reviewer must review before any code
+  exists. `spec` and `plan` are **single model calls through the existing `LlmProvider`**: they edit
+  no files, their context already arrives through `ContextProvider`, and a sandbox buys them nothing.
+  A consequence worth having: both are metered through the existing ledger even where `build` is not.
 - **FR-F19 — Plan phase [M4].** A specification is decomposed into ordered steps sized as vertical
   slices — each ending at something runnable — and executed one at a time with a completion gate
   between steps.
 - **FR-F20 — Verify phase [M4].** A step is verified by repository-declared back-pressure: build,
   tests, linters and any gate command the repository names. A step that cannot be verified is
-  reported as unverified, never as passing.
+  reported as unverified, never as passing. **`verify` fails a step, never a work item** — the plan
+  coordinator spends its retry budget and a gate decides what follows, because one failed
+  verification killing the item would discard every completed step. `unverified` propagates upward as
+  a fact the gate sees, not as a verdict that pre-empts it. The phase also emits a **licence
+  provenance report** (NFR-F10) rather than a gate: a blocking check needs a false-positive rate
+  nobody has measured, and a gate that cries wolf gets switched off.
 - **FR-F21 — Review phase [M2].** A delivered pull request is reviewed by the existing reviewer, with
   reconciliation across rounds. The review model and prompt must differ from the build model and
   prompt.
@@ -273,14 +282,15 @@ infrastructure is paid for by a feature that stands alone.
    the operator's image to build; Code Spire supplies the contract, not every stack.
 5. Vendor terms for automated use changed twice during 2026. Every finding is recorded with its
    retrieval date and re-checked before a harness ships.
-6. **Unverified:** whether Codex's own `workspace-write` sandbox initializes inside a container. It is
-   Landlock/seccomp-based and host-kernel-dependent, and the common containerized practice is to
-   disable it and let the container be the sole boundary. M0's exit criterion names that exact
-   invocation, so this is a **spike before M0 planning settles**, not an assumption to carry.
-7. **Unverified:** that a deny-by-default egress allowlist can be made complete enough for a real
-   `verify` phase. A Gradle or npm build reaches plugin portals, CDNs and transitive registries; an
-   incomplete allowlist turns infrastructure noise into `unverified` results and spends FR-F20's
-   honesty budget on the wrong thing.
+6. **Measured, not assumed:** Codex's `workspace-write` sandbox *does* initialize inside a container
+   on a modern kernel — Landlock ABI v7 under Docker's default seccomp profile, kernel 6.18.
+   Availability is host-dependent, so the runtime **probes at boot** and declares `innerSandbox`;
+   where it is absent the container is the sole boundary and an attention row says so. Neither
+   answer is hard-coded.
+7. **Decided:** the egress allowlist is per repository and **seeded by observation** — early runs
+   record egress without blocking, the operator promotes the observed set, later runs enforce it. The
+   model endpoint, git host and forge API are always allowed. A newly added dependency produces a
+   `blocked_egress` failure cause naming the host, not a mysterious build error.
 
 ## 8. Success criteria
 

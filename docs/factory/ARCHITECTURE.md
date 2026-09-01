@@ -81,7 +81,8 @@ Two contract rules that are not obvious:
 ```java
 public interface RunRuntime {
     RuntimeType type();
-    RuntimeCapabilities capabilities();   // networkPolicy, resourceLimits, steering, archival, gc
+    RuntimeCapabilities capabilities();   // networkPolicy, resourceLimits, steering, archival, gc,
+                                         // innerSandbox — probed at boot, see EXECUTION-LAYER §5.1
     RunHandle create(RunSpec spec);       // workspace, image, injected creds, limits
     Stream<RunEvent> attach(RunHandle h);
     void cancel(RunHandle h);
@@ -283,10 +284,32 @@ no reviewId); `CHECK (kind IN ('REVIEW','RECONCILE','FOLLOWUP'))`, whose own com
 unrecognised literal *dead-letters the result at INSERT time*; and `call_ref` identity derived from
 reviewId + slot + commit.
 
-A run charge therefore needs a **neutral subject key** (a run id or a review id, one column, with the
-kind disambiguating), the `kind` set extended for run work, and a `call_ref` scheme derived from
-`runId + attempt` in the ADR-023 style. ADR-026 already flagged this shape when it noted that
-embedding spend had no `call_ref` scheme under ADR-023.
+The shape, decided rather than deferred:
+
+```sql
+ALTER TABLE llm_charge RENAME COLUMN review_id TO subject_id;
+ALTER TABLE llm_charge ADD COLUMN subject_kind VARCHAR(8) NOT NULL DEFAULT 'REVIEW';
+ALTER TABLE llm_charge ADD COLUMN capability   VARCHAR(16) NOT NULL DEFAULT 'REVIEW';
+ALTER TABLE llm_charge ADD COLUMN credential_ref TEXT;
+-- kind CHECK extended: REVIEW | RECONCILE | FOLLOWUP | SPEC | PLAN | BUILD | FIX
+-- subject_kind CHECK: REVIEW | RUN
+```
+
+- **`subject_id` + `subject_kind`, not a nullable second column.** One key with a discriminator keeps
+  `UNIQUE (call_ref, token_type)` meaningful and every existing read a one-line change. Putting a run
+  id into a column named `review_id` was rejected outright: that is the shape where a name lies, and
+  the next reader inherits the lie.
+- **`kind` gains four values, and the CHECK stays.** Its own migration comment explains why the CHECK
+  exists — a typo'd literal would otherwise dead-letter the result at INSERT — so extending it is
+  mandatory, not cosmetic.
+- **`CallRefs` gains a run form:** `run:{runId}:{attempt}:{seq}`, where `seq` is the harness-reported
+  call index, or `total` when the harness reports only an aggregate. `attempt` is what distinguishes a
+  genuine re-run from a redelivery, exactly as `ReviewRuns` does for reviews.
+- **The ten existing ledger reads are updated in the same migration**, and the archived-row filter
+  rule is unchanged: per-subject reads filter `archived_at`, the spend-window read does not.
+
+ADR-026 already flagged this shape when it noted that embedding spend had no `call_ref` scheme under
+ADR-023.
 
 `capability` and `credential_ref` join in the same migration, **at M0**, because they cannot be
 backfilled and M0 already spends real money — the same lesson as `review_finding` shipping with no

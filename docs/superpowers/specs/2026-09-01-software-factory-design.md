@@ -101,20 +101,28 @@ must build from an approved golden base and mirror into a private registry.
 - **`review_finding` is the corpus everyone else wants.** ADR-027 shipped the expensive half of a
   measurement loop the prior art lists as unscheduled.
 
-## 7. Open questions carried forward
+## 7. Open questions — all but one closed
 
-The review promoted six items from "open question" to **must be answered before M0** — they change
-what the first milestone builds, and each had been assumed rather than decided. They are tabled in
-[`../../factory/ROADMAP.md`](../../factory/ROADMAP.md) §Must be answered before M0 starts.
+The review promoted six items from "open question" to **must be answered before M0**, and the design
+carried five more. Ten of the eleven are now decided; the tables live in
+[`../../factory/ROADMAP.md`](../../factory/ROADMAP.md).
 
-The genuinely deferrable ones remain in that file's §Open questions:
+**One was answered by measurement rather than argument.** The review predicted Codex's Landlock
+sandbox would be unavailable inside a container. Calling `landlock_create_ruleset` in an ordinary
+Docker container returned ABI **v7** under the *default* seccomp profile on kernel 6.18 — the
+prediction was wrong, and so was the draft that had assumed the opposite. Because one host proves
+nothing about all hosts, the outcome is neither assumption: the runtime **probes at boot** and
+declares a capability, and a missing inner sandbox is visible rather than silent.
 
-1. Where the `spec` phase writes — tracker comment, repository file, or both.
-2. Whether `verify` can fail a work item or only a step.
-3. How entitlements are delivered — signed licence file, registry entry, or operator toggle.
-4. Whether `plan` needs a harness invocation or is a single model call.
-5. Where licence provenance for generated code is checked — a scanner in `verify`, a gate at
-   `deliver`, or a report only.
+**Two were closed by refusing the more elaborate option.** Entitlements are a registry entry, not a
+signed licence file, because a cryptographic lock on software whose database the operator owns is
+theatre and the FSL text is the real enforcement. And `spec` and `plan` are single model calls, not
+harness invocations, because they edit no files and their context already arrives through
+`ContextProvider` — which also makes them metered on a deployment where `build` is not.
+
+**The last one cannot be closed here.** The provenance of the Codex-subscription confirmation —
+source, channel, date — is a fact only the operator holds. ADR-030 carries a marked placeholder, and
+it blocks the Codex arm shipping and nothing else.
 
 ## 8. Standing obligation
 

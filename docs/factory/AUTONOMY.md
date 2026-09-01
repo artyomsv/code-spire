@@ -17,10 +17,10 @@ intake ─► spec ─► plan ─► build ─► verify ─► review ─► d
 | Phase | What happens | Output |
 |---|---|---|
 | **intake** | eligibility, labels, ceiling, actor allowlist, budget reservation | admitted or refused |
-| **spec** | vague ticket → outcome, context, acceptance criteria | specification written back to the tracker |
-| **plan** | specification → ordered steps, each a vertical slice | plan, ready for a gate |
-| **build** | one sandboxed run per step | commits on a branch |
-| **verify** | the repository's own back-pressure runs | pass / fail / **unverified** |
+| **spec** | vague ticket → outcome, context, acceptance criteria — *one model call, no sandbox* | specification commented back to the tracker |
+| **plan** | specification → ordered steps, each a vertical slice — *one model call, no sandbox* | plan, ready for a gate |
+| **build** | one sandboxed run per step — *harness* | commits on a branch |
+| **verify** | the repository's own back-pressure runs — *harness* | pass / fail / **unverified** (fails the step, never the item) |
 | **review** | the existing reviewer reviews the branch | findings, reconciled across rounds |
 | **deliver** | push and open a pull request | pull request URL |
 | **land** | merge and close the work item | merged, or handed to a human |
@@ -252,6 +252,20 @@ A profile may protect more. No profile may protect less. An operator who genuine
 agent-authored CI changes enables that per repository, outside the profile mechanism, having read what
 it means.
 
+**How the match works, decided rather than left to the implementer:**
+
+- **Reuse `PathGlobs`** — the fixed-ladder glob matcher ADR-027 already uses for learned-preference
+  path groups, promoted out of `spire-orchestrator/…/memory/` into a shared module. One matcher, one
+  set of semantics; a second glob dialect in the same product is a bug waiting for a Friday.
+- **Match the diff's changed-path set against the base**, including **both sides of a rename** and
+  **deletions**. A deleted workflow file changes what CI does exactly as much as an edited one, and a
+  rename that moves a file *into* a protected path is the obvious evasion.
+- **The CI floor matches case-insensitively.** `.GitHub/workflows/x.yml` is a different path to git
+  and the same path to a case-insensitive filesystem, and the forge will happily run it. Repository
+  globs stay case-sensitive, because that is what an operator writing them expects.
+- **A refusal names every blocked path**, in the timeline entry and the attention row, with status
+  `push_gate_refused` — not "the push was blocked".
+
 This mirrors the never-suppressed SECURITY floor in ADR-027: a learned preference may hide many kinds
 of finding and may never hide a security one, because the evidence qualifying a group is itself
 manufacturable. Same shape here — the input that would authorise the change is the input under
@@ -341,3 +355,8 @@ The failure taxonomy is worth copying in full: *provider error, dropped commit, 
 finalize not posted, finalize failed, no model response, out of memory, sandbox unreachable, timed
 out.* In the observed deployment the top cause was **provider error** and the second was **dropped
 commit** — which is precisely why `finalize` and `destroy` are separate operations.
+
+Three causes this design adds, each because it would otherwise arrive as something misleading:
+**`push_gate_refused`** (correct work, deliberately not delivered — not a crash), **`blocked_egress`**
+(a host the allowlist did not contain, named — not a mysterious build failure), and
+**`credentials_exhausted`** (capacity, with a return time — not an error).

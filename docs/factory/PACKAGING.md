@@ -155,8 +155,12 @@ three is a feature of an existing pack, not a new one.
 
 - **Price points, tiers and packaging names.** This document fixes the *boundaries* so that pricing
   is possible; it does not set prices.
-- **How entitlements are delivered** — signed licence file, registry entry, or an operator toggle.
-  All three fit behind the same `Entitlements` type, and the decision does not change any boundary
-  above.
+- ~~How entitlements are delivered~~ — **decided: a registry entry the operator sets, like a
+  provider.** Not a signed licence file. A signed file implies technical enforcement *against* the
+  operator, which needs key management, offline validation and a revocation story — and it would be
+  theatre here, because this is self-hosted source-available software whose actual enforcement is the
+  FSL licence text and whose database the operator owns. Stating that plainly is better than shipping
+  a lock that a `psql` session opens. Entitlements exist to make the product's shape legible and its
+  billing honest, and they are recorded, auditable and inspectable for exactly that reason.
 - **Whether Insight splits further** into analytics versus audit. It might; the metering column makes
   the question answerable with data instead of opinion.

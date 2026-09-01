@@ -174,6 +174,33 @@ performs that login; Code Spire stores the result in the **existing** encrypted 
 AES-256-GCM with AAD binding) and injects a copy per run. It expires, so the pool needs a refresh
 path.
 
+### 3.4 The machine account's credential — one, not two
+
+ADR-037 gives the factory a dedicated machine account. It needs to do two things: call the forge API
+(open a pull request, read a branch) and push over HTTPS.
+
+**Decision: one credential per (machine account, provider), with a capability flag for the forge that
+one day splits them.** On all three shipped forges a single credential already covers both:
+
+| Forge | Credential | Covers API | Covers git push |
+|---|---|---|---|
+| GitHub App | installation token | yes | yes — as `x-access-token` over HTTPS |
+| GitHub PAT | fine-grained PAT | yes | yes |
+| GitLab | PAT with `api` + `write_repository` | yes | yes |
+| Bitbucket | API token / app password | yes | yes |
+
+So `separatePushCredential` is a declared capability that is **false everywhere today**. It exists so
+that a forge which splits them later is an adapter change, not a redesign — the same reason
+`RepoRef.forge` and the other unused-but-shaped fields exist in the SCM contract.
+
+Two rules that are not optional:
+
+- **The push credential is never the review bot's.** That is the whole point of ADR-037; sharing it
+  would restore the authority widening the separate account exists to avoid.
+- **It is injected per run and redacted from every event.** Git writes credentials into `.git/config`
+  and into remote URLs if you let it; the workspace layer uses an askpass helper or a credential
+  header, never a URL-embedded token, because a URL-embedded token reaches the run event stream.
+
 ## 4. Agent images
 
 ### 4.1 The image is a contract, not a base
@@ -266,21 +293,56 @@ because a customer who needs it today can build an image that passes the suite.
 Egress is deny-by-default with an allowlist for the model endpoint, the git host and the package
 registries the repository needs.
 
-### 5.1 Two things here are unverified, and both must be settled before M0
+### 5.1 The inner sandbox is probed, not assumed — spike result, 2026-09-01
 
-**Does Codex's own sandbox work inside a container?** `workspace-write` is enforced by Landlock and
-seccomp, which are host-kernel-dependent; inside a container that mechanism is commonly unavailable,
-and the usual containerized practice is to run Codex with its own sandbox **disabled** and let the
-container be the boundary. This design counted the inner sandbox as a defence layer, and **M0's exit
-criterion names that exact invocation.** A half-day spike decides which of the two is the enforcement
-boundary, and the answer is written back into this section. The project's own precedent applies: a
-spike preceded the auth work for the same reason, and it overturned two of that plan's predictions.
+**The question:** Codex's `workspace-write` mode is enforced by Landlock and seccomp, which are
+host-kernel-dependent. A review predicted the mechanism would be *commonly unavailable* inside a
+container, making the container the sole boundary and the defence-in-depth framing wrong.
 
-**Is a deny-by-default egress allowlist completable?** "The package registries the repository needs"
-understates it: one Gradle or npm `verify` run touches plugin portals, CDNs and transitive registries,
-and an incomplete allowlist turns infrastructure noise into `unverified` results — spending FR-F20's
-honesty budget on the wrong thing. The likely shape is a per-repository allowlist seeded from a first
-observed run, but that is a decision, not an assumption, and it belongs with the spike.
+**Measured, not reasoned.** Calling `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`
+inside an ordinary container:
+
+| Host | Kernel | Seccomp | Result |
+|---|---|---|---|
+| Docker 29.6.2 / WSL2 | 6.18.33.2 | **default profile** | returns **7** — Landlock available, ABI v7 |
+| same | same | `seccomp=unconfined` | returns 7 — identical |
+
+So the prediction is falsified on this host: Docker's default seccomp profile does **not** block the
+Landlock syscalls, and the inner sandbox can initialize.
+
+**But one host is not a guarantee, so neither answer gets hard-coded.** Landlock needs kernel ≥ 5.13
+*and* the LSM enabled at boot; a distro that omits it from its `lsm=` list, an older kernel, or a
+gVisor-based runtime will all return `ENOSYS` or `EOPNOTSUPP`. The design therefore **probes once at
+boot and declares a capability**:
+
+```java
+RuntimeCapabilities.innerSandbox()   // PRESENT | ABSENT
+```
+
+- **PRESENT** → Codex runs with `--sandbox workspace-write`; two boundaries, as designed.
+- **ABSENT** → Codex runs with its own sandbox disabled, the container is the sole boundary, and an
+  **attention row says so**. A silently lost defence layer is the failure this project keeps paying
+  for; a visible one is a decision.
+
+The probe is the same shape the deployment already uses for `bwrap`: a functional check at startup,
+not a version string. Capabilities, not conditionals.
+
+### 5.2 Egress: allowlist by observation, and `unverified` is the honest failure
+
+"The package registries the repository needs" understates the problem. One Gradle or npm `verify` run
+reaches plugin portals, CDNs and transitive registries, and an allowlist assembled by guessing turns
+infrastructure noise into `unverified` results — spending FR-F20's honesty budget on the wrong thing.
+
+**Decision:** the allowlist is **per repository and seeded by observation**. A repository's first runs
+execute in a `report` mode that records every egress attempt without blocking; the operator promotes
+that set to the repository's allowlist; subsequent runs enforce it. Adding a dependency later produces
+a **blocked-egress failure cause**, not a mysterious build error — the operator sees the host that was
+refused and decides.
+
+Two properties this preserves. The model endpoint, the git host and the forge API are **always**
+allowed, because a run cannot function without them and nothing is learned by discovering that. And
+`report` mode is never the default for a repository that has an allowlist — a repository that has been
+observed does not silently fall back to open egress.
 
 ## 6. Implementation order and why
 
