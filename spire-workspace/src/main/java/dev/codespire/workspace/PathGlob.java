@@ -53,7 +53,10 @@ public final class PathGlob {
         if (glob.isBlank()) {
             throw new IllegalArgumentException("a blank glob matches nothing and protects nothing");
         }
-        return new PathGlob(glob, Pattern.compile(toRegex(glob), Pattern.CASE_INSENSITIVE));
+        // UNICODE_CASE alongside CASE_INSENSITIVE: without it the folding is ASCII-only, so a
+        // non-ASCII profile glob would be silently case-SENSITIVE while the class claims otherwise.
+        return new PathGlob(glob, Pattern.compile(toRegexSource(glob),
+                Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE));
     }
 
     public static List<PathGlob> compileAll(List<String> globs) {
@@ -80,7 +83,10 @@ public final class PathGlob {
         return path.replace('\\', '/');
     }
 
-    private static String toRegex(String glob) {
+    private static String toRegexSource(String glob) {
+        // The GLOB is normalised too, not just the path. Normalising only one side meant
+        // deploy** protected nothing while deploy/** worked.
+        glob = normalize(glob);
         StringBuilder regex = new StringBuilder();
         int i = 0;
         while (i < glob.length()) {
@@ -88,13 +94,26 @@ public final class PathGlob {
             switch (c) {
                 case '*' -> {
                     boolean doubled = i + 1 < glob.length() && glob.charAt(i + 1) == '*';
-                    if (doubled) {
+                    if (!doubled) {
+                        // Within one segment only.
+                        regex.append("[^/]*");
+                        break;
+                    }
+                    if (i + 2 < glob.length() && glob.charAt(i + 2) == '/') {
+                        // "**/" must match ZERO segments as well as many, so "**/Jenkinsfile"
+                        // covers a root-level Jenkinsfile and not only "sub/Jenkinsfile".
+                        //
+                        // Translating "**" to ".*" and leaving the "/" as a literal made the slash
+                        // MANDATORY, so the idiomatic "**/secrets.yml" protected everything except
+                        // the file at the repository root — silently. That is exactly the failure
+                        // this class refuses "{" and "[" to prevent, and the profile published in
+                        // AUTONOMY.md was affected by it.
+                        regex.append("(?:.*/)?");
+                        i += 2;
+                    } else {
                         // Crosses separators: ".github/workflows/**" covers "a.yml" and "sub/a.yml".
                         regex.append(".*");
                         i++;
-                    } else {
-                        // Within one segment only.
-                        regex.append("[^/]*");
                     }
                 }
                 case '?' -> regex.append("[^/]");
@@ -108,6 +127,7 @@ public final class PathGlob {
         }
         return regex.toString();
     }
+
 
     public String glob() {
         return glob;

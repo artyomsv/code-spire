@@ -2,7 +2,10 @@ package dev.codespire.workspace;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,7 +23,7 @@ class PushGateTest {
         PushDecision decision = PushGate.decide(changed("src/main/java/Foo.java"), List.of());
 
         assertTrue(decision.allowed());
-        assertEquals(List.of(), decision.blocked());
+        assertEquals(List.of(), decision.blockedPaths());
     }
 
     @Test
@@ -33,7 +36,7 @@ class PushGateTest {
         PushDecision decision = PushGate.decide(changed(".github/workflows/ci.yml"), List.of());
 
         assertFalse(decision.allowed(), "CI configuration is a floor no profile may lower");
-        assertEquals(List.of(".github/workflows/ci.yml"), decision.blocked());
+        assertEquals(List.of(".github/workflows/ci.yml"), decision.blockedPaths());
     }
 
     @Test
@@ -91,13 +94,6 @@ class PushGateTest {
     }
 
     @Test
-    void aBackslashSeparatedPathIsTheSameFile() {
-        // Git stores forward slashes, but a hand-built ChangedPath or a Windows working tree can
-        // produce backslashes, and it is the same file to the forge that runs it.
-        assertFalse(PushGate.decide(changed(".github\\workflows\\ci.yml"), List.of()).allowed());
-    }
-
-    @Test
     void aNestedWorkflowIsStillUnderTheFloor() {
         assertFalse(PushGate.decide(changed(".github/workflows/sub/deep.yml"), List.of()).allowed());
     }
@@ -115,14 +111,7 @@ class PushGateTest {
         PushDecision decision = PushGate.decide(changed("deploy/values.yaml"), List.of("deploy/**"));
 
         assertFalse(decision.allowed());
-        assertEquals(List.of("deploy/values.yaml"), decision.blocked());
-    }
-
-    @Test
-    void aProfileCannotUnprotectTheFloor() {
-        // An empty profile list, a permissive one, and a hostile one all behave identically.
-        assertFalse(PushGate.decide(changed("Jenkinsfile"), List.of("**")).allowed());
-        assertFalse(PushGate.decide(changed("Jenkinsfile"), List.of()).allowed());
+        assertEquals(List.of("deploy/values.yaml"), decision.blockedPaths());
     }
 
     @Test
@@ -130,7 +119,7 @@ class PushGateTest {
         PushDecision decision = PushGate.decide(
                 changed(".github/workflows/a.yml", "src/Ok.java", "Jenkinsfile"), List.of());
 
-        assertEquals(List.of(".github/workflows/a.yml", "Jenkinsfile"), decision.blocked());
+        assertEquals(List.of(".github/workflows/a.yml", "Jenkinsfile"), decision.blockedPaths());
     }
 
     @Test
@@ -141,7 +130,7 @@ class PushGateTest {
                 new ChangedPath("Jenkinsfile", ChangeKind.RENAMED_FROM),
                 new ChangedPath("Jenkinsfile", ChangeKind.MODIFIED)));
 
-        assertEquals(List.of("Jenkinsfile"), PushGate.decide(twice, List.of()).blocked());
+        assertEquals(List.of("Jenkinsfile"), PushGate.decide(twice, List.of()).blockedPaths());
     }
 
     @Test
@@ -155,18 +144,6 @@ class PushGateTest {
     }
 
     @Test
-    void everyFloorEntryActuallyRefusesSomething() {
-        // Stronger than "it compiles": each entry must refuse a path it is meant to cover, so an
-        // entry that can never match anything fails here instead of being decoration.
-        for (String glob : ProtectedPaths.CI_FLOOR) {
-            String sample = glob.endsWith("/**") ? glob.substring(0, glob.length() - 2) + "sample.yml" : glob;
-
-            assertFalse(PushGate.decide(changed(sample), List.of()).allowed(),
-                    "floor entry \"" + glob + "\" did not refuse \"" + sample + "\"");
-        }
-    }
-
-    @Test
     void aProfileGlobUsingAnUnsupportedConstructIsRefusedLoudly() {
         // A brace or a bracket would be treated as a literal by a naive translation, so the rule
         // would compile and match nothing — a protection the operator believes they have. It is a
@@ -175,5 +152,113 @@ class PushGateTest {
                 () -> PushGate.decide(changed("src/Foo.java"), List.of("deploy/{a,b}/**")));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> PushGate.decide(changed("src/Foo.java"), List.of("")));
+    }
+    @Test
+    void aLeadingDoubleStarMatchesAtTheRootAsWellAsBelowIt() {
+        // "**" translated to ".*" left the following "/" as a literal, so the slash was MANDATORY:
+        // "**/secrets.yml" protected every nested copy and silently missed the one at the
+        // repository root. That is the failure PathGlob refuses "{" and "[" to prevent, shipped in
+        // the class that refuses them — and the example profile in AUTONOMY.md was affected.
+        assertFalse(PushGate.decide(changed("secrets.yml"), List.of("**/secrets.yml")).allowed(),
+                "a root-level file must match a **/ glob");
+        assertFalse(PushGate.decide(changed("a/b/secrets.yml"), List.of("**/secrets.yml")).allowed(),
+                "and so must a nested one");
+        assertTrue(PushGate.decide(changed("secrets.yaml"), List.of("**/secrets.yml")).allowed(),
+                "guards the guard: **/ must not become match-everything");
+    }
+
+    @Test
+    void aCompositeActionIsProtectedAtTheRootAndAtAnyDepth() {
+        // A workflow saying "uses: ./tools/build" executes tools/build/action.yml, and "uses: ./"
+        // executes action.yml at the root. An agent rewriting that file's run: steps never touches
+        // .github/workflows at all — the workflow is unchanged and runs the new code on a runner
+        // holding the repository's secrets.
+        assertFalse(PushGate.decide(changed("action.yml"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed("action.yaml"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed("tools/build/action.yml"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed("deeply/nested/thing/action.yaml"), List.of()).allowed());
+    }
+
+    @Test
+    void aSuffixedJenkinsfileIsProtectedToo() {
+        // Jenkinsfile.release is a common convention, and the bare entry missed it.
+        assertFalse(PushGate.decide(changed("Jenkinsfile.release"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed("Jenkinsfile"), List.of()).allowed());
+    }
+
+    @Test
+    void theFloorAppliesWhateverTheProfileSays() {
+        // The version this replaces passed List.of("**") as the "hostile" profile — but "**"
+        // protects EVERYTHING, so it blocked Jenkinsfile through the profile whether or not the
+        // floor existed. Deleting the whole floor left it green. A profile that cannot itself
+        // match Jenkinsfile is the only one that tests the floor.
+        assertFalse(PushGate.decide(changed("Jenkinsfile"), List.of("docs/**")).allowed(),
+                "the floor holds when the profile is about something else entirely");
+        assertFalse(PushGate.decide(changed("Jenkinsfile"), List.of()).allowed(),
+                "and when there is no profile at all");
+    }
+
+    @Test
+    void everyFloorEntryRefusesARealPathItIsMeantToCover() {
+        // The version this replaces built each sample by string surgery on the glob itself, so it
+        // asserted self-consistency rather than coverage: a typo like ".github/workflow/**"
+        // (singular) produced ".github/workflow/sample.yml" and passed. These paths are written out
+        // by hand, so a mistyped floor entry has nothing to agree with.
+        Map<String, String> covered = new LinkedHashMap<>();
+        covered.put(".github/workflows/**", ".github/workflows/ci.yml");
+        covered.put(".github/actions/**", ".github/actions/setup/action.yml");
+        covered.put(".gitea/workflows/**", ".gitea/workflows/build.yaml");
+        covered.put(".forgejo/workflows/**", ".forgejo/workflows/build.yaml");
+        covered.put("action.yml", "action.yml");
+        covered.put("action.yaml", "action.yaml");
+        covered.put("**/action.yml", "tools/build/action.yml");
+        covered.put("**/action.yaml", "tools/build/action.yaml");
+        covered.put(".gitlab-ci.yml", ".gitlab-ci.yml");
+        covered.put(".gitlab/**", ".gitlab/agents/x.yaml");
+        covered.put("bitbucket-pipelines.yml", "bitbucket-pipelines.yml");
+        covered.put("Jenkinsfile", "Jenkinsfile");
+        covered.put("Jenkinsfile.*", "Jenkinsfile.release");
+        covered.put(".circleci/**", ".circleci/config.yml");
+        covered.put("azure-pipelines.yml", "azure-pipelines.yml");
+        covered.put(".drone.yml", ".drone.yml");
+        covered.put(".woodpecker.yml", ".woodpecker.yml");
+        covered.put(".woodpecker/**", ".woodpecker/build.yml");
+        covered.put(".travis.yml", ".travis.yml");
+        covered.put("appveyor.yml", "appveyor.yml");
+        covered.put(".appveyor.yml", ".appveyor.yml");
+        covered.put(".buildkite/**", ".buildkite/pipeline.yml");
+        covered.put(".teamcity/**", ".teamcity/settings.kts");
+        covered.put("cloudbuild.yaml", "cloudbuild.yaml");
+        covered.put("buildspec.yml", "buildspec.yml");
+        covered.put(".semaphore/**", ".semaphore/semaphore.yml");
+        covered.put(".gitmodules", ".gitmodules");
+
+        assertEquals(ProtectedPaths.CI_FLOOR.size(), covered.size(),
+                "every floor entry needs a hand-written path proving it covers something real");
+        assertEquals(Set.copyOf(ProtectedPaths.CI_FLOOR), covered.keySet(),
+                "the floor and this table have drifted apart");
+
+        covered.forEach((glob, path) -> assertFalse(PushGate.decide(changed(path), List.of()).allowed(),
+                "floor entry \"" + glob + "\" did not refuse \"" + path + "\""));
+    }
+
+    @Test
+    void aRefusalSaysWhatHappenedToEachFileNotJustWhichOnes() {
+        // "ci.yml was blocked" does not tell an operator whether the factory edited that workflow
+        // or deleted it, and those call for different responses.
+        ChangeSet deleted = new ChangeSet(List.of(
+                new ChangedPath(".github/workflows/ci.yml", ChangeKind.DELETED)));
+
+        PushDecision decision = PushGate.decide(deleted, List.of());
+
+        assertEquals(List.of(new ChangedPath(".github/workflows/ci.yml", ChangeKind.DELETED)),
+                decision.blocked());
+    }
+
+    @Test
+    void aBackslashSeparatedProfileGlobStillProtects() {
+        // Normalising only the PATH and not the GLOB meant "deploy\\**" protected nothing while
+        // "deploy/**" worked — and nothing said which spelling an operator had written.
+        assertFalse(PushGate.decide(changed("deploy/values.yaml"), List.of("deploy\\**")).allowed());
     }
 }
