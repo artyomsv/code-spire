@@ -89,6 +89,27 @@ while being a single snapshot. The same honest shape as ADR-026's symbol index, 
 cannot be measured on the day it ships; that is written into the exit criteria rather than
 discovered later.
 
+> **Amended 2026-09-01 — half of that premise was wrong, and it was never measured.** An operator
+> asked why Analytics read zero on a deployment whose reviews list plainly showed findings, and the
+> database answered: **33 reviews, 52 findings, 6 repositories — and verdicts on 14 of them.**
+> `reconciliation_json` keeps the ADR-019 verdicts for every review that ran a second round, so "no
+> verdicts" described a case that does not exist once a repository has any re-review traffic at all.
+> The paragraph above reasoned about the data instead of reading it.
+>
+> `FindingBackfill` now recovers, once, what the read model still holds: the finding, its severity,
+> its location, its repository, whether it was posted, and its verdict where one was reconciled. The
+> half of the premise that survived is what it refuses to invent. **Category** stays null — the
+> field did not exist, and null already means "the model was not asked". **The round** stays
+> `BACKFILL_ROUND` (0, reserved and below the 1 that `recordGenerated` enforces), with
+> `verdict_round` null, so these rows never enter *median rounds to fix* — filling both from one
+> snapshot would make that tile compute `1.0` forever, confidently, which is the concrete harm the
+> original decision was protecting against and the reason it was right to name it.
+>
+> The lesson is narrower than "backfill after all": an empty screen on a deployment that has plainly
+> done work reads as data loss, and the argument for leaving it empty had never been checked against
+> a database. Refusing to fabricate history and refusing to show history that exists are different
+> decisions, and this one had quietly become the second.
+
 **Analytics ships with the projection, not after it.** It is the only way to tell a correct
 projection from a wrong one, because a bad number is visible immediately and a bad row is not —
 ADR-023's sequence, where building the ledger and reading it back is what exposed four separate
