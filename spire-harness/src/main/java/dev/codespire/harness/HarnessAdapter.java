@@ -20,6 +20,12 @@ public interface HarnessAdapter {
 
     HarnessCapabilities capabilities();
 
+    /**
+     * How this arm receives the prompt. The worker must honour it: a {@link PromptDelivery#STDIN}
+     * arm whose stdin nobody writes runs, produces nothing and exits cleanly.
+     */
+    PromptDelivery promptDelivery();
+
     List<String> command(HarnessInvocation invocation);
 
     Map<String, String> environment(HarnessInvocation invocation);

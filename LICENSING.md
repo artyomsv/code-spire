@@ -27,6 +27,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-context-code` | Apache-2.0 | Repository code context provider (ADR-026). |
 | `spire-llm` | Apache-2.0 | Reference LLM provider. |
 | `spire-harness` | Apache-2.0 | The agent-execution SPI. Every harness arm compiles against it (ADR-029). |
+| `spire-harness-codex` | Apache-2.0 | Reference harness arm — the worked example a second arm copies. |
 | `spire-arch` | Apache-2.0 | Build-time architecture check (ADR-020). Tooling, not product. |
 | **`spire-gateway`** | **FSL-1.1-ALv2** | Deployable service. |
 | **`spire-orchestrator`** | **FSL-1.1-ALv2** | Deployable service — the deciders, sagas, event store and dashboard. This is the product. |

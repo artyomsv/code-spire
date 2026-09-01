@@ -66,13 +66,21 @@ public abstract class HarnessAdapterContract {
 
     @Test
     void anOrdinaryPromptStillReachesTheHarness() {
-        // Guards the guard: an arm could satisfy the rule above by dropping the prompt entirely.
+        // Guards the guard: an arm could satisfy the rule above by dropping the prompt entirely,
+        // which passes every hostile-prompt case and runs the agent with no instructions.
         List<String> argv = adapter().command(invocation("fix the flaky test", Map.of()));
 
-        boolean carried = argv.contains("fix the flaky test");
-        assertTrue(carried || argv.contains("--"),
-                "the prompt must reach the harness — as a post-'--' argument, or by stdin/file with "
-                        + "the arm documenting which. argv was: " + argv);
+        switch (adapter().promptDelivery()) {
+            case ARGUMENT -> {
+                assertTrue(argv.contains("--"),
+                        "an ARGUMENT arm must mark end-of-options before the prompt: " + argv);
+                assertEquals("fix the flaky test", argv.get(argv.size() - 1),
+                        "an ARGUMENT arm's prompt is argv's final element: " + argv);
+            }
+            case STDIN -> assertFalse(argv.contains("fix the flaky test"),
+                    "a STDIN arm must not ALSO place the prompt in argv — it would be parsed as an "
+                            + "option and would defeat the reason for choosing stdin: " + argv);
+        }
     }
 
     @Test

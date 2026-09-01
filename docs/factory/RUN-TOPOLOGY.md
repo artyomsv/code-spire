@@ -384,10 +384,49 @@ that reports only at the end, it captures nothing — and records UNKNOWN, hones
 Costs nothing to build, and it means the answer to "does Codex report incrementally" changes how much
 data we get rather than whether the mechanism exists.
 
-### Status
+### Measured — 2026-09-01, codex-cli 0.146.0
 
-Not a blocker. Worth measuring during Task 2's live-stream capture and writing down here, alongside
-the real event-type list.
+**Usage is reported per turn, on `turn.completed`, and each report is that turn's cumulative
+totals rather than an increment.** So a run killed mid-turn loses only the turn in flight, and the
+`/handoff` mechanism above captures the rest. A multi-turn run therefore yields near-complete
+telemetry, and `usage()` takes the **last** report — summing them would multiply a run's totals by
+roughly its turn count.
+
+The real event vocabulary, captured from two live runs rather than read from documentation:
+
+| Envelope `type` | Nested `item.type` | Carries |
+|---|---|---|
+| `thread.started` | — | `thread_id` |
+| `turn.started` | — | nothing |
+| `item.started` | `command_execution` | `command`, `aggregated_output`, `exit_code` (null while running), `status` |
+| `item.completed` | `command_execution` | same, with a real `exit_code` |
+| `item.completed` | `agent_message` | `text` |
+| `turn.completed` | — | `usage{input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens}` |
+| `error` | — | `message` (documented envelope; not observed in these runs) |
+
+**Three things this overturned in the M0 plan**, each of which would have shipped as a silent defect:
+
+- **The planned usage envelope does not exist.** Task 2 specified `{"type":"token_count",…}`.
+  `parse` written to that would have extracted usage from *no run at all* — the ledger recording
+  UNKNOWN forever while the feature looked installed.
+- **`command_execution` arrives twice**, started and completed. Mapping both to one event kind
+  doubles every shell command on an operator's timeline.
+- **Cached tokens are a subset, and the numbers are large.** One measured turn reported
+  `input_tokens: 14064` of which `cached_input_tokens: 9984`. Recording both raw gives 24048 for a
+  call that used 14064 — a 71% overstatement, worst on the runs that were cheapest.
+  `TokenUsageMapper.openAi` in spire-llm already subtracts for this reason; `CodexAdapter` follows it.
+
+**Two limits left open, deliberately.** Codex reports **no total**, so the independent cross-check
+`TokenUsageMapper` performs against `totalTokenCount()` is unavailable here — a mis-partition cannot
+be caught by arithmetic, only by a contradiction between the vendor's own fields. And
+`cache_write_input_tokens` is treated as *additional* to input rather than a subset of it, matching
+what the name describes and how Anthropic reports the same concept; every run observed so far
+reported zero, so measurement has not ruled out the alternative. A run with a non-zero cache write
+would settle it.
+
+**Version note.** The plan states its flag set was verified against codex-cli **0.152.0**; the
+binary available for this measurement was **0.146.0**. Every flag the adapter uses was re-checked
+against `codex exec --help` on 0.146.0 and is present. `--ask-for-approval` is absent on both.
 
 ---
 

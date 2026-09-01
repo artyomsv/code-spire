@@ -161,6 +161,7 @@ val fastTestModules = listOf(
     "spire-context-gitlab",
     "spire-context-code",
     "spire-harness",
+    "spire-harness-codex",
 )
 
 val serviceTestModules = listOf(
