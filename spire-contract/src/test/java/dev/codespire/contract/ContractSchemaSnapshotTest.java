@@ -2,10 +2,12 @@ package dev.codespire.contract;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import dev.codespire.contract.command.ActionCommand;
+import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
 // RecordCommand is imported for the javadoc on ROOTS that explains why it is excluded.
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.event.RunResult;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -55,7 +57,8 @@ class ContractSchemaSnapshotTest {
      * golden" and stops being read.
      */
     private static final List<Class<?>> ROOTS =
-            List.of(IntegrationEvent.class, DomainEvent.class, ActionCommand.class);
+            List.of(IntegrationEvent.class, DomainEvent.class, ActionCommand.class,
+                    RunCommand.class, RunResult.class);
 
     /**
      * The roots that MUST carry {@code @JsonSubTypes}, named explicitly rather than discovered.
@@ -64,7 +67,8 @@ class ContractSchemaSnapshotTest {
      * orchestrator's {@code EventTypes} registry, guarded there by {@code EventTypesCoverageTest}.
      */
     private static final List<Class<?>> KAFKA_ROOTS =
-            List.of(IntegrationEvent.class, ActionCommand.class);
+            List.of(IntegrationEvent.class, ActionCommand.class,
+                    RunCommand.class, RunResult.class);
 
     @Test
     void wireShapeMatchesTheRecordedSnapshot() throws IOException {
