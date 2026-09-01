@@ -4,21 +4,17 @@ quarkus:
   datasource:
     db-kind: postgresql
     jdbc:
-      url: ${SPIRE_DB_URL:jdbc:postgresql://localhost:34432/spire}
-    username: ${POSTGRES_USER:spire}
-    password: ${POSTGRES_PASSWORD}
+      additional-jdbc-properties:
+        currentSchema: runworker
   flyway:
     migrate-at-start: true
-    schemas: runworker
+    # schema-per-service (ADR-011/DATA-MODEL): this worker owns ONLY run_claim and run_lease,
+    # in its own schema.
+    default-schema: runworker
+    create-schemas: true
   log:
     console:
-      json: false
-
-"%prod":
-  quarkus:
-    log:
-      console:
-        json: true
+      json: true
 
 mp:
   messaging:
@@ -52,3 +48,23 @@ mp:
         value:
           serializer: dev.codespire.runworker.RunResultSerializer
         waitForWriteCompletion: true
+
+# Dev: the single repo-root .env supplies POSTGRES_*; the broker is the compose Redpanda.
+"%dev":
+  quarkus:
+    log:
+      console:
+        json: false
+    datasource:
+      username: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      jdbc:
+        url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
+
+# Test: Dev Services boot Postgres and a broker automatically, so no URL is set here — supplying
+# one is what stops them starting, which surfaces as a connection refused rather than as config.
+"%test":
+  quarkus:
+    log:
+      console:
+        json: false
