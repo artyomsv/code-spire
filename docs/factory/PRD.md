@@ -112,9 +112,14 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 - **FR-F12 — Credential pool with rotation [M1].** An operator may register several credentials for
   one harness. On quota exhaustion or rate limiting the pool rotates to the least-recently-exhausted
   member. Exhaustion of the whole pool is a first-class refusal naming when capacity returns.
-- **FR-F13 — Bring-your-own image [M0].** The agent image is a published contract any image may
-  satisfy, verifiable by a conformance command. Shipped images are reference implementations, never
-  mandatory. Image references are digest-pinnable for air-gapped mirrors.
+- **FR-F13 — Bring-your-own image [M0 / M1].** The agent image is a published contract any image
+  may satisfy, verifiable by a conformance command. Shipped images are reference implementations,
+  never mandatory. Image references are digest-pinnable for air-gapped mirrors. **Split across two
+  milestones, on purpose:** M0 delivers the half the walking skeleton needs — `agentImage` is a
+  per-run parameter carried on `ExecuteRun` and honoured by the runtime, a digest reference works,
+  and the reference image's entrypoint contract (`deploy/agent/spire-agent-entrypoint.sh`: prompt on
+  stdin, commits to bundles on `/handoff`, `DONE` last) is what any image must provide. The written
+  image contract and `spire agent-image verify` are M1, as ROADMAP.md lists them.
 - **FR-F14 — Enterprise image environment [M1].** The contract requires corporate CA bundles, proxy
   variables and private registry credentials to be honoured, all injected at run time, never baked
   into an image.

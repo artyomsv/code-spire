@@ -469,9 +469,17 @@ ENV HOME=/home/agent SPIRE_WORKSPACE=/workspace
 WORKDIR /workspace
 ```
 
-Still to add before M0 ships: the **autosave loop** (§5), the **`git bundle` handoff step** (§4.1),
-and the **repository's own toolchain** (§1.4) — the last of which is the operator's image to build
-`FROM` this one.
+The shipped image is `deploy/agent/codex/Dockerfile`, which is this appendix plus the entrypoint.
+**`deploy/agent/spire-agent-entrypoint.sh` is the image contract in executable form**: it runs the
+harness argv it is given with the prompt on stdin (from `$SPIRE_PROMPT`, written to a file outside
+the working tree and unset before the harness starts, so an autosave can never commit it), commits
+anything dirty and bundles `$SPIRE_BASE_COMMIT..HEAD` onto `/handoff` every `$SPIRE_AUTOSAVE_SECONDS`
+(§5) and once more when the harness exits (§4.1), and writes `DONE` last. Bundles are written to a
+dotted temp name and renamed, so a half-written file never matches `*.bundle`. The mount points are
+created in the image owned by the agent user, because a fresh named volume inherits the ownership of
+the directory it is mounted over — without that the volume is root's and the agent cannot write its
+own workspace. The **repository's own toolchain** (§1.4) remains the operator's image to build `FROM`
+this one.
 
 Subscription auth is supplied by copying the operator's `auth.json` into `$HOME/.codex/` at start —
 mounted read-only from the registry and copied, because Codex refreshes the token and needs the file
