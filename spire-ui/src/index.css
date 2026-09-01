@@ -1496,3 +1496,23 @@
     padding-left: 12px;
   }
 }
+
+/* ---- the session menu: who is signed in, and how to stop being them ---- */
+@layer components {
+  /* Reuses .attention's positioning and .attention-panel's chrome -- the same popover, so it
+     should not look like a second kind of thing. */
+  /* No box of its own: it rides on .attention for positioning, and this only marks the element so
+     the pairing is visible in the markup rather than looking like a stray .attention. */
+  .session-menu { display: inline-flex; }
+  .session-panel { width: min(300px, calc(100vw - 32px)); padding: 12px 13px; }
+
+  .session-who { display: flex; flex-direction: column; gap: 2px; }
+  .session-name { font-size: 13px; font-weight: 600; color: var(--text); word-break: break-word; }
+  .session-roles { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
+
+  /* The operator id an admin needs to link an account, on the one screen that knows it. */
+  .session-subject { margin-top: 9px; font-size: 11.5px; color: var(--text-2); word-break: break-all; }
+
+  .session-signout { margin-top: 12px; width: 100%; justify-content: center; }
+  .session-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--text-3); }
+}

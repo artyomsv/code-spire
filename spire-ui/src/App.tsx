@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Brain, FileText, GitPullRequest, LogOut, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Brain, FileText, GitPullRequest, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
+import SessionMenu from './components/SessionMenu';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
@@ -21,7 +22,7 @@ import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
 import { useLiveReviews } from './useLiveReviews';
 import { useMe } from './hooks/useMe';
-import { canAdminister, ensureServiceSessions, goToFullLogin, goToLogout, needsLogin } from './auth';
+import { canAdminister, ensureServiceSessions, goToFullLogin, needsLogin } from './auth';
 
 function toggleTheme() {
   const root = document.documentElement;
@@ -321,13 +322,11 @@ export default function App() {
             </Tooltip>
           )}
           <AttentionBell />
-          {me?.authEnabled && me.authenticated && (
-            <Tooltip label={`Sign out ${me.user}`}>
-              <button className="iconbtn" aria-label={`Sign out ${me.user}`} onClick={goToLogout}>
-                <LogOut size={16} />
-              </button>
-            </Tooltip>
-          )}
+          {/* Replaced a bare sign-out icon that rendered only when `authEnabled && authenticated`.
+              It answered neither question an operator actually has: with authentication off it
+              showed nothing at all, so there was no way to tell what mode the dashboard was in, and
+              with it on it never named the account -- the identity lived in a tooltip. */}
+          <SessionMenu me={me} />
           <Tooltip label="Toggle theme">
             <button className="iconbtn" id="themeBtn" aria-label="Toggle theme" onClick={toggleTheme}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
