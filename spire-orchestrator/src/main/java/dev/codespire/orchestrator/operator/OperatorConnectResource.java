@@ -111,8 +111,20 @@ public class OperatorConnectResource {
                 .orElseThrow(() -> new NotFoundException(
                         "No OAuth app is configured for " + type + " — an admin sets one up first."));
 
+        String subject = OidcSubjects.of(identity);
+        if (subject.isBlank()) {
+            // Nothing to attach the proof TO. This is the %dev profile, where authentication is off
+            // and every caller is anonymous.
+            //
+            // Refused rather than allowed to write a blank-keyed row, because that row is
+            // unreadable by construction: `OperatorIdentities.forSubject` declines a blank subject,
+            // and rightly — matching one would let an unauthenticated caller inherit somebody's
+            // mapping. The result was a contradiction on one screen. The Operators table listed the
+            // link, "My activity" said the identity was not linked, and both were correct.
+            return back("noidentity");
+        }
         String redirectUri = callbackUri(uriInfo, type);
-        String state = states.start(OidcSubjects.of(identity), type, redirectUri);
+        String state = states.start(subject, type, redirectUri);
         return Response.seeOther(URI.create(oauth.authorizeUrl(app, state, redirectUri))).build();
     }
 
@@ -147,6 +159,11 @@ public class OperatorConnectResource {
         ConnectStates.Pending attempt = pending.get();
         if (!attempt.oidcSubject().equals(OidcSubjects.of(identity)) || !attempt.providerType().equals(type)) {
             return back("mismatch");
+        }
+        // The same refusal as `start`, repeated because this is the write's own boundary. A state
+        // issued before that guard existed would otherwise still redeem into an unreadable row.
+        if (attempt.oidcSubject().isBlank()) {
+            return back("noidentity");
         }
         if (code == null || code.isBlank()) {
             return back("nocode");

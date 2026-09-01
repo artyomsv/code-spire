@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { ConnectOptions, connectOutcome } from './ConnectOptions';
 import * as api from '../api';
+import * as auth from '../auth';
 
 /**
  * An operator proving their own SCM account (P4 / FR-11).
@@ -58,6 +59,28 @@ describe('ConnectOptions', () => {
     expect(screen.getByText(/Settings → Operators/)).toBeTruthy();
   });
 
+  /**
+   * A sign-in proves WHOSE account it is, so with authentication off there is nothing to attach the
+   * proof to and the server refuses. Said before the click, not after: otherwise an operator visits
+   * the platform, authorizes a real application, and comes back to a decline.
+   */
+  it('says authentication is off rather than offering a sign-in that cannot work', async () => {
+    vi.spyOn(api, 'fetchConnectablePlatforms').mockResolvedValue([
+      { providerType: 'github', configured: true, linked: false, authorId: '' },
+    ]);
+    vi.spyOn(auth, 'fetchMe').mockResolvedValue({
+      authEnabled: false,
+      authenticated: false,
+      user: '',
+      roles: [],
+    });
+
+    render(<ConnectOptions />);
+
+    expect(await screen.findByText(/Authentication is off in this deployment/)).toBeTruthy();
+    expect(screen.queryByText(/Connect my github account/)).toBeNull();
+  });
+
   it('reports a failed load instead of looking like nothing is available', async () => {
     vi.spyOn(api, 'fetchConnectablePlatforms').mockRejectedValue(new Error('TEST-UNREACHABLE'));
 
@@ -80,6 +103,7 @@ describe('connectOutcome', () => {
     expect(connectOutcome('refused')?.ok).toBe(false);
     expect(connectOutcome('noaccount')?.ok).toBe(false);
     expect(connectOutcome('unconfigured')?.ok).toBe(false);
+    expect(connectOutcome('noidentity')?.ok).toBe(false);
   });
 
   /**

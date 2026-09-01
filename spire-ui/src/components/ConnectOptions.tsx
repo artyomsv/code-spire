@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 // meaning for that name in a file that also routes would be read wrong at a glance.
 import { Link2 as LinkIcon } from 'lucide-react';
 import { ConnectablePlatform, connectStartUrl, fetchConnectablePlatforms } from '../api';
+import { useMe } from '../hooks/useMe';
 
 /**
  * The operator proving, themselves, which SCM account is theirs (FR-11).
@@ -18,6 +19,7 @@ import { ConnectablePlatform, connectStartUrl, fetchConnectablePlatforms } from 
 export function ConnectOptions() {
   const [platforms, setPlatforms] = useState<ConnectablePlatform[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { me } = useMe();
 
   useEffect(() => {
     fetchConnectablePlatforms()
@@ -34,6 +36,18 @@ export function ConnectOptions() {
   }
   if (platforms === null) {
     return <p className="prov-note">Loading…</p>;
+  }
+
+  // A sign-in proves WHOSE account it is, so with authentication off there is nothing to attach the
+  // proof to and the server refuses. Said here rather than left to that refusal: the operator would
+  // otherwise click a button, visit the platform, authorize, and come back to a decline.
+  if (me && !me.authEnabled) {
+    return (
+      <p className="prov-note">
+        Authentication is off in this deployment, so there is no operator identity to attach an SCM
+        account to. Start the stack with the identity-provider overlay to use this.
+      </p>
+    );
   }
 
   const available = platforms.filter((p) => p.configured && !p.linked);
@@ -79,6 +93,11 @@ export function connectOutcome(code: string | null): { text: string; ok: boolean
       return { text: 'The platform refused the sign-in. An admin should check the application’s client id, secret and redirect address.', ok: false };
     case 'unconfigured':
       return { text: 'No sign-in application is set up for that platform yet.', ok: false };
+    case 'noidentity':
+      return {
+        text: 'This deployment has authentication switched off, so there is no operator identity to link an account to.',
+        ok: false,
+      };
     case 'noaccount':
       return { text: 'That sign-in returned no user account, so there was nothing to link.', ok: false };
     default:

@@ -47,7 +47,7 @@ class OperatorConnectResourceTest {
     void clean() {
         exec("DELETE FROM scm_oauth_app WHERE provider_type = 'github'");
         exec("DELETE FROM oauth_connect_state WHERE oidc_subject LIKE 'TEST-SUBJECT-%'");
-        exec("DELETE FROM operator_identity WHERE oidc_subject LIKE 'TEST-SUBJECT-%'");
+        exec("DELETE FROM operator_identity WHERE oidc_subject LIKE 'TEST-SUBJECT-%' OR oidc_subject = ''");
     }
 
     @Test
@@ -159,6 +159,46 @@ class OperatorConnectResourceTest {
                 .then().statusCode(303).header("Location", containsString("connect=expired"));
     }
 
+    /**
+     * A caller whose subject is blank has nothing to attach the proof to, and the link that would be
+     * written is unreadable by construction: {@code OperatorIdentities.forSubject} declines a blank
+     * subject — rightly, since matching one would let an unauthenticated caller inherit somebody
+     * else's mapping.
+     *
+     * <p><b>Found on a live run.</b> A connect completed against real GitHub and stored a link keyed
+     * on {@code ''}. The Operators table listed it, "My activity" said the identity was not linked,
+     * and both were correct — which is the worst kind of wrong, because each screen looks right on
+     * its own.
+     *
+     * <p>The blank principal here stands in for the real cause, an anonymous caller on a deployment
+     * running with authentication off. That state cannot be expressed with {@code @TestSecurity},
+     * and the permission policy it needs is build-time fixed so no test profile can open it — but
+     * the guard's condition is blankness, and this produces exactly that.
+     */
+    @Test
+    @TestSecurity(user = " ", roles = "spire-viewer")
+    void refusesToStartASignInWhenTheCallerHasNoIdentity() {
+        apps.save(new ScmOAuthApps.Input("github", null, null, "TEST-CLIENT", "TEST-SECRET"));
+
+        given().redirects().follow(false)
+                .when().get("/api/operator-connect/github/start")
+                .then().statusCode(303).header("Location", containsString("connect=noidentity"));
+    }
+
+    /** The same refusal at the write's own boundary, so a state issued earlier cannot still redeem. */
+    @Test
+    @TestSecurity(user = " ", roles = "spire-viewer")
+    void refusesToLinkABlankSubjectEvenWithAValidState() {
+        apps.save(new ScmOAuthApps.Input("github", null, null, "TEST-CLIENT", "TEST-SECRET"));
+        String issuedBefore = states.start(" ", "github", "https://spire.example.invalid/cb");
+
+        given().redirects().follow(false)
+                .when().get("/api/operator-connect/github/callback?code=TEST-CODE&state=" + issuedBefore)
+                .then().statusCode(303).header("Location", containsString("connect=noidentity"));
+
+        assertEquals(0, blankSubjectLinks(), "a link nothing can read must never be written");
+    }
+
     /** Setting up an application is configuration, so its reads are admin-only like every registry. */
     @Test
     @TestSecurity(user = ALICE, roles = "spire-viewer")
@@ -195,6 +235,19 @@ class OperatorConnectResourceTest {
                 .body("{\"providerType\":\"github\",\"clientId\":\"x\",\"clientSecret\":\"\"}")
                 .when().post("/api/scm-oauth-apps")
                 .then().statusCode(400);
+    }
+
+    private int blankSubjectLinks() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT count(*) FROM operator_identity WHERE trim(oidc_subject) = ''")) {
+            try (var rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not count blank-subject links", e);
+        }
     }
 
     private int linkCount() {
