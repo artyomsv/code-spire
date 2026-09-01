@@ -217,6 +217,29 @@ class AnalyticsQueriesTest {
                 .noneMatch(a -> "TEST-AUTHOR-NAMELESS".equals(a.displayName())));
     }
 
+    /**
+     * The same {@code workspace/slug} on two platforms is two repositories, and the list must say so.
+     * Collapsing them would give one row whose badge could only name one platform — the collision
+     * this project has already been bitten by twice, arriving on the analytics index.
+     */
+    @Test
+    void listsASameNamedRepositoryOnTwoPlatformsAsTwoRows() {
+        seedReview("#901", "TEST-A", SLUG, "github");
+        seedReview("#902", "TEST-A", SLUG, "gitlab");
+        findings.recordGenerated(reviewId("#901"), 1, COMMIT,
+                List.of(finding("src/A.java", 1, Severity.MAJOR, FindingCategory.CORRECTNESS)));
+        findings.recordGenerated(reviewId("#902"), 1, COMMIT,
+                List.of(finding("src/A.java", 1, Severity.MAJOR, FindingCategory.CORRECTNESS)));
+
+        List<AnalyticsQueries.RepositoryRow> rows = queries.repositories().stream()
+                .filter(r -> r.repo().equals(WS + "/" + SLUG))
+                .toList();
+
+        assertEquals(2, rows.size(), "one row per platform, never one row for both");
+        assertTrue(rows.stream().anyMatch(r -> r.providerType().equals("github") && r.findings() == 1));
+        assertTrue(rows.stream().anyMatch(r -> r.providerType().equals("gitlab") && r.findings() == 1));
+    }
+
     /** Exactly one row per {@code (platform, id)} pair — the grouping the picker's keys rely on. */
     private static AnalyticsQueries.ObservedAuthor only(List<AnalyticsQueries.ObservedAuthor> authors,
                                                         String providerType, String authorId) {

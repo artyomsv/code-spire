@@ -1188,6 +1188,8 @@ export async function fetchAnalyticsOverview(): Promise<AnalyticsLens> {
  */
 export interface AnalyticsRepository {
   repo: string;
+  /** Always sent; the badge is shown only when the list spans more than one platform. */
+  providerType: string;
   reviews: number;
   findings: number;
 }

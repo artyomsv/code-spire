@@ -13,6 +13,7 @@ import {
   fetchMyActivity,
 } from '../api';
 import { ConnectOptions, connectOutcome } from './ConnectOptions';
+import { providerBadge } from '../render';
 
 /**
  * Three states, never two.
@@ -155,6 +156,46 @@ function Lens({ state }: { state: LoadState<AnalyticsLens> }) {
   );
 }
 
+/**
+ * Counts beside each name, not names alone. A bare `owner/name` was read as a pull-request title on
+ * a real deployment; a count of reviews next to it is what makes it read as the repository those
+ * reviews belong to.
+ *
+ * <p>The platform badge appears only when the list spans more than one. On a single-platform
+ * deployment every row would carry the same badge, which is a column of noise saying nothing; the
+ * moment a second platform appears it becomes the one thing that tells two same-named repositories
+ * apart — a collision this project has been bitten by twice.
+ */
+function RepositoryTable({ rows }: { rows: AnalyticsRepository[] }) {
+  const mixed = new Set(rows.map((row) => row.providerType)).size > 1;
+  return (
+    <table className="prov-table">
+      <thead>
+        <tr>
+          <th>Repository</th>
+          {mixed && <th>Platform</th>}
+          <th className="cell-r">Reviews</th>
+          <th className="cell-r">Findings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`${row.providerType}:${row.repo}`}>
+            <td>
+              <Link className="an-repo" to={`/analytics/${row.repo}`}>
+                {row.repo}
+              </Link>
+            </td>
+            {mixed && <td>{providerBadge(row)}</td>}
+            <td className="cell-r">{row.reviews}</td>
+            <td className="cell-r">{row.findings}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export function AnalyticsOverview() {
   const overview = useLoaded<AnalyticsLens>(fetchAnalyticsOverview, []);
   const repos = useLoaded<AnalyticsRepository[]>(fetchAnalyticsRepos, []);
@@ -181,28 +222,7 @@ export function AnalyticsOverview() {
             title on a real deployment; a count of reviews next to it is what makes it read as the
             repository those reviews belong to. */}
         {repos.kind === 'ready' && repos.value.length > 0 && (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Repository</th>
-                <th className="cell-r">Reviews</th>
-                <th className="cell-r">Findings</th>
-              </tr>
-            </thead>
-            <tbody>
-              {repos.value.map((row) => (
-                <tr key={row.repo}>
-                  <td>
-                    <Link className="an-repo" to={`/analytics/${row.repo}`}>
-                      {row.repo}
-                    </Link>
-                  </td>
-                  <td className="cell-r">{row.reviews}</td>
-                  <td className="cell-r">{row.findings}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <RepositoryTable rows={repos.value} />
         )}
       </div>
     </section>

@@ -153,7 +153,7 @@ describe('AnalyticsOverview', () => {
       breakdown: [],
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
-      { repo: 'TEST-WS/TEST-REPO', reviews: 5, findings: 12 },
+      { repo: 'TEST-WS/TEST-REPO', providerType: 'github', reviews: 5, findings: 12 },
     ]);
 
     render(
@@ -167,6 +167,52 @@ describe('AnalyticsOverview', () => {
     expect(within(row).getByText('12')).toBeTruthy();
     expect(screen.getByText('Repository')).toBeTruthy();
     expect(screen.getByText('Reviews')).toBeTruthy();
+  });
+
+  /**
+   * On a single-platform deployment a platform column is a column of identical badges saying
+   * nothing. It is withheld, and this pins that it IS withheld rather than merely blank.
+   */
+  it('shows no platform column when every repository is on the same platform', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({ totals: EMPTY_TOTALS, breakdown: [] });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-A', providerType: 'github', reviews: 2, findings: 3 },
+      { repo: 'TEST-WS/TEST-B', providerType: 'github', reviews: 1, findings: 1 },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('TEST-WS/TEST-A');
+    expect(screen.queryByText('Platform')).toBeNull();
+    expect(document.querySelector('.prov-badge')).toBeNull();
+  });
+
+  /**
+   * The moment a second platform appears the badge is the one thing that tells two same-named
+   * repositories apart — the collision this project has already met twice.
+   */
+  it('shows a platform badge on every row once the list spans more than one platform', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({ totals: EMPTY_TOTALS, breakdown: [] });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-SAME', providerType: 'github', reviews: 2, findings: 3 },
+      { repo: 'TEST-WS/TEST-SAME', providerType: 'gitlab', reviews: 1, findings: 1 },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    const rows = await screen.findAllByText('TEST-WS/TEST-SAME');
+    expect(rows).toHaveLength(2);
+    expect(screen.getByText('Platform')).toBeTruthy();
+    expect(screen.getByText('github')).toBeTruthy();
+    expect(screen.getByText('gitlab')).toBeTruthy();
   });
 
   it('says the review count is of reviews that recorded findings', async () => {

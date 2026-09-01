@@ -189,25 +189,33 @@ public class AnalyticsQueries {
      * otherwise: a slash-separated name with no figure next to it is ambiguous, and it only resolves
      * in favour of "repository" once a count of reviews sits beside it.
      */
-    public record RepositoryRow(String repo, long reviews, long findings) {
+    public record RepositoryRow(String repo, String providerType, long reviews, long findings) {
     }
 
+    /**
+     * Grouped by platform as well as by name. The same {@code workspace/slug} routinely exists on two
+     * platforms — this project has been bitten by that twice — and collapsing them would show one row
+     * whose badge could only name one of them. The interface shows the badge only when the list
+     * spans more than one platform; the data always carries it.
+     */
     public List<RepositoryRow> repositories() {
         List<RepositoryRow> repos = new ArrayList<>();
         String sql = """
                 SELECT s.workspace || '/' || s.slug AS repo,
+                       s.provider_type              AS provider_type,
                        count(DISTINCT s.review_id)  AS reviews,
                        count(f.id)                  AS findings
                   FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
                  WHERE s.archived_at IS NULL
-                 GROUP BY s.workspace, s.slug
-                 ORDER BY findings DESC, repo
+                 GROUP BY s.workspace, s.slug, s.provider_type
+                 ORDER BY findings DESC, repo, provider_type
                 """;
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                repos.add(new RepositoryRow(rs.getString("repo"), rs.getLong("reviews"), rs.getLong("findings")));
+                repos.add(new RepositoryRow(rs.getString("repo"), rs.getString("provider_type"),
+                        rs.getLong("reviews"), rs.getLong("findings")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("could not list analytics repositories", e);
