@@ -103,6 +103,14 @@ mp:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
           serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      run-commands-out:
+        connector: smallrye-kafka
+        topic: cs.run-commands
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
+        waitForWriteCompletion: true
     incoming:
       integration-in:
         connector: smallrye-kafka
@@ -126,6 +134,19 @@ mp:
           id: spire-orchestrator-results
         value:
           deserializer: dev.codespire.orchestrator.pipeline.IntegrationEventDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+      run-results-in:
+        connector: smallrye-kafka
+        topic: cs.run-results
+        group:
+          id: spire-orchestrator-run-results
+        value:
+          deserializer: dev.codespire.orchestrator.factory.RunResultDeserializer
         auto:
           offset:
             reset: latest

@@ -112,6 +112,10 @@ class CoreIsProviderNeutralTest {
                         + "operator configured, which is the point of them.");
         allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextKeyValidator.java",
                 "Composition root: maps a context type to the API path its connectivity check pings.");
+        allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/FactoryCloneUrls.java",
+                "Composition root: maps a provider's API base URL to its clone host. GitHub's cloud API "
+                        + "answers on api.github.com while clones go to github.com; a GHE server keeps "
+                        + "both on one host. That mapping is provider knowledge and this is its one home.");
         return Collections.unmodifiableMap(allowed);
     }
 
