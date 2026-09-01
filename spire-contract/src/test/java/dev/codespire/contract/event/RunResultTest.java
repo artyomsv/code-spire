@@ -68,7 +68,7 @@ class RunResultTest {
         // line to write. These are Tink ciphertext rather than plaintext, but a ciphertext in a log
         // is still a credential in a log: it survives rotation and it is attacker-collectable.
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun("run::github:a/b:s:1",
-                new RepoRef("a", "b"), "abc123", "spire/run_1", "fix the bug", "CODEX",
+                new RepoRef("a", "b"), "https://github.com/a/b.git", "main", "abc123", "spire/run_1", "fix the bug", "CODEX",
                 "gpt-5.6", "spire/agent:1", List.of("deploy/**"), 1800,
                 "TINK-CIPHERTEXT-SCM", "TINK-CIPHERTEXT-HARNESS");
 
@@ -83,7 +83,7 @@ class RunResultTest {
     @Test
     void anExecuteRunNeedsAWallClock() {
         assertThrows(IllegalArgumentException.class, () -> new RunCommand.ExecuteRun("r",
-                new RepoRef("a", "b"), "abc", "br", "p", "CODEX", "m", "img", List.of(), 0,
+                new RepoRef("a", "b"), "https://github.com/a/b.git", "main", "abc", "br", "p", "CODEX", "m", "img", List.of(), 0,
                 null, null));
     }
 
@@ -91,7 +91,7 @@ class RunResultTest {
     void bothRunCommandsCarryTheirRunId() {
         // The reason this is a separate hierarchy from ActionCommand, which mandates reviewId().
         assertEquals("r1", new RunCommand.CancelRun("r1", "operator asked").runId());
-        assertEquals("r2", new RunCommand.ExecuteRun("r2", new RepoRef("a", "b"), "abc", "br",
+        assertEquals("r2", new RunCommand.ExecuteRun("r2", new RepoRef("a", "b"), "https://github.com/a/b.git", "main", "abc", "br",
                 "p", "CODEX", "m", "img", List.of(), 60, null, null).runId());
     }
 }

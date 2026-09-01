@@ -37,6 +37,7 @@ COPY spire-llm/build.gradle.kts spire-llm/
 COPY spire-orchestrator/build.gradle.kts spire-orchestrator/
 COPY spire-review-worker/build.gradle.kts spire-review-worker/
 COPY spire-publisher/build.gradle.kts spire-publisher/
+COPY spire-run-worker/build.gradle.kts spire-run-worker/
 COPY spire-runtime/build.gradle.kts spire-runtime/
 COPY spire-runtime-docker/build.gradle.kts spire-runtime-docker/
 COPY spire-scm-bitbucket/build.gradle.kts spire-scm-bitbucket/

@@ -36,6 +36,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | **`spire-orchestrator`** | **FSL-1.1-ALv2** | Deployable service — the deciders, sagas, event store and dashboard. This is the product. |
 | **`spire-review-worker`** | **FSL-1.1-ALv2** | Deployable service. |
 | **`spire-publisher`** | **FSL-1.1-ALv2** | Deployable: the sidecar that gates and pushes. The only part of a run unit holding a write credential. |
+| **`spire-run-worker`** | **FSL-1.1-ALv2** | Deployable service: dispatches run units and reports results. |
 | **`spire-ui`** | **FSL-1.1-ALv2** | The dashboard front end. |
 | **`spire-e2e`** | **FSL-1.1-ALv2** | Tests only, and they drive the deployables end to end. It ships no reusable surface a plugin author could build against, so the permissive case does not apply. |
 

@@ -1,0 +1,54 @@
+quarkus:
+  http:
+    port: ${SPIRE_RUN_WORKER_HTTP_PORT:34083}
+  datasource:
+    db-kind: postgresql
+    jdbc:
+      url: ${SPIRE_DB_URL:jdbc:postgresql://localhost:34432/spire}
+    username: ${POSTGRES_USER:spire}
+    password: ${POSTGRES_PASSWORD}
+  flyway:
+    migrate-at-start: true
+    schemas: runworker
+  log:
+    console:
+      json: false
+
+"%prod":
+  quarkus:
+    log:
+      console:
+        json: true
+
+mp:
+  messaging:
+    incoming:
+      run-commands-in:
+        connector: smallrye-kafka
+        topic: cs.run-commands
+        group:
+          id: spire-run-worker
+        value:
+          deserializer: dev.codespire.runworker.RunCommandDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+        # Unlike the review worker, this channel acks on RECEIPT. An hour-long run would outlive
+        # any sane unprocessed-record threshold, and that exact pairing once stalled a consumer
+        # which re-stalled on every restart and needed a manual offset seek. Idempotency therefore
+        # lives in runworker.run_claim, not in Kafka.
+        max:
+          poll:
+            records: 1
+    outgoing:
+      run-results-out:
+        connector: smallrye-kafka
+        topic: cs.run-results
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.RunResultSerializer
+        waitForWriteCompletion: true
