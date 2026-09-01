@@ -79,6 +79,9 @@ describe('ScmConnections', () => {
 
     expect(await screen.findByText(/once per platform/)).toBeTruthy();
     expect(screen.getByText(/not the bot/i)).toBeTruthy();
+    // Read beside Settings -> Webhooks, which DOES need a public URL, so the difference has to be
+    // stated rather than left to be inferred: a sign-in needs nothing inbound at all.
+    expect(screen.getByText(/No tunnel needed/i)).toBeTruthy();
 
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
     expect(await screen.findByText(/Register it under the account that owns the repositories/))

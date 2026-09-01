@@ -1519,6 +1519,18 @@ resulting claim could not be checked by anything. This is the platform answering
 
 1. Stack up with authentication ON (`docker-compose.idp.yml`, Mode J's prerequisites). The flow is
    meaningless with auth off: there is no operator identity to link to.
+
+   **No tunnel, unlike a webhook.** The `--profile tunnel` service exists because the SCMs *push* to
+   us and cannot reach a private compose network. A sign-in is the other direction on both legs: the
+   platform redirects the operator's own browser to the callback, and this deployment calls *out* to
+   the platform's token endpoint. Nothing has to reach you from the internet, and GitHub, GitLab and
+   Bitbucket all accept a `localhost` callback URL.
+
+   That tunnel is also the wrong URL to reuse if you tried: it forwards to `gateway:39281`, which
+   serves `/webhooks/*` and has no callback route — the redirect would 404. If you genuinely need a
+   public address (signing in from another device), tunnel the **UI** on `39285` instead, since that
+   is the single origin every service answers behind, and set `SPIRE_PUBLIC_HOST` so the address
+   this page shows matches the one you registered.
 2. Register an OAuth application on the platform you are testing. **One per platform for the whole
    deployment, not one per person**, and it goes on the account that owns your repositories — not on
    a repository, and not on the bot account whose token the provider registry already holds. That

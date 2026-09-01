@@ -73,6 +73,12 @@ export function ScmConnections() {
           <strong>This is not the bot’s credential.</strong> That one proves the reviewer’s
           identity; this one lets a person prove their own.
         </li>
+        <li>
+          <strong>No tunnel needed, unlike a webhook.</strong> Nothing has to reach this deployment
+          from the internet: the platform redirects the operator’s own browser to the address below,
+          and this deployment calls out to the platform. A <code>localhost</code> address works, and
+          all three platforms accept one.
+        </li>
       </ul>
 
       {error && (
@@ -166,7 +172,7 @@ function AppRow({
           <CopyField
             label="Redirect address to register"
             value={app.redirectUri}
-            hint="Paste this into the application on the platform. It must match exactly — scheme, host, port and path."
+            hint="Paste this into the application on the platform. It must match exactly — scheme, host, port and path — and it is whatever address your browser reached this page on, so it stays correct behind a proxy without a second setting."
           />
 
           {guide && <SetupChecklist providerType={app.providerType} />}
