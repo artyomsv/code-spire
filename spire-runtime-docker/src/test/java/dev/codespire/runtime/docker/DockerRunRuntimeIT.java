@@ -161,11 +161,30 @@ class DockerRunRuntimeIT {
                 256L * 1024 * 1024, 1_000_000_000L, Duration.ofMinutes(1));
 
         assertThrows(IllegalStateException.class, () -> runtime.create(spec));
-
-        // Left behind on purpose and reachable by label, so the watchdog can reclaim it and an
-        // operator can read why the clone failed.
         started.add(new RunHandle("run_unit7", "unknown"));
-        runtime.destroy(new RunHandle("run_unit7", "unknown"));
+
+        // Asserted through discoverOrphans, not by hand-building a handle. The version this
+        // replaces did the latter and was therefore vacuous: discoverOrphans filtered on
+        // role=agent, and on the init-failure path NO agent container is ever created — so the
+        // unit was undiscoverable, and the init container kept the clone token in its environment
+        // forever. The test asserted the comment rather than the behaviour.
+        assertTrue(runtime.discoverOrphans().stream().anyMatch(h -> h.runId().equals("run_unit7")),
+                "the watchdog must be able to reach a unit whose init failed");
+    }
+
+    @Test
+    void anAgentThatOutlivesItsWallClockIsActuallyStopped() throws Exception {
+        // The clock has to STOP the run, not merely stop waiting for it. Returning salvageFailed
+        // and leaving the agent alive was the previous behaviour, so a hung run kept its memory,
+        // its CPU reservation and its model credential — the limit bounded one method and nothing
+        // else, while the commit message claimed it was enforced.
+        RunHandle handle = start(unit("run_unit8", "sleep 300", "sleep 300", Duration.ofSeconds(3)));
+
+        assertFalse(runtime.salvage(handle).salvaged());
+
+        String state = runtime.client().inspectContainerCmd(handle.providerRunId())
+                .exec().getState().getStatus();
+        assertFalse("running".equals(state), "the agent is still running after its clock expired");
     }
 
     @Test

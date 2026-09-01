@@ -27,6 +27,15 @@ public record Finalization(int exitCode, boolean salvaged, String detail) {
             throw new IllegalArgumentException(
                     "a failed salvage observed no exit code, so it cannot report " + exitCode);
         }
+        if (salvaged && exitCode == NOT_OBSERVED) {
+            // Guarded on BOTH sides, or the sentinel is ambiguous: a salvaged run whose real status
+            // is -1 would be byte-identical to one never observed, and any consumer testing
+            // exitCode == NOT_OBSERVED reads a real outcome as "never happened". Not hypothetical —
+            // Docker reports State.ExitCode as -1 for a container that never started, and that
+            // path arrives here as a salvaged unit.
+            throw new IllegalArgumentException(
+                    "a salvaged run observed an exit code, so it cannot report NOT_OBSERVED");
+        }
     }
 
     public static Finalization salvaged(int exitCode, String detail) {

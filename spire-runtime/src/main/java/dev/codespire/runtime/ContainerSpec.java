@@ -1,8 +1,10 @@
 package dev.codespire.runtime;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * One container in a run unit.
@@ -26,6 +28,16 @@ public record ContainerSpec(String image, List<String> argv, Map<String, String>
         mounts = List.copyOf(Objects.requireNonNull(mounts, "mounts"));
         if (image.isBlank()) {
             throw new IllegalArgumentException("a container must name an image");
+        }
+
+        // One path, one mount. A List permits duplicates, which re-opens the hole the typed
+        // read-only flag closed: appending a writable /handoff after the read-only one leaves an
+        // arm that dedups last-wins with a writable /handoff and no error anywhere.
+        Set<String> paths = new LinkedHashSet<>();
+        for (Mount mount : mounts) {
+            if (!paths.add(mount.path())) {
+                throw new IllegalArgumentException("duplicate mount path: " + mount.path());
+            }
         }
     }
 

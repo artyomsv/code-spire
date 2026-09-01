@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
+import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
@@ -27,9 +28,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -70,6 +73,9 @@ public final class DockerRunRuntime implements RunRuntime {
 
     /** How long the publisher is given to drain after the agent exits, before it is stopped. */
     private static final int PUBLISHER_DRAIN_SECONDS = 30;
+
+    /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
+    private static final long PIDS_LIMIT = 512;
 
     private final DockerClient client;
 
@@ -167,6 +173,11 @@ public final class DockerRunRuntime implements RunRuntime {
                 .withBinds(binds)
                 .withMemory(spec.memoryBytes())
                 .withNanoCPUs(spec.nanoCpus())
+                // Memory and CPU alone do not bound an unconfined agent. A fork bomb exhausts the
+                // host pid_max; a privilege escalation or a raw socket is available by default.
+                .withPidsLimit(PIDS_LIMIT)
+                .withSecurityOpts(List.of("no-new-privileges"))
+                .withCapDrop(Capability.ALL)
                 // salvage() must be able to read the exit code, and an auto-removed container has
                 // none to read. Teardown is destroy()'s job and nothing else's.
                 .withAutoRemove(false);
@@ -214,12 +225,19 @@ public final class DockerRunRuntime implements RunRuntime {
     }
 
     /**
-     * Waits for the agent within the unit's wall clock, then drains the publisher.
+     * Waits for the agent within the unit's wall clock, stops it if it overran, then drains the
+     * publisher.
      *
-     * <p><b>The wall clock is enforced here, and nowhere else.</b> {@link RunUnitSpec} refuses to be
-     * constructed without one, which made it look bounded — but the first version of this method
-     * waited on the agent indefinitely, so the limit existed in the type and constrained nothing. A
-     * run that hung held its memory and CPU reservation until someone noticed.
+     * <p><b>The clock has to STOP the run, not merely stop waiting for it.</b> Two versions of this
+     * method got that wrong in different ways. The first waited on the agent indefinitely, so the
+     * limit existed in {@link RunUnitSpec} and constrained nothing. The second bounded the wait and
+     * returned — but a timeout arrives as an EXCEPTION from the callback rather than a null status,
+     * so the cancel sat in a branch that never ran, and a hung run kept its memory, its CPU
+     * reservation and its model credential exactly as before. The commit message claimed it was
+     * enforced; only a test that inspected the container's state afterwards disagreed.
+     *
+     * <p>Cancelling is not destroying. The unit is preserved either way — {@link #destroy} is a
+     * separate call — so an operator can still read what the agent was doing when its time ran out.
      */
     @Override
     public Finalization salvage(RunHandle handle) {
@@ -227,21 +245,26 @@ public final class DockerRunRuntime implements RunRuntime {
         if (agent.isEmpty()) {
             return Finalization.salvageFailed("no agent container for run " + handle.runId());
         }
+        Integer exit;
         try {
-            Integer exit = client.waitContainerCmd(agent.get())
+            exit = client.waitContainerCmd(agent.get())
                     .exec(new WaitContainerResultCallback())
                     .awaitStatusCode(wallClockOf(handle).toSeconds(), TimeUnit.SECONDS);
-            drainPublisher(handle);
-            if (exit == null) {
-                return Finalization.salvageFailed("agent did not exit within the run's wall clock");
-            }
-            return Finalization.salvaged(exit, "agent exited " + exit);
         } catch (RuntimeException e) {
+            // Includes the timeout. Stop the agent BEFORE reporting, whatever went wrong: an
+            // unreadable exit code does not mean the process is gone.
+            cancel(handle);
             drainPublisher(handle);
-            // A timeout arrives as a RuntimeException from the callback. Either way the unit is
-            // PRESERVED: destroy() is a separate call, so nothing is thrown away here.
-            return Finalization.salvageFailed("could not read the agent's exit code: " + e.getMessage());
+            return Finalization.salvageFailed("agent did not exit within the run's wall clock, or its "
+                    + "status could not be read (" + e.getClass().getSimpleName() + "); cancelled");
         }
+        if (exit == null) {
+            cancel(handle);
+            drainPublisher(handle);
+            return Finalization.salvageFailed("agent did not exit within the run's wall clock; cancelled");
+        }
+        drainPublisher(handle);
+        return Finalization.salvaged(exit, "agent exited " + exit);
     }
 
     /**
@@ -303,12 +326,13 @@ public final class DockerRunRuntime implements RunRuntime {
     @Override
     public List<RunHandle> discoverOrphans() {
         List<RunHandle> handles = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
         for (Container container : client.listContainersCmd()
                 .withShowAll(true)
-                .withLabelFilter(Map.of(ROLE_LABEL, AGENT))
+                .withLabelFilter(List.of(RUN_ID_LABEL))
                 .exec()) {
             String runId = container.getLabels().get(RUN_ID_LABEL);
-            if (runId != null) {
+            if (runId != null && seen.add(runId)) {
                 handles.add(new RunHandle(runId, container.getId()));
             }
         }
