@@ -12,6 +12,29 @@
 
 ---
 
+## Revision — 2026-09-01, after the Codex spike (ADR-038)
+
+A measured spike against the real CLI, and an operator objection to the storage model, changed this
+plan's shape. **Read [`docs/factory/RUN-TOPOLOGY.md`](../../factory/RUN-TOPOLOGY.md) before starting.**
+
+What changed, and where:
+
+| Was | Is | Tasks |
+|---|---|---|
+| Worker clones and bind-mounts a workspace | **The pod clones itself**; the worker holds no filesystem and runs no git | 3, 6, 8 |
+| One handoff at the end of the run | **Continuous checkpointing** — every commit gated and pushed within seconds | 6b, 8 |
+| `codex … --ask-for-approval never` | **That flag does not exist** in 0.152.0 | 2 |
+| Sandbox mode `workspace-write` | **`danger-full-access`** — Codex's bubblewrap sandbox cannot initialize under Docker's default seccomp, and Codex does not fail fast when it can't | 2, 6 |
+| NDJSON `agent_reasoning` / `exec_command_begin` | **`{"type":"item.completed","item":{…}}`** and `{"type":"error","message":…}` | 2 |
+| `LandlockProbe` | **deleted** — it measured a primitive Codex does not use | 6 |
+| Gate runs in the worker | **Gate runs in the publisher sidecar**, in its own clean clone | 4, 6b |
+| — | **New Task 6b: `spire-publisher`**, the sidecar image that gates and pushes | 6b |
+
+Two facts the spike established that the plan now depends on: **`ca-certificates` is mandatory** in
+the agent image (without it every TLS call dies `UnknownIssuer` and Codex retries silently), and
+**Codex genuinely works in a container** — verified end to end, editing a file and committing, with
+the commit authored by the identity the workspace was configured with.
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
@@ -423,38 +446,41 @@ class CodexAdapterTest {
     }
 
     @Test
-    void unattendedCommandNeverAsksForApproval() {
+    void buildsTheVerifiedUnattendedInvocation() {
         List<String> argv = adapter.command(invocation(true));
 
         assertEquals("codex", argv.get(0));
         assertEquals("exec", argv.get(1));
         assertTrue(argv.contains("--json"), "the worker parses NDJSON, not prose");
-        assertTrue(argv.contains("--ask-for-approval"), "unattended runs must not wait on a prompt");
-        assertEquals("never", argv.get(argv.indexOf("--ask-for-approval") + 1));
-        assertEquals("workspace-write", argv.get(argv.indexOf("--sandbox") + 1));
-        // The prompt is untrusted text from a tracker: it is a separate argv element, never
-        // interpolated into a shell string.
+        assertTrue(argv.contains("--skip-git-repo-check"));
+
+        // Verified against codex-cli 0.152.0: --ask-for-approval DOES NOT EXIST. An earlier draft of
+        // this plan asserted it from documentation.
+        assertFalse(argv.contains("--ask-for-approval"));
+
+        // danger-full-access means "Codex adds no boundary of its own", not "there is no boundary".
+        // Its sandbox is bubblewrap-based and cannot initialize under Docker's default seccomp
+        // profile — and it does NOT fail fast when it can't, so any other value is a lie about the
+        // security posture. The container is the boundary (ADR-038).
+        assertEquals("danger-full-access", argv.get(argv.indexOf("--sandbox") + 1));
+
+        // The prompt is untrusted text from a tracker: a separate argv element, never interpolated
+        // into a shell string.
         assertTrue(argv.contains("fix the bug"));
     }
 
     @Test
-    void disablesTheInnerSandboxWhenTheHostCannotProvideIt() {
-        List<String> argv = adapter.command(invocation(false));
-
-        assertEquals("danger-full-access", argv.get(argv.indexOf("--sandbox") + 1),
-                "with no Landlock the container is the only boundary; pretending otherwise fails the run");
-    }
-
-    @Test
-    void parsesOneNdjsonLinePerEvent() {
-        Optional<RunEvent> thinking = adapter.parse(
-                "{\"type\":\"agent_reasoning\",\"text\":\"checking the parser\"}");
-        Optional<RunEvent> tool = adapter.parse(
-                "{\"type\":\"exec_command_begin\",\"command\":[\"bash\",\"-lc\",\"ls\"]}");
+    void parsesTheRealEventShape() {
+        // Observed from a live run, not from documentation.
+        Optional<RunEvent> completed = adapter.parse(
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\","
+                        + "\"text\":\"done\"}}");
+        Optional<RunEvent> failed = adapter.parse(
+                "{\"type\":\"error\",\"message\":\"Reconnecting... waiting for network\"}");
         Optional<RunEvent> noise = adapter.parse("not json at all");
 
-        assertTrue(thinking.orElseThrow() instanceof RunEvent.Thinking);
-        assertTrue(tool.orElseThrow() instanceof RunEvent.ToolUse);
+        assertTrue(completed.orElseThrow() instanceof RunEvent.Output);
+        assertTrue(failed.orElseThrow() instanceof RunEvent.StateChange);
         assertTrue(noise.isEmpty(), "an unparseable line is skipped, never fatal");
     }
 
@@ -563,16 +589,23 @@ public final class CodexAdapter implements HarnessAdapter {
 
     @Override
     public List<String> command(HarnessInvocation invocation) {
-        // Landlock is host-dependent (EXECUTION-LAYER §5.1). With it, two boundaries; without it,
-        // the container is the only one and asking Codex to sandbox itself would fail the run.
-        String sandbox = invocation.innerSandboxAvailable() ? "workspace-write" : "danger-full-access";
+        // Verified against codex-cli 0.152.0, 2026-09-01. Two things the documentation gets wrong:
+        // --ask-for-approval does not exist, and the sandbox mode cannot be workspace-write.
+        //
+        // Codex's Linux sandbox is BUBBLEWRAP (it vendors bwrap), and Docker's default seccomp
+        // profile refuses the user namespace bwrap needs. Making it work would require
+        // seccomp=unconfined on the container — weakening the OUTER boundary to gain an inner one.
+        // And Codex does not fail at startup when its sandbox cannot initialize, so leaving
+        // workspace-write set would mean believing in two boundaries while having one.
+        //
+        // The container is the boundary (ADR-038, RUN-TOPOLOGY §1).
         return List.of(
                 "codex", "exec",
                 "--json",
-                "--sandbox", sandbox,
-                "--ask-for-approval", "never",
+                "--sandbox", "danger-full-access",
+                "--skip-git-repo-check",
                 "--model", invocation.model(),
-                "--cd", invocation.workspacePath(),
+                "-C", invocation.workspacePath(),
                 invocation.prompt());
     }
 
@@ -594,18 +627,30 @@ public final class CodexAdapter implements HarnessAdapter {
         } catch (Exception e) {
             return Optional.empty(); // a line we cannot read is skipped, never fatal
         }
-        String type = node.path("type").asText("");
         Instant at = Instant.now();
-        return switch (type) {
-            case "agent_reasoning" -> Optional.of(new RunEvent.Thinking(at, node.path("text").asText("")));
-            case "agent_message" -> Optional.of(new RunEvent.Output(at, node.path("text").asText("")));
-            case "exec_command_begin" -> Optional.of(
-                    new RunEvent.ToolUse(at, "bash", node.path("command").toString()));
-            case "exec_command_end" -> Optional.of(new RunEvent.ToolResult(at, "bash",
-                    node.path("exit_code").asInt(0) != 0, node.path("stdout").asText("")));
-            case "token_count" -> usageEvent(node, at);
-            default -> Optional.of(new RunEvent.StateChange(at, type, ""));
-        };
+        String envelope = node.path("type").asText("");
+
+        // The real shape, observed from a live run: an outer envelope whose "type" is item.*,
+        // error, or a lifecycle name, with the interesting discriminator on the nested "item".
+        if ("error".equals(envelope)) {
+            return Optional.of(new RunEvent.StateChange(at, "error", node.path("message").asText("")));
+        }
+        if (envelope.startsWith("item.")) {
+            JsonNode item = node.path("item");
+            return switch (item.path("type").asText("")) {
+                case "agent_message" -> Optional.of(new RunEvent.Output(at, item.path("text").asText("")));
+                case "reasoning" -> Optional.of(new RunEvent.Thinking(at, item.path("text").asText("")));
+                case "command_execution" -> Optional.of(
+                        new RunEvent.ToolUse(at, "bash", item.path("command").asText("")));
+                case "error" -> Optional.of(new RunEvent.StateChange(at, "item_error",
+                        item.path("message").asText("")));
+                default -> Optional.of(new RunEvent.StateChange(at, envelope, item.path("type").asText("")));
+            };
+        }
+        if ("token_count".equals(envelope) || node.has("input_tokens")) {
+            return usageEvent(node, at);
+        }
+        return Optional.of(new RunEvent.StateChange(at, envelope, ""));
     }
 
     private Optional<RunEvent> usageEvent(JsonNode node, Instant at) {
@@ -660,17 +705,28 @@ public final class CodexAdapter implements HarnessAdapter {
 Run: `./gradlew :spire-harness-codex:test :spire-arch:test`
 Expected: PASS.
 
-- [ ] **Step 6: Verify the NDJSON shapes against the real CLI, and correct the adapter if they differ**
+- [ ] **Step 6: Pin the event shape against a live run, and settle the usage question**
 
-Run:
+The envelope shapes in Step 4 come from a real run (`item.completed`, `error`), but the nested
+`item.type` values are still partly inferred, and one question is open and matters.
+
+Run, against the agent image from Task 6b and a real credential:
 
 ```bash
-docker run --rm -e OPENAI_API_KEY -v "$PWD:/w" -w /w node:22-alpine \
-  sh -c 'npm i -g @openai/codex >/dev/null 2>&1 && codex exec --json --sandbox read-only --ask-for-answer never "say hi"' \
-  | head -20
+codex exec --json --sandbox danger-full-access --skip-git-repo-check -C /w   "Read README.md, then run: ls -la. Then say done." | tee /tmp/stream.ndjson
+jq -r ".type, (.item.type // empty)" /tmp/stream.ndjson | sort | uniq -c
+grep -c token /tmp/stream.ndjson
 ```
 
-Expected: newline-delimited JSON objects. **The `type` values in Step 4 are from documentation, not from a captured run.** If they differ, fix `parse` and update the test fixtures to the observed lines — the test's job is to pin the real wire shape, not a guessed one.
+Record two outcomes:
+
+1. **The real set of `type` / `item.type` values.** Fix `parse` and the test fixtures to what the
+   run actually emitted. The test pins the real wire shape, never a guessed one.
+2. **Whether token usage appears DURING the run or only in the final summary.** This is the open
+   question in RUN-TOPOLOGY §10 and it is not cosmetic: if usage arrives only at the end, a killed
+   run’s spend is **never recorded** — real money spent, ledger blind to it, which is the shape
+   ADR-023 exists to prevent. Runs here are long and killable, so settle it before M1 records
+   charges, and write the answer into RUN-TOPOLOGY §10.
 
 - [ ] **Step 7: Commit**
 
@@ -682,6 +738,12 @@ git commit -m "Add the Codex harness adapter with NDJSON event parsing"
 ---
 
 ## Task 3: `spire-workspace` — clone, branch, changed paths, push
+
+> **⚠ SUPERSEDED IN PART BY ADR-038 — rewrite before executing.** The library and its tests stand,
+> but it no longer runs in the worker: it is linked into the **publisher image** and runs inside the
+> run pod. `Workspace.create` is used by the publisher to make its OWN pristine clone from the forge;
+> the agent`s clone is done by an init container and the publisher never touches it. Add
+> `fetchBundle(Path)` and drop any assumption that the worker holds a filesystem.
 
 **Files:**
 - Create: `spire-workspace/build.gradle.kts`, `spire-workspace/LICENSE`
@@ -1399,6 +1461,11 @@ git commit -m "Add the run-placement SPI with salvage separate from teardown"
 
 ## Task 6: `spire-runtime-docker` — one sibling container per run
 
+> **⚠ SUPERSEDED BY ADR-038 — rewrite before executing.** A run is not one container. It is an
+> init clone + the agent as main + the publisher as a sidecar, sharing one ephemeral volume, with
+> `/handoff` read-only to the publisher and `/workspace` not mounted into it at all. `LandlockProbe`
+> is **deleted** — it measured a primitive Codex does not use. See RUN-TOPOLOGY §3.
+
 **Files:**
 - Create: `spire-runtime-docker/build.gradle.kts`, `spire-runtime-docker/LICENSE`
 - Create: `spire-runtime-docker/src/main/java/dev/codespire/runtime/docker/{DockerRunRuntime,LandlockProbe}.java`
@@ -1912,6 +1979,12 @@ git commit -m "Add the run wire contract with a derived, platform-carrying run i
 ---
 
 ## Task 8: `spire-run-worker` — the deployable
+
+> **⚠ SUPERSEDED IN PART BY ADR-038 — rewrite before executing.** `RunClaimStore`, the dispatcher
+> and the channel semantics stand. `RunExecutor` does **not**: the worker performs no git and holds
+> no filesystem. It creates the run unit, streams two log channels (agent events, publisher
+> outcomes), records charges and emits results. That is what makes it stateless, and therefore what
+> makes a run recoverable by any replica.
 
 **Files:**
 - Create: `spire-run-worker/build.gradle.kts`, `spire-run-worker/LICENSE`

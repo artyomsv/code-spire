@@ -82,7 +82,7 @@ Two contract rules that are not obvious:
 public interface RunRuntime {
     RuntimeType type();
     RuntimeCapabilities capabilities();   // networkPolicy, resourceLimits, steering, archival, gc,
-                                         // innerSandbox — probed at boot, see EXECUTION-LAYER §5.1
+                                         // nativeSidecar (k8s >= 1.29) — see RUN-TOPOLOGY.md §3
     RunHandle create(RunSpec spec);       // workspace, image, injected creds, limits
     Stream<RunEvent> attach(RunHandle h);
     void cancel(RunHandle h);
@@ -92,8 +92,13 @@ public interface RunRuntime {
 }
 ```
 
-Arms: **`docker`** (sibling container, M0) and **`kubernetes`** (pod per run, M5). Domain code
-branches on `capabilities()`, never on `type()`.
+Arms: **`docker`** (M0) and **`kubernetes`** (M5). Domain code branches on `capabilities()`, never on
+`type()`.
+
+> **A run is not one container.** ADR-038 makes it a three-part unit — an init clone, the agent as
+> the main container, and the publisher as a sidecar — sharing one ephemeral volume and no storage
+> outside the pod. The worker holds no workspace and runs no git. **[RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md)
+> is the authority on this**; the bind-mounted sketch that used to be in §7 is superseded.
 
 `finalize` and `destroy` are two methods on purpose. Warren's second most common failure across 44
 failed runs was **dropped commit** — the agent did the work and the container died with it.

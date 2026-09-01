@@ -76,10 +76,18 @@ extracting data or Output"* — scraping, not agentic use.
 > "Use API key authentication for programmatic Codex CLI workflows, such as CI/CD jobs."
 
 `printenv OPENAI_API_KEY | codex login --with-api-key`; enterprise workspace automation uses
-`CODEX_ACCESS_TOKEN` with `codex login --with-access-token`. Unattended invocation is
-`codex exec --sandbox workspace-write --ask-for-approval never`; the read-only CI shape is
-`--sandbox read-only --ask-for-approval never`. **Network access is off by default** in
-`workspace-write`.
+`CODEX_ACCESS_TOKEN` with `codex login --with-access-token`.
+
+> **The documented invocation does not match the shipped CLI.** `--ask-for-approval` **does not
+> exist** in `codex-cli 0.152.0` — verified against the binary, 2026-09-01. The real flags are
+> `-s/--sandbox` (`read-only | workspace-write | danger-full-access`), `--approve-for-me`,
+> `--dangerously-bypass-approvals-and-sandbox`, `-C/--cd`, `--add-dir`, `--json`,
+> `--skip-git-repo-check`, `-o/--output-last-message`, `--output-schema`, `--ephemeral`,
+> `--ignore-user-config`, `--oss`, `--local-provider`.
+>
+> The unattended shape this design uses is
+> `codex exec --json --sandbox danger-full-access --skip-git-repo-check -C <dir> "<prompt>"` — §5.1
+> explains why the sandbox mode is what it is.
 
 ### OpenAI — Service Terms
 
@@ -297,39 +305,37 @@ because a customer who needs it today can build an image that passes the suite.
 Egress is deny-by-default with an allowlist for the model endpoint, the git host and the package
 registries the repository needs.
 
-### 5.1 The inner sandbox is probed, not assumed — spike result, 2026-09-01
+### 5.1 The inner sandbox does not work in a container — measured 2026-09-01
 
-**The question:** Codex's `workspace-write` mode is enforced by Landlock and seccomp, which are
-host-kernel-dependent. A review predicted the mechanism would be *commonly unavailable* inside a
-container, making the container the sole boundary and the defence-in-depth framing wrong.
+**Superseded finding.** An earlier probe measured **Landlock** (`landlock_create_ruleset` → ABI 7,
+available under Docker's default seccomp) and concluded the inner sandbox would work. **That probe
+tested the wrong primitive.** Codex ships **`bwrap` (bubblewrap)** in its vendor directory; its Linux
+sandbox is bubblewrap-based, and Landlock's availability is irrelevant to it.
 
-**Measured, not reasoned.** Calling `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`
-inside an ordinary container:
+Measured against the vendored binary:
 
-| Host | Kernel | Seccomp | Result |
-|---|---|---|---|
-| Docker 29.6.2 / WSL2 | 6.18.33.2 | **default profile** | returns **7** — Landlock available, ABI v7 |
-| same | same | `seccomp=unconfined` | returns 7 — identical |
+| Container configuration | `bwrap --unshare-all` |
+|---|---|
+| **default Docker** | ❌ `No permissions to create a new namespace` |
+| `--security-opt seccomp=unconfined` | ✅ works |
+| `seccomp=unconfined` + `--cap-add SYS_ADMIN` | ✅ works (SYS_ADMIN not required) |
 
-So the prediction is falsified on this host: Docker's default seccomp profile does **not** block the
-Landlock syscalls, and the inner sandbox can initialize.
+**And Codex does not fail fast when its sandbox cannot work.** All three configurations started
+normally and reached the network; the sandbox applies to model-generated shell commands, so a broken
+inner sandbox surfaces mid-run or not at all.
 
-**But one host is not a guarantee, so neither answer gets hard-coded.** Landlock needs kernel ≥ 5.13
-*and* the LSM enabled at boot; a distro that omits it from its `lsm=` list, an older kernel, or a
-gVisor-based runtime will all return `ENOSYS` or `EOPNOTSUPP`. The design therefore **probes once at
-boot and declares a capability**:
+**Decision: keep the default seccomp profile and run with `--sandbox danger-full-access`.** Enabling
+the inner sandbox costs the outer one — weakening the container to strengthen something nested inside
+it — which is a bad trade when the container already confines writes by mounting only the workspace.
+Leaving `workspace-write` set where bubblewrap cannot run is the worst of the three, because the
+operator would believe in two boundaries and have one.
 
-```java
-RuntimeCapabilities.innerSandbox()   // PRESENT | ABSENT
-```
+`danger-full-access` means *Codex adds no boundary of its own*, not *there is no boundary*. The
+container therefore has to be genuinely restrictive: non-root, only the workspace writable, no Docker
+socket, dropped capabilities.
 
-- **PRESENT** → Codex runs with `--sandbox workspace-write`; two boundaries, as designed.
-- **ABSENT** → Codex runs with its own sandbox disabled, the container is the sole boundary, and an
-  **attention row says so**. A silently lost defence layer is the failure this project keeps paying
-  for; a visible one is a decision.
-
-The probe is the same shape the deployment already uses for `bwrap`: a functional check at startup,
-not a version string. Capabilities, not conditionals.
+Full evidence, and the run topology this produced, are in
+[RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md) (ADR-038).
 
 ### 5.2 Egress: allowlist by observation, and `unverified` is the honest failure
 

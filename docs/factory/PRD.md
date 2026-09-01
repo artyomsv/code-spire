@@ -282,11 +282,12 @@ infrastructure is paid for by a feature that stands alone.
    the operator's image to build; Code Spire supplies the contract, not every stack.
 5. Vendor terms for automated use changed twice during 2026. Every finding is recorded with its
    retrieval date and re-checked before a harness ships.
-6. **Measured, not assumed:** Codex's `workspace-write` sandbox *does* initialize inside a container
-   on a modern kernel — Landlock ABI v7 under Docker's default seccomp profile, kernel 6.18.
-   Availability is host-dependent, so the runtime **probes at boot** and declares `innerSandbox`;
-   where it is absent the container is the sole boundary and an attention row says so. Neither
-   answer is hard-coded.
+6. **Measured, and the opposite of an earlier assumption:** Codex's own sandbox does **not** work in
+   a container. It is bubblewrap-based, and Docker's default seccomp refuses the user namespace it
+   needs; an earlier probe measured Landlock and drew the wrong conclusion from the wrong primitive.
+   **The container is the sole boundary**, Codex runs `--sandbox danger-full-access`, and the
+   container is therefore made genuinely restrictive. Separately confirmed: Codex *does* run, reason,
+   edit files and commit inside a container. See [RUN-TOPOLOGY §1](./RUN-TOPOLOGY.md).
 7. **Decided:** the egress allowlist is per repository and **seeded by observation** — early runs
    record egress without blocking, the operator promotes the observed set, later runs enforce it. The
    model endpoint, git host and forge API are always allowed. A newly added dependency produces a

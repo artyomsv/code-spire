@@ -70,6 +70,7 @@ closest prior art (Warren's corpus-flywheel record) describes at length and list
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Planes, seams, services, topics, identity, data tiers |
 | [MODULES.md](./MODULES.md) | Every new module: purpose, interface, dependencies, licence |
 | [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) | Harnesses, vendor terms with quotes, credential pooling, agent images |
+| [RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md) | **What runs where.** Measured spike results, the pod layout, the handoff protocol, continuous checkpointing, and how the gate actually works |
 | [AUTONOMY.md](./AUTONOMY.md) | The eight phases, autonomy profiles, gates, and the label threat model |
 | [PACKAGING.md](./PACKAGING.md) | Product capability packs, entitlements, per-capability metering |
 | [RESEARCH.md](./RESEARCH.md) | The prior art this design is built on, with sources |

@@ -4,6 +4,98 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-038 — The run environment clones itself, checkpoints continuously, and the gate runs in a clean clone
+
+**Context.** The first draft had the run worker clone a repository into its own filesystem and
+bind-mount it into the agent container. Two separate lines of evidence killed that design on the same
+day.
+
+*A measured spike.* Codex was run for real inside a container: it authenticates, answers, edits files
+and commits, verified by inspecting the repository rather than trusting the agent's report. But its
+own sandbox does **not** work there — Codex ships **bubblewrap**, and Docker's default seccomp profile
+refuses the user namespace it needs. An earlier probe had measured **Landlock** and concluded the
+opposite; that probe tested a primitive Codex does not use as its boundary. Worse, Codex does **not
+fail at startup** when its sandbox cannot initialize, so the failure is invisible until a command
+runs. Full evidence in `docs/factory/RUN-TOPOLOGY.md` §1.
+
+*An operator objection that was sharper than the design.* A bind-mounted workspace makes the worker
+**stateful**: only the replica that started a run can finish it, a node reschedule mid-run destroys
+the work, and Kubernetes would need RWX shared storage. The orphan watchdog ADR-028 specifies
+**cannot salvage a run whose workspace lived on a dead node** — the design contained a recovery
+mechanism its own storage model defeated.
+
+**Decision — four parts.**
+
+**1. The container is the only sandbox.** Keep Docker's default seccomp profile; run Codex with
+`--sandbox danger-full-access`. Enabling the inner sandbox costs the outer one, which is a bad trade
+when the container already confines writes by mounting only the workspace. Leaving `workspace-write`
+set where bubblewrap cannot run is the worst option of the three, because the operator would believe
+in two boundaries, have one, and learn otherwise only when a command executed. `danger-full-access`
+means *Codex adds no boundary of its own*, not *there is no boundary* — so the container must be
+genuinely restrictive: non-root, only the workspace writable, no Docker socket, dropped capabilities.
+
+**2. The run environment clones itself and is destroyed.** No shared storage, no workspace on any
+worker's disk. An init container clones the branch, the agent works, the pod ends. The worker becomes
+stateless and **any replica can observe or salvage any run**, because run state lives in the pod until
+it is pushed, and after that on the forge.
+
+**3. The branch on the forge is the durable checkpoint, written continuously.** The agent commits as
+it works — instructed by the prompt, backstopped by an autosave loop in the container that holds no
+token — and every commit is gated and pushed within seconds. A single handoff at the end would mean a
+pod lost at hour three loses everything, which is exactly the second most common failure in the field
+data this design learned from. Continuous pushing also makes the gate **fail-fast**: the first commit
+touching a protected path trips it at minute four rather than minute 180. A gate trip terminates the
+run; the branch keeps the safe prefix.
+
+**4. The gate runs in a clean clone, and that — not the location of the push — is the control.**
+An earlier draft argued at length about which process should push. That argument was wrong. What
+protects the repository is the **gate**: diff the branch against its base, refuse if a changed path is
+protected. It works wherever the push happens. Location matters for exactly one thing, and the
+relevant unit is the **directory**, not the pod:
+
+> Never run git-with-a-token inside a directory the agent could write to.
+
+Git **executes scripts it finds inside a repository** — `.git/hooks/*`, and config keys such as
+`core.fsmonitor`, `diff.external`, `filter.*.clean`, `uploadpack.packObjectsHook`. Anything running
+git with a credential in the agent's directory can be made to run the agent's code. Defending that by
+enumerating dangerous keys is a blocklist, and git has been extending that list for a decade.
+
+So the agent hands work over as a **git bundle** — objects and refs, carrying no config and no hooks —
+and the publisher fetches it into its **own** clone, diffs, and pushes. It never mounts the agent's
+workspace and never checks out a working tree, so agent-controlled data never becomes files on the
+publisher's disk. The escape is not mitigated; it is structurally unavailable.
+
+**Why a git hook cannot be the guard**, since it is the obvious first idea: the agent can delete or
+neuter it (it is a file in the directory the agent writes to), `git push --no-verify` skips it, hooks
+are not cloned so something must install one into the untrusted directory, and a client-side hook
+asks the pusher to check itself. Forge-enforced push rules — GitHub push rulesets, GitLab push rules,
+self-hosted `pre-receive` — are the legitimate server-side version and the right **second** layer,
+but they are the customer's repository settings, differ per forge and are sometimes paywalled, so
+they cannot be the primary control.
+
+**Everything leaves the pod as a log stream.** Run events from the agent's stdout, the push outcome
+from the publisher's stdout. No `exec`, no file extraction, no shared storage between pod and worker —
+which is what keeps the worker stateless in the first place.
+
+**Two credentials, never the same secret in both containers:** a **read-only** clone token in the
+init container, and the **write** machine-account token (ADR-037) in the publisher. The residual risk
+is stated rather than hidden — a write credential lives in the run pod — and it is accepted because
+the realistic path to it, through git, is closed by part 4.
+
+**Consequences.** `spire-workspace` runs inside the publisher image rather than in the worker, and a
+small `spire-publisher` deployable joins the module map. `spire-run-worker` loses all git handling and
+becomes a dispatcher and log reader. The Docker arm must create a multi-container unit sharing a
+volume; the Kubernetes arm needs **≥ 1.29** for native sidecar termination, or an explicit sentinel
+file below that. Bundle size must be capped — an agent can write an object bomb, and an unbounded read
+is a denial-of-service on the publisher.
+
+**One question deliberately left open:** whether Codex reports token usage incrementally or only in
+its final summary. If only at the end, a killed run's spend is never recorded — real money spent, and
+the ledger blind to it, which is the shape ADR-023 exists to prevent. It must be settled before M1
+records charges.
+
+---
+
 ## ADR-037 — The factory pushes as a dedicated machine account, and "factory-authored" is an attribute rather than an inference
 
 **Context.** An adversarial review of the factory design found that the reviewer would **silently skip

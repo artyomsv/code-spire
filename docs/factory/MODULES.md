@@ -23,6 +23,7 @@ worker and not in `spire-harness` — the same reason the LLM circuit breaker co
 | `spire-runtime-docker` | Apache-2.0 | adapter | M0 |
 | `spire-runtime-k8s` | Apache-2.0 | adapter | M5 |
 | `spire-workspace` | Apache-2.0 | library | M0 |
+| **`spire-publisher`** | **FSL-1.1-ALv2** | **deployable (sidecar image)** | **M0** |
 | `spire-worksource` | Apache-2.0 | SPI | M3 |
 | `spire-worksource-github` | Apache-2.0 | adapter | M3 |
 | `spire-worksource-gitlab` | Apache-2.0 | adapter | M3 |
@@ -60,9 +61,16 @@ durability guarantee that tier does not have.
 
 **Purpose.** Drive OpenAI Codex CLI (Apache-2.0) non-interactively.
 
-**Shape.** `codex exec --json` with `--sandbox` and `--ask-for-approval never`, producing
+**Shape.** `codex exec --json --sandbox danger-full-access --skip-git-repo-check -C <dir>`, producing
 newline-delimited JSON events and an honest process exit code. Capabilities declared: streaming yes,
 cancel yes, structured output yes, steer no, resume no.
+
+**Two facts verified against the binary, not the documentation (2026-09-01):** `--ask-for-approval`
+does **not** exist in 0.152.0, and the event stream is shaped
+`{"type":"item.completed","item":{…}}` / `{"type":"error","message":…}` rather than the
+`agent_reasoning` / `exec_command_begin` names the docs suggest. The sandbox mode is
+`danger-full-access` because Codex's own sandbox is bubblewrap-based and cannot initialize under
+Docker's default seccomp profile — see [RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md) §1.
 
 **Notable.** Codex reaches any OpenAI-compatible endpoint through `model_providers` with `base_url`
 and `env_key`, so this arm is not model-locked. It also **ignores `model_provider` set in a
@@ -142,17 +150,48 @@ into infrastructure rather than beside it.
 clone or worktree at an explicit base commit, branch naming, commit detection, push, and the
 "commits ahead" check that distinguishes real work from an empty run.
 
-**Why a module rather than code inside the worker.** It is pure, it is heavily conditional (shallow
-vs full, worktree vs clone, force-push vs fast-forward, empty-diff detection), and it is exactly the
-kind of logic that deserves tests without a container. It is also the natural home for the
-`empty push` signal that a plan step with nothing to commit must produce, or a plan deadlocks
-waiting for a pull request that never opens.
+**Where it runs — not in the worker (ADR-038).** This library is linked into the **publisher image**
+and runs inside the run pod. The worker holds no workspace and no git at all; that was the design
+that made it stateful and broke run recovery.
 
-**Depends on** a git-push credential brokered to it; it never mints one itself. **That brokering does
-not exist yet.** Today the provider registry token is handed to a command for API calls only, and
-nothing in Code Spire has ever pushed a commit — so "whether the registry token doubles as the push
-credential, per forge" is an M2 decision, not an assumption. Under ADR-037 the credential belongs to
-the **dedicated machine account**, not to the review bot.
+**Why a module rather than a shell script in the image.** The gate's correctness lives in details a
+script gets wrong: rename detection on both sides, deletions counting, case-insensitive matching for
+the CI floor. Keeping it as tested Java means `./gradlew test` covers the security-critical part, and
+one glob dialect serves the whole product.
+
+**Depends on** a git-push credential handed to the publisher container; it never mints one itself.
+**That brokering does not exist yet** — today the provider registry token is used for API calls only,
+and nothing in Code Spire has ever pushed a commit. Under ADR-037 the credential belongs to the
+**dedicated machine account**, never the review bot.
+
+---
+
+## 9a. `spire-publisher` — the sidecar that gates and pushes
+
+**Purpose.** A small Java program, packaged as its own image, that runs as a **sidecar beside the
+agent** for the life of a run. It is the only thing in the pod holding a write credential.
+
+**What it does, in a loop:**
+
+1. Clone the branch from the forge into `/publish` — **its own, pristine copy**.
+2. Watch `/handoff` (mounted **read-only**) for new bundle files.
+3. `git fetch <bundle>` — objects and refs only.
+4. `git diff --name-status -M <base> FETCH_HEAD` → the push gate.
+5. Refuse and terminate, or push the branch.
+6. Report each outcome as one JSON line on **stdout**, which the worker reads from the log stream.
+
+**What it must never do**, and these are the security properties rather than style preferences:
+
+- never mount or read `/workspace` — the agent's directory,
+- never check out a working tree from agent data — fetch, diff, push, object-level only,
+- never write to a shared volume,
+- never read more than the configured bundle size cap.
+
+**Why a separate image rather than logic in the agent image:** the agent image holds the model
+credential and runs untrusted-influenced output; the publisher image holds the write token. Two
+images, two credentials, no overlap.
+
+**FSL-licensed**, like the other deployables — it is a running service, not a library.
 
 ---
 
@@ -186,6 +225,12 @@ report an outcome.
 - The **idempotency claim** per `(run_id, slot)`, so a redelivered command never re-spends.
 - The **orphan watchdog**.
 - Credential injection and redaction.
+
+**Does NOT own, since ADR-038:** any git operation, any workspace, any filesystem state. It creates
+the run pod, streams two log channels (agent events, publisher outcomes), records charges, and emits
+results. The clone, the gate and the push all happen inside the pod. That is what makes it
+**stateless** — and therefore what makes a run recoverable by any replica rather than only by the one
+that started it.
 - Its own `worker` schema, unreachable from the orchestrator's role at the database level — the same
   separation the existing worker already proves in the packaged end-to-end checks.
 
