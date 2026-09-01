@@ -50,9 +50,10 @@ public class RunResource {
 
     private static final String DEFAULT_BASE_BRANCH = "main";
 
-    private static final long DEFAULT_WALL_CLOCK_SECONDS = 30L * 60;
+    /** The branch is {@code spire/<subject>}; git refuses these two shapes, so refuse them here. */
+    private static final String REF_DOTDOT = "..";
 
-    private static final String AGENT_IMAGE = "spire-agent-codex:latest";
+    private static final String REF_LOCK_SUFFIX = ".lock";
 
     @Inject
     MachineAccounts machineAccounts;
@@ -63,6 +64,9 @@ public class RunResource {
     @Inject
     RunCommandEmitter emitter;
 
+    @Inject
+    FactoryConfig config;
+
     public record DispatchRequest(String workspace, String slug, String providerType, String baseBranch,
                                   String baseCommit, String prompt, String harness, String model,
                                   String subject) {
@@ -72,23 +76,28 @@ public class RunResource {
     @Consumes(MediaType.APPLICATION_JSON)
     public Response dispatch(DispatchRequest req) {
         if (req == null) {
-            throw new BadRequestException("a request body is required");
+            throw badRequest("a request body is required");
         }
         ScmType scmType = ScmType.fromProviderType(req.providerType())
-                .orElseThrow(() -> new BadRequestException("unknown providerType: " + req.providerType()));
+                .orElseThrow(() -> badRequest("unknown providerType: " + req.providerType()));
         String workspace = segment(req.workspace(), "workspace");
         String slug = segment(req.slug(), "slug");
         String baseCommit = required(req.baseCommit(), "baseCommit");
         if (!COMMIT.matcher(baseCommit).matches()) {
-            throw new BadRequestException("baseCommit must be a hex commit id");
+            throw badRequest("baseCommit must be a hex commit id");
         }
         String prompt = required(req.prompt(), "prompt");
         String harness = required(req.harness(), "harness");
+        String agentImage = config.agentImage().get(harness);
+        if (agentImage == null) {
+            throw badRequest("no agent image is configured for harness '" + harness
+                    + "'; this deployment configures " + config.agentImage().keySet()
+                    + " (spire.factory.agent-image.<harness>)");
+        }
         String model = required(req.model(), "model");
         String baseBranch = req.baseBranch() == null || req.baseBranch().isBlank()
                 ? DEFAULT_BASE_BRANCH : req.baseBranch();
-        String subject = req.subject() == null || req.subject().isBlank()
-                ? "manual-" + baseCommit.substring(0, 7) : req.subject();
+        String subject = subject(req.subject(), baseCommit);
 
         ScmProvider account = machineAccounts.resolve(scmType, workspace)
                 .orElseThrow(() -> new ClientErrorException(Response.status(Response.Status.CONFLICT)
@@ -110,8 +119,8 @@ public class RunResource {
         // pool; the field name already says what it will carry so the call sites need no change.
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(runId, repo,
                 FactoryCloneUrls.cloneUrl(scmType, account.baseUrl(), repo),
-                baseBranch, baseCommit, branch, prompt, harness, model, AGENT_IMAGE,
-                List.of(), DEFAULT_WALL_CLOCK_SECONDS, account.secret(), null);
+                baseBranch, baseCommit, branch, prompt, harness, model, agentImage,
+                List.of(), config.wallClockSeconds(), account.secret(), null);
         try {
             emitter.dispatch(command);
         } catch (IllegalStateException e) {
@@ -127,6 +136,28 @@ public class RunResource {
         return Response.status(Response.Status.CREATED).entity(Map.of("runId", runId)).build();
     }
 
+    /**
+     * The subject names the run and its branch. Validated like a path segment, plus the two shapes
+     * git refuses in a ref, so a bad name is a 400 here rather than a publisher that refuses to
+     * start after the agent has already run and been paid for.
+     */
+    private static String subject(String raw, String baseCommit) {
+        if (raw == null || raw.isBlank()) {
+            return "manual-" + baseCommit.substring(0, 7);
+        }
+        String subject = segment(raw, "subject");
+        if (subject.contains(REF_DOTDOT) || subject.endsWith(REF_LOCK_SUFFIX)) {
+            throw badRequest("subject must be usable as a branch name: no '..' and no '.lock' suffix");
+        }
+        return subject;
+    }
+
+    /** A 400 whose body says why — the bare exception's message never reaches the client. */
+    private static BadRequestException badRequest(String message) {
+        return new BadRequestException(
+                Response.status(Response.Status.BAD_REQUEST).entity(message).build());
+    }
+
     @GET
     // A run id embeds the repository (`run::github:acme/app:subject:1`) and a GitLab workspace can
     // itself be `group/subgroup`, so the id spans several path segments; the regex keeps them all.
@@ -139,14 +170,14 @@ public class RunResource {
     private static String segment(String value, String field) {
         String v = required(value, field);
         if (!SLUG.matcher(v).matches()) {
-            throw new BadRequestException(field + " is not a valid repository segment");
+            throw badRequest(field + " is not a valid repository segment");
         }
         return v;
     }
 
     private static String required(String value, String field) {
         if (value == null || value.isBlank()) {
-            throw new BadRequestException(field + " is required");
+            throw badRequest(field + " is required");
         }
         return value.strip();
     }

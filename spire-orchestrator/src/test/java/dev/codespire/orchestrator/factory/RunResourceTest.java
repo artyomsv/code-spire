@@ -120,6 +120,36 @@ class RunResourceTest {
     }
 
     @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aHarnessWithNoConfiguredImageIsRefusedBeforeAnythingIsRecorded() {
+        // The orchestrator never names an arm; it reads spire.factory.agent-image.<harness>. A name
+        // with no image is a 400 that names the configured ones — and leaves no queued row behind.
+        String workspace = workspaceWithFactoryAccount();
+        String request = body(workspace).replace("\"harness\":\"codex\"",
+                "\"subject\":\"no-such-arm\",\"harness\":\"opencode\"");
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(400)
+                .body(containsString("opencode"))
+                .body(containsString("codex"));
+        given().when().get("/api/runs/run::github:" + workspace + "/app:no-such-arm:1")
+                .then().statusCode(404);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aSubjectGitWouldRefuseAsABranchIsRefusedHere() {
+        String workspace = workspaceWithFactoryAccount();
+        for (String bad : List.of("a..b", "x.lock", "has/slash", "-leading")) {
+            String request = body(workspace).replace("\"harness\"", "\"subject\":\"" + bad + "\",\"harness\"");
+            given().contentType("application/json").body(request)
+                    .when().post("/api/runs")
+                    .then().statusCode(400);
+        }
+    }
+
+    @Test
     @TestSecurity(user = "viewer", roles = "spire-viewer")
     void aViewerCannotSpendMoney() {
         given().contentType("application/json").body(body("acme"))

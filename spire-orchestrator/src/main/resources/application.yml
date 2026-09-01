@@ -196,6 +196,12 @@ mp:
 # is ever used) is "observe" in code — safe first contact. The per-provider author
 # allowlist lives in the provider registry, not here.
 spire:
+  factory:
+    # Agent image per harness NAME. Keyed by name so the orchestrator never spells a harness; a
+    # harness with no image here is refused at dispatch, before a row is written or a token moves.
+    agent-image:
+      codex: spire-agent-codex:latest
+    wall-clock-seconds: 1800
   review:
     # Bounded auto-retry (C8/ADR-016): total pipeline runs before a transient
     # failure fails terminally. Tuning knob — a safe default is fine here.
