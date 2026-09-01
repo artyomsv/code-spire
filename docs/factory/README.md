@@ -1,0 +1,92 @@
+# The Software Factory
+
+> **Status: design, not built.** Nothing in this directory is implemented. It is the agreed design
+> for extending Code Spire from a reviewer into an automated software factory, written 2026-09-01
+> after a research pass over the running prior art. The build order is in
+> [ROADMAP.md](./ROADMAP.md); the first slice is **M0**.
+
+## What this is
+
+Code Spire today **reads and comments**. It receives a pull-request webhook, fetches a diff,
+assembles context, calls a model, and posts findings it then tracks across rounds. It never writes
+to a repository, never runs a command, and never holds a workspace.
+
+The factory gives it **hands**. A work item — a tracker issue — becomes a specification, then a
+plan, then one or more agent runs inside an isolated sandbox, then a pushed branch, then a pull
+request that the existing reviewer reviews. A human approves at whichever phases the work item's
+own autonomy label says they should.
+
+```
+tracker issue
+     │
+     ▼
+ intake ─► spec ─► plan ─► build ─► verify ─► review ─► deliver ─► land
+     │       │       │       │        │         │          │         │
+     └───────┴───────┴───────┴────────┴─────────┴──────────┴─────────┘
+              each phase is a gate the work item's autonomy profile
+              may set to auto, approve (human), or off
+                                  │
+                                  ▼
+              guaranteed output: a pushed workspace branch
+              everything past it is policy, not the kernel
+```
+
+## The one-sentence division of labour
+
+> **Code Spire executes agents. Policy decides what runs, how far it may go, and what it costs.**
+
+The kernel owns the run lifecycle. Autonomy, budgets, gates and merge authority are policy read at
+dispatch time — never inferred from a credential, never granted by a repository.
+
+## What already exists, and what is new
+
+The factory is not a new product bolted on. Most of the hard parts are shipped.
+
+| Already shipped | Genuinely new |
+|---|---|
+| Provider-neutral SCM seam, 3 forges, build-enforced (ADR-020) | A **workspace** and a **sandbox** |
+| Priced charge ledger + spend caps (ADR-023, ADR-025) | A **harness** — an agentic tool loop, not one LLM call |
+| Encrypted provider registry, SSRF-guarded | **Writes**: branch, push, pull request |
+| Operator auth + RBAC (ADR-022) | A **work source** — the tracker as a queue, not as context |
+| Event store, sagas, idempotency claims, DLQ | **Gates** — durable human approval points |
+| Findings corpus + analytics + learned memory (ADR-027) | **Autonomy profiles** driven by ticket labels |
+| Attention panel, packaged deploy (Compose/Helm/kustomize) | A second, high-volume **run event** tier |
+
+The single largest asset is the one nobody else has: **the reviewer reviews the factory's own
+output**, and ADR-019 reconciliation already handles the second round. That closes a measurement
+loop — *an agent wrote this × the reviewer found N × a human dismissed M × it cost X* — that the
+closest prior art (Warren's corpus-flywheel record) describes at length and lists as unscheduled.
+
+## Reading order
+
+| Document | Answers |
+|---|---|
+| [PRD.md](./PRD.md) | Who it is for, functional requirements FR-F1..F26, NFRs, success criteria |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Planes, seams, services, topics, identity, data tiers |
+| [MODULES.md](./MODULES.md) | Every new module: purpose, interface, dependencies, licence |
+| [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) | Harnesses, vendor terms with quotes, credential pooling, agent images |
+| [AUTONOMY.md](./AUTONOMY.md) | The eight phases, autonomy profiles, gates, and the label threat model |
+| [PACKAGING.md](./PACKAGING.md) | Product capability packs, entitlements, per-capability metering |
+| [RESEARCH.md](./RESEARCH.md) | The prior art this design is built on, with sources |
+| [ROADMAP.md](./ROADMAP.md) | M0–M6 build order, and what is deliberately not built |
+
+Decisions are recorded as **ADR-028 through ADR-035** in [`../DECISIONS.md`](../DECISIONS.md),
+alongside every earlier decision. The design record for the session that produced this directory is
+[`../superpowers/specs/2026-09-01-software-factory-design.md`](../superpowers/specs/2026-09-01-software-factory-design.md).
+
+## The rule that recurs
+
+Three separate defences in this codebase turn out to be the same rule, and the factory needs it a
+fourth time:
+
+- `.codespire` is read from the **target branch, never the reviewed commit** — a pull request must
+  not rewrite the instructions of the reviewer judging it.
+- Codex CLI ignores `model_provider` in a repository's own config file, in its own words *"to
+  prevent repositories from secretly changing the machine's model provider."*
+- An agent image named by a repository would decide where the operator's credentials get injected.
+- An autonomy label applied by anyone with tracker write would decide what the factory may merge.
+
+> **Repo-supplied configuration may narrow behaviour. It may never redirect where compute or
+> credentials go, and it may never widen authority.**
+
+This is ADR-035. Every new repo-readable setting is checked against it.

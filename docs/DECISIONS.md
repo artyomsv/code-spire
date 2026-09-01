@@ -4,6 +4,373 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-035 — Repository-supplied configuration may narrow behaviour, never redirect compute or widen authority
+
+**Context.** Three defences already in this codebase turn out to be the same rule, discovered
+separately each time. `.codespire` is read from the pull request's **target branch, never the
+reviewed commit**, because the head is written by the change under review and rules taken from it
+would let a pull request rewrite the reviewer's instructions in the same pull request. Codex CLI —
+found during the factory research — ignores `model_provider` and `model_providers` set in a
+repository's own config file, in its own documentation's words *"to prevent repositories from
+secretly changing the machine's model provider."* And the factory adds two more instances: a
+repository-named agent image would decide where the operator's credentials are injected, and an
+autonomy label applied by anyone with tracker write would decide what the factory may merge.
+
+Rediscovering the same rule a fourth time by being bitten is the outcome this record exists to
+prevent.
+
+**Decision.** State it once, cite it thereafter:
+
+> Repository-supplied configuration may **narrow** behaviour. It may never redirect where compute or
+> credentials go, and it may never widen authority.
+
+Concretely, for every setting a repository can influence: a repository may make the reviewer
+stricter, exclude a path, lower an autonomy profile, or add text into an already-fenced untrusted
+slot. A repository may never select the model endpoint, the container image, the credential, the
+runtime, or a profile above the operator's ceiling. Where a repository-facing selection is genuinely
+useful — an image for its own toolchain, a profile for its own risk appetite — it selects **from an
+operator-defined allowlist**, never by free text.
+
+**Why the fencing defence does not cover this.** Prompt fencing works on untrusted *data*: a ticket
+body, a review comment, a rules file. It quotes the input and tells the model not to obey it. None of
+that helps for untrusted *control*, because control is not quoted into a prompt — it is read by code
+and obeyed. A label naming an autonomy profile is not text the model might be tricked by; it is a
+switch. The only defence is a ceiling and an allowlist.
+
+**Consequence.** Every new repository-readable setting is checked against this record before it
+ships, and the check is named in its design. It also explains, retroactively, why the target-branch
+rule for `.codespire` could not be solved by better fencing: the defence had to live in *where the
+rules were read from*, not in *how they were quoted*.
+
+---
+
+## ADR-034 — The platform divides into capability packs; entitlement is one gate and every charge names its capability
+
+**Context.** The factory makes Code Spire large enough that a customer may reasonably want part of
+it. Today's module structure splits by *technical seam* — contract, diff, llm, scm-\*, context-\* —
+and carries the ADR-021 licence split. That axis does not answer "what did this customer buy",
+because one purchasable capability spans several modules, a worker, several UI screens and several
+read-model tables.
+
+**Decision.** Two orthogonal axes, both holding at once. Code modules keep splitting by seam and
+keep carrying the licence. **Product modules** ("capability packs") split by capability: **Core**
+(chassis, not sold alone), **Review**, **Knowledge**, **Build**, **Autonomy**, **Insight**. The
+boundaries and their reasoning are in `docs/factory/PACKAGING.md`.
+
+**Build and Autonomy are separate on purpose.** Build is *"I ask, it builds"*; Autonomy is *"it
+decides when to work"*. That is a genuine value line, and the second half is the one with the blast
+radius, so gating it separately is a safety control that happens also to be a price line.
+
+**Knowledge and Build share connectors and stay separate**, because the difference is rights rather
+than transport: a context provider reads an issue, a work source also claims, comments and
+transitions it. Authority narrows per pack, enforced at the adapter.
+
+**Entitlement is read at exactly one place** — in the saga, beside `SpendGate` and the priceability
+check — so that every reason a dispatch was refused reads in one place. A blocked capability produces
+a first-class refusal (`entitlement_missing`) with its own status, timeline detail, operator note and
+attention row, reaching the UI's status union in the same change. Not a crash, not a silent skip.
+
+Scattering the check as `if (hasBuild)` across handlers is refused explicitly. This codebase has
+twice paid to learn why one comparison must have one home: `SpendGate` exists so a money comparison
+cannot drift between the enforcement site and the attention row, and `ProviderCircuits` exists so
+health is decided once per host rather than per call site.
+
+**`llm_charge` gains `capability` and `credential_ref`, now.** Per-module pricing asks exactly one
+question — what did this capability cost this deployment this month — and it is unanswerable without
+the column. It is **impossible to backfill**: a charge row that did not record its capability cannot
+have one inferred later. This is the same lesson as `review_finding` shipping with no backfill, and
+the same failure shape as ADR-023's four places where *unknown* silently became *zero*. An unmetered
+run still records its capability and its credential, because money is null for it and call counts are
+not.
+
+**Placement.** `Entitlements` is a value type in `spire-contract`, because commands carry it across
+the wire. **Enforcement lives in the FSL services**, because no Apache-2.0 module may depend on a
+service module — the same constraint that kept the LLM circuit breaker out of `spire-llm`. Licence
+and entitlement answer different questions and neither substitutes for the other: FSL stops a
+competitor reselling the services; entitlement decides what the operator's own deployment switched
+on.
+
+---
+
+## ADR-033 — Run events are a second tier; the aggregate's log stays milestone-only
+
+**Context.** One agent run in the observed prior art emitted **858 events** — reasoning, tool calls,
+tool results, state transitions. A review, by comparison, produces a handful of domain events. ADR-010
+makes the aggregate the single writer of domain events and ADR-011 encrypts payloads that may quote
+source. Writing an agent's tool-call trace into that log would multiply event-store volume by three
+orders of magnitude, encrypt every line of it, and make replay useless.
+
+**Decision.** Two tiers, with different transports, stores, retention and guarantees.
+
+The **run stream** — reasoning, `tool_use`, `tool_result`, output, state — rides a new topic
+`cs.run-events` into a bounded `run_event` table with a short TTL. It exists for the live tail, for
+debugging, and for a transcript an operator can read. It is not replayable and nothing derives state
+from it.
+
+The **domain tier** is unchanged: `RunStarted`, `RunFinished`, `BranchPushed`, `GateOpened`,
+`GateResolved`, `WorkItemCompleted` and their siblings ride `cs.events` into the event store, durable
+and replayable. Only milestones are promoted.
+
+**Why the normalized run-event types live in `spire-harness` rather than `spire-contract`.** Most run
+events never reach the domain log. Putting the high-volume vocabulary into the contract module would
+imply a durability guarantee the tier does not have, and would invite a later change to persist it
+"since it is already in the contract".
+
+**Consequence.** `run_event` payloads are Tink-encrypted, because a tool result quotes the
+repository — the ADR-011 boundary applies unchanged. The TTL is an operator setting, and a run's
+transcript is therefore explicitly ephemeral. An operator who needs a permanent transcript exports it
+before expiry; the alternative — permanent retention by default — is a storage bill and a data
+exposure nobody asked for.
+
+---
+
+## ADR-032 — Autonomy is a property of the work item, selected by label, bounded by an operator ceiling
+
+**Context.** A single deployment-wide autonomy setting is wrong in both directions: it makes a typo
+fix wait for a human, or it lets a change to an authentication path merge without one. The prior art
+splits on this — one system gates per campaign, another triggers per label — and neither binds the
+two together.
+
+**Decision.** Autonomy is a property of the **work item**. An operator defines named **profiles**;
+each profile is a **vector**, assigning every phase (`intake`, `spec`, `plan`, `build`, `verify`,
+`review`, `deliver`, `land`) a mode of `auto`, `approve` or `off`, plus caps for runs, steps, wall
+clock, spend, call count and protected paths. A work item selects a profile by tracker label.
+
+Three rules make a label safe to obey.
+
+**The ceiling is operator-owned and does not live in the repository.** Profiles, the ceiling and the
+label mapping live in the registry. This follows the distinction this project already drew for
+prompts: a per-repository prompt is an operator-owned change to the reviewer's *instructions*, while
+`.codespire` is contributor-owned *data* that can only add text into a fenced slot. Autonomy is
+instructions with authority attached, so it sits on the operator side.
+
+**A label may only lower.** A label naming a profile above the ceiling is clamped to the ceiling, and
+the clamp is recorded as a timeline entry and an attention row. Visibly, always; never silently, and
+never upward.
+
+**The labeller must be allowed.** Anyone with tracker write can apply a label, so the label is an
+authorization decision made outside this system's trust boundary. The existing per-provider author
+allowlist is reused: a label applied by an actor outside it does not select a profile. Without this
+rule, a drive-by contributor opens an issue, labels it for full autonomy, and the factory writes and
+merges their code using the operator's credentials.
+
+**Gates are durable state, not blocking calls.** An `approve` phase persists a row that appears in the
+existing attention panel and is answerable from the dashboard, a tracker comment, or a pull-request
+review — three channels, so a human never has to learn a new tool to unblock work. Gates **expire**
+into `WorkItemRefused(gate_expired)`, because a plan awaiting approval for a month is dead work
+holding a budget reservation. A person pushing to the branch or commenting on the pull request sets
+`human_takeover` and suspends automation until an operator resumes: an agent that races a human
+produces conflicting commits and a bot arguing with a maintainer in public.
+
+**Every refusal is a first-class terminal state with its own reason**, in the vocabulary shape ADR-025
+established — and every one of them reaches the UI's status union, label map, pipeline renderer and
+chip filter in the same change. A status the union does not know arrives as runtime JSON and renders
+through the default branch, which is the *success* branch, while `tsc` has nothing to check. That has
+happened twice here; the second time a refused review rendered as five green segments under "done".
+
+---
+
+## ADR-031 — The agent image is a conformance contract, not a base image
+
+**Context.** The obvious design ships `spire-agent-codex` and tells customers to write
+`FROM spire-agent-codex`. A regulated enterprise cannot: it builds from an approved golden base,
+mirrors images into its own registry, scans and signs them, and injects its own CA bundle and proxy
+configuration. Inheriting from a vendor's image is not available to them.
+
+There is also a second dimension that a single image cannot carry. The sandbox needs the
+**repository's own toolchain** — a JDK and Gradle here, a Python environment there — or the agent
+cannot run the repository's tests, and a test it cannot run is back-pressure it does not have.
+
+**Decision.** Publish an **image contract** and a conformance command; ship images as reference
+implementations that satisfy it. An image must place the harness binary on `PATH` under its declared
+name, declare and run as a non-root UID, contain `git` and a POSIX shell, honour `SPIRE_WORKSPACE`,
+write the run event stream to the declared descriptor, honour proxy and CA-bundle variables, exit
+non-zero only on failure, and contain no credential. `spire agent-image verify <ref>` boots any image
+and passes or fails it.
+
+This follows the house rule that a seam is not done until a gate enforces it, and matches how the
+comparable protocols in this space prove an implementation — with a conformance suite, not a grep.
+
+**Shipped images are one base with thin per-harness layers**, not four independent images: four
+images means four places to patch a CVE and four entrypoints that drift. This repository already
+carries three tech-debt entries that are literally *"duplicated with no drift guard"*. Images are
+digest-pinnable, signed and published with an SBOM, because an enterprise mirrors and approves them
+before anything else can happen.
+
+**Harnesses are installed into images, never redistributed.** Claude Code publishes no open-source
+licence; Codex is Apache-2.0 and pi is MIT and could be shipped, but all four are installed the same
+way so that adding a proprietary one later is not a special case. The closest prior art states the
+same rule in the same words.
+
+**Image resolution is `per-run > per-repository > harness default > built-in`, and the
+per-repository level selects from an operator allowlist** — ADR-035. A repository-chosen image
+decides where the operator's credentials are injected; free text there means anyone who can open a
+pull request receives the model key, the git token and the CA bundle on startup.
+
+**Sidecar injection is named and deferred.** Injecting the harness into the customer's own image at
+run time — the pattern major CI runners use — is the better end state and needs a bundled runtime for
+the Node-based harnesses. The contract makes deferring it safe: a customer who needs it today builds
+an image that passes the suite.
+
+---
+
+## ADR-030 — Model credentials belong to the operator, and API keys are the only supported auth mode
+
+**Context.** A factory spends money on every run, under some vendor's terms. Two questions had to be
+separated, because conflating them is the easiest mistake in this area: the **harness software
+licence** (may we run and ship this program?) and the **model provider terms** (may this credential
+run unattended?). `pi`, `opencode`, OpenHands and Goose have only the first — they are empty
+harnesses pointed at somebody else's API, so there are no terms of their own to check. Codex CLI and
+Claude Code carry both, because each is a vendor's own client for that vendor's own service.
+
+Primary sources, retrieved 2026-09-01 and quoted in full in
+`docs/factory/EXECUTION-LAYER.md` §2:
+
+- **Anthropic Consumer Terms** (effective 2025-10-08) list among prohibited uses: *"Except when you
+  are accessing our Services via an Anthropic API Key or where we otherwise explicitly permit it, to
+  access the Services through automated or non-human means, whether through a bot, script, or
+  otherwise."* Enforced server-side since January 2026.
+- **Anthropic Commercial Terms** (effective 2025-06-17) contain no automation restriction, and §A.1
+  explicitly permits using the Services *"to power products and services Customer makes available to
+  its own customers and end users."* §D.4 forbids building a competing service **or reselling the
+  Services** except as expressly approved.
+- **OpenAI Services Agreement** (effective 2026-01-01) contains no automation clause; the consumer
+  Terms of Use prohibit only *"Automatically or programmatically extracting data or Output."*
+- **OpenAI Codex documentation:** *"Use API key authentication for programmatic Codex CLI workflows,
+  such as CI/CD jobs."*
+- **OpenAI Service Terms:** *"Output generated by code generation features of our Services, including
+  OpenAI Codex, may be subject to third party licenses, including, without limitation, open source
+  licenses."*
+
+No document was found that **affirmatively permits** using a ChatGPT subscription for unattended
+automation. It is not prohibited in writing, and OpenAI's own documentation steers to API keys.
+
+**Decision — three parts.**
+
+**Bring-your-own-key, always.** The operator supplies the credential, it is stored in the existing
+encrypted registry, and the usage bills to the operator's own agreement with the vendor. This is not
+merely a cost preference: Anthropic §D.4 forbids reselling the Services, and any design in which Code
+Spire proxied model access would engage that clause. The provider registry already implements this
+posture; the factory inherits it rather than inventing a second one.
+
+**API key is the supported auth mode**, and the `HarnessAdapter` contract has **no subscription auth
+mode** — not a flag, not a warning, absent. Anthropic prohibits subscription automation outright;
+OpenAI permits it only by silence. A subscription is a *person's* credential and a factory is a
+*service*, browser OAuth in a headless sandbox is operationally absurd, and one server-side policy
+flip would take every deployment dark at once. Where an operator nonetheless chooses subscription
+auth for a harness that supports it, that is a deployment decision recorded with its own provenance —
+the design carries it, the design does not assert it is sanctioned.
+
+**Credentials are pooled, not singular.** A subscription has windowed quota and an API key has rate
+limits, so the unit is a pool with per-member state — `available`, `rate_limited(until)`, `rejected`,
+`disabled` — rotating **least-recently-exhausted**, never round-robin, because round-robin burns every
+window together and takes capacity from full to zero with no warning. A rotated retry is the *same*
+logical call and must reuse its charge identity; the ledger already had to distinguish a re-run from
+an auto-retry, and rotation is the second kind. Pool exhaustion is a first-class refusal naming when
+capacity returns, in the shape of `CAP_REACHED`, not a crash and not a retry storm.
+
+**Consequence, foreseen by ADR-025.** A subscription-authenticated run has no per-token price, so it
+charges `pricing_mode = UNMETERED` — an asserted zero, never a coerced one — and the money cap is
+inert for it. ADR-025 wrote this down in advance: *"a money-denominated cap will be inert by design
+on an `UNMETERED` deployment, so the eventual cap needs a token- or call-count axis regardless of
+pricing mode."* The call-count axis becomes the live control, joined by a third: quota headroom.
+
+**Consequence, unforeseen.** OpenAI states in its own terms that generated code may carry third-party
+licences. A factory merges such code at volume, so licence provenance is a real pipeline concern
+(NFR-F10) rather than a footnote.
+
+**Re-check before shipping each arm.** Terms for automated use changed twice during 2026. Every
+finding above carries its retrieval date for exactly that reason.
+
+---
+
+## ADR-029 — Harnesses are driven, not built, and the harness is a runtime registry row
+
+**Context.** The factory needs an agentic tool loop: read, search, edit, run a command, observe,
+repeat, with context management and compaction. Code Spire's `LlmProvider` is a single-shot call and
+is not that. The build-or-drive question had to be answered before anything else, because it decides
+the module structure.
+
+**Decision.** Drive an existing harness behind a `HarnessAdapter` seam. Do not build a tool loop.
+
+**Why.** A survey of open-source harnesses finds the same four tools in all of them — read, search,
+edit, bash — which makes the loop look easy, and the same survey measures **20–30 percentage points
+of benchmark difference on the same model, attributable to harness quality alone.** The difficulty is
+not the loop; it is context management, compaction, tool-result shaping and the thousand small
+decisions that separate a working harness from a demonstration. Building that is a second product.
+
+**The harness is a runtime registry selection, not a build-time dependency.** Anthropic's January 2026
+restriction landed server-side with no warning. A design that welds one harness into the worker is one
+vendor policy change away from a dead product; a registry with several arms survives it. This is the
+same reasoning that made SCM and LLM providers registry rows rather than configuration.
+
+**Order: Codex first, pi second.** Codex is Apache-2.0, has a dedicated non-interactive subcommand
+emitting newline-delimited JSON with an honest exit code, ships OS-level sandbox modes with network
+off by default, reaches any OpenAI-compatible endpoint through `model_providers`, and is the path
+OpenAI's own documentation describes for automation. pi is MIT, provider-agnostic through the existing
+LLM registry, and the only candidate with a bidirectional session mode — which is what makes **steer**
+implementable. Building the second arm is what turns the seam from an assertion into a fact, per the
+existing rule that a capability parity supported only by a grep is not done.
+
+**Two contract rules that are not obvious.** `usage()` returning empty means **UNKNOWN, never zero** —
+ADR-023 exists because four separate places turned unknown into zero, and a harness whose usage shape
+is unrecognised must arrive unpriceable rather than free. And `command()` returns argv, never a shell
+string, because a prompt is untrusted text from a tracker.
+
+**Not adopted: the Unified Harness Protocol.** An Apache-2.0 open standard exists covering the same
+harnesses, with a versioned specification and a conformance suite. It is an HTTP hop and a
+hosted-product-shaped API, where `spire-run-worker` already owns the process directly. `HarnessAdapter`
+is shaped so a `UhpHarnessAdapter` is one more arm, for an operator who already runs one — the same
+posture as a remote-tracker bridge.
+
+---
+
+## ADR-028 — The factory extends the kernel; a run is a workload beside the review, not a second control plane
+
+**Context.** Extending Code Spire from a reviewer into a software factory admits three shapes. Extend
+the existing kernel with one new deployable and new sagas. Build a separate control plane that drives
+Code Spire over HTTP — the pattern the closest prior art chose. Or extend `spire-review-worker` to
+also run agents.
+
+**Decision.** Extend the kernel. One new deployable, `spire-run-worker`; new deciders and sagas in
+the existing orchestrator; factory commands and events on the Kafka bus that already exists, into the
+event store that already exists, surfaced in the UI that already exists, charged to the ledger that
+already exists.
+
+**Why not a separate control plane.** That prior art chose it because its kernel is deliberately
+minimal — its philosophy explicitly restricts core to the run loop and pushes everything reactive
+outside. Code Spire's kernel is not minimal in that sense and was never meant to be: it already owns
+operator auth and RBAC, an encrypted event store, a priced charge ledger with spend caps, an attention
+panel and a dashboard. A separate plane would rebuild all five to gain a decoupling nobody has asked
+for, and would then need its own credential, its own database and its own UI.
+
+**Why not the review worker.** Three independent reasons, each sufficient. A run holds tens of
+gigabytes of disk and an hour of wall clock, while the review worker is a short ordered blocking
+consumer. A run needs a Docker socket or Kubernetes API access, and that privilege must not sit in the
+process that posts review comments. And one stalled run must not stall every review — this project has
+already paid for that exact failure, when a slow model call outran the SmallRye ack threshold and
+dead-lettered a consumer that re-stalled on every restart.
+
+**The guaranteed output is a pushed workspace branch.** Opening a pull request, updating a tracker,
+merging and closing are policy layered on that boundary, not part of the kernel. Adopted from the
+prior art, and it is what keeps the run plane free of product decisions.
+
+**The tracker stays the source of truth.** No issues table, no issues UI, no sync. Code Spire stores
+only its own run bookkeeping, keyed by `(work source, repository, issue id)`. Every customer already
+has a tracker, and owning a second means owning drift, permissions and reconciliation forever.
+
+**Provider neutrality is build-enforced from the first commit.** `spire-arch` today fails the build
+when a core module names an SCM or context provider outside a reasoned allowlist; it is extended to
+harness, runtime and work-source names **in the same commit as the first seam**, not after the first
+leak. The SCM version of that check found three real leaks, one of which was a live defect returning
+500 where it should have returned 404.
+
+**Deliberately out of scope:** campaign controllers, multi-repository policy execution, learned
+routing and replica dispatch. Each is recorded in `docs/factory/ROADMAP.md` with the price of
+admission that would schedule it.
+
+---
+
 ## ADR-027 — Findings are retained as a queryable projection, and a learned preference filters visibly
 
 **Context.** P4 was scheduled on the assumption that a corpus of accepted and rejected findings
