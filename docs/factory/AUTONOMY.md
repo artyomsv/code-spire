@@ -254,9 +254,11 @@ it means.
 
 **How the match works, decided rather than left to the implementer:**
 
-- **Reuse `PathGlobs`** — the fixed-ladder glob matcher ADR-027 already uses for learned-preference
-  path groups, promoted out of `spire-orchestrator/…/memory/` into a shared module. One matcher, one
-  set of semantics; a second glob dialect in the same product is a bug waiting for a Friday.
+- **Use the JDK's `java.nio.file.PathMatcher` with `glob:` syntax** — it already implements `**`,
+  `*`, `?` and character classes, so the product gains no glob dialect of its own and no dependency.
+  A first draft said "reuse `PathGlobs`"; that was wrong. `PathGlobs` does the **opposite** job — it
+  maps a path *to* the group glob a learned preference is about (`src/foo/Bar.java` → `src/foo/**`).
+  It cannot answer "does this path match this glob", which is what a gate needs.
 - **Match the diff's changed-path set against the base**, including **both sides of a rename** and
   **deletions**. A deleted workflow file changes what CI does exactly as much as an edited one, and a
   rename that moves a file *into* a protected path is the obvious evasion.

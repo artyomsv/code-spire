@@ -200,8 +200,9 @@ Only **milestones** are promoted. This mirrors the split the prior art makes bet
 live tailers and a lifecycle bus for durable consumers, and it is ADR-011/ADR-014 discipline applied
 one level up.
 
-Topics after the change: `cs.integration`, `cs.commands`, `cs.events`, `cs.results`, **`cs.run-events`**,
-**`cs.run-control`**, `cs.dlq`.
+Topics after the change: `cs.integration`, `cs.commands`, `cs.events`, `cs.results`,
+**`cs.run-commands`**, **`cs.run-control`**, **`cs.run-results`**, **`cs.run-events`**, `cs.dlq`.
+Review topics are keyed by `reviewId`; run topics by `runId`.
 
 ### 5.1 The run worker cannot inherit the review worker's consumption model
 
@@ -214,7 +215,19 @@ rather than merely awkward:
 > meant to cancel — so it would be consumed only after that run finished.** Cancel that cannot
 > cancel.
 
-So the run worker's semantics are specified rather than inherited:
+**Run commands also cannot ride `cs.commands` at all**, for a reason found while grounding the M0
+plan: `ActionCommand` declares `String reviewId()` as a mandatory member of the sealed hierarchy, and
+a run has a `runId`. Putting a run id behind a method named `reviewId()` is the shape where a name
+lies. So run dispatch gets its own sealed type and its own topic:
+
+| | Review | Run |
+|---|---|---|
+| type | `ActionCommand` (`reviewId()` mandatory) | **`RunCommand`** (`runId()`) |
+| dispatch topic | `cs.commands` | **`cs.run-commands`** |
+| control topic | — | **`cs.run-control`** |
+| results topic | `cs.results` | **`cs.run-results`** |
+
+And the semantics are specified rather than inherited:
 
 | Concern | Review worker | Run worker |
 |---|---|---|
