@@ -130,6 +130,31 @@ describe('AnalyticsOverview', () => {
 
     await waitFor(() => expect(screen.getByText(/No findings recorded yet/i)).toBeTruthy());
     expect(screen.getByText(/nothing was backfilled/i)).toBeTruthy();
+    // The confusion this caused in practice: a deployment with dozens of reviews, the author's own
+    // name on screen elsewhere, and this reading zero. The reason has to be stated — earlier
+    // reviews exist and genuinely contribute nothing, because their findings were never stored.
+    expect(screen.getByText(/earlier reviews exist/i)).toBeTruthy();
+  });
+
+  /**
+   * The tile counts DISTINCT review ids in the findings table, so it means "reviews that recorded
+   * findings" and not "reviews this author opened". Labelled plain "Reviews" the number was right
+   * and the label was a promise it never made, which reads as data loss rather than an empty corpus.
+   */
+  it('says the review count is of reviews that recorded findings', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
+      totals: EMPTY_TOTALS,
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Reviews with findings/i)).toBeTruthy());
   });
 
   /**

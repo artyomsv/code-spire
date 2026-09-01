@@ -67,7 +67,11 @@ function Totals({ totals }: { totals: AnalyticsTotals }) {
   return (
     <div className="an-stats">
       <Stat value={String(totals.findings)} label="Findings" />
-      <Stat value={String(totals.reviews)} label="Reviews" />
+      {/* Counted from the FINDINGS table, so this is reviews that recorded findings -- not every
+          review the deployment has run. Labelled "Reviews" it read 0 on a deployment with dozens of
+          them, whose author name is on screen elsewhere, and the number was right while the label
+          was a promise it never made. */}
+      <Stat value={String(totals.reviews)} label="Reviews with findings" />
       <Stat
         value={percent(totals.dismissalRate)}
         label={totals.judged === 0 ? 'Dismissed (nothing judged yet)' : `Dismissed of ${totals.judged} judged`}
@@ -84,8 +88,10 @@ function Breakdown({ rows }: { rows: AnalyticsBreakdown[] }) {
   if (rows.length === 0) {
     return (
       <p className="prov-note">
-        No findings recorded yet. This record starts when a review runs — nothing was backfilled, so
-        the history begins here rather than pretending to reach further back than it does.
+        No findings recorded yet. Findings began being stored only when this feature shipped, and
+        nothing was backfilled — so earlier reviews exist and still count nothing here. Their
+        findings were never written down anywhere to recover. The next review to run starts the
+        record.
       </p>
     );
   }
