@@ -722,11 +722,12 @@ Record two outcomes:
 
 1. **The real set of `type` / `item.type` values.** Fix `parse` and the test fixtures to what the
    run actually emitted. The test pins the real wire shape, never a guessed one.
-2. **Whether token usage appears DURING the run or only in the final summary.** This is the open
-   question in RUN-TOPOLOGY §10 and it is not cosmetic: if usage arrives only at the end, a killed
-   run’s spend is **never recorded** — real money spent, ledger blind to it, which is the shape
-   ADR-023 exists to prevent. Runs here are long and killable, so settle it before M1 records
-   charges, and write the answer into RUN-TOPOLOGY §10.
+2. **Whether token usage appears DURING the run or only in the final summary.** Not a blocker —
+   Codex runs on a subscription, so a killed run loses no money, only statistics (RUN-TOPOLOGY §10).
+   Record the answer there anyway: it decides how much data survives a killed run, and it becomes
+   accounting again the day an arm runs on an API key. Usage is written beside each bundle in
+   `/handoff`, so whatever the harness reports per turn is captured at the last checkpoint; a harness
+   that reports only at the end yields **UNKNOWN**, never zero.
 
 - [ ] **Step 7: Commit**
 

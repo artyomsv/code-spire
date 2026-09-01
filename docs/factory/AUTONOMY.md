@@ -348,6 +348,7 @@ Adopted from the observed prior art because they are the right ones:
 | Metric | Definition |
 |---|---|
 | **Cost per merged pull request** | the headline number; everything else explains it |
+| **Tokens (or runs) per merged pull request** | the same number's stand-in on an **UNMETERED** deployment, where cost is a flat subscription fee and a money figure says nothing. Without this substitute, an unmetered factory has no way to tell "getting better" from "getting busier" |
 | **Autonomy rate** | merged with no steer, no re-run and no human commit |
 | **Issue → merge lead time** | median, from admission to merge |
 | **Where runs die** | a closed failure-cause discriminator, recorded as data |

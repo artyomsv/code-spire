@@ -350,16 +350,44 @@ directories.
 
 ---
 
-## 10. Open question
+## 10. Token usage is telemetry here, not accounting
 
-**Does Codex report token usage incrementally, or only in its final summary?**
+An earlier draft called incremental usage reporting an open question that blocked M1, on the grounds
+that a killed run's spend would go unrecorded. **That framing is wrong for the mode this deployment
+actually runs in.**
 
-If only at the end, a killed run's spend is **never recorded** — real money spent, and the ledger does
-not know. That is the exact shape ADR-023 exists to prevent, and it matters more here because runs are
-long and may be killed.
+Codex is used on a **subscription**. There is no per-token bill, so a run that dies before reporting
+its usage has not lost anyone money — the money was a flat fee already paid. `pricing_mode` is
+`UNMETERED` (ADR-030), and ADR-023's rule still applies for a smaller reason: a missing count is
+recorded as **UNKNOWN**, never as zero, because zero would be a claim nobody measured.
 
-Cheap to settle: one small prompt with `--json`, inspecting the stream for token events. Not yet run,
-because it consumes the operator's quota. **Settle it before M1 records charges.**
+### What usage is still worth having
+
+| Purpose | Why it matters under a subscription |
+|---|---|
+| **Substitute headline metric** | "Cost per merged pull request" is meaningless when cost is a flat fee. **Tokens — or runs — per merged pull request** is the analogue, and it is the number that tells an operator whether the factory is getting better or just busier. |
+| **Waste detection** | A run that burned 200k tokens and produced nothing is a strong signal even when it "cost nothing". |
+| **Cross-arm comparison** | The moment a metered arm exists (pi on an API key), comparable numbers are needed to choose between them. |
+| **Future API-key mode** | ADR-030 requires every arm to also work on an API key. In that mode this becomes accounting again — for that mode only. |
+
+**What it is NOT needed for:** credential rotation. The pool rotates on the vendor's own
+rate-limit/quota response, not on a token count, so the operationally important mechanism does not
+depend on this at all.
+
+### The cheap mechanism, which fits the design already
+
+**Usage rides the checkpoint stream, exactly like commits.** The agent container writes the
+last-known usage beside each bundle in `/handoff`, so a killed pod still leaves whatever was known at
+the last checkpoint. For a harness that reports per turn, that captures nearly everything; for one
+that reports only at the end, it captures nothing — and records UNKNOWN, honestly.
+
+Costs nothing to build, and it means the answer to "does Codex report incrementally" changes how much
+data we get rather than whether the mechanism exists.
+
+### Status
+
+Not a blocker. Worth measuring during Task 2's live-stream capture and writing down here, alongside
+the real event-type list.
 
 ---
 
