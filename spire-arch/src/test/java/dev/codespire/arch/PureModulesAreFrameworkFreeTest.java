@@ -40,11 +40,11 @@ import static org.junit.jupiter.api.Assertions.fail;
 class PureModulesAreFrameworkFreeTest {
 
     /** Modules whose build files declare them framework-free. */
-    private static final List<String> PURE_MODULES = List.of("spire-contract", "spire-diff");
+    private static final List<String> PURE_MODULES = List.of("spire-contract", "spire-diff", "spire-harness");
 
     /** What a pure module may always import: the JDK, and the pure modules themselves. */
     private static final List<String> DOMAIN_PREFIXES =
-            List.of("java.", "dev.codespire.contract.", "dev.codespire.diff.");
+            List.of("java.", "dev.codespire.contract.", "dev.codespire.diff.", "dev.codespire.harness.");
 
     /**
      * Third-party imports permitted anyway, each with the reason. An entry here is a deliberate,
@@ -140,7 +140,7 @@ class PureModulesAreFrameworkFreeTest {
         violations.forEach(violation -> message.append("  ").append(violation).append("\n"));
         message.append("""
 
-                spire-contract and spire-diff must import only the JDK and each other. They are the
+                The pure modules must import only the JDK and each other. They are the
                 Apache-2.0 libraries a plugin author depends on (LICENSING.md), and the domain code
                 whose deciders and views are unit-tested as pure functions with no runtime. A
                 framework import here forces that runtime on every consumer.

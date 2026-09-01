@@ -30,6 +30,7 @@ COPY spire-diff/build.gradle.kts spire-diff/
 COPY spire-e2e/build.gradle.kts spire-e2e/
 COPY spire-encryption/build.gradle.kts spire-encryption/
 COPY spire-gateway/build.gradle.kts spire-gateway/
+COPY spire-harness/build.gradle.kts spire-harness/
 COPY spire-http/build.gradle.kts spire-http/
 COPY spire-llm/build.gradle.kts spire-llm/
 COPY spire-orchestrator/build.gradle.kts spire-orchestrator/
