@@ -19,7 +19,12 @@ public final class OutcomeWriter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    private static final String REDACTED = "***";
+
     private final PrintStream out;
+
+    /** Scrubbed from every failure detail; null when there is nothing to protect yet. */
+    private final String secret;
 
     public OutcomeWriter() {
         this(System.out);
@@ -27,7 +32,17 @@ public final class OutcomeWriter {
 
     /** Injectable so a test can read what was written instead of scraping a real stdout. */
     public OutcomeWriter(PrintStream out) {
+        this(out, null);
+    }
+
+    /**
+     * @param secret the git credential, so no failure detail can carry it — a transport exception
+     *               quotes the URL it tried, and this line is what the worker records as the run's
+     *               failure. Refusing userinfo in the URI is the front door; this is the one behind it.
+     */
+    public OutcomeWriter(PrintStream out, String secret) {
         this.out = out;
+        this.secret = secret;
     }
 
     public void pushed(String ref, List<ChangedPath> changed) {
@@ -43,7 +58,14 @@ public final class OutcomeWriter {
     }
 
     public void failed(String cause, String detail) {
-        write(entry("event", "failed", "cause", cause, "detail", detail));
+        write(entry("event", "failed", "cause", cause, "detail", scrub(detail)));
+    }
+
+    private String scrub(String detail) {
+        if (detail == null || secret == null || secret.isEmpty()) {
+            return detail;
+        }
+        return detail.replace(secret, REDACTED);
     }
 
     private static List<Map<String, String>> describe(List<ChangedPath> paths) {

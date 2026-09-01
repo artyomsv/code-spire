@@ -19,6 +19,11 @@ import java.util.Map;
  * must refuse — the union is "refuse" — so branching on the kind could only ever narrow that,
  * adding a way to miss and no way to catch. The kind is still REPORTED, because an operator reading
  * a refusal needs to know whether the factory edited a workflow or deleted it.
+ *
+ * <p>It judges the TIP tree against the base, not every commit in between. A branch whose history
+ * adds a workflow and then deletes it pushes with a clean tip, and that is the intended answer:
+ * CI systems execute the configuration at the ref they are given, so an intermediate commit's
+ * workflow never runs. What reaches the remote's default branch is the tip a reviewer merges.
  */
 public final class PushGate {
 

@@ -1,12 +1,9 @@
 package dev.codespire.publisher;
 
-import dev.codespire.workspace.GitCredential;
 import dev.codespire.workspace.PublishRepo;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.List;
 
 /**
  * The publisher sidecar.
@@ -23,14 +20,10 @@ import java.util.List;
  *   <li>it never checks out a working tree, so nothing the agent authored becomes a file here.</li>
  * </ul>
  *
- * <p>Configuration is environment-only, with no defaults for anything an operator must decide. A
- * missing value is a startup failure naming the variable, because a publisher that starts with the
- * wrong branch or an absent credential fails later, in the middle of a run, having already consumed
- * the agent's work.
+ * <p>Configuration is environment-only and validated once, before the clone — see
+ * {@link PublisherConfig} for what is refused and why.
  */
 public final class PublisherMain {
-
-    private static final String HANDOFF = "/handoff";
 
     /** The agent's last act. Only needed where the runtime has no native sidecar termination. */
     static final String DONE_SENTINEL = "DONE";
@@ -41,26 +34,26 @@ public final class PublisherMain {
     }
 
     public static void main(String[] args) throws Exception {
-        OutcomeWriter outcome = new OutcomeWriter();
-        Path handoff = Path.of(System.getenv().getOrDefault("SPIRE_HANDOFF_DIR", HANDOFF));
+        PublisherConfig config;
+        try {
+            config = PublisherConfig.fromEnv(System.getenv());
+        } catch (IllegalStateException e) {
+            // A refusal names the variable, never its value.
+            new OutcomeWriter().failed("PUBLISHER_MISCONFIGURED", e.getMessage());
+            System.exit(2);
+            return;
+        }
+        OutcomeWriter outcome = new OutcomeWriter(System.out, config.credential().secret());
 
-        try (PublishRepo repo = PublishRepo.cloneBranch(
-                required("SPIRE_REMOTE_URI"),
-                required("SPIRE_BRANCH_BASE"),
-                Files.createTempDirectory("spire-publish-clone-"),
-                credential())) {
+        try (PublishRepo repo = PublishRepo.cloneBranch(config.remoteUri(), config.baseBranch(),
+                Files.createTempDirectory("spire-publish-clone-"), config.credential())) {
 
-            PublishCycle cycle = new PublishCycle(repo,
-                    required("SPIRE_BASE_COMMIT"),
-                    required("SPIRE_BRANCH"),
-                    profileGlobs(),
-                    Long.parseLong(required("SPIRE_BUNDLE_MAX_BYTES")),
-                    credential(),
-                    outcome);
+            PublishCycle cycle = new PublishCycle(repo, config.baseCommit(), config.branch(),
+                    config.protectedPaths(), config.bundleMaxBytes(), config.credential(), outcome);
 
-            HandoffWatcher watcher = new HandoffWatcher(handoff);
+            HandoffWatcher watcher = new HandoffWatcher(config.handoffDir());
             boolean carryOn = true;
-            while (carryOn && agentStillRunning(handoff)) {
+            while (carryOn && agentStillRunning(config.handoffDir())) {
                 carryOn = drain(watcher, cycle);
                 if (carryOn) {
                     Thread.sleep(POLL_MILLIS);
@@ -97,29 +90,5 @@ public final class PublisherMain {
      */
     private static boolean agentStillRunning(Path handoff) {
         return !Files.exists(handoff.resolve(DONE_SENTINEL));
-    }
-
-    private static GitCredential credential() {
-        return new GitCredential(required("SPIRE_GIT_USERNAME"), required("SPIRE_GIT_SECRET"));
-    }
-
-    private static List<String> profileGlobs() {
-        String raw = System.getenv("SPIRE_PROTECTED_PATHS");
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(raw.split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
-    }
-
-    /**
-     * No defaults, on purpose. A publisher that silently starts with the wrong branch, or with no
-     * credential, discovers it in the middle of a run — after the agent's work is already done.
-     */
-    private static String required(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is required and was not set");
-        }
-        return value;
     }
 }
