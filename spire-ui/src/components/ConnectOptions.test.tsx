@@ -60,6 +60,23 @@ describe('ConnectOptions', () => {
   });
 
   /**
+   * The state an operator reaches immediately AFTER succeeding, which is when they are most likely
+   * to read it: one platform configured, already linked, nothing left to offer. Keying the message
+   * on "nothing to offer" made it claim no application existed, on the screen that had just used one.
+   */
+  it('does not claim nothing is set up when the only platform is already linked', async () => {
+    vi.spyOn(api, 'fetchConnectablePlatforms').mockResolvedValue([
+      { providerType: 'github', configured: true, linked: true, authorId: '3218389' },
+      { providerType: 'gitlab', configured: false, linked: false, authorId: '' },
+    ]);
+
+    render(<ConnectOptions />);
+
+    await waitFor(() => expect(screen.queryByText(/Loading/)).toBeNull());
+    expect(screen.queryByText(/No platform is set up for sign-in yet/)).toBeNull();
+  });
+
+  /**
    * A sign-in proves WHOSE account it is, so with authentication off there is nothing to attach the
    * proof to and the server refuses. Said before the click, not after: otherwise an operator visits
    * the platform, authorizes a real application, and comes back to a decline.

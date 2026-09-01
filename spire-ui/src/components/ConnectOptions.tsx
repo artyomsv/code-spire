@@ -51,7 +51,11 @@ export function ConnectOptions() {
   }
 
   const available = platforms.filter((p) => p.configured && !p.linked);
-  const unavailable = platforms.filter((p) => !p.configured && !p.linked);
+  // Whether ANY platform is set up, not whether any is left to connect. The two differ exactly when
+  // an operator has already linked the one configured platform, and keying the message on
+  // "nothing to offer" made it claim no application existed while one plainly did -- on the very
+  // screen that had just used it.
+  const nothingConfigured = platforms.every((platform) => !platform.configured);
 
   return (
     <div className="connect-options">
@@ -60,7 +64,7 @@ export function ConnectOptions() {
           <LinkIcon size={13} /> Connect my {platform.providerType} account
         </a>
       ))}
-      {available.length === 0 && unavailable.length > 0 && (
+      {nothingConfigured && (
         <p className="prov-note">
           No platform is set up for sign-in yet. An admin registers an application under
           <strong> Settings → Operators</strong>, and then this becomes a single click.
