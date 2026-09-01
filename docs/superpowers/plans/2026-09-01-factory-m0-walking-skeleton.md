@@ -46,7 +46,8 @@ Every task's requirements implicitly include this section.
 3. `Dockerfile` — `COPY spire-<name>/build.gradle.kts spire-<name>/` in the alphabetical block. `ImageBuildSeesEveryModuleTest` fails otherwise, and without it **every production image build breaks**.
 4. `<module>/LICENSE` — Apache-2.0 for libraries and adapters, FSL-1.1-ALv2 for deployables (ADR-021), plus a row in `LICENSING.md`.
 
-**Licence boundary (ADR-021), build-enforced by intent:** no Apache-2.0 module may depend on a service module. `spire-harness`, `spire-harness-codex`, `spire-runtime`, `spire-runtime-docker`, `spire-workspace` are Apache-2.0. `spire-run-worker` is FSL.
+**Licence boundary (ADR-021), build-enforced by intent:** no Apache-2.0 module may depend on a service module. `spire-harness`, `spire-harness-codex`, `spire-runtime`, `spire-runtime-docker`, `spire-workspace` are Apache-2.0. `spire-run-worker` and `spire-publisher`
+are FSL.
 
 **Framework-free modules:** `spire-harness` and `spire-runtime` carry no framework imports beyond the JDK and their own module — the same rule `PureModulesAreFrameworkFreeTest` enforces for `spire-contract` and `spire-diff`. Add them to that test's list in the task that creates them.
 
@@ -72,12 +73,14 @@ Every task's requirements implicitly include this section.
 | `spire-harness/…/RunEvent.java` | normalized event vocabulary (sealed) |
 | `spire-harness/…/UsageReport.java` | token usage, with `unknown()` distinct from zero |
 | `spire-harness-codex/…/CodexAdapter.java` | `codex exec --json`, NDJSON parsing, exit classification |
-| `spire-workspace/…/Workspace.java` | clone at a commit, branch, changed paths, push |
+| `spire-workspace/…/PublishRepo.java` | the publisher+s bare clone: fetch a bundle, diff, push |
 | `spire-workspace/…/PushGate.java` | protected-path refusal, CI floor |
 | `spire-runtime/…/RunRuntime.java` | the SPI: create, attach, cancel, finalize, destroy |
-| `spire-runtime/…/RuntimeCapabilities.java` | declared flags incl. `innerSandbox` |
+| `spire-runtime/…/RuntimeCapabilities.java` | declared flags incl. `nativeSidecar` |
+| `spire-runtime/…/RunUnitSpec.java` | the three-container run unit: init, agent, publisher |
 | `spire-runtime-docker/…/DockerRunRuntime.java` | one sibling container per run |
-| `spire-runtime-docker/…/LandlockProbe.java` | boot probe for the inner sandbox |
+| `spire-publisher/…/PublisherMain.java` | the sidecar: watch, fetch, gate, push, report |
+| `spire-publisher/…/HandoffWatcher.java` | sees each bundle once, in sequence order |
 | `spire-contract/…/command/RunCommand.java` | sealed run-dispatch wire type (`runId()`) |
 | `spire-contract/…/event/RunResult.java` | sealed run-result wire type |
 | `spire-contract/…/event/RunIds.java` | derive `runId`, parse it back |
@@ -278,7 +281,7 @@ import java.util.Map;
  */
 public record HarnessInvocation(String runId, String prompt, String workspacePath,
                                 String model, Map<String, String> credentials,
-                                Duration wallClock, boolean innerSandboxAvailable) {
+                                Duration wallClock) {
 }
 ```
 
@@ -440,9 +443,9 @@ class CodexAdapterTest {
 
     private final CodexAdapter adapter = new CodexAdapter();
 
-    private HarnessInvocation invocation(boolean innerSandbox) {
+    private HarnessInvocation invocation() {
         return new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
-                Map.of("OPENAI_API_KEY", "sk-secret"), Duration.ofMinutes(30), innerSandbox);
+                Map.of("OPENAI_API_KEY", "sk-secret"), Duration.ofMinutes(30));
     }
 
     @Test
@@ -738,23 +741,26 @@ git commit -m "Add the Codex harness adapter with NDJSON event parsing"
 
 ---
 
-## Task 3: `spire-workspace` — clone, branch, changed paths, push
+## Task 3: `spire-workspace` — the publisher's git library
 
-> **⚠ SUPERSEDED IN PART BY ADR-038 — rewrite before executing.** The library and its tests stand,
-> but it no longer runs in the worker: it is linked into the **publisher image** and runs inside the
-> run pod. `Workspace.create` is used by the publisher to make its OWN pristine clone from the forge;
-> the agent`s clone is done by an init container and the publisher never touches it. Add
-> `fetchBundle(Path)` and drop any assumption that the worker holds a filesystem.
+**Where it runs:** inside the **publisher image**, not the worker (ADR-038). The worker holds no
+filesystem and runs no git at all. The agent's own clone is made by an init container and its bundles
+are written by shell in the agent image; this library is used only by the publisher, on its **own**
+pristine clone.
 
 **Files:**
 - Create: `spire-workspace/build.gradle.kts`, `spire-workspace/LICENSE`
-- Create: `spire-workspace/src/main/java/dev/codespire/workspace/{Workspace,WorkspaceSpec,ChangeSet,ChangedPath,ChangeKind,PushCredential}.java`
-- Modify: `settings.gradle.kts`, `build.gradle.kts`, `Dockerfile`, `LICENSING.md`
-- Test: `spire-workspace/src/test/java/dev/codespire/workspace/WorkspaceTest.java`
+- Create: `spire-workspace/src/main/java/dev/codespire/workspace/{PublishRepo,ChangeSet,ChangedPath,ChangeKind,GitCredential,BundleTooLargeException}.java`
+- Modify: `settings.gradle.kts`, `build.gradle.kts` (`fastTestModules`), `Dockerfile`, `LICENSING.md`
+- Test: `spire-workspace/src/test/java/dev/codespire/workspace/PublishRepoTest.java`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `Workspace.create(WorkspaceSpec) -> Workspace`; `Workspace.path() -> Path`; `Workspace.changes() -> ChangeSet`; `Workspace.push(String branch, PushCredential) -> String` returning the pushed ref. `ChangeSet.paths() -> List<ChangedPath>`; `ChangedPath(String path, ChangeKind kind)`; `ChangeKind` = `ADDED|MODIFIED|DELETED|RENAMED_FROM|RENAMED_TO`.
+- Produces: `PublishRepo.cloneBranch(String remoteUri, String branch, Path dir, GitCredential cred)`;
+  `PublishRepo.fetchBundle(Path bundle, long maxBytes) -> String fetchedSha`;
+  `PublishRepo.changesSince(String baseCommit, String sha) -> ChangeSet`;
+  `PublishRepo.pushRef(String sha, String branch, GitCredential cred) -> String pushedRef`.
+  `ChangedPath(String path, ChangeKind kind)`; `ChangeKind` = `ADDED|MODIFIED|DELETED|RENAMED_FROM|RENAMED_TO`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -766,63 +772,77 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class WorkspaceTest {
+class PublishRepoTest {
 
-    /** Builds a throwaway origin repo on disk — no network, no fixtures to keep in sync. */
-    private Path origin(@TempDir Path dir) throws Exception {
-        Path repo = dir.resolve("origin");
-        Files.createDirectories(repo);
-        run(repo, "git", "init", "--initial-branch=main");
-        run(repo, "git", "config", "user.email", "t@example.invalid");
-        run(repo, "git", "config", "user.name", "t");
-        Files.writeString(repo.resolve("README.md"), "hello\n");
-        Files.createDirectories(repo.resolve(".github/workflows"));
-        Files.writeString(repo.resolve(".github/workflows/ci.yml"), "on: push\n");
-        run(repo, "git", "add", ".");
-        run(repo, "git", "commit", "-m", "initial");
-        return repo;
-    }
-
-    private void run(Path cwd, String... argv) throws Exception {
+    private void git(Path cwd, String... argv) throws Exception {
         Process p = new ProcessBuilder(argv).directory(cwd.toFile()).inheritIO().start();
         assertEquals(0, p.waitFor(), String.join(" ", argv));
     }
 
-    @Test
-    void clonesAtAnExplicitCommitAndCreatesItsOwnBranch(@TempDir Path dir) throws Exception {
-        Path origin = origin(dir);
-        String head = head(origin);
+    private String rev(Path repo, String ref) throws Exception {
+        Process p = new ProcessBuilder("git", "rev-parse", ref).directory(repo.toFile())
+                .redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes()).trim();
+        assertEquals(0, p.waitFor());
+        return out;
+    }
 
-        Workspace ws = Workspace.create(new WorkspaceSpec(
-                origin.toUri().toString(), head, "spire/run_abc", dir.resolve("ws"), null));
+    /** A bare origin plus a seed clone, standing in for the forge. No network. */
+    private Path origin(Path dir) throws Exception {
+        Path bare = dir.resolve("origin.git");
+        Files.createDirectories(bare);
+        git(bare, "git", "init", "--bare", "--initial-branch=main");
 
-        assertTrue(Files.exists(ws.path().resolve("README.md")));
-        assertEquals("spire/run_abc", ws.branch());
+        Path seed = dir.resolve("seed");
+        Files.createDirectories(seed);
+        git(seed, "git", "clone", bare.toUri().toString(), ".");
+        git(seed, "git", "config", "user.email", "t@t");
+        git(seed, "git", "config", "user.name", "t");
+        Files.writeString(seed.resolve("README.md"), "hello\n");
+        Files.createDirectories(seed.resolve(".github/workflows"));
+        Files.writeString(seed.resolve(".github/workflows/ci.yml"), "on: push\n");
+        git(seed, "git", "add", "-A");
+        git(seed, "git", "commit", "-m", "base");
+        git(seed, "git", "push", "origin", "main");
+        return bare;
+    }
+
+    /** Stands in for the AGENT container: its own clone, its own commits, its own bundle. */
+    private Path agentBundle(Path dir, Path bare, String base) throws Exception {
+        Path ws = dir.resolve("agent-ws");
+        git(dir, "git", "clone", bare.toUri().toString(), ws.toString());
+        git(ws, "git", "config", "user.email", "bot@spire");
+        git(ws, "git", "config", "user.name", "spire-bot");
+        git(ws, "git", "checkout", "-b", "spire/run_1");
+        Files.writeString(ws.resolve("NEW.md"), "new\n");
+        Files.delete(ws.resolve(".github/workflows/ci.yml"));
+        Files.move(ws.resolve("README.md"), ws.resolve("DOCS.md"));
+        git(ws, "git", "add", "-A");
+        git(ws, "git", "commit", "-m", "agent work");
+
+        Path bundle = dir.resolve("delta.bundle");
+        git(ws, "git", "bundle", "create", bundle.toString(), base + "..HEAD");
+        return bundle;
     }
 
     @Test
-    void reportsEveryChangedPathIncludingDeletionsAndBothSidesOfARename(@TempDir Path dir) throws Exception {
-        Path origin = origin(dir);
-        Workspace ws = Workspace.create(new WorkspaceSpec(
-                origin.toUri().toString(), head(origin), "spire/run_abc", dir.resolve("ws"), null));
+    void fetchesABundleAndSeesEveryChangedPath(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
 
-        // Simulate what an agent does inside the sandbox.
-        Files.writeString(ws.path().resolve("NEW.md"), "new\n");
-        Files.delete(ws.path().resolve(".github/workflows/ci.yml"));
-        Files.move(ws.path().resolve("README.md"), ws.path().resolve("DOCS.md"));
-        run(ws.path(), "git", "config", "user.email", "t@example.invalid");
-        run(ws.path(), "git", "config", "user.name", "t");
-        run(ws.path(), "git", "add", "-A");
-        run(ws.path(), "git", "commit", "-m", "agent work");
+        PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null);
+        String sha = repo.fetchBundle(bundle, 10_000_000L);
 
-        Set<String> paths = ws.changes().paths().stream()
+        Set<String> paths = repo.changesSince(base, sha).paths().stream()
                 .map(ChangedPath::path).collect(Collectors.toSet());
 
         assertTrue(paths.contains("NEW.md"));
@@ -832,20 +852,46 @@ class WorkspaceTest {
     }
 
     @Test
-    void reportsNoChangesWhenTheAgentCommittedNothing(@TempDir Path dir) throws Exception {
-        Path origin = origin(dir);
-        Workspace ws = Workspace.create(new WorkspaceSpec(
-                origin.toUri().toString(), head(origin), "spire/run_abc", dir.resolve("ws"), null));
+    void pushesTheFetchedCommitToTheBranch(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
 
-        assertEquals(List.of(), ws.changes().paths());
+        PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null);
+        String sha = repo.fetchBundle(bundle, 10_000_000L);
+        String pushed = repo.pushRef(sha, "spire/run_1", null);
+
+        assertEquals("refs/heads/spire/run_1", pushed);
+        assertEquals(sha, rev(bare, "refs/heads/spire/run_1"), "the commit must be on the real remote");
     }
 
-    private String head(Path repo) throws Exception {
-        Process p = new ProcessBuilder("git", "rev-parse", "HEAD").directory(repo.toFile())
-                .redirectErrorStream(true).start();
-        String out = new String(p.getInputStream().readAllBytes()).trim();
-        assertEquals(0, p.waitFor());
-        return out;
+    @Test
+    void refusesABundleOverTheSizeCap(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+
+        PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null);
+
+        // An agent can write an object bomb; an unbounded read is a denial of service.
+        assertThrows(BundleTooLargeException.class, () -> repo.fetchBundle(bundle, 16L));
+    }
+
+    @Test
+    void neverCreatesAWorkingTree(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+
+        Path publish = dir.resolve("publish");
+        PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main", publish, null);
+        repo.fetchBundle(bundle, 10_000_000L);
+
+        // Agent-authored content must never become a file on the publisher's disk (ADR-038).
+        assertTrue(Files.notExists(publish.resolve("NEW.md")));
+        assertTrue(Files.notExists(publish.resolve("DOCS.md")));
     }
 }
 ```
@@ -861,8 +907,8 @@ Expected: FAIL — module and types do not exist.
 
 ```kotlin
 dependencies {
-    // JGit rather than shelling out: the worker image then needs no git binary, and clone/diff/push
-    // are testable in-process against a local file:// origin with no network.
+    // JGit rather than shelling out: the publisher image then needs no git binary, and
+    // clone/fetch-bundle/diff/push are testable in-process against a local origin with no network.
     implementation("org.eclipse.jgit:org.eclipse.jgit:7.1.0.202411261347-r")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
@@ -871,36 +917,23 @@ dependencies {
 }
 ```
 
-If that JGit version fails to resolve, run `./gradlew :spire-workspace:dependencies --refresh-dependencies` and pin the newest published `7.x` from Maven Central. Do not leave it unpinned.
+If that JGit version fails to resolve, run
+`./gradlew :spire-workspace:dependencies --refresh-dependencies` and pin the newest published `7.x`.
+Do not leave it unpinned.
 
-Then the four-file ritual.
+Then the four-file ritual from Global Constraints.
 
 - [ ] **Step 4: Write the minimal implementation**
 
 ```java
 package dev.codespire.workspace;
 
-import java.nio.file.Path;
-
-/**
- * What a run's workspace is made of. {@code branch} is created when it does not exist and checked
- * out when it does — FR-F2: the workspace is always fresh, the branch is not always new (a fix run
- * targeting an open pull request checks out that pull request's source branch).
- */
-public record WorkspaceSpec(String remoteUri, String baseCommit, String branch,
-                            Path directory, PushCredential credential) {
-}
-```
-
-```java
-package dev.codespire.workspace;
-
-/** Credentials for a git remote. Never rendered into a URL — a URL reaches the run event stream. */
-public record PushCredential(String username, String secret) {
+/** Credentials for a git remote. Never rendered into a URL — a URL reaches the log stream. */
+public record GitCredential(String username, String secret) {
 
     @Override
     public String toString() {
-        return "PushCredential[username=" + username + ", secret=***]";
+        return "GitCredential[username=" + username + ", secret=***]";
     }
 }
 ```
@@ -934,70 +967,92 @@ public record ChangeSet(List<ChangedPath> paths) {
 ```java
 package dev.codespire.workspace;
 
+/** An agent can write an object bomb. An unbounded read is a denial of service on the publisher. */
+public class BundleTooLargeException extends RuntimeException {
+
+    public BundleTooLargeException(long actual, long max) {
+        super("bundle is " + actual + " bytes, cap is " + max);
+    }
+}
+```
+
+```java
+package dev.codespire.workspace;
+
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A run's git workspace: a fresh clone at an explicit base commit, on a named branch.
+ * The publisher's own pristine clone of the repository.
  *
- * <p>Rename detection is ON, and BOTH sides of a rename are reported. A rename that moves a file
- * into a protected path is the obvious way to evade a push gate that only looks at the target.
+ * <p><b>It never reads the agent's workspace and never checks out a working tree.</b> Agent work
+ * arrives only as a git bundle — objects and refs, carrying no config and no hooks — so nothing the
+ * agent authored can execute here, and nothing it authored becomes a file on this disk. That is what
+ * makes it safe for this process to hold a write credential (ADR-038).
  */
-public final class Workspace implements AutoCloseable {
+public final class PublishRepo implements AutoCloseable {
+
+    private static final String BUNDLE_REFS = "refs/bundle/";
 
     private final Git git;
-    private final String baseCommit;
-    private final String branch;
     private final Path directory;
 
-    private Workspace(Git git, String baseCommit, String branch, Path directory) {
+    private PublishRepo(Git git, Path directory) {
         this.git = git;
-        this.baseCommit = baseCommit;
-        this.branch = branch;
         this.directory = directory;
     }
 
-    public static Workspace create(WorkspaceSpec spec) throws Exception {
+    /** A BARE clone: no working tree exists, so none can be written into. */
+    public static PublishRepo cloneBranch(String remoteUri, String branch, Path dir,
+                                          GitCredential credential) throws Exception {
         Git git = Git.cloneRepository()
-                .setURI(spec.remoteUri())
-                .setDirectory(spec.directory().toFile())
-                .setNoCheckout(true)
-                .setCredentialsProvider(provider(spec.credential()))
+                .setURI(remoteUri)
+                .setDirectory(dir.toFile())
+                .setBare(true)
+                .setBranch(branch)
+                .setCredentialsProvider(provider(credential))
                 .call();
-        git.checkout()
-                .setName(spec.branch())
-                .setCreateBranch(true)
-                .setStartPoint(spec.baseCommit())
+        return new PublishRepo(git, dir);
+    }
+
+    /** @return the sha the bundle's head resolved to. */
+    public String fetchBundle(Path bundle, long maxBytes) throws Exception {
+        long size = Files.size(bundle);
+        if (size > maxBytes) {
+            throw new BundleTooLargeException(size, maxBytes);
+        }
+        git.fetch()
+                .setRemote(bundle.toAbsolutePath().toString())
+                .setRefSpecs(new RefSpec("+refs/heads/*:" + BUNDLE_REFS + "*"))
                 .call();
-        return new Workspace(git, spec.baseCommit(), spec.branch(), spec.directory());
+        List<Ref> fetched = git.getRepository().getRefDatabase().getRefsByPrefix(BUNDLE_REFS);
+        if (fetched.isEmpty()) {
+            throw new IOException("bundle contained no branch");
+        }
+        return fetched.getFirst().getObjectId().name();
     }
 
-    public Path path() {
-        return directory;
-    }
-
-    public String branch() {
-        return branch;
-    }
-
-    /** Every path the branch changed relative to its base commit. */
-    public ChangeSet changes() throws IOException {
+    /** Every path changed between {@code baseCommit} and {@code sha}, renames on both sides. */
+    public ChangeSet changesSince(String baseCommit, String sha) throws IOException {
         Repository repo = git.getRepository();
-        try (var reader = repo.newObjectReader(); var walk = new org.eclipse.jgit.revwalk.RevWalk(repo)) {
+        try (var reader = repo.newObjectReader(); RevWalk walk = new RevWalk(repo)) {
             CanonicalTreeParser base = new CanonicalTreeParser();
             base.reset(reader, walk.parseCommit(ObjectId.fromString(baseCommit)).getTree());
             CanonicalTreeParser head = new CanonicalTreeParser();
-            head.reset(reader, walk.parseCommit(repo.resolve("HEAD")).getTree());
+            head.reset(reader, walk.parseCommit(ObjectId.fromString(sha)).getTree());
 
             List<ChangedPath> paths = new ArrayList<>();
             for (DiffEntry entry : git.diff().setOldTree(base).setNewTree(head).call()) {
@@ -1006,6 +1061,7 @@ public final class Workspace implements AutoCloseable {
                     case MODIFY -> paths.add(new ChangedPath(entry.getNewPath(), ChangeKind.MODIFIED));
                     case DELETE -> paths.add(new ChangedPath(entry.getOldPath(), ChangeKind.DELETED));
                     case RENAME, COPY -> {
+                        // BOTH sides. A rename INTO a protected path is the obvious evasion.
                         paths.add(new ChangedPath(entry.getOldPath(), ChangeKind.RENAMED_FROM));
                         paths.add(new ChangedPath(entry.getNewPath(), ChangeKind.RENAMED_TO));
                     }
@@ -1013,21 +1069,25 @@ public final class Workspace implements AutoCloseable {
             }
             return new ChangeSet(List.copyOf(paths));
         } catch (Exception e) {
-            throw new IOException("could not diff " + branch + " against " + baseCommit, e);
+            throw new IOException("could not diff " + sha + " against " + baseCommit, e);
         }
     }
 
-    /** @return the pushed ref. Call ONLY after the push gate has passed. */
-    public String push(PushCredential credential) throws Exception {
+    /** Call ONLY after the push gate has passed. @return the pushed ref. */
+    public String pushRef(String sha, String branch, GitCredential credential) throws Exception {
         git.push()
                 .setRemote("origin")
-                .setRefSpecs(new RefSpec("refs/heads/" + branch + ":refs/heads/" + branch))
+                .setRefSpecs(new RefSpec(sha + ":refs/heads/" + branch))
                 .setCredentialsProvider(provider(credential))
                 .call();
         return "refs/heads/" + branch;
     }
 
-    private static UsernamePasswordCredentialsProvider provider(PushCredential credential) {
+    public Path path() {
+        return directory;
+    }
+
+    private static UsernamePasswordCredentialsProvider provider(GitCredential credential) {
         return credential == null
                 ? null
                 : new UsernamePasswordCredentialsProvider(credential.username(), credential.secret());
@@ -1040,16 +1100,22 @@ public final class Workspace implements AutoCloseable {
 }
 ```
 
+> `fetchBundle`'s refspec is written from JGit's documented behaviour, not from a captured run. Run
+> the test first; if `refs/bundle/*` is not populated as written, print what
+> `git.getRepository().getRefDatabase().getRefs()` actually holds after the fetch and fix the code to
+> that. Do not adjust the test to match a wrong implementation.
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `./gradlew :spire-workspace:test :spire-arch:test`
-Expected: PASS. `git` must be on the test machine's PATH — the test builds its origin repo with it. Production does not need git; JGit does the work.
+Expected: PASS. `git` must be on the test machine's PATH — the tests build their origin and their
+bundle with it, standing in for the init container and the agent. Production needs no git binary.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add spire-workspace settings.gradle.kts build.gradle.kts Dockerfile LICENSING.md
-git commit -m "Add the run workspace: clone at a commit, branch, changed paths"
+git commit -m "Add the publisher's git library: clone, fetch a bundle, diff, push"
 ```
 
 ---
@@ -1289,17 +1355,20 @@ git commit -m "Refuse a push that touches CI configuration, on every profile"
 
 ---
 
-## Task 5: `spire-runtime` — the placement SPI and the Landlock probe
+## Task 5: `spire-runtime` — the placement SPI
 
 **Files:**
 - Create: `spire-runtime/build.gradle.kts`, `spire-runtime/LICENSE`
-- Create: `spire-runtime/src/main/java/dev/codespire/runtime/{RuntimeType,RuntimeCapabilities,RunSpec,RunHandle,Finalization,RunRuntime}.java`
+- Create: `spire-runtime/src/main/java/dev/codespire/runtime/{RuntimeType,RuntimeCapabilities,ContainerSpec,RunUnitSpec,RunHandle,LogChannel,Finalization,RunRuntime}.java`
 - Modify: `settings.gradle.kts`, `build.gradle.kts`, `Dockerfile`, `LICENSING.md`, `PureModulesAreFrameworkFreeTest`
 - Test: `spire-runtime/src/test/java/dev/codespire/runtime/FinalizationTest.java`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `RunRuntime` with `RuntimeType type()`, `RuntimeCapabilities capabilities()`, `RunHandle create(RunSpec)`, `void attach(RunHandle, Consumer<String> lines)`, `void cancel(RunHandle)`, `Finalization finalize(RunHandle)`, `void destroy(RunHandle)`, `List<RunHandle> discoverOrphans()`. `Finalization(int exitCode, boolean salvaged, String detail)`.
+- Produces: `RunRuntime` with `RuntimeType type()`, `RuntimeCapabilities capabilities()`,
+  `RunHandle create(RunUnitSpec)`, `void attach(RunHandle, LogChannel, Consumer<String>)`,
+  `void cancel(RunHandle)`, `Finalization finalize(RunHandle)`, `void destroy(RunHandle)`,
+  `List<RunHandle> discoverOrphans()`. `LogChannel` = `AGENT | PUBLISHER`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1315,20 +1384,22 @@ class FinalizationTest {
 
     @Test
     void aFailedSalvageIsNotASuccessfulRun() {
-        Finalization failed = Finalization.salvageFailed("push rejected by branch protection");
+        Finalization failed = Finalization.salvageFailed("publisher never reported an outcome");
 
         assertFalse(failed.salvaged(),
                 "destroy must not proceed on a failed salvage — that is the loss finalize prevents");
-        assertTrue(failed.detail().contains("branch protection"));
+        assertTrue(failed.detail().contains("outcome"));
     }
 
     @Test
-    void capabilitiesDeclareTheInnerSandboxRatherThanAssumingIt() {
-        RuntimeCapabilities withLandlock = new RuntimeCapabilities(true, true, false, true, true, true);
-        RuntimeCapabilities without = new RuntimeCapabilities(true, true, false, true, true, false);
+    void capabilitiesDeclareNativeSidecarSupportRatherThanAssumingIt() {
+        // Kubernetes >= 1.29 terminates a sidecar when the main container exits. Below that, the
+        // publisher needs an explicit sentinel file to know the agent finished (RUN-TOPOLOGY §3).
+        RuntimeCapabilities modern = new RuntimeCapabilities(true, true, false, true, true, true);
+        RuntimeCapabilities old = new RuntimeCapabilities(true, true, false, true, true, false);
 
-        assertTrue(withLandlock.innerSandbox());
-        assertFalse(without.innerSandbox());
+        assertTrue(modern.nativeSidecar());
+        assertFalse(old.nativeSidecar());
     }
 }
 ```
@@ -1353,14 +1424,42 @@ public enum RuntimeType { DOCKER, KUBERNETES }
 ```java
 package dev.codespire.runtime;
 
+/** Which container's output is being read. A run has two log streams that mean different things. */
+public enum LogChannel { AGENT, PUBLISHER }
+```
+
+```java
+package dev.codespire.runtime;
+
 /**
  * What a runtime can do. The domain reads these; it never branches on {@link RuntimeType}.
  *
- * <p>{@code innerSandbox} is PROBED at boot, not assumed: Landlock is host-kernel-dependent, and a
- * silently missing defence layer is the failure this project keeps paying for (EXECUTION-LAYER §5.1).
+ * <p>{@code nativeSidecar} is Kubernetes >= 1.29's sidecar termination. Where it is absent the
+ * publisher must learn the agent finished from a sentinel file instead.
  */
 public record RuntimeCapabilities(boolean networkPolicy, boolean resourceLimits, boolean steering,
-                                  boolean archival, boolean garbageCollection, boolean innerSandbox) {
+                                  boolean archival, boolean garbageCollection, boolean nativeSidecar) {
+}
+```
+
+```java
+package dev.codespire.runtime;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * One container in a run unit.
+ *
+ * <p>{@code environment} carries injected credentials and MUST NOT be logged; the docker arm
+ * additionally keeps them out of container labels, which {@code docker inspect} prints.
+ *
+ * <p>{@code mounts} maps a shared volume name to its mount path. A path suffixed {@code :ro} is
+ * read-only — which is how {@code /handoff} reaches the publisher, and why the publisher writes
+ * nothing to any shared volume (ADR-038).
+ */
+public record ContainerSpec(String image, List<String> argv, Map<String, String> environment,
+                            Map<String, String> mounts) {
 }
 ```
 
@@ -1368,23 +1467,24 @@ public record RuntimeCapabilities(boolean networkPolicy, boolean resourceLimits,
 package dev.codespire.runtime;
 
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 
 /**
- * One workload. {@code environment} carries injected credentials and MUST NOT be logged; the docker
- * arm additionally keeps them out of container labels, which `docker inspect` prints.
+ * A run is not one container. It is an init clone, the agent, and the publisher sidecar, sharing
+ * ephemeral volumes and nothing outside the unit (ADR-038, RUN-TOPOLOGY §3).
+ *
+ * <p>The parts run in this order: {@code init} to completion, then {@code agent} and
+ * {@code publisher} concurrently. The unit ends when the agent exits and the publisher has drained.
  */
-public record RunSpec(String runId, String image, List<String> argv, Map<String, String> environment,
-                      String workspaceHostPath, String workspaceMountPath,
-                      long memoryBytes, long nanoCpus, Duration wallClock) {
+public record RunUnitSpec(String runId,
+                          ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
+                          long memoryBytes, long nanoCpus, Duration wallClock) {
 }
 ```
 
 ```java
 package dev.codespire.runtime;
 
-/** An opaque handle to a live workload. {@code providerRunId} is a container id or a pod name. */
+/** An opaque handle to a live run unit. {@code providerRunId} is a pod name or a docker unit id. */
 public record RunHandle(String runId, String providerRunId) {
 }
 ```
@@ -1395,9 +1495,9 @@ package dev.codespire.runtime;
 /**
  * The result of finalizing a run — salvage, BEFORE teardown.
  *
- * <p>{@code destroy} runs only when {@link #salvaged()} is true. A failed salvage preserves the
- * workspace, because "the agent did the work and the container died with it" was the second most
- * common failure in the prior art this design learned from.
+ * <p>{@code destroy} runs only when {@link #salvaged()} is true. A failed salvage preserves the unit,
+ * because "the agent did the work and the container died with it" was the second most common failure
+ * in the prior art this design learned from.
  */
 public record Finalization(int exitCode, boolean salvaged, String detail) {
 
@@ -1418,7 +1518,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Where a workload runs and how its life is controlled.
+ * Where a run unit runs and how its life is controlled.
  *
  * <p>{@link #finalize} and {@link #destroy} are separate on purpose. Merging them is how completed
  * work gets thrown away.
@@ -1429,10 +1529,10 @@ public interface RunRuntime {
 
     RuntimeCapabilities capabilities();
 
-    RunHandle create(RunSpec spec);
+    RunHandle create(RunUnitSpec spec);
 
-    /** Streams the workload's stdout line by line until it exits. */
-    void attach(RunHandle handle, Consumer<String> lines);
+    /** Streams one container's stdout line by line until it exits. */
+    void attach(RunHandle handle, LogChannel channel, Consumer<String> lines);
 
     void cancel(RunHandle handle);
 
@@ -1440,7 +1540,7 @@ public interface RunRuntime {
 
     void destroy(RunHandle handle);
 
-    /** Workloads this runtime holds that no live lease claims. See ARCHITECTURE §7. */
+    /** Units this runtime holds that no live lease claims. See ARCHITECTURE §7. */
     List<RunHandle> discoverOrphans();
 }
 ```
@@ -1460,36 +1560,34 @@ git commit -m "Add the run-placement SPI with salvage separate from teardown"
 
 ---
 
-## Task 6: `spire-runtime-docker` — one sibling container per run
-
-> **⚠ SUPERSEDED BY ADR-038 — rewrite before executing.** A run is not one container. It is an
-> init clone + the agent as main + the publisher as a sidecar, sharing one ephemeral volume, with
-> `/handoff` read-only to the publisher and `/workspace` not mounted into it at all. `LandlockProbe`
-> is **deleted** — it measured a primitive Codex does not use. See RUN-TOPOLOGY §3.
+## Task 6: `spire-runtime-docker` — the three-container run unit
 
 **Files:**
 - Create: `spire-runtime-docker/build.gradle.kts`, `spire-runtime-docker/LICENSE`
-- Create: `spire-runtime-docker/src/main/java/dev/codespire/runtime/docker/{DockerRunRuntime,LandlockProbe}.java`
+- Create: `spire-runtime-docker/src/main/java/dev/codespire/runtime/docker/DockerRunRuntime.java`
 - Modify: `settings.gradle.kts`, `build.gradle.kts`, `Dockerfile`, `LICENSING.md`
 - Test: `spire-runtime-docker/src/test/java/dev/codespire/runtime/docker/DockerRunRuntimeIT.java`
 
 **Interfaces:**
-- Consumes: `RunRuntime`, `RunSpec`, `RunHandle`, `Finalization`, `RuntimeCapabilities`, `RuntimeType` from Task 5.
-- Produces: `DockerRunRuntime` implementing `RunRuntime`; `LandlockProbe.available(DockerClient, String image) -> boolean`.
+- Consumes: everything from Task 5.
+- Produces: `DockerRunRuntime` implementing `RunRuntime`.
+
+**Docker has no pods**, so this adapter builds the unit by hand: two named volumes, the init container
+run to completion, then the agent and publisher started concurrently on the same volumes. Everything
+is labelled with the run id so the orphan watchdog can find what a restart forgot.
 
 - [ ] **Step 1: Write the failing test**
 
 ```java
 package dev.codespire.runtime.docker;
 
+import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Finalization;
+import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.RunHandle;
-import dev.codespire.runtime.RunSpec;
+import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -1498,40 +1596,84 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Integration test: needs a working Docker daemon. Part of testFast — it is fast, not pure. */
+/** Integration test: needs a working Docker daemon. In testFast — it is fast, not pure. */
 class DockerRunRuntimeIT {
 
     private final DockerRunRuntime runtime = new DockerRunRuntime();
 
-    @Test
-    void runsAWorkloadAndStreamsItsOutput(@TempDir Path workspace) throws Exception {
-        Files.writeString(workspace.resolve("marker.txt"), "present\n");
-
-        RunSpec spec = new RunSpec("run_test1", "alpine:3.20",
-                List.of("sh", "-c", "cat /workspace/marker.txt; echo done"),
-                Map.of(), workspace.toString(), "/workspace",
-                256L * 1024 * 1024, 1_000_000_000L, Duration.ofMinutes(1));
-
-        RunHandle handle = runtime.create(spec);
-        List<String> lines = new ArrayList<>();
-        runtime.attach(handle, lines::add);
-        Finalization finalization = runtime.finalize(handle);
-        runtime.destroy(handle);
-
-        assertEquals(0, finalization.exitCode());
-        assertTrue(finalization.salvaged());
-        assertTrue(lines.contains("present"), "the workspace must be mounted and readable");
-        assertTrue(lines.contains("done"));
+    private RunUnitSpec unit(String id, String agentScript, String publisherScript) {
+        // init seeds /workspace; agent writes into it and drops a file in /handoff;
+        // publisher reads /handoff READ-ONLY and must not be able to see /workspace at all.
+        return new RunUnitSpec(id,
+                new ContainerSpec("alpine:3.20", List.of("sh", "-c", "echo seeded > /workspace/seed.txt"),
+                        Map.of(), Map.of("ws", "/workspace", "ho", "/handoff")),
+                new ContainerSpec("alpine:3.20", List.of("sh", "-c", agentScript),
+                        Map.of(), Map.of("ws", "/workspace", "ho", "/handoff")),
+                new ContainerSpec("alpine:3.20", List.of("sh", "-c", publisherScript),
+                        Map.of(), Map.of("ho", "/handoff:ro")),
+                256L * 1024 * 1024, 1_000_000_000L, Duration.ofMinutes(2));
     }
 
     @Test
-    void reportsANonZeroExitRatherThanThrowing(@TempDir Path workspace) {
-        RunSpec spec = new RunSpec("run_test2", "alpine:3.20", List.of("sh", "-c", "exit 3"),
-                Map.of(), workspace.toString(), "/workspace",
-                256L * 1024 * 1024, 1_000_000_000L, Duration.ofMinutes(1));
+    void runsInitThenAgentAndPublisherOnSharedVolumes() {
+        RunHandle handle = runtime.create(unit("run_unit1",
+                "cat /workspace/seed.txt; echo handed-over > /handoff/delta; echo agent-done",
+                "for i in $(seq 1 30); do [ -f /handoff/delta ] && { cat /handoff/delta; "
+                        + "echo publisher-done; exit 0; }; sleep 1; done; exit 1"));
 
-        RunHandle handle = runtime.create(spec);
-        runtime.attach(handle, line -> { });
+        List<String> agent = new ArrayList<>();
+        List<String> publisher = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, agent::add);
+        runtime.attach(handle, LogChannel.PUBLISHER, publisher::add);
+        Finalization finalization = runtime.finalize(handle);
+        runtime.destroy(handle);
+
+        assertTrue(agent.contains("seeded"), "the init container's output must be in the workspace");
+        assertTrue(agent.contains("agent-done"));
+        assertTrue(publisher.contains("handed-over"), "the handoff volume must be shared");
+        assertTrue(publisher.contains("publisher-done"));
+        assertEquals(0, finalization.exitCode());
+        assertTrue(finalization.salvaged());
+    }
+
+    @Test
+    void thePublisherCannotSeeTheAgentsWorkspace() {
+        RunHandle handle = runtime.create(unit("run_unit2",
+                "echo secret > /workspace/private.txt; echo x > /handoff/delta",
+                "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
+                        + "if [ -e /workspace ]; then echo LEAKED; else echo isolated; fi"));
+
+        List<String> publisher = new ArrayList<>();
+        runtime.attach(handle, LogChannel.PUBLISHER, publisher::add);
+        runtime.finalize(handle);
+        runtime.destroy(handle);
+
+        // ADR-038: the publisher must never reach agent-controlled git config or hooks.
+        assertTrue(publisher.contains("isolated"));
+        assertTrue(!publisher.contains("LEAKED"));
+    }
+
+    @Test
+    void handoffIsReadOnlyToThePublisher() {
+        RunHandle handle = runtime.create(unit("run_unit3",
+                "echo x > /handoff/delta; echo agent-done",
+                "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
+                        + "if echo y > /handoff/evil 2>/dev/null; then echo WRITABLE; else echo readonly; fi"));
+
+        List<String> publisher = new ArrayList<>();
+        runtime.attach(handle, LogChannel.PUBLISHER, publisher::add);
+        runtime.finalize(handle);
+        runtime.destroy(handle);
+
+        assertTrue(publisher.contains("readonly"));
+    }
+
+    @Test
+    void reportsANonZeroAgentExitRatherThanThrowing() {
+        RunHandle handle = runtime.create(unit("run_unit4",
+                "exit 3", "echo publisher-idle"));
+
+        runtime.attach(handle, LogChannel.AGENT, line -> { });
         Finalization finalization = runtime.finalize(handle);
         runtime.destroy(handle);
 
@@ -1539,11 +1681,15 @@ class DockerRunRuntimeIT {
     }
 
     @Test
-    void capabilitiesReportTheProbedInnerSandbox() {
-        // Whatever the answer on this host, it must be a probe result and not a hard-coded literal.
-        boolean probed = LandlockProbe.available(runtime.client(), "alpine:3.20");
+    void discoversItsOwnUnitsAsOrphansUntilDestroyed() {
+        RunHandle handle = runtime.create(unit("run_unit5", "sleep 5", "sleep 5"));
 
-        assertEquals(probed, runtime.capabilities().innerSandbox());
+        assertTrue(runtime.discoverOrphans().stream().anyMatch(h -> h.runId().equals("run_unit5")));
+
+        runtime.finalize(handle);
+        runtime.destroy(handle);
+
+        assertTrue(runtime.discoverOrphans().stream().noneMatch(h -> h.runId().equals("run_unit5")));
     }
 }
 ```
@@ -1575,85 +1721,55 @@ If `3.4.1` fails to resolve, pin the newest published `3.4.x`.
 package dev.codespire.runtime.docker;
 
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.model.HostConfig;
-import com.github.dockerjava.core.command.WaitContainerResultCallback;
-
-/**
- * Asks the host whether Landlock is usable inside a container, by calling
- * {@code landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)} — syscall 444 on x86_64.
- *
- * <p>A positive return is the ABI version. Measured on Docker 29.6 / WSL2 kernel 6.18 this returns 7
- * under the DEFAULT seccomp profile. It is host-dependent, which is exactly why it is probed.
- */
-final class LandlockProbe {
-
-    private LandlockProbe() {
-    }
-
-    static boolean available(DockerClient client, String probeImage) {
-        String script = "python3 - <<'PY'\n"
-                + "import ctypes\n"
-                + "libc = ctypes.CDLL(None, use_errno=True)\n"
-                + "libc.syscall.restype = ctypes.c_long\n"
-                + "libc.syscall.argtypes = [ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32]\n"
-                + "raise SystemExit(0 if libc.syscall(444, None, 0, 1) > 0 else 1)\n"
-                + "PY\n";
-        try {
-            var created = client.createContainerCmd(probeImage)
-                    .withCmd("sh", "-c", "command -v python3 >/dev/null && " + script)
-                    .withHostConfig(HostConfig.newHostConfig().withAutoRemove(false))
-                    .exec();
-            client.startContainerCmd(created.getId()).exec();
-            int exit = client.waitContainerCmd(created.getId())
-                    .exec(new WaitContainerResultCallback()).awaitStatusCode();
-            client.removeContainerCmd(created.getId()).withForce(true).exec();
-            return exit == 0;
-        } catch (Exception e) {
-            return false; // an unanswerable probe is ABSENT, never assumed present
-        }
-    }
-}
-```
-
-```java
-package dev.codespire.runtime.docker;
-
-import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.core.command.WaitContainerResultCallback;
-import com.github.dockerjava.transport.DockerHttpClient;
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
+import com.github.dockerjava.transport.DockerHttpClient;
+import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Finalization;
+import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
-import dev.codespire.runtime.RunSpec;
+import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * One sibling container per run, over the Docker socket.
+ * A run unit as three Docker containers over two named volumes.
  *
- * <p><b>Socket access is root-equivalent on the host.</b> That is stated in SECURITY.md rather than
- * mitigated away; the Kubernetes arm removes it.
+ * <p>Docker has no pods, so the ordering Kubernetes gives for free is done here: the init container
+ * runs to completion, then the agent and publisher start concurrently on the same volumes.
+ *
+ * <p><b>Socket access is root-equivalent on the host.</b> Stated in SECURITY.md rather than mitigated
+ * away; the Kubernetes arm removes it.
+ *
+ * <p><b>Codex's own sandbox is NOT used</b> (ADR-038): it is bubblewrap-based and cannot initialize
+ * under Docker's default seccomp profile, and it does not fail fast when it cannot. The container is
+ * the boundary, so the default seccomp profile is KEPT and never relaxed here.
  */
 public final class DockerRunRuntime implements RunRuntime {
 
-    /** The run id is a container LABEL so the orphan watchdog can find what a restart forgot. */
     static final String RUN_ID_LABEL = "dev.codespire.runId";
+    static final String ROLE_LABEL = "dev.codespire.role";
 
     private final DockerClient client;
-    private final RuntimeCapabilities capabilities;
+    private final Map<String, Unit> units = new HashMap<>();
+
+    private record Unit(String initId, String agentId, String publisherId, List<String> volumes) {
+    }
 
     public DockerRunRuntime() {
         var config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
@@ -1662,8 +1778,6 @@ public final class DockerRunRuntime implements RunRuntime {
                 .sslConfig(config.getSSLConfig())
                 .build();
         this.client = DockerClientImpl.getInstance(config, http);
-        boolean innerSandbox = LandlockProbe.available(client, "alpine:3.20");
-        this.capabilities = new RuntimeCapabilities(false, true, false, true, true, innerSandbox);
     }
 
     DockerClient client() {
@@ -1677,35 +1791,81 @@ public final class DockerRunRuntime implements RunRuntime {
 
     @Override
     public RuntimeCapabilities capabilities() {
-        return capabilities;
+        // No native sidecar semantics in Docker: this adapter sequences the parts itself.
+        return new RuntimeCapabilities(false, true, false, true, true, false);
     }
 
     @Override
-    public RunHandle create(RunSpec spec) {
-        List<String> env = new ArrayList<>();
-        for (Map.Entry<String, String> entry : spec.environment().entrySet()) {
-            env.add(entry.getKey() + "=" + entry.getValue());
+    public RunHandle create(RunUnitSpec spec) {
+        List<String> volumeNames = new ArrayList<>();
+        for (String name : allVolumeNames(spec)) {
+            String full = "spire-" + spec.runId() + "-" + name;
+            client.createVolumeCmd().withName(full).withLabels(Map.of(RUN_ID_LABEL, spec.runId())).exec();
+            volumeNames.add(full);
         }
+
+        String initId = createContainer(spec, spec.init(), "init");
+        client.startContainerCmd(initId).exec();
+        int initExit = client.waitContainerCmd(initId)
+                .exec(new WaitContainerResultCallback()).awaitStatusCode();
+        if (initExit != 0) {
+            throw new IllegalStateException("init container failed with exit " + initExit);
+        }
+
+        String agentId = createContainer(spec, spec.agent(), "agent");
+        String publisherId = createContainer(spec, spec.publisher(), "publisher");
+        client.startContainerCmd(publisherId).exec();   // sidecar first, so it misses nothing
+        client.startContainerCmd(agentId).exec();
+
+        units.put(spec.runId(), new Unit(initId, agentId, publisherId, volumeNames));
+        return new RunHandle(spec.runId(), agentId);
+    }
+
+    private List<String> allVolumeNames(RunUnitSpec spec) {
+        List<String> names = new ArrayList<>();
+        for (ContainerSpec c : List.of(spec.init(), spec.agent(), spec.publisher())) {
+            for (String v : c.mounts().keySet()) {
+                if (!names.contains(v)) {
+                    names.add(v);
+                }
+            }
+        }
+        return names;
+    }
+
+    private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
+        List<Bind> binds = new ArrayList<>();
+        container.mounts().forEach((volume, target) -> {
+            boolean readOnly = target.endsWith(":ro");
+            String path = readOnly ? target.substring(0, target.length() - 3) : target;
+            Bind bind = new Bind("spire-" + spec.runId() + "-" + volume, new Volume(path), readOnly);
+            binds.add(bind);
+        });
+
+        List<String> env = new ArrayList<>();
+        container.environment().forEach((k, v) -> env.add(k + "=" + v));
+
         HostConfig host = HostConfig.newHostConfig()
-                .withBinds(Bind.parse(spec.workspaceHostPath() + ":" + spec.workspaceMountPath()))
+                .withBinds(binds)
                 .withMemory(spec.memoryBytes())
                 .withNanoCPUs(spec.nanoCpus())
-                .withAutoRemove(false); // finalize must be able to read the exit code
-        var created = client.createContainerCmd(spec.image())
-                .withCmd(spec.argv())
-                .withEnv(env)                       // credentials live here, never in a label
-                .withLabels(Map.of(RUN_ID_LABEL, spec.runId()))
-                .withWorkingDir(spec.workspaceMountPath())
+                .withAutoRemove(false);   // finalize must be able to read the exit code
+
+        return client.createContainerCmd(container.image())
+                .withCmd(container.argv())
+                .withEnv(env)             // credentials live HERE, never in a label
+                .withLabels(Map.of(RUN_ID_LABEL, spec.runId(), ROLE_LABEL, role))
                 .withHostConfig(host)
-                .exec();
-        client.startContainerCmd(created.getId()).exec();
-        return new RunHandle(spec.runId(), created.getId());
+                .exec()
+                .getId();
     }
 
     @Override
-    public void attach(RunHandle handle, Consumer<String> lines) {
+    public void attach(RunHandle handle, LogChannel channel, Consumer<String> lines) {
+        Unit unit = units.get(handle.runId());
+        String containerId = channel == LogChannel.AGENT ? unit.agentId() : unit.publisherId();
         try {
-            client.logContainerCmd(handle.providerRunId())
+            client.logContainerCmd(containerId)
                     .withStdOut(true).withStdErr(true).withFollowStream(true)
                     .exec(new ResultCallback.Adapter<Frame>() {
                         @Override
@@ -1726,26 +1886,54 @@ public final class DockerRunRuntime implements RunRuntime {
 
     @Override
     public void cancel(RunHandle handle) {
-        client.killContainerCmd(handle.providerRunId()).exec();
+        Unit unit = units.get(handle.runId());
+        for (String id : List.of(unit.agentId(), unit.publisherId())) {
+            try {
+                client.killContainerCmd(id).exec();
+            } catch (Exception e) {
+                // already stopped
+            }
+        }
     }
 
     @Override
     public Finalization finalize(RunHandle handle) {
+        Unit unit = units.get(handle.runId());
         try {
-            int exit = client.waitContainerCmd(handle.providerRunId())
+            int agentExit = client.waitContainerCmd(unit.agentId())
                     .exec(new WaitContainerResultCallback()).awaitStatusCode();
-            return Finalization.salvaged(exit, "container exited");
+            // Give the publisher its drain window, then stop it. It has no work left once the agent
+            // is gone and the last bundle has been read.
+            try {
+                client.stopContainerCmd(unit.publisherId()).withTimeout(30).exec();
+            } catch (Exception e) {
+                // already exited
+            }
+            return Finalization.salvaged(agentExit, "agent exited " + agentExit);
         } catch (Exception e) {
-            return Finalization.salvageFailed("could not read the exit code: " + e.getMessage());
+            return Finalization.salvageFailed("could not read the agent's exit code: " + e.getMessage());
         }
     }
 
     @Override
     public void destroy(RunHandle handle) {
-        try {
-            client.removeContainerCmd(handle.providerRunId()).withForce(true).exec();
-        } catch (Exception e) {
-            // Already gone is not a failure; a leaked container is the watchdog's problem.
+        Unit unit = units.remove(handle.runId());
+        if (unit == null) {
+            return;
+        }
+        for (String id : List.of(unit.initId(), unit.agentId(), unit.publisherId())) {
+            try {
+                client.removeContainerCmd(id).withForce(true).exec();
+            } catch (Exception e) {
+                // already gone
+            }
+        }
+        for (String volume : unit.volumes()) {
+            try {
+                client.removeVolumeCmd(volume).exec();
+            } catch (Exception e) {
+                // already gone
+            }
         }
     }
 
@@ -1753,7 +1941,7 @@ public final class DockerRunRuntime implements RunRuntime {
     public List<RunHandle> discoverOrphans() {
         List<RunHandle> handles = new ArrayList<>();
         client.listContainersCmd().withShowAll(true)
-                .withLabelFilter(List.of(RUN_ID_LABEL))
+                .withLabelFilter(Map.of(ROLE_LABEL, "agent"))
                 .exec()
                 .forEach(container -> handles.add(
                         new RunHandle(container.getLabels().get(RUN_ID_LABEL), container.getId())));
@@ -1762,16 +1950,266 @@ public final class DockerRunRuntime implements RunRuntime {
 }
 ```
 
+> `units` is an in-memory map, which is fine within one run's lifetime and **not** the recovery
+> mechanism — `discoverOrphans` is, and it reads labels from the daemon rather than this map. A
+> restarted worker rebuilds nothing; it discovers.
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `./gradlew :spire-runtime-docker:test`
-Expected: PASS. Requires a running Docker daemon and pulls `alpine:3.20` on first run.
+Expected: PASS. Requires a running Docker daemon; pulls `alpine:3.20` on first run.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add spire-runtime-docker settings.gradle.kts build.gradle.kts Dockerfile LICENSING.md
-git commit -m "Add the Docker run runtime with a probed inner sandbox"
+git commit -m "Add the Docker run unit: init, agent and publisher on shared volumes"
+```
+
+---
+
+## Task 6b: `spire-publisher` — the sidecar that gates and pushes
+
+**Files:**
+- Create: `spire-publisher/build.gradle.kts`, `spire-publisher/LICENSE`, `spire-publisher/Dockerfile`
+- Create: `spire-publisher/src/main/java/dev/codespire/publisher/{PublisherMain,HandoffWatcher,OutcomeWriter}.java`
+- Modify: `settings.gradle.kts`, `build.gradle.kts` (`serviceTestModules`), `Dockerfile`, `LICENSING.md`
+- Test: `spire-publisher/src/test/java/dev/codespire/publisher/HandoffWatcherTest.java`
+
+**Interfaces:**
+- Consumes: `PublishRepo`, `ChangeSet` (Task 3); `PushGate`, `PushDecision` (Task 4).
+- Produces: an image that runs as the publisher container, reading `/handoff` and writing one JSON
+  line per outcome to stdout.
+
+This is the **only** thing in the run unit holding a write credential. Its safety comes from four
+properties, each of which is a test above or below: it never mounts `/workspace`, it works only in its
+own clone, it never checks out a working tree, and `/handoff` is read-only to it.
+
+- [ ] **Step 1: Write the failing test**
+
+```java
+package dev.codespire.publisher;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class HandoffWatcherTest {
+
+    @Test
+    void seesEachNewBundleExactlyOnce(@TempDir Path handoff) throws Exception {
+        List<Path> seen = new ArrayList<>();
+        HandoffWatcher watcher = new HandoffWatcher(handoff);
+
+        Files.writeString(handoff.resolve("1.bundle"), "x");
+        watcher.poll(seen::add);
+        watcher.poll(seen::add);                       // nothing new
+        Files.writeString(handoff.resolve("2.bundle"), "y");
+        watcher.poll(seen::add);
+
+        assertEquals(2, seen.size(), "a bundle already handled must not be handled again");
+    }
+
+    @Test
+    void ignoresPartiallyWrittenFiles(@TempDir Path handoff) throws Exception {
+        List<Path> seen = new ArrayList<>();
+        HandoffWatcher watcher = new HandoffWatcher(handoff);
+
+        // The agent writes to a temp name and renames atomically; anything else is mid-write.
+        Files.writeString(handoff.resolve("tmp"), "half");
+        Files.writeString(handoff.resolve("3.bundle.part"), "half");
+        watcher.poll(seen::add);
+
+        assertTrue(seen.isEmpty(), "only *.bundle counts, so a half-written file is never read");
+    }
+
+    @Test
+    void ordersBundlesByTheirSequenceNumber(@TempDir Path handoff) throws Exception {
+        List<Path> seen = new ArrayList<>();
+        HandoffWatcher watcher = new HandoffWatcher(handoff);
+
+        Files.writeString(handoff.resolve("10.bundle"), "x");
+        Files.writeString(handoff.resolve("2.bundle"), "y");
+        watcher.poll(seen::add);
+
+        assertEquals("2.bundle", seen.get(0).getFileName().toString(),
+                "2 before 10 — lexical order would push the later commit first");
+    }
+}
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `./gradlew :spire-publisher:test`
+Expected: FAIL — module does not exist.
+
+- [ ] **Step 3: Create the module (four-file ritual, `serviceTestModules`)**
+
+```kotlin
+dependencies {
+    implementation(project(":spire-workspace"))
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+```
+
+Plain Java with a `main`, not Quarkus — it runs for the length of one run and needs no framework.
+Package it with the `application` plugin or a shadow jar, whichever the repository already uses.
+
+- [ ] **Step 4: Write the minimal implementation**
+
+```java
+package dev.codespire.publisher;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+/**
+ * Watches the handoff directory for bundles the agent has finished writing.
+ *
+ * <p>Only {@code *.bundle} counts. The agent writes to a temp name and renames atomically, so any
+ * other name is mid-write and must not be read (RUN-TOPOLOGY §4.1).
+ */
+public final class HandoffWatcher {
+
+    private final Path handoff;
+    private final Set<String> handled = new HashSet<>();
+
+    public HandoffWatcher(Path handoff) {
+        this.handoff = handoff;
+    }
+
+    public void poll(Consumer<Path> onNewBundle) throws IOException {
+        if (!Files.isDirectory(handoff)) {
+            return;
+        }
+        List<Path> fresh;
+        try (Stream<Path> entries = Files.list(handoff)) {
+            fresh = entries
+                    .filter(p -> p.getFileName().toString().endsWith(".bundle"))
+                    .filter(p -> !handled.contains(p.getFileName().toString()))
+                    .sorted(Comparator.comparingLong(HandoffWatcher::sequence))
+                    .toList();
+        }
+        for (Path bundle : fresh) {
+            handled.add(bundle.getFileName().toString());
+            onNewBundle.accept(bundle);
+        }
+    }
+
+    /** "2.bundle" before "10.bundle" — lexical order would ship the later commit first. */
+    private static long sequence(Path bundle) {
+        String name = bundle.getFileName().toString().replace(".bundle", "");
+        try {
+            return Long.parseLong(name);
+        } catch (NumberFormatException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+}
+```
+
+```java
+package dev.codespire.publisher;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * One JSON line per outcome, on stdout. The worker reads this from the container's log stream —
+ * nothing is extracted from the pod (ADR-038).
+ */
+public final class OutcomeWriter {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    public void pushed(String ref, List<String> changed) {
+        write(Map.of("event", "pushed", "ref", ref, "changed", changed));
+    }
+
+    public void refused(List<String> blocked, List<String> changed) {
+        write(Map.of("event", "gate_refused", "blocked", blocked, "changed", changed));
+    }
+
+    public void failed(String cause, String detail) {
+        write(Map.of("event", "failed", "cause", cause, "detail", detail));
+    }
+
+    private void write(Map<String, Object> payload) {
+        try {
+            System.out.println(JSON.writeValueAsString(payload));
+            System.out.flush();
+        } catch (Exception e) {
+            // A publisher that cannot report is still a publisher that pushed; never crash here.
+            System.out.println("{\"event\":\"failed\",\"cause\":\"REPORT_FAILED\"}");
+        }
+    }
+}
+```
+
+`PublisherMain` reads its configuration from the environment — `SPIRE_REMOTE_URI`,
+`SPIRE_BASE_COMMIT`, `SPIRE_BRANCH`, `SPIRE_PROTECTED_PATHS` (comma-separated),
+`SPIRE_BUNDLE_MAX_BYTES`, `SPIRE_GIT_USERNAME`, `SPIRE_GIT_SECRET` — clones once with `PublishRepo`,
+then loops:
+
+```java
+while (agentStillRunning()) {
+    watcher.poll(bundle -> {
+        String sha = repo.fetchBundle(bundle, maxBytes);
+        ChangeSet changes = repo.changesSince(baseCommit, sha);
+        PushDecision decision = PushGate.decide(changes, protectedPaths);
+        if (!decision.allowed()) {
+            outcome.refused(decision.blocked(), paths(changes));
+            System.exit(2);                       // a gate trip TERMINATES the run
+        }
+        outcome.pushed(repo.pushRef(sha, branch, credential), paths(changes));
+    });
+    Thread.sleep(pollMillis);
+}
+```
+
+**`agentStillRunning()`** is the one platform-dependent part. Where the runtime declares
+`nativeSidecar`, Kubernetes terminates this container when the agent exits and the loop simply ends.
+Where it does not, the agent's last act is to write `/handoff/DONE` and this method watches for it.
+
+Three rules with no exceptions, each corresponding to a test:
+
+- **Never mount or read `/workspace`.** Not in code, not in the image, not in the container spec.
+- **Never check out a working tree.** `PublishRepo` is a bare clone; keep it that way.
+- **Never write to a shared volume.** Outcomes go to stdout.
+
+`spire-publisher/Dockerfile`: a JRE base, the jar, a non-root user, `ca-certificates`. It needs no
+git binary — JGit does the work.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `./gradlew :spire-publisher:test :spire-arch:test`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add spire-publisher settings.gradle.kts build.gradle.kts Dockerfile LICENSING.md
+git commit -m "Add the publisher sidecar: watch, gate, push, report on stdout"
 ```
 
 ---
@@ -1979,27 +2417,29 @@ git commit -m "Add the run wire contract with a derived, platform-carrying run i
 
 ---
 
-## Task 8: `spire-run-worker` — the deployable
-
-> **⚠ SUPERSEDED IN PART BY ADR-038 — rewrite before executing.** `RunClaimStore`, the dispatcher
-> and the channel semantics stand. `RunExecutor` does **not**: the worker performs no git and holds
-> no filesystem. It creates the run unit, streams two log channels (agent events, publisher
-> outcomes), records charges and emits results. That is what makes it stateless, and therefore what
-> makes a run recoverable by any replica.
+## Task 8: `spire-run-worker` — the stateless deployable
 
 **Files:**
 - Create: `spire-run-worker/build.gradle.kts`, `spire-run-worker/LICENSE`
 - Create: `spire-run-worker/src/main/resources/application.yml`
 - Create: `spire-run-worker/src/main/resources/db/migration/V1__run_claim.sql`
-- Create: `spire-run-worker/src/main/java/dev/codespire/runworker/{RunDispatcher,RunExecutor,RunClaimStore,RunResultsEmitter,RunCommandDeserializer,HarnessRegistry}.java`
+- Create: `spire-run-worker/src/main/java/dev/codespire/runworker/{RunDispatcher,RunLauncher,RunUnitBuilder,RunClaimStore,RunResultsEmitter,RunCommandDeserializer,HarnessRegistry,WorkerRuntimes,Credentials}.java`
 - Modify: `settings.gradle.kts`, `build.gradle.kts` (`serviceTestModules`), `Dockerfile`, `LICENSING.md`
-- Test: `spire-run-worker/src/test/java/dev/codespire/runworker/RunClaimStoreTest.java`
+- Test: `spire-run-worker/src/test/java/dev/codespire/runworker/{RunClaimStoreTest,RunUnitBuilderTest}.java`
 
 **Interfaces:**
-- Consumes: `RunCommand`, `RunResult`, `RunIds` (Task 7); `HarnessAdapter` (Task 1); `CodexAdapter` (Task 2); `Workspace`, `PushGate` (Tasks 3–4); `RunRuntime`, `DockerRunRuntime` (Tasks 5–6).
-- Produces: `RunClaimStore.claim(String runId, String slot) -> boolean` (false when already claimed); `RunExecutor.execute(RunCommand.ExecuteRun) -> RunResult`.
+- Consumes: `RunCommand`, `RunResult`, `RunIds` (Task 7); `HarnessAdapter` (Task 1); `CodexAdapter`
+  (Task 2); `RunRuntime`, `RunUnitSpec`, `ContainerSpec`, `LogChannel` (Task 5); `DockerRunRuntime`
+  (Task 6).
+- Produces: `RunClaimStore.claim(String runId, String slot) -> boolean`;
+  `RunUnitBuilder.build(RunCommand.ExecuteRun, HarnessAdapter) -> RunUnitSpec`;
+  `RunLauncher.launch(RunCommand.ExecuteRun) -> RunResult`.
 
-- [ ] **Step 1: Write the failing test**
+**The worker performs no git and holds no filesystem (ADR-038).** It creates the run unit, streams two
+log channels, records what it sees, and emits a result. That is what makes it stateless — and
+therefore what makes a run recoverable by any replica rather than only by the one that started it.
+
+- [ ] **Step 1: Write the failing tests**
 
 ```java
 package dev.codespire.runworker;
@@ -2034,14 +2474,86 @@ class RunClaimStoreTest {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+```java
+package dev.codespire.runworker;
+
+import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.harness.codex.CodexAdapter;
+import dev.codespire.runtime.RunUnitSpec;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class RunUnitBuilderTest {
+
+    private final RunUnitBuilder builder = new RunUnitBuilder();
+
+    private RunCommand.ExecuteRun command() {
+        return new RunCommand.ExecuteRun("run::github:acme/app:finding-1:1",
+                new RepoRef("acme", "app"), "abc1234", "spire/run_1",
+                "fix the typo", "codex", "gpt-5.6", "spire-agent-codex:1",
+                List.of("deploy/**"), 3600, "enc-scm", "enc-harness");
+    }
+
+    @Test
+    void theAgentGetsNoWriteCredential() {
+        RunUnitSpec unit = builder.build(command(), new CodexAdapter());
+
+        // ADR-038: the agent physically cannot push, gate or no gate.
+        assertFalse(unit.agent().environment().containsKey("SPIRE_GIT_SECRET"));
+        assertTrue(unit.publisher().environment().containsKey("SPIRE_GIT_SECRET"));
+    }
+
+    @Test
+    void thePublisherNeverMountsTheWorkspace() {
+        RunUnitSpec unit = builder.build(command(), new CodexAdapter());
+
+        assertFalse(unit.publisher().mounts().containsKey("workspace"),
+                "the publisher must not reach agent-controlled git config or hooks");
+        assertTrue(unit.agent().mounts().containsKey("workspace"));
+    }
+
+    @Test
+    void handoffIsReadOnlyToThePublisherAndWritableByTheAgent() {
+        RunUnitSpec unit = builder.build(command(), new CodexAdapter());
+
+        assertTrue(unit.publisher().mounts().get("handoff").endsWith(":ro"));
+        assertFalse(unit.agent().mounts().get("handoff").endsWith(":ro"));
+    }
+
+    @Test
+    void theProtectedPathsReachThePublisherAndNotTheAgent() {
+        RunUnitSpec unit = builder.build(command(), new CodexAdapter());
+
+        // The gate's rules come from the operator side, never from anything the agent can influence.
+        assertEquals("deploy/**", unit.publisher().environment().get("SPIRE_PROTECTED_PATHS"));
+        assertFalse(unit.agent().environment().containsKey("SPIRE_PROTECTED_PATHS"));
+    }
+
+    @Test
+    void theInitContainerClonesWithAReadCredentialOnly() {
+        RunUnitSpec unit = builder.build(command(), new CodexAdapter());
+
+        assertTrue(unit.init().environment().containsKey("SPIRE_CLONE_SECRET"));
+        assertFalse(unit.init().environment().containsKey("SPIRE_GIT_SECRET"));
+    }
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `./gradlew :spire-run-worker:test`
 Expected: FAIL — module does not exist.
 
 - [ ] **Step 3: Create the module, its schema and its channels**
 
-`spire-run-worker/build.gradle.kts` — copy `spire-review-worker/build.gradle.kts` and replace the dependency block's project list with:
+`spire-run-worker/build.gradle.kts` — copy `spire-review-worker/build.gradle.kts` and replace the
+project dependency list with:
 
 ```kotlin
     implementation(project(":spire-contract"))
@@ -2050,10 +2562,10 @@ Expected: FAIL — module does not exist.
     implementation(project(":spire-harness-codex"))
     implementation(project(":spire-runtime"))
     implementation(project(":spire-runtime-docker"))
-    implementation(project(":spire-workspace"))
 ```
 
-keeping the Quarkus extension list (jackson, messaging-kafka, jdbc-postgresql, flyway, config-yaml, smallrye-health, logging-json, oidc) and the test block.
+Note what is **absent**: `spire-workspace`. The worker runs no git. If that dependency appears, the
+statelessness this task exists to establish has been lost.
 
 `V1__run_claim.sql`:
 
@@ -2063,10 +2575,9 @@ CREATE SCHEMA IF NOT EXISTS runworker;
 
 -- The SOLE idempotency mechanism for run dispatch.
 --
--- The run worker acks a command ON RECEIPT, because an hour-long run cannot ride the review
--- worker's ordered-blocking channel. That moves the redelivery guarantee off Kafka and onto this
--- row, and the write order matters: claim FIRST, then ack. The reverse loses the command on a
--- crash between the two.
+-- This worker acks a command ON RECEIPT, because an hour-long run cannot ride the review worker's
+-- ordered-blocking channel. That moves the redelivery guarantee off Kafka and onto this row, and the
+-- write order matters: claim FIRST, then ack. The reverse loses the command on a crash between them.
 CREATE TABLE runworker.run_claim (
     run_id     TEXT        NOT NULL,
     slot       TEXT        NOT NULL,
@@ -2074,20 +2585,20 @@ CREATE TABLE runworker.run_claim (
     PRIMARY KEY (run_id, slot)
 );
 
--- Which sandbox owns which workspace, with the heartbeat that DEFINES an orphan.
+-- Which run unit a replica currently owns, with the heartbeat that DEFINES an orphan.
 --
 -- Without owner + heartbeat, discoverOrphans() cannot tell a dead replica's leak from a live
--- replica's healthy hour-long run: reap eagerly and the watchdog kills real work, reap lazily and
--- an eviction leaks forever.
-CREATE TABLE runworker.workspace_lease (
-    run_id        TEXT        PRIMARY KEY,
-    owner_id      TEXT        NOT NULL,
-    workspace_dir TEXT        NOT NULL,
-    heartbeat_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+-- replica's healthy hour-long run: reap eagerly and the watchdog kills real work, reap lazily and an
+-- eviction leaks forever. Note this row holds no filesystem path — since ADR-038 there is nothing on
+-- any worker's disk to point at.
+CREATE TABLE runworker.run_lease (
+    run_id       TEXT        PRIMARY KEY,
+    owner_id     TEXT        NOT NULL,
+    heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-`application.yml` — model it on `spire-review-worker/src/main/resources/application.yml`, with:
+`application.yml` — model it on `spire-review-worker`'s, with:
 
 ```yaml
 mp:
@@ -2123,10 +2634,9 @@ mp:
         waitForWriteCompletion: true
 ```
 
-Set the HTTP port env var alongside the others (`SPIRE_RUN_WORKER_HTTP_PORT`, default `34083`).
-
-Then the four-file ritual, with `spire-run-worker` in **`serviceTestModules`**, and add
-`docker build --build-arg SERVICE=run-worker` to the `Dockerfile` header comment.
+Set `SPIRE_RUN_WORKER_HTTP_PORT` (default `34083`) alongside the other per-service port vars, and add
+`docker build --build-arg SERVICE=run-worker` to the `Dockerfile` header comment. Then the four-file
+ritual, with `spire-run-worker` in **`serviceTestModules`**.
 
 - [ ] **Step 4: Write the minimal implementation**
 
@@ -2174,111 +2684,81 @@ public class RunClaimStore {
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
-import dev.codespire.contract.event.RunResult;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
-import dev.codespire.harness.RunEvent;
-import dev.codespire.harness.RunEventSummary;
-import dev.codespire.harness.TokenBucket;
-import dev.codespire.harness.UsageReport;
-import dev.codespire.runtime.Finalization;
-import dev.codespire.runtime.RunHandle;
-import dev.codespire.runtime.RunRuntime;
-import dev.codespire.runtime.RunSpec;
-import dev.codespire.workspace.PushCredential;
-import dev.codespire.workspace.PushDecision;
-import dev.codespire.workspace.PushGate;
-import dev.codespire.workspace.Workspace;
-import dev.codespire.workspace.WorkspaceSpec;
+import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.RunUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import org.jboss.logging.Logger;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
-/** Workspace → sandbox → harness → gate → push. The only class that touches all four seams. */
+/**
+ * Turns a command into the three-container run unit of ADR-038.
+ *
+ * <p>The security properties of the whole design are decided HERE, by what each container is handed:
+ *
+ * <ul>
+ *   <li>the agent gets the model credential and the workspace, and NO write credential;</li>
+ *   <li>the publisher gets the write credential, the gate's rules, and NOT the workspace;</li>
+ *   <li>{@code /handoff} is writable by the agent and read-only to the publisher;</li>
+ *   <li>the init container gets a READ-only clone credential.</li>
+ * </ul>
+ *
+ * Each of those is asserted by a test, because each is a boundary rather than a preference.
+ */
 @ApplicationScoped
-public class RunExecutor {
+public class RunUnitBuilder {
 
-    private static final Logger LOG = Logger.getLogger(RunExecutor.class);
+    private static final String WORKSPACE = "workspace";
+    private static final String HANDOFF = "handoff";
+    private static final String PUBLISHER_IMAGE = "spire-publisher:latest";
+    private static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
 
-    @Inject
-    RunRuntime runtime;
-
-    @Inject
-    HarnessRegistry harnesses;
-
-    public RunResult execute(RunCommand.ExecuteRun command) {
-        HarnessAdapter adapter = harnesses.forName(command.harness());
-        Path dir;
-        try {
-            dir = Files.createTempDirectory("spire-run-");
-        } catch (Exception e) {
-            return new RunResult.RunFailed(command.runId(), "SANDBOX_UNREACHABLE", e.getMessage(), true);
-        }
-
-        // Credentials are decrypted here and never leave this method's locals.
-        PushCredential push = Credentials.push(command.scmCredential());
+    public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
+        Credentials.Scm scm = Credentials.scm(command.scmCredential());
         Map<String, String> harnessEnv = Credentials.harnessEnv(command.harnessCredential());
 
-        try (Workspace workspace = Workspace.create(new WorkspaceSpec(
-                remoteUri(command), command.baseCommit(), command.branch(), dir, push))) {
+        ContainerSpec init = new ContainerSpec(
+                PUBLISHER_IMAGE,
+                List.of("spire-clone"),
+                Map.of("SPIRE_REMOTE_URI", remoteUri(command),
+                        "SPIRE_BRANCH", command.branch(),
+                        "SPIRE_BASE_COMMIT", command.baseCommit(),
+                        "SPIRE_CLONE_USERNAME", scm.readUsername(),
+                        "SPIRE_CLONE_SECRET", scm.readSecret()),
+                Map.of(WORKSPACE, "/workspace"));
 
-            HarnessInvocation invocation = new HarnessInvocation(command.runId(), command.prompt(),
-                    "/workspace", command.model(), harnessEnv,
-                    Duration.ofSeconds(command.maxWallClockSeconds()),
-                    runtime.capabilities().innerSandbox());
+        HarnessInvocation invocation = new HarnessInvocation(command.runId(), command.prompt(),
+                "/workspace", command.model(), harnessEnv,
+                Duration.ofSeconds(command.maxWallClockSeconds()));
 
-            RunSpec spec = new RunSpec(command.runId(), command.agentImage(),
-                    adapter.command(invocation), adapter.environment(invocation),
-                    workspace.path().toString(), "/workspace",
-                    2L * 1024 * 1024 * 1024, 2_000_000_000L,
-                    Duration.ofSeconds(command.maxWallClockSeconds()));
+        Map<String, String> agentEnv = new LinkedHashMap<>(adapter.environment(invocation));
+        agentEnv.put("SPIRE_BASE_COMMIT", command.baseCommit());
+        agentEnv.put("SPIRE_HANDOFF", "/handoff");
+        ContainerSpec agent = new ContainerSpec(
+                command.agentImage(),
+                adapter.command(invocation),
+                Map.copyOf(agentEnv),
+                Map.of(WORKSPACE, "/workspace", HANDOFF, "/handoff"));
 
-            RunHandle handle = runtime.create(spec);
-            List<RunEvent> events = new ArrayList<>();
-            runtime.attach(handle, line -> adapter.parse(line).ifPresent(events::add));
+        ContainerSpec publisher = new ContainerSpec(
+                PUBLISHER_IMAGE,
+                List.of("spire-publish"),
+                Map.of("SPIRE_REMOTE_URI", remoteUri(command),
+                        "SPIRE_BRANCH", command.branch(),
+                        "SPIRE_BASE_COMMIT", command.baseCommit(),
+                        "SPIRE_PROTECTED_PATHS", String.join(",", command.protectedPaths()),
+                        "SPIRE_BUNDLE_MAX_BYTES", Long.toString(BUNDLE_MAX_BYTES),
+                        "SPIRE_GIT_USERNAME", scm.writeUsername(),
+                        "SPIRE_GIT_SECRET", scm.writeSecret()),
+                Map.of(HANDOFF, "/handoff:ro"));
 
-            Finalization finalization = runtime.finalize(handle);
-            if (!finalization.salvaged()) {
-                // The workspace is NOT deleted and the container is NOT destroyed: a failed salvage
-                // must not throw away the work finalize exists to keep.
-                return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED", finalization.detail(), false);
-            }
-            runtime.destroy(handle);
-
-            RunEventSummary seen = new RunEventSummary(List.copyOf(events), !events.isEmpty());
-            var changes = workspace.changes();
-            PushDecision decision = PushGate.decide(changes, command.protectedPaths());
-
-            List<String> changedPaths = changes.paths().stream().map(p -> p.path()).toList();
-            if (!decision.allowed()) {
-                LOG.warnf("run %s refused at the push gate: %s", command.runId(), decision.blocked());
-                return finished(command, null, changedPaths, decision.blocked(), adapter.usage(seen));
-            }
-
-            String ref = changes.isEmpty() ? null : workspace.push(push);
-            return finished(command, ref, changedPaths, List.of(), adapter.usage(seen));
-
-        } catch (Exception e) {
-            return new RunResult.RunFailed(command.runId(), "PROVIDER_ERROR", e.getMessage(), true);
-        }
-    }
-
-    private RunResult finished(RunCommand.ExecuteRun command, String ref, List<String> changed,
-                               List<String> blocked, Optional<UsageReport> usage) {
-        // Empty usage means UNKNOWN. It must NOT become zero here — that is the exact conversion
-        // ADR-023 exists to prevent, and the ledger prices an UNKNOWN row as unpriceable.
-        boolean unknown = usage.isEmpty();
-        Long in = unknown ? null : usage.get().tokens(TokenBucket.INPUT);
-        Long out = unknown ? null : usage.get().tokens(TokenBucket.OUTPUT);
-        return new RunResult.RunFinished(command.runId(), ref, changed, blocked, in, out, unknown);
+        return new RunUnitSpec(command.runId(), init, agent, publisher,
+                4L * 1024 * 1024 * 1024, 2_000_000_000L,
+                Duration.ofSeconds(command.maxWallClockSeconds()));
     }
 
     private String remoteUri(RunCommand.ExecuteRun command) {
@@ -2287,71 +2767,120 @@ public class RunExecutor {
 }
 ```
 
-> If `RepoRef` has no `cloneUrl()`, add one derived from the existing fields rather than
-> reconstructing a URL at this call site. Check `spire-contract/.../scm/RepoRef.java` first.
+> If `RepoRef` has no `cloneUrl()`, add one derived from its existing fields rather than
+> reconstructing a URL at this call site. Read `spire-contract/.../scm/RepoRef.java` first.
 
 ```java
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
-import io.smallrye.reactive.messaging.annotations.Blocking;
+import dev.codespire.contract.event.RunResult;
+import dev.codespire.harness.HarnessAdapter;
+import dev.codespire.harness.RunEvent;
+import dev.codespire.runtime.Finalization;
+import dev.codespire.runtime.LogChannel;
+import dev.codespire.runtime.RunHandle;
+import dev.codespire.runtime.RunRuntime;
+import dev.codespire.runtime.RunUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
-import org.jboss.logging.MDC;
 
-/** Claim, then ack, then run. The order is the guarantee. */
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Creates the run unit and reads its two log streams. Performs no git and holds no filesystem — that
+ * is the whole point of ADR-038, and it is what lets any replica salvage any run.
+ */
 @ApplicationScoped
-public class RunDispatcher {
+public class RunLauncher {
 
-    private static final Logger LOG = Logger.getLogger(RunDispatcher.class);
-
-    @Inject
-    RunClaimStore claims;
+    private static final Logger LOG = Logger.getLogger(RunLauncher.class);
 
     @Inject
-    RunExecutor executor;
+    RunRuntime runtime;
 
     @Inject
-    RunResultsEmitter results;
+    RunUnitBuilder builder;
 
-    @Incoming("run-commands-in")
-    @Blocking
-    public void on(RunCommand command) {
-        if (command == null) {
-            return; // poison record already logged by the deserializer
-        }
-        MDC.put("runId", command.runId());
+    @Inject
+    HarnessRegistry harnesses;
+
+    @Inject
+    RunEventPublisher events;
+
+    public RunResult launch(RunCommand.ExecuteRun command) {
+        HarnessAdapter adapter = harnesses.forName(command.harness());
+        RunUnitSpec unit = builder.build(command, adapter);
+
+        RunHandle handle;
         try {
-            switch (command) {
-                case RunCommand.ExecuteRun execute -> {
-                    if (!claims.claim(execute.runId(), "execute")) {
-                        LOG.infof("run %s already claimed — redelivery, not a second run", execute.runId());
-                        return;
-                    }
-                    results.emit(executor.execute(execute));
-                }
-                case RunCommand.CancelRun cancel ->
-                        LOG.infof("cancel for %s arrived on the command topic; M1 moves this to "
-                                + "cs.run-control, where it does not queue behind the run", cancel.runId());
-            }
-        } finally {
-            MDC.remove("runId");
+            handle = runtime.create(unit);
+        } catch (Exception e) {
+            return new RunResult.RunFailed(command.runId(), "SANDBOX_UNREACHABLE", e.getMessage(), true);
         }
+
+        List<RunEvent> seen = new ArrayList<>();
+        PublisherOutcome outcome = new PublisherOutcome();
+
+        // Both streams are read concurrently: the publisher reports pushes WHILE the agent is still
+        // working (continuous checkpointing, RUN-TOPOLOGY §5), so reading them in sequence would
+        // hold every push report until the run ended.
+        CompletableFuture<Void> agentLog = CompletableFuture.runAsync(() ->
+                runtime.attach(handle, LogChannel.AGENT, line ->
+                        adapter.parse(line).ifPresent(event -> {
+                            seen.add(event);
+                            events.publish(command.runId(), event);
+                        })));
+        CompletableFuture<Void> publisherLog = CompletableFuture.runAsync(() ->
+                runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept));
+
+        Finalization finalization = runtime.finalize(handle);
+        CompletableFuture.allOf(agentLog, publisherLog).join();
+
+        if (!finalization.salvaged()) {
+            // The unit is NOT destroyed: a failed salvage must not throw away the work finalize
+            // exists to keep. The watchdog or an operator reclaims it.
+            return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED", finalization.detail(), false);
+        }
+        runtime.destroy(handle);
+
+        if (outcome.refused()) {
+            LOG.warnf("run %s refused at the push gate: %s", command.runId(), outcome.blocked());
+        }
+        return new RunResult.RunFinished(command.runId(), outcome.lastPushedRef(),
+                outcome.changedPaths(), outcome.blocked(),
+                adapter.usage(seen).map(u -> u).orElse(null) == null ? null : null,
+                null, adapter.usage(seen).isEmpty());
     }
 }
 ```
 
+> The usage fields above are deliberately left as the UNKNOWN case. Codex runs on a subscription, so
+> a missing count costs no money — but it must arrive as **UNKNOWN, never zero** (RUN-TOPOLOGY §10).
+> Fill the two token fields in once Task 2 Step 6 has established what the stream actually reports.
+
 Also write, in the same task:
 
-- **`HarnessRegistry`** — a composition root, `@ApplicationScoped`, mapping `"codex"` → `CodexAdapter`, throwing on an unknown name (never falling back to a default: an unknown harness must fail loudly at dispatch, not run the wrong one).
-- **`WorkerRuntimes`** — a CDI producer, `@ApplicationScoped`, exposing `DockerRunRuntime` as the `RunRuntime` bean. `spire-runtime-docker` is framework-free, so it carries no CDI annotations of its own and something in the worker must produce it. M0 has one arm; the selection logic arrives with the Kubernetes arm at M5.
-- **`RunResultsEmitter`** — an `@Channel("run-results-out")` `Emitter<RunResult>`, keyed by `runId`.
-- **`RunCommandDeserializer`** and **`RunResultSerializer`** — copy `ActionCommandDeserializer` / `ActionCommandSerializer` verbatim and change the type. **The never-throw behaviour on a poison record is load-bearing**: a record that cannot be read maps to `null` and is skipped, and processing failures go to `cs.dlq` (ADR-013).
-- **`Credentials`** — Tink decrypt via `spire-encryption`, mirroring the review worker's credential unpacking. Its `toString` must not render a secret.
+- **`PublisherOutcome`** — parses the publisher's one-JSON-line-per-outcome stdout (`pushed`,
+  `gate_refused`, `failed`), keeping the last pushed ref, the union of changed paths, and any blocked
+  paths.
+- **`RunEventPublisher`** — an `@Channel("run-events-out")` `Emitter<RunEvent>` keyed by `runId`,
+  onto `cs.run-events` (the short-retention tier, ADR-033).
+- **`HarnessRegistry`** — composition root, `"codex"` → `CodexAdapter`, throwing on an unknown name;
+  never defaulting, because an unknown harness must fail loudly rather than run the wrong one.
+- **`WorkerRuntimes`** — a CDI producer exposing `DockerRunRuntime` as the `RunRuntime` bean, since
+  `spire-runtime-docker` is framework-free and carries no CDI annotations.
+- **`RunDispatcher`** — `@Incoming("run-commands-in")`, `@Blocking`: claim, then run, then emit. On a
+  refused claim, log and return — a redelivery is not a second run.
+- **`RunCommandDeserializer`** / **`RunResultSerializer`** — copy the review worker's and change the
+  type. **The never-throw behaviour on a poison record is load-bearing.**
+- **`Credentials`** — Tink decrypt via `spire-encryption`, yielding a read pair and a write pair. Its
+  `toString` must not render a secret.
 
-**`HarnessRegistry` and `WorkerRuntimes` are added to the `spire-arch` allowlist in Task 11** — both name an implementation, and that is exactly their job.
+**`HarnessRegistry` and `WorkerRuntimes` are added to the `spire-arch` allowlist in Task 11.**
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -2362,7 +2891,7 @@ Expected: PASS. Quarkus Dev Services boots Postgres; Flyway applies `V1`.
 
 ```bash
 git add spire-run-worker settings.gradle.kts build.gradle.kts Dockerfile LICENSING.md
-git commit -m "Add the run worker: claim before ack, salvage before teardown"
+git commit -m "Add the stateless run worker: claim before ack, no git, two log streams"
 ```
 
 ---
@@ -2905,13 +3434,14 @@ git commit -m "Prove both M0 exit criteria end to end"
 | Requirement | Task |
 |---|---|
 | FR-F1 dispatch a run | 10 |
-| FR-F2 isolated workspace | 3 |
+| FR-F2 isolated workspace | 6 (the init container clones it), 3 (the publisher's own copy) |
 | FR-F3 sandboxed execution | 6 |
-| FR-F4 guaranteed (gated) output | 3, 4, 8 |
+| FR-F4 guaranteed (gated) output | 3, 4, 6b |
+| FR-F7 salvage before teardown | 5 (`Finalization`), 6, 8 |
 | FR-F11 harness registry | 1 (SPI), 8 (`HarnessRegistry`) |
 | FR-F13 bring-your-own image | 7, 8 — **the M0 half only** |
-| FR-F28 push gate | 4, 8 |
-| FR-F29 factory identity | 10 |
+| FR-F28 push gate | 4 (the matcher), 6b (where it runs), 8 (the rules that reach it) |
+| FR-F29 factory identity | 10 (registration), 8 (which container gets the write token) |
 
 **FR-F13 is split across milestones and the PRD's tag does not say so.** M0 delivers the half the
 walking skeleton needs: `agentImage` is a per-run parameter carried on `ExecuteRun` and honoured by
