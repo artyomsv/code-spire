@@ -171,6 +171,7 @@ val fastTestModules = listOf(
 
 val serviceTestModules = listOf(
     "spire-runtime-docker",
+    "spire-publisher",
     "spire-gateway",
     "spire-orchestrator",
     "spire-review-worker",
