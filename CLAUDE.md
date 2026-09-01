@@ -1387,9 +1387,9 @@ The design is fully specified in `docs/` — **treat those files as the source o
   The admin form stays as the repair path, both ends now picked from recorded values.
   Runbook: SMOKE-TEST **Mode P**.
 
-  Measured, not estimated: **1779 Java tests across 224 suites**; **440 `spire-ui` vitest tests
-  across 58 files**; `tsc --noEmit` silent.
-||||||| 85096b5
+  Measured, not estimated: **1782 Java tests across 225 suites** (`testFast` + `testServices`; the
+  nightly `testE2e` tier is separate); **457 `spire-ui` vitest tests across 59 files**;
+  `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
