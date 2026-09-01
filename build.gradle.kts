@@ -150,6 +150,10 @@ tasks.register("cleanDevServices") {
  */
 val fastTestModules = listOf(
     "spire-contract",
+    // Its tests boot nothing: the git library is exercised against a temporary on-disk repository,
+    // which is a bare JVM by the rule this list states. It was in the service tier by proximity to
+    // the run unit it ships inside, which is not the criterion.
+    "spire-publisher",
     "spire-arch",
     "spire-encryption",
     "spire-diff",
@@ -171,7 +175,6 @@ val fastTestModules = listOf(
 
 val serviceTestModules = listOf(
     "spire-runtime-docker",
-    "spire-publisher",
     "spire-run-worker",
     "spire-gateway",
     "spire-orchestrator",

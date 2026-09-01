@@ -3,10 +3,12 @@ package dev.codespire.runworker;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
+import dev.codespire.harness.PromptDelivery;
 import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -50,9 +52,12 @@ public class RunUnitBuilder {
 
     private static final long NANO_CPUS = 2_000_000_000L;
 
+    @Inject
+    Credentials credentials;
+
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
-        Credentials.Scm scm = Credentials.scm(command.scmCredential());
-        Map<String, String> harnessEnv = Credentials.harnessEnv(command.harnessCredential());
+        Credentials.Scm scm = credentials.scm(command.runId(), command.scmCredential());
+        Map<String, String> harnessEnv = credentials.harnessEnv(command.runId(), command.harnessCredential());
 
         ContainerSpec init = new ContainerSpec(
                 PUBLISHER_IMAGE,
@@ -71,6 +76,15 @@ public class RunUnitBuilder {
         Map<String, String> agentEnv = new LinkedHashMap<>(adapter.environment(invocation));
         agentEnv.put("SPIRE_BASE_COMMIT", command.baseCommit());
         agentEnv.put("SPIRE_HANDOFF", "/handoff");
+        if (adapter.promptDelivery() == PromptDelivery.STDIN) {
+            // The agent image's entrypoint contract (deploy/agent/spire-agent-entrypoint.sh): the
+            // prompt arrives in SPIRE_PROMPT, is written to a file OUTSIDE the working tree, unset,
+            // and piped to the harness on stdin. Nothing in the runtime touches stdin, so without
+            // this line a STDIN arm reads an empty prompt, produces nothing, exits 0 -- and the run
+            // is reported as finished having done nothing, which is exactly what the harness SPI's
+            // own javadoc warns about. It is never on argv (see thePromptIsNeverInTheAgentsArgv).
+            agentEnv.put("SPIRE_PROMPT", command.prompt());
+        }
         ContainerSpec agent = new ContainerSpec(
                 command.agentImage(),
                 adapter.command(invocation),

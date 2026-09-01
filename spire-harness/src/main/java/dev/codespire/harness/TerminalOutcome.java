@@ -13,7 +13,7 @@ public record TerminalOutcome(boolean succeeded, Optional<FailureCause> cause, S
         Objects.requireNonNull(cause, "cause");
         Objects.requireNonNull(detail, "detail");
         if (succeeded && cause.isPresent()) {
-            throw new IllegalArgumentException("a successful outcome cannot name a failure cause: " + cause.get());
+            throw new IllegalArgumentException("a successful outcome cannot name a failure cause: " + cause.orElseThrow());
         }
         if (!succeeded && cause.isEmpty()) {
             throw new IllegalArgumentException("a failure must name its cause (FR-F9): " + detail);

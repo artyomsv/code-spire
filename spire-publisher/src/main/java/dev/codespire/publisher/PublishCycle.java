@@ -1,11 +1,18 @@
 package dev.codespire.publisher;
 
+import dev.codespire.workspace.AmbiguousBundleException;
+import dev.codespire.workspace.BundleTooLargeException;
 import dev.codespire.workspace.ChangeSet;
+import dev.codespire.workspace.EmptyBundleException;
 import dev.codespire.workspace.GitCredential;
 import dev.codespire.workspace.PublishRepo;
 import dev.codespire.workspace.PushDecision;
 import dev.codespire.workspace.PushGate;
+import dev.codespire.workspace.PushRefusedException;
+import dev.codespire.workspace.UnsafeTreePathException;
+import org.eclipse.jgit.api.errors.GitAPIException;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -54,9 +61,12 @@ public final class PublishCycle {
         try {
             sha = repo.fetchBundle(bundle, bundleMaxBytes);
             changes = repo.changesSince(baseCommit, sha);
-        } catch (Exception e) {
+        } catch (GitAPIException | IOException | BundleTooLargeException | EmptyBundleException
+                 | AmbiguousBundleException | UnsafeTreePathException e) {
             // A bundle that cannot be read is not a refusal and not a push. Reported and skipped:
-            // the agent is still working, and the next checkpoint may be fine.
+            // the agent is still working, and the next checkpoint may be fine. Named rather than
+            // caught as Exception so that a NEW failure mode surfaces as a crash to be classified,
+            // not as one more "unreadable bundle" nobody looks at.
             outcome.failed("BUNDLE_UNREADABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
             return true;
         }
@@ -72,9 +82,9 @@ public final class PublishCycle {
         try {
             outcome.pushed(repo.pushRef(sha, branch, credential), changes.paths());
             return true;
-        } catch (Exception e) {
-            // Includes PushRefusedException — the forge's own ruleset saying no, which JGit reports
-            // as a status rather than throwing on its own. Never reported as a success.
+        } catch (GitAPIException | PushRefusedException e) {
+            // PushRefusedException is the forge's own ruleset saying no, which JGit reports as a
+            // status rather than throwing on its own. Never reported as a success.
             outcome.failed("PUSH_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
             return false;
         }

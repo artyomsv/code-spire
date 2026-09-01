@@ -5,6 +5,12 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -117,6 +123,61 @@ class FactoryRunProjectionTest {
         projection.queued(unacked, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
         FactoryRunProjection.RunView view = projection.find(unacked).orElseThrow();
         assertEquals(FactoryRunProjection.QUEUED, view.status());
+        assertNull(view.failureCause());
+    }
+
+    @Test
+    void reArmingADispatchFailureTakesTheNewRequestsParameters() {
+        // The re-arm used to flip the status and keep the FIRST request's harness, model, commit and
+        // branch — while the command actually dispatched carried the SECOND request's. The row then
+        // described a run that was never sent, and every later read (attention, the operator's
+        // page) lied about what was running.
+        String runId = queuedRun();
+        projection.dispatchFailed(runId, "No broker ack within 10s");
+
+        projection.queued(runId, "codex", "gpt-5.7-mini", "release/2", "fedcba9876543210fedcba9876543210fedcba98",
+                "spire/x", "other-bot");
+
+        assertEquals(FactoryRunProjection.QUEUED, projection.find(runId).orElseThrow().status());
+        assertEquals(List.of("gpt-5.7-mini", "release/2", "fedcba9876543210fedcba9876543210fedcba98", "other-bot"),
+                column(runId, "model", "base_branch", "base_commit", "pushed_as"));
+    }
+
+    @Inject
+    DataSource dataSource;
+
+    private List<String> column(String runId, String... columns) {
+        String sql = "SELECT " + String.join(", ", columns) + " FROM factory_run WHERE run_id = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new AssertionError("no row for " + runId);
+                }
+                List<String> values = new ArrayList<>();
+                for (int i = 1; i <= columns.length; i++) {
+                    values.add(rs.getString(i));
+                }
+                return values;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException(sql, e);
+        }
+    }
+
+    @Test
+    void aLateDispatchFailureCannotOverwriteARunThatAlreadyStarted() {
+        // The emitter's ack wait is shorter than the producer's delivery timeout, so a slow broker can
+        // report "not dispatched" for a record that landed and whose worker already sent RunStarted.
+        // Marking that row failed would drop the run's real result, which projects only onto a queued
+        // or running row, and let a retry re-arm the row under a run still executing.
+        String runId = queuedRun();
+        projection.apply(new RunResult.RunStarted(runId, "container-1"));
+        projection.dispatchFailed(runId, "No broker ack within 10s");
+        assertEquals(FactoryRunProjection.RUNNING, projection.find(runId).orElseThrow().status());
+        projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of(), List.of(), null));
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
         assertNull(view.failureCause());
     }
 

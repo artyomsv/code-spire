@@ -44,11 +44,19 @@ public final class ProtectedPaths {
             // Jenkins. The suffixed form is real — Jenkinsfile.release is a common convention.
             "Jenkinsfile",
             "Jenkinsfile.*",
+            // A multibranch or folder job sets a "Script Path", and ci/Jenkinsfile is a common one; a
+            // Jenkinsfile IS the configuration wherever it sits, like a composite action.
+            "**/Jenkinsfile",
+            "**/Jenkinsfile.*",
             // The rest of the field.
             ".circleci/**",
             "azure-pipelines.yml",
+            "azure-pipelines.yaml",
             ".drone.yml",
+            ".drone.yaml",
             ".woodpecker.yml",
+            // Woodpecker reads BOTH spellings at the root; the directory form below covers both.
+            ".woodpecker.yaml",
             ".woodpecker/**",
             ".travis.yml",
             "appveyor.yml",
@@ -56,7 +64,9 @@ public final class ProtectedPaths {
             ".buildkite/**",
             ".teamcity/**",
             "cloudbuild.yaml",
+            "cloudbuild.yml",
             "buildspec.yml",
+            "buildspec.yaml",
             ".semaphore/**",
             // Not CI configuration itself, but it redirects what `actions/checkout submodules:true`
             // fetches and then builds — so editing it changes what runs without changing a workflow.

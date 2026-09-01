@@ -50,6 +50,31 @@ class PublisherOutcomeTest {
     }
 
     @Test
+    void aFailureAfterTheLastPushOutranksIt() {
+        // Continuous checkpointing: a push, then a later push that FAILED. Reporting the earlier
+        // ref would tell the operator the run delivered when its final state never reached the
+        // remote -- the same lie a refusal after a push would tell, and handled the same way.
+        outcome.accept("""
+                {"event":"pushed","ref":"refs/heads/a","changed":[{"path":"a.md","kind":"ADDED"}]}""");
+        outcome.accept("""
+                {"event":"failed","cause":"PUSH_FAILED","detail":"REJECTED_NONFASTFORWARD"}""");
+
+        assertTrue(outcome.pushedRef().isEmpty(), "a stale ref must not be reported as the outcome");
+        assertEquals("PUSH_FAILED", outcome.failureCause().orElseThrow());
+    }
+
+    /** The reverse order is a real success: the failure was a transient one the next push cured. */
+    @Test
+    void aPushAfterAFailureIsStillAPush() {
+        outcome.accept("""
+                {"event":"failed","cause":"BUNDLE_UNREADABLE","detail":"short read"}""");
+        outcome.accept("""
+                {"event":"pushed","ref":"refs/heads/a","changed":[{"path":"a.md","kind":"ADDED"}]}""");
+
+        assertEquals("refs/heads/a", outcome.pushedRef().orElseThrow());
+    }
+
+    @Test
     void anUnparseableOrUnknownLineIsIgnoredRatherThanFatal() {
         // The publisher also logs plain text, and it is free to add outcomes this worker does not
         // model yet. Neither may fail a run that already pushed.

@@ -6,6 +6,7 @@ import jakarta.inject.Inject;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 
 /**
  * The run worker's only idempotency mechanism.
@@ -33,7 +34,7 @@ public class RunClaimStore {
             statement.setString(1, runId);
             statement.setString(2, slot);
             return statement.executeUpdate() == 1;
-        } catch (Exception e) {
+        } catch (SQLException e) {
             // Fail CLOSED. An unreadable claim table must not authorise a paid run: answering
             // "true" on a database fault turns one outage into an unbounded number of duplicate
             // agent runs, which is the shape the LLM idempotency claim already learned from.

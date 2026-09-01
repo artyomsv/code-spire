@@ -4,6 +4,7 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmProviderConfig;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
@@ -21,6 +22,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.ServerErrorException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Map;
@@ -47,7 +49,21 @@ public class RunResource {
     /** A single path segment's charset — the same guard the manual-register endpoint applies. */
     private static final Pattern SLUG = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
 
-    private static final Pattern COMMIT = Pattern.compile("[0-9a-fA-F]{7,64}");
+    /**
+     * A FULL object id, not an abbreviation. The publisher hands this to JGit's ObjectId.fromString,
+     * which accepts exactly 40 hex characters; a 7-character prefix passed every check here, was
+     * cloned and run against, and then failed every bundle as BUNDLE_UNREADABLE — after the agent
+     * had been paid for. SHA-256 repositories (64) are not what the publisher's git library speaks.
+     */
+    private static final Pattern COMMIT = Pattern.compile("[0-9a-fA-F]{40}");
+
+    /** A model name as the vendors spell them ({@code gpt-5.6}, {@code claude-opus-5}, {@code org/model:tag}). */
+    private static final Pattern MODEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}");
+
+    /** Generous for a work item; a bound at all is what matters (see the prompt check). */
+    private static final int MAX_PROMPT_CHARS = 64 * 1024;
+
+    private static final Logger LOG = Logger.getLogger(RunResource.class);
 
     /** M0: one attempt per subject. A re-run is a later milestone's decision, not a default. */
     private static final int FIRST_ATTEMPT = 1;
@@ -58,6 +74,14 @@ public class RunResource {
     private static final String REF_DOTDOT = "..";
 
     private static final String REF_LOCK_SUFFIX = ".lock";
+
+    /** One segment of a branch name; the whole-name rules live in {@link #refName}. */
+    private static final Pattern REF_SEGMENT = Pattern.compile("[A-Za-z0-9._-]+");
+
+    private static final int MAX_REF_CHARS = 255;
+
+    /** Stored on the row, which a viewer can read; the broker exception itself goes to the log. */
+    static final String DISPATCH_FAILED_DETAIL = "the broker did not acknowledge the command; retry the same request";
 
     @Inject
     MachineAccounts machineAccounts;
@@ -73,6 +97,12 @@ public class RunResource {
 
     @Inject
     LlmProviderRegistry llmProviders;
+
+    @Inject
+    SpendGate spendGate;
+
+    @Inject
+    RunCredentials runCredentials;
 
     /**
      * @param llmProviderId the registered LLM provider whose key the harness runs with; blank means
@@ -91,13 +121,18 @@ public class RunResource {
         }
         ScmType scmType = ScmType.fromProviderType(req.providerType())
                 .orElseThrow(() -> badRequest("unknown providerType: " + req.providerType()));
-        String workspace = segment(req.workspace(), "workspace");
+        String workspace = namespace(req.workspace());
         String slug = segment(req.slug(), "slug");
         String baseCommit = required(req.baseCommit(), "baseCommit");
         if (!COMMIT.matcher(baseCommit).matches()) {
-            throw badRequest("baseCommit must be a hex commit id");
+            throw badRequest("baseCommit must be a full 40-character hex commit id");
         }
         String prompt = required(req.prompt(), "prompt");
+        if (prompt.length() > MAX_PROMPT_CHARS) {
+            // The prompt rides every command copy, the DLQ row and the agent's environment; an
+            // unbounded one is a stored-payload problem before it is a model-context problem.
+            throw badRequest("prompt exceeds " + MAX_PROMPT_CHARS + " characters");
+        }
         String harness = required(req.harness(), "harness");
         String agentImage = config.agentImage().get(harness);
         if (agentImage == null) {
@@ -106,8 +141,13 @@ public class RunResource {
                     + " (spire.factory.agent-image.<harness>)");
         }
         String model = required(req.model(), "model");
+        if (!MODEL.matcher(model).matches()) {
+            // Reaches the harness's argv as `--model <value>`; HarnessInvocation refuses a
+            // flag-shaped value too, but after the row is written and the command is on the bus.
+            throw badRequest("model is not a valid model name");
+        }
         String baseBranch = req.baseBranch() == null || req.baseBranch().isBlank()
-                ? DEFAULT_BASE_BRANCH : req.baseBranch();
+                ? DEFAULT_BASE_BRANCH : refName(req.baseBranch(), "baseBranch");
         String subject = subject(req.subject(), baseCommit);
 
         ScmProvider account = machineAccounts.resolve(scmType, workspace)
@@ -121,22 +161,48 @@ public class RunResource {
         String runId = RunIds.of(scmType, workspace, slug, subject, FIRST_ATTEMPT);
         String branch = "spire/" + subject;
 
-        // Recorded BEFORE dispatch, so a run can never exist on the bus without a row — and the
-        // insert is idempotent, so a retried request for the same subject changes nothing.
-        projection.queued(runId, harness, model, baseBranch, baseCommit, branch, account.botUsername());
+        // The deployment-wide caps (ADR-025) apply here as they do to a review: a run is a paid model
+        // call, and V40 makes its spend count toward the same rolling window — so without this gate
+        // runs would consume the cap the reviews respect while never respecting it themselves. Checked
+        // BEFORE the row is written: a refused run is not a run, and a queued row for it would be a
+        // 201-shaped promise. A ledger the gate could not read fails open, as it does for reviews.
+        SpendGate.Decision cap = spendGate.decide();
+        if (cap.refused()) {
+            throw new ClientErrorException(Response.status(Response.Status.TOO_MANY_REQUESTS)
+                    .entity("Run not dispatched: " + cap.refusal().detail()
+                            + ". Capacity returns as older usage ages out, or raise the cap in Settings -> General.")
+                    .build());
+        }
 
-        // M0 packs the machine account's raw token. KEK wrapping (ADR-030) lands with the credential
-        // pool; the field name already says what it will carry so the call sites need no change.
+        // Recorded BEFORE dispatch, so a run can never exist on the bus without a row. A retried
+        // request for a run that failed to dispatch re-arms it; any other existing row is a run
+        // that is queued, running or already finished, and dispatching over it would be dropped by
+        // the worker's claim as a redelivery -- a 201 for a run that never runs. So: 409, naming it.
+        if (!projection.queued(runId, harness, model, baseBranch, baseCommit, branch, account.botUsername())) {
+            String status = projection.find(runId).map(FactoryRunProjection.RunView::status).orElse("unknown");
+            throw conflict("Run " + runId + " already exists (status " + status + "). M0 runs each subject "
+                    + "once; pass a different subject to run again.");
+        }
+
+        // Both credentials ride the bus as Tink ciphertext bound to this run (ADR-015's rule, which
+        // the review path already keeps). The raw values went on the command once: every other
+        // credential on the bus was ciphertext, this one was a write token, and a dead-lettered
+        // command lands in dlq_entry.payload — a plain TEXT column with no TTL — exactly as sent.
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(runId, repo,
                 FactoryCloneUrls.cloneUrl(scmType, account.baseUrl(), repo),
                 baseBranch, baseCommit, branch, prompt, harness, model, agentImage,
-                List.of(), config.wallClockSeconds(), account.secret(), llm.apiKey());
+                List.of(), config.wallClockSeconds(),
+                runCredentials.packScm(runId, account.botUsername(), account.secret()),
+                runCredentials.packHarness(runId, llm.apiKey()));
         try {
             emitter.dispatch(command);
         } catch (IllegalStateException e) {
             // The row stays and says why. Deleting it would leave a run the broker may well have
             // accepted (an ack timeout proves nothing) with no record; the retry re-arms this row.
-            projection.dispatchFailed(runId, e.getMessage());
+            // The stored detail is a fixed sentence: the row is viewer-readable through GET, and a
+            // broker exception names hosts and internals. The exception itself goes to the log.
+            LOG.errorf(e, "run %s was recorded but the broker did not acknowledge its dispatch", runId);
+            projection.dispatchFailed(runId, DISPATCH_FAILED_DETAIL);
             throw new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
                     .entity("Run " + runId + " was recorded but not dispatched: " + e.getMessage()
                             + ". Retry the same request once the broker is reachable; it re-arms this run.")
@@ -218,12 +284,50 @@ public class RunResource {
         return projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
     }
 
+    /**
+     * A workspace is one segment on GitHub and Bitbucket and may be several on GitLab
+     * ({@code group/subgroup}). Each segment is validated on its own; the joined form is what the
+     * run id carries, and {@code RunIds} splits on the LAST slash for exactly this reason. Validating
+     * the whole value as one segment made a nested GitLab namespace undispatchable while the GET
+     * route's own comment said it was supported.
+     */
+    private static String namespace(String value) {
+        String v = required(value, "workspace");
+        if (v.startsWith("/") || v.endsWith("/")) {
+            throw badRequest("workspace must not start or end with '/'");
+        }
+        for (String part : v.split("/", -1)) {
+            if (!SLUG.matcher(part).matches()) {
+                throw badRequest("workspace is not a valid repository namespace");
+            }
+        }
+        return v;
+    }
+
     private static String segment(String value, String field) {
         String v = required(value, field);
         if (!SLUG.matcher(v).matches()) {
             throw badRequest(field + " is not a valid repository segment");
         }
         return v;
+    }
+
+    /**
+     * A branch name git would accept: slash-separated segments, none empty, none starting with a
+     * dot or a hyphen, no {@code ..} and no {@code .lock} suffix. The publisher clones this, so a
+     * bad name is a 400 here rather than an init container that fails after the row is written.
+     */
+    private static String refName(String value, String field) {
+        if (value.length() > MAX_REF_CHARS || value.startsWith("/") || value.endsWith("/")
+                || value.contains(REF_DOTDOT) || value.endsWith(REF_LOCK_SUFFIX)) {
+            throw badRequest(field + " is not a valid branch name");
+        }
+        for (String part : value.split("/", -1)) {
+            if (part.isEmpty() || part.startsWith(".") || part.startsWith("-") || !REF_SEGMENT.matcher(part).matches()) {
+                throw badRequest(field + " is not a valid branch name");
+            }
+        }
+        return value;
     }
 
     private static String required(String value, String field) {

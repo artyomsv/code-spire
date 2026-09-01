@@ -29,8 +29,11 @@ import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -78,11 +81,17 @@ public final class DockerRunRuntime implements RunRuntime {
     /** How long the publisher is given to drain after the agent exits, before it is stopped. */
     private static final int PUBLISHER_DRAIN_SECONDS = 30;
 
+    /** Grace between SIGTERM and SIGKILL when the drain window elapses. */
+    private static final int STOP_GRACE_SECONDS = 5;
+
     /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
     private static final long PIDS_LIMIT = 512;
 
     /** A registry pull of an agent image with a toolchain in it; a stalled one must not hang a run. */
     private static final Duration PULL_TIMEOUT = Duration.ofMinutes(10);
+
+    /** A clone of a large repository from a forge; a stalled one must not hold the dispatch slot for ever. */
+    private static final Duration INIT_TIMEOUT = Duration.ofMinutes(15);
 
     private final DockerClient client;
 
@@ -123,9 +132,18 @@ public final class DockerRunRuntime implements RunRuntime {
 
         String initId = createContainer(spec, spec.init(), INIT);
         client.startContainerCmd(initId).exec();
-        int initExit = client.waitContainerCmd(initId)
-                .exec(new WaitContainerResultCallback())
-                .awaitStatusCode();
+        int initExit;
+        try {
+            // Bounded: the init container clones from a forge, and an unbounded wait on a stalled
+            // clone would hold the dispatcher's one ordered slot for ever with no run to show for it.
+            initExit = client.waitContainerCmd(initId)
+                    .exec(new WaitContainerResultCallback())
+                    .awaitStatusCode((int) INIT_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+        } catch (RuntimeException notFinished) {
+            stopQuietly(initId);
+            throw new IllegalStateException("init container did not finish within " + INIT_TIMEOUT
+                    + " for run " + spec.runId(), notFinished);
+        }
         if (initExit != 0) {
             // The unit stays behind on purpose: its containers and volumes carry the run id, so the
             // orphan watchdog can reach them, and an operator can read why the clone failed.
@@ -161,8 +179,28 @@ public final class DockerRunRuntime implements RunRuntime {
         return names;
     }
 
-    private static String volumeName(String runId, String volume) {
-        return "spire-" + runId + "-" + volume;
+    /**
+     * A daemon-legal name derived from the run id, never the id itself.
+     *
+     * <p>A run id is {@code run::github:acme/app:finding-1:1}, and a local volume name may contain
+     * only {@code [a-zA-Z0-9][a-zA-Z0-9_.-]}. Naming the volume after the id verbatim failed at
+     * {@code create} for every real run — reported as {@code SANDBOX_UNREACHABLE}, retryable, and
+     * invisible to the integration tests, whose ids are synthetic and slash-free. The id itself
+     * stays on {@link #RUN_ID_LABEL}, which is what {@link #destroy} and {@link #discoverOrphans}
+     * already look volumes up by; the name only has to be unique and legal.
+     */
+    static String volumeName(String runId, String volume) {
+        return "spire-" + digestOf(runId) + "-" + volume;
+    }
+
+    private static String digestOf(String runId) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(runId.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 16);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is mandatory in every JDK", e);
+        }
     }
 
     /**
@@ -244,14 +282,37 @@ public final class DockerRunRuntime implements RunRuntime {
             client.logContainerCmd(containerId)
                     .withStdOut(true).withStdErr(true).withFollowStream(true)
                     .exec(new ResultCallback.Adapter<Frame>() {
+                        // The daemon does not align frames to lines: one JSON report line can
+                        // arrive across two frames. Splitting each frame on its own delivered both
+                        // halves as separate, unparseable lines, and PublisherOutcome skips a line it
+                        // cannot parse -- so a split "pushed" report made a real push invisible and
+                        // the run reported no push. The trailing partial line is carried over and
+                        // flushed when the stream ends.
+                        private final StringBuilder carry = new StringBuilder();
+
                         @Override
                         public void onNext(Frame frame) {
-                            String chunk = new String(frame.getPayload(), StandardCharsets.UTF_8);
-                            for (String line : chunk.split("\\R")) {
+                            carry.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+                            int newline;
+                            while ((newline = indexOfLineEnd(carry)) >= 0) {
+                                String line = carry.substring(0, newline);
+                                carry.delete(0, newline + 1);
+                                if (line.endsWith("\r")) {
+                                    line = line.substring(0, line.length() - 1);
+                                }
                                 if (!line.isEmpty()) {
                                     lines.accept(line);
                                 }
                             }
+                        }
+
+                        @Override
+                        public void onComplete() {
+                            if (!carry.isEmpty()) {
+                                lines.accept(carry.toString());
+                                carry.setLength(0);
+                            }
+                            super.onComplete();
                         }
                     })
                     .awaitCompletion();
@@ -324,13 +385,30 @@ public final class DockerRunRuntime implements RunRuntime {
                 .orElse(Duration.ofHours(1));
     }
 
+    /**
+     * Lets the publisher finish, and stops it only if it does not.
+     *
+     * <p>The publisher ends itself once it has read the last bundle and seen the agent's DONE marker.
+     * The version this replaces issued {@code docker stop} with the drain window as its timeout — and
+     * {@code stop} sends SIGTERM <em>immediately</em>, waiting the timeout only before SIGKILL. Salvage
+     * calls this the instant the agent exits, so the publisher JVM, typically still fetching the final
+     * bundle, died with exit 143 before it could gate or push, and printed nothing: every such run was
+     * reported finished with nothing pushed and nothing blocked. The comment beside that call described
+     * a wait that did not exist. A cancelled agent never writes DONE, so on the wall-clock path the
+     * publisher polls until the window elapses and is then stopped — bounded, with whatever it already
+     * pushed on the remote.
+     */
     private void drainPublisher(RunHandle handle) {
         containerOf(handle.runId(), PUBLISHER).ifPresent(id -> {
             try {
-                // It has no work left once the agent is gone and the last bundle has been read.
-                client.stopContainerCmd(id).withTimeout(PUBLISHER_DRAIN_SECONDS).exec();
-            } catch (RuntimeException e) {
-                // already exited
+                client.waitContainerCmd(id).exec(new WaitContainerResultCallback())
+                        .awaitStatusCode(PUBLISHER_DRAIN_SECONDS, TimeUnit.SECONDS);
+            } catch (RuntimeException notFinished) {
+                try {
+                    client.stopContainerCmd(id).withTimeout(STOP_GRACE_SECONDS).exec();
+                } catch (RuntimeException alreadyGone) {
+                    // exited between the wait and the stop
+                }
             }
         });
     }
@@ -382,6 +460,11 @@ public final class DockerRunRuntime implements RunRuntime {
         return handles;
     }
 
+    /** The first line terminator in the buffer, or -1. Both \n and \r\n count; a CR alone does not. */
+    private static int indexOfLineEnd(StringBuilder buffer) {
+        return buffer.indexOf("\n");
+    }
+
     private void killQuietly(String containerId) {
         try {
             client.killContainerCmd(containerId).exec();
@@ -417,5 +500,14 @@ public final class DockerRunRuntime implements RunRuntime {
         labels.put(ROLE_LABEL, role);
         labels.put(WALL_CLOCK_LABEL, Long.toString(spec.wallClock().toSeconds()));
         return labels;
+    }
+
+    /** Stops a container that outlived its wait; nothing to do if it exited in between. */
+    private void stopQuietly(String id) {
+        try {
+            client.stopContainerCmd(id).withTimeout(STOP_GRACE_SECONDS).exec();
+        } catch (RuntimeException alreadyGone) {
+            // exited between the wait and the stop
+        }
     }
 }

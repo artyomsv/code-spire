@@ -35,6 +35,21 @@ public sealed interface RunCommand {
     }
 
     /**
+     * The AAD both credentials are bound to: the run they were packed for, and which of the two
+     * they are. Bound to the run rather than the workspace (the review path's choice) because a run
+     * is the unit of dispatch here — a ciphertext lifted from one command cannot be replayed on
+     * another run's command even within the same workspace. The two slots differ so an SCM token
+     * cannot be presented where a harness key is expected.
+     */
+    static String scmCredentialAad(String runId) {
+        return "run-scm:" + Objects.requireNonNull(runId, "runId");
+    }
+
+    static String harnessCredentialAad(String runId) {
+        return "run-harness:" + Objects.requireNonNull(runId, "runId");
+    }
+
+    /**
      * One agent run.
      *
      * <p><b>Its {@code toString} redacts both credentials.</b> A record prints every component, and
@@ -61,6 +76,9 @@ public sealed interface RunCommand {
             // publisher CLONES (the target the work is based on) and branch is what it PUSHES to.
             // One name for both would make the factory push onto the branch it forked from.
             Objects.requireNonNull(baseBranch, "baseBranch");
+            // Was the one component with no check: a null surfaced later as an NPE out of Map.of in
+            // the unit builder, reported as BAD_COMMAND with a message naming nothing.
+            Objects.requireNonNull(baseCommit, "baseCommit");
             Objects.requireNonNull(branch, "branch");
             Objects.requireNonNull(prompt, "prompt");
             protectedPaths = List.copyOf(Objects.requireNonNull(protectedPaths, "protectedPaths"));

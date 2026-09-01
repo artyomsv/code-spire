@@ -3,7 +3,6 @@ package dev.codespire.runworker;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.harness.HarnessAdapter;
-import dev.codespire.harness.RunEvent;
 import dev.codespire.harness.RunEventSummary;
 import dev.codespire.harness.TerminalOutcome;
 import dev.codespire.harness.UsageReport;
@@ -17,10 +16,11 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import jakarta.annotation.PreDestroy;
 
 /**
  * Creates the run unit and reads its two log streams.
@@ -32,6 +32,15 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class RunLauncher {
 
     private static final Logger LOG = Logger.getLogger(RunLauncher.class);
+
+    /** One virtual thread per log stream; see {@link #launch} for why not the common pool. */
+    private final ExecutorService streams = Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("run-stream-", 0).factory());
+
+    @PreDestroy
+    void stopStreams() {
+        streams.shutdownNow();
+    }
 
     @Inject
     RunRuntime runtime;
@@ -63,18 +72,22 @@ public class RunLauncher {
                     e.getClass().getSimpleName() + ": " + e.getMessage(), true);
         }
 
-        List<RunEvent> seen = new CopyOnWriteArrayList<>();
+        RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
 
         // Both streams are read CONCURRENTLY. The publisher reports pushes while the agent is still
         // working (continuous checkpointing, RUN-TOPOLOGY §5), so reading them in sequence would
         // hold every push report until the run ended — and a run that then died would look as
         // though it had pushed nothing.
+        // On a dedicated executor, never the common pool: each of these blocks for the run's whole
+        // wall clock following a container log, and two per run on ForkJoinPool.commonPool() would
+        // exhaust the JVM-wide pool with a handful of concurrent runs. Virtual threads, because the
+        // work is a blocked socket read and nothing else.
         CompletableFuture<Void> agentStream = CompletableFuture.runAsync(() ->
                 runtime.attach(handle, LogChannel.AGENT,
-                        line -> adapter.parse(line).ifPresent(seen::add)));
+                        line -> adapter.parse(line).ifPresent(seen::accept)), streams);
         CompletableFuture<Void> publisherStream = CompletableFuture.runAsync(() ->
-                runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept));
+                runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept), streams);
 
         Finalization finalization = runtime.salvage(handle);
         CompletableFuture.allOf(agentStream, publisherStream).join();
@@ -92,18 +105,21 @@ public class RunLauncher {
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter,
-                                List<RunEvent> seen, PublisherOutcome outcome,
+                                RunEventFold seen, PublisherOutcome outcome,
                                 Finalization finalization) {
         if (!finalization.salvaged()) {
             return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED",
                     finalization.detail(), false);
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
-            return new RunResult.RunFailed(command.runId(), outcome.failureCause().get(),
+            return new RunResult.RunFailed(command.runId(), outcome.failureCause().orElseThrow(),
                     outcome.failureDetail(), true);
         }
 
-        RunEventSummary summary = RunEventSummary.of(seen);
+        if (seen.dropped() > 0) {
+            LOG.debugf("run %s: %d agent events folded away", command.runId(), seen.dropped());
+        }
+        RunEventSummary summary = seen.summary();
         TerminalOutcome terminal = adapter.classify(finalization.exitCode(), summary);
         if (!terminal.succeeded() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             // The agent failed and nothing reached the remote. A run that DID push before failing

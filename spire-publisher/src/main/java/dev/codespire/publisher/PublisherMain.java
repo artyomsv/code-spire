@@ -1,7 +1,9 @@
 package dev.codespire.publisher;
 
 import dev.codespire.workspace.PublishRepo;
+import org.eclipse.jgit.api.errors.GitAPIException;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -43,7 +45,8 @@ public final class PublisherMain {
             System.exit(2);
             return;
         }
-        OutcomeWriter outcome = new OutcomeWriter(System.out, config.credential().secret());
+        OutcomeWriter outcome = new OutcomeWriter(System.out, config.credential().username(), config.credential().secret());
+        int exitCode = 0;
 
         try (PublishRepo repo = PublishRepo.cloneBranch(config.remoteUri(), config.baseBranch(),
                 Files.createTempDirectory("spire-publish-clone-"), config.credential())) {
@@ -63,15 +66,24 @@ public final class PublisherMain {
                 // The agent is gone; take whatever it wrote in its last moments before exiting.
                 drain(watcher, cycle);
             }
-        } catch (Exception e) {
+        } catch (IOException | GitAPIException | InterruptedException | RuntimeException e) {
+            // The process boundary: every failure that reaches here is reported on stdout as the
+            // run worker expects, then the sidecar exits non-zero. Each source is named -- the clone,
+            // the temp directory, the poll sleep, the watcher, and anything the cycle raises --
+            // rather than caught as Exception, so a new checked type cannot slip in unannounced.
             outcome.failed("PUBLISHER_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
-            System.exit(1);
+            exitCode = 1;
         } finally {
+            // Runs on BOTH paths. System.exit inside the catch skipped this block, so a failed
+            // publisher held its pack windows open on the way out.
             PublishRepo.releaseAllPackWindows();
+        }
+        if (exitCode != 0) {
+            System.exit(exitCode);
         }
     }
 
-    private static boolean drain(HandoffWatcher watcher, PublishCycle cycle) throws Exception {
+    private static boolean drain(HandoffWatcher watcher, PublishCycle cycle) throws IOException {
         boolean[] carryOn = {true};
         watcher.poll(bundle -> {
             if (carryOn[0]) {

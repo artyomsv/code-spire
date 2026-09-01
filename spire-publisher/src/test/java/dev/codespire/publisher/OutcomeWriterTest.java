@@ -29,6 +29,26 @@ class OutcomeWriterTest {
     }
 
     @Test
+    void theCredentialIsScrubbedInTheFormsATransportErrorRendersIt() {
+        // JGit speaks HTTP Basic: a message can carry the token percent-encoded inside a URI, or
+        // Base64-encoded as the Authorization value together with the username. Neither contains
+        // the literal token, so the literal-only scrub let both through.
+        String secret = "TEST/secret+77b1";
+        String encoded = java.net.URLEncoder.encode(secret, StandardCharsets.UTF_8);
+        String basic = java.util.Base64.getEncoder()
+                .encodeToString(("bot:" + secret).getBytes(StandardCharsets.UTF_8));
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(
+                new PrintStream(captured, true, StandardCharsets.UTF_8), "bot", secret);
+        writer.failed("PUSH_FAILED", "https://bot:" + encoded + "@host/x rejected; Authorization: Basic " + basic);
+        String line = captured.toString(StandardCharsets.UTF_8);
+        assertFalse(line.contains(encoded), line);
+        assertFalse(line.contains(basic), line);
+        assertTrue(line.contains("https://bot:***@host/x"), line);
+        assertTrue(line.contains("Basic ***"), line);
+    }
+
+    @Test
     void aWriterWithNoSecretWritesTheDetailAsIs() {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8));

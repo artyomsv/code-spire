@@ -289,7 +289,10 @@ public final class PublishRepo implements AutoCloseable {
         if (path == null || path.isBlank() || "/dev/null".equals(path)) {
             throw new UnsafeTreePathException(String.valueOf(path));
         }
-        if (path.startsWith("/") || path.contains("\\") || path.indexOf('\0') >= 0) {
+        if (path.startsWith("/") || path.contains("\\") || path.indexOf('\0') >= 0
+                || path.indexOf('\n') >= 0 || path.indexOf('\r') >= 0) {
+            // git permits a newline in a path; the read model joins blocked paths on '\n', so one
+            // would split into two on the way back out and misreport what the gate refused.
             throw new UnsafeTreePathException(path);
         }
         for (String segment : path.split("/", -1)) {
@@ -367,7 +370,7 @@ public final class PublishRepo implements AutoCloseable {
         if (!Files.exists(root)) {
             return;
         }
-        try (var walk = Files.walk(root)) {
+        try (java.util.stream.Stream<Path> walk = Files.walk(root)) {
             Iterator<Path> deepestFirst = walk.sorted(Comparator.reverseOrder()).iterator();
             while (deepestFirst.hasNext()) {
                 Files.deleteIfExists(deepestFirst.next());

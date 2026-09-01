@@ -1,5 +1,6 @@
 package dev.codespire.runtime.docker;
 
+import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.exception.NotFoundException;
 import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Finalization;
@@ -194,6 +195,36 @@ class DockerRunRuntimeIT {
         // forever. The test asserted the comment rather than the behaviour.
         assertTrue(runtime.discoverOrphans().stream().anyMatch(h -> h.runId().equals("run_unit7")),
                 "the watchdog must be able to reach a unit whose init failed");
+    }
+
+    @Test
+    void thePublisherGetsItsDrainWindowNotASigtermTheInstantTheAgentExits() throws Exception {
+        // The agent exits at once; the publisher still has five seconds of work. salvage() used to
+        // issue `docker stop` with the drain window as its TIMEOUT — and stop sends SIGTERM first,
+        // waiting the timeout only before SIGKILL — so the publisher died at ~0s with exit 143 and
+        // printed nothing, and the run reported nothing pushed and nothing blocked. The reader runs
+        // beside salvage, as the launcher's does: attached in sequence before it, the publisher
+        // would finish on its own and the old code would pass. The trap matters just as much: a
+        // shell as PID 1 IGNORES SIGTERM, so a plain `sleep 5; echo drained` survived the old
+        // stop until its 30s SIGKILL and printed "drained" anyway — the mutation passed. The real
+        // publisher is a JVM, which dies on SIGTERM; the trap makes the fake die the same way.
+        RunHandle handle = start(unit("run_unit9", "exit 0",
+                "trap 'exit 143' TERM; sleep 5 & wait $!; echo drained; exit 0"));
+        List<String> publisher = new CopyOnWriteArrayList<>();
+        Thread reader = Thread.ofVirtual().start(
+                () -> runtime.attach(handle, LogChannel.PUBLISHER, publisher::add));
+
+        Finalization finalization = runtime.salvage(handle);
+        reader.join(Duration.ofSeconds(30).toMillis());
+
+        assertTrue(finalization.salvaged());
+        assertTrue(publisher.contains("drained"), "the publisher was stopped before it could finish: " + publisher);
+        Container publisherContainer = runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, "run_unit9",
+                        DockerRunRuntime.ROLE_LABEL, "publisher"))
+                .exec().getFirst();
+        assertEquals(0L, runtime.client().inspectContainerCmd(publisherContainer.getId())
+                .exec().getState().getExitCodeLong(), "143 is a SIGTERM the publisher never asked for");
     }
 
     @Test

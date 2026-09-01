@@ -187,6 +187,26 @@ class PushGateTest {
     }
 
     @Test
+    void aJenkinsfileBelowTheRootIsProtectedLikeACompositeAction() {
+        // A multibranch or folder job points at a "Script Path", and ci/Jenkinsfile is a common
+        // one. The root-only entries let it through while composite actions were covered at any
+        // depth — an oversight, not a decision: the executed file IS the configuration wherever it
+        // sits, which is the class the floor says it covers.
+        assertFalse(PushGate.decide(changed("ci/Jenkinsfile"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed("deploy/Jenkinsfile.release"), List.of()).allowed());
+    }
+
+    @Test
+    void bothYamlSpellingsAreProtectedWhereTheToolReadsBoth() {
+        // Woodpecker reads .woodpecker.yml AND .woodpecker.yaml at the root, and Cloud Build is used
+        // with both spellings; the floor listed one of each. action.yml/action.yaml already had the
+        // pattern ("Both spellings: GitHub accepts each") — it was not applied consistently.
+        assertFalse(PushGate.decide(changed(".woodpecker.yaml"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed("cloudbuild.yml"), List.of()).allowed());
+        assertFalse(PushGate.decide(changed(".drone.yaml"), List.of()).allowed());
+    }
+
+    @Test
     void theFloorAppliesWhateverTheProfileSays() {
         // The version this replaces passed List.of("**") as the "hostile" profile — but "**"
         // protects EVERYTHING, so it blocked Jenkinsfile through the profile whether or not the
@@ -218,10 +238,15 @@ class PushGateTest {
         covered.put("bitbucket-pipelines.yml", "bitbucket-pipelines.yml");
         covered.put("Jenkinsfile", "Jenkinsfile");
         covered.put("Jenkinsfile.*", "Jenkinsfile.release");
+        covered.put("**/Jenkinsfile", "ci/Jenkinsfile");
+        covered.put("**/Jenkinsfile.*", "deploy/Jenkinsfile.release");
         covered.put(".circleci/**", ".circleci/config.yml");
         covered.put("azure-pipelines.yml", "azure-pipelines.yml");
+        covered.put("azure-pipelines.yaml", "azure-pipelines.yaml");
         covered.put(".drone.yml", ".drone.yml");
+        covered.put(".drone.yaml", ".drone.yaml");
         covered.put(".woodpecker.yml", ".woodpecker.yml");
+        covered.put(".woodpecker.yaml", ".woodpecker.yaml");
         covered.put(".woodpecker/**", ".woodpecker/build.yml");
         covered.put(".travis.yml", ".travis.yml");
         covered.put("appveyor.yml", "appveyor.yml");
@@ -229,7 +254,9 @@ class PushGateTest {
         covered.put(".buildkite/**", ".buildkite/pipeline.yml");
         covered.put(".teamcity/**", ".teamcity/settings.kts");
         covered.put("cloudbuild.yaml", "cloudbuild.yaml");
+        covered.put("cloudbuild.yml", "cloudbuild.yml");
         covered.put("buildspec.yml", "buildspec.yml");
+        covered.put("buildspec.yaml", "buildspec.yaml");
         covered.put(".semaphore/**", ".semaphore/semaphore.yml");
         covered.put(".gitmodules", ".gitmodules");
 

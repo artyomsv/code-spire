@@ -61,15 +61,23 @@ public class FactoryRunProjection {
      * never acknowledged ({@link #DISPATCH_FAILED}) is re-armed to queued. Any other existing row
      * is left alone — a succeeded or refused run must not be reopened by a repeated request.
      */
-    public void queued(String runId, String harness, String model, String baseBranch, String baseCommit,
-                       String branch, String pushedAs) {
+    /**
+     * @return whether a row was written or re-armed. {@code false} means the run already exists in
+     *     a state this must not overwrite (queued, running, or finished either way) — the caller
+     *     must refuse rather than dispatch, because the claim store would then drop the command as
+     *     a redelivery and the operator would hold a 201 for a run that never runs.
+     */
+    public boolean queued(String runId, String harness, String model, String baseBranch, String baseCommit,
+                          String branch, String pushedAs) {
         RunIds.Parsed parsed = RunIds.parse(runId);
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
-                   SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL, ended_at = NULL
+                   SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL, ended_at = NULL,
+                       harness = EXCLUDED.harness, model = EXCLUDED.model, base_branch = EXCLUDED.base_branch,
+                       base_commit = EXCLUDED.base_commit, branch = EXCLUDED.branch, pushed_as = EXCLUDED.pushed_as
                  WHERE factory_run.status = ? AND factory_run.failure_cause = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -88,7 +96,9 @@ public class FactoryRunProjection {
             ps.setString(13, pushedAs);
             ps.setString(14, FAILED);
             ps.setString(15, DISPATCH_FAILED);
-            ps.executeUpdate();
+            // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
+            // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
+            return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record run " + runId, e);
         }
@@ -138,7 +148,16 @@ public class FactoryRunProjection {
      * lets the worker's claim drop the duplicate while its results project onto the re-armed row.
      */
     public void dispatchFailed(String runId, String detail) {
-        update(FAIL_SQL, runId, FAILED, DISPATCH_FAILED, detail, runId, QUEUED, RUNNING);
+        // Guarded on QUEUED alone, deliberately not FAIL_SQL's (queued, running) pair. The emitter's
+        // ack wait is 10s and the producer's own delivery timeout is 120s, so a slow broker can time
+        // the ack out AFTER the record landed and a worker already started the run: its RunStarted
+        // has moved the row to running. Marking that row failed would have its real result — which
+        // only projects onto a queued or running row — silently dropped, and the operator's retry
+        // would re-arm the row under a run that is still executing.
+        update("""
+                UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()
+                 WHERE run_id = ? AND status = ?
+                """, runId, FAILED, DISPATCH_FAILED, detail, runId, QUEUED);
     }
 
     /**

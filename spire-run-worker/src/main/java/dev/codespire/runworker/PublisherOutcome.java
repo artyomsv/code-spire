@@ -1,7 +1,9 @@
 package dev.codespire.runworker;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +24,8 @@ public final class PublisherOutcome {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    private static final Logger LOG = Logger.getLogger(PublisherOutcome.class);
+
     private final List<String> changedPaths = new ArrayList<>();
 
     private final List<String> blockedPaths = new ArrayList<>();
@@ -32,12 +36,20 @@ public final class PublisherOutcome {
 
     private String failureDetail;
 
-    /** Reads one line. An unparseable one is ignored — the publisher also logs plain text. */
+    /** A terminal publisher failure that arrived after a checkpoint had already pushed. */
+    private boolean failedAfterPush;
+
+    /**
+     * Reads one line. An unparseable one is skipped — the publisher also logs plain text on the
+     * same stream — but never silently: a report line that fails to parse is the one case where a
+     * push could have happened with nothing here to say so, and a debug line is the only trace.
+     */
     public void accept(String line) {
         JsonNode node;
         try {
             node = JSON.readTree(line);
-        } catch (Exception e) {
+        } catch (JsonProcessingException e) {
+            LOG.debugf("publisher wrote a non-JSON line, skipped: %s", e.getOriginalMessage());
             return;
         }
         if (node == null || !node.isObject()) {
@@ -47,6 +59,9 @@ public final class PublisherOutcome {
             case "pushed" -> {
                 pushedRef = node.path("ref").asText(null);
                 collect(node.path("changed"), changedPaths);
+                // A push after a failure means the failure was transient and cured; only a failure
+                // that is the LAST word withholds the ref.
+                failedAfterPush = false;
             }
             case "gate_refused" -> {
                 collect(node.path("blocked"), blockedPaths);
@@ -55,6 +70,10 @@ public final class PublisherOutcome {
             case "failed" -> {
                 failureCause = node.path("cause").asText("PUBLISHER_FAILED");
                 failureDetail = node.path("detail").asText("");
+                // A failure AFTER a checkpoint pushed means the run's final state did not reach the
+                // remote. Remembered so pushedRef() can withhold the stale ref, for the same reason
+                // a refusal outranks the pushes before it.
+                failedAfterPush = pushedRef != null;
             }
             default -> {
                 // A shape this worker does not model. Ignored rather than fatal: the publisher is
@@ -87,7 +106,9 @@ public final class PublisherOutcome {
     }
 
     public Optional<String> pushedRef() {
-        return refused() ? Optional.empty() : Optional.ofNullable(pushedRef);
+        // A refusal or a later failure both mean the final state is not on the remote; the ref of
+        // an earlier checkpoint would announce a delivery that did not happen.
+        return refused() || failedAfterPush ? Optional.empty() : Optional.ofNullable(pushedRef);
     }
 
     public List<String> changedPaths() {
