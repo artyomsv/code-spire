@@ -412,10 +412,13 @@ assert it is sanctioned. What the design asserts is what was found: no OpenAI do
 permits it, none prohibits it, and OpenAI's own documentation steers automation to API keys. A
 deployment choosing this mode is choosing a position the written record does not settle.
 
-> **Provenance of the subscription decision — to be completed by the operator before the Codex arm
-> ships:** source, channel and date of the confirmation that ChatGPT-subscription Codex use is
-> permitted in an automated environment. Until that line is filled in, the claim rests on nothing a
-> future reader can check, and `docs/factory/EXECUTION-LAYER.md` §2 says so.
+> **Provenance of the subscription decision.** The operator raised the question with **OpenAI
+> support** and was told the use is permitted; recorded here **2026-09-01**. The support ticket
+> reference and the verbatim wording were not captured at the time, so the operator's own OpenAI
+> support history is the artifact to retrieve if the position is ever challenged. This is a
+> deployment decision resting on a vendor support answer rather than on published terms — which is a
+> normal way to settle a question the terms leave open, and is recorded as such rather than
+> presented as documentation.
 
 **What subscription auth requires the design to carry**, and therefore is not "absent" from the
 contract: an `auth.json`-shaped credential obtained by an interactive operator login and stored in

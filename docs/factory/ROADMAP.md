@@ -277,7 +277,7 @@ decided; the sixth needs a fact only the operator holds.
 | 3 | The protected-path matcher and refusal surface | **Reuse `PathGlobs`** (promoted out of the orchestrator's memory package — one glob dialect per product). Match the changed-path set against base, **both sides of a rename**, **deletions included**; the CI floor matches **case-insensitively**. Refusal is `push_gate_refused`, naming every blocked path. | [AUTONOMY §5](./AUTONOMY.md) |
 | 4 | The run charge row's shape | `review_id` → **`subject_id` + `subject_kind`** (`REVIEW`\|`RUN`); `kind` CHECK extended with `SPEC`, `PLAN`, `BUILD`, `FIX`; `CallRefs` gains `run:{runId}:{attempt}:{seq}`. Ten existing reads updated in the same migration. A run id in a column named `review_id` was rejected outright. | [ARCHITECTURE §7](./ARCHITECTURE.md) |
 | 5 | The run worker's channel semantics | `cs.commands` stays the dispatch topic; the worker **writes `run_claim` then acks** (that order — the reverse loses the command on a crash); `cs.run-control` carries cancel and steer to a non-blocking listener; concurrency is a bounded executor, not consumer parallelism. | [ARCHITECTURE §5.1](./ARCHITECTURE.md) |
-| 6 | Subscription-decision provenance | **Still open — needs the operator.** ADR-030 carries a marked placeholder for source, channel and date. Blocks the Codex arm, nothing else. | [ADR-030](../DECISIONS.md) |
+| 6 | Subscription-decision provenance | **Closed.** The operator raised it with **OpenAI support** and was told the use is permitted; recorded 2026-09-01. The published terms leave it open, the vendor's support answer settles it for this deployment, and the ticket in the operator's support history is the artifact if it is challenged. | [ADR-030](../DECISIONS.md) |
 
 ## Design questions — closed 2026-09-01
 
@@ -323,7 +323,13 @@ features of our Services, including OpenAI Codex, may be subject to third party 
 
 ## Still open
 
-One item, and it needs a fact rather than a decision:
+**Nothing.** All eleven questions carried into this design are closed — five by decision, five by
+refusing the more elaborate option or choosing the smaller mechanism, and one (the Codex sandbox) by
+measurement. The last, the subscription provenance, was closed by the operator asking OpenAI support.
 
-- **The provenance of the Codex-subscription confirmation** — source, channel and date. ADR-030 has a
-  marked placeholder. It blocks the Codex arm shipping and nothing else.
+What remains before M0 is not a question but work: the M0 implementation plan itself.
+
+**The standing obligation is unchanged, and it is not a question.** Vendor terms for automated use
+changed twice during 2026, and one of this design's positions rests on a support answer rather than a
+published term. Every finding in [EXECUTION-LAYER §2](./EXECUTION-LAYER.md) carries its retrieval
+date, and each is re-read before the arm it governs ships.

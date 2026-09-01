@@ -120,9 +120,14 @@ theatre and the FSL text is the real enforcement. And `spec` and `plan` are sing
 harness invocations, because they edit no files and their context already arrives through
 `ContextProvider` — which also makes them metered on a deployment where `build` is not.
 
-**The last one cannot be closed here.** The provenance of the Codex-subscription confirmation —
-source, channel, date — is a fact only the operator holds. ADR-030 carries a marked placeholder, and
-it blocks the Codex arm shipping and nothing else.
+**The last one was closed by asking the vendor.** The operator raised the subscription question with
+**OpenAI support** and was told the use is permitted, recorded 2026-09-01 in ADR-030. The published
+terms leave it open; a vendor support answer settles it for this deployment. The ticket reference was
+not captured at the time, so the operator's support history is the artifact if it is ever challenged
+— and because a support answer can be superseded as easily as a term, every arm also works on an API
+key, so a reversal costs a credential change rather than a redesign.
+
+**All eleven are therefore closed.** What remains before M0 is work, not questions.
 
 ## 8. Standing obligation
 

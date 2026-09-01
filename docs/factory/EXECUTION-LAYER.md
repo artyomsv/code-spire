@@ -95,11 +95,15 @@ No OpenAI document was found that **affirmatively permits** using a ChatGPT subs
 unattended automation. It is not prohibited in writing, and OpenAI's own documentation steers to API
 keys.
 
-The deployment decision to use subscription auth for Codex is the operator's, taken on a confirmation
-obtained outside this research. **That confirmation is not yet recorded anywhere a future reader can
-check it.** ADR-030 carries a placeholder for its source, channel and date, to be completed before the
-Codex arm ships. Until then the position rests on nothing verifiable, and this paragraph is the honest
-statement of that — the design supports the mode; the design does not assert it is sanctioned.
+**The gap was closed by asking the vendor.** The operator raised the question with **OpenAI support**
+and was told the use is permitted (recorded 2026-09-01, ADR-030). So the position is: the published
+terms leave it open, and the vendor's own support answer settles it for this deployment.
+
+Two things follow, and both are ordinary rather than alarming. The confirmation is a **support
+answer, not a term** — the ticket in the operator's OpenAI support history is the artifact if it is
+ever questioned, and its reference was not captured at the time. And a support answer can be
+superseded the way a term can, which is why the harness stays a registry row (ADR-029) and every arm
+also works on an API key: if the position moves, an operator changes a credential, not a product.
 
 ## 3. Credentials
 
