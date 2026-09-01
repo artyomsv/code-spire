@@ -1180,7 +1180,19 @@ export async function fetchAnalyticsOverview(): Promise<AnalyticsLens> {
   return res.json();
 }
 
-export async function fetchAnalyticsRepos(): Promise<string[]> {
+/**
+ * A repository with findings, and the two counts that make the name read as a repository.
+ *
+ * A bare `owner/name` string was read as a pull-request title on a real deployment — there was
+ * nothing beside it to say otherwise.
+ */
+export interface AnalyticsRepository {
+  repo: string;
+  reviews: number;
+  findings: number;
+}
+
+export async function fetchAnalyticsRepos(): Promise<AnalyticsRepository[]> {
   const res = await apiFetch('/api/analytics/repos');
   if (!res.ok) throw new Error(`Analytics repositories failed: ${res.status}`);
   return res.json();

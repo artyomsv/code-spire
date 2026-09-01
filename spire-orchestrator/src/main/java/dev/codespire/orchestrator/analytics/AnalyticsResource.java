@@ -60,7 +60,7 @@ public class AnalyticsResource {
 
     @GET
     @Path("/repos")
-    public List<String> repositories() {
+    public List<AnalyticsQueries.RepositoryRow> repositories() {
         return queries.repositories();
     }
 

@@ -4,6 +4,7 @@ import { BarChart3, TriangleAlert, UserRound } from 'lucide-react';
 import {
   AnalyticsBreakdown,
   AnalyticsLens,
+  AnalyticsRepository,
   AnalyticsTotals,
   MyActivity,
   fetchAnalyticsOverview,
@@ -156,7 +157,7 @@ function Lens({ state }: { state: LoadState<AnalyticsLens> }) {
 
 export function AnalyticsOverview() {
   const overview = useLoaded<AnalyticsLens>(fetchAnalyticsOverview, []);
-  const repos = useLoaded<string[]>(fetchAnalyticsRepos, []);
+  const repos = useLoaded<AnalyticsRepository[]>(fetchAnalyticsRepos, []);
 
   return (
     <section className="content">
@@ -176,16 +177,28 @@ export function AnalyticsOverview() {
         {repos.kind === 'ready' && repos.value.length === 0 && (
           <p className="prov-note">No repository has recorded findings yet.</p>
         )}
+        {/* Counts beside each name, not names alone. A bare `owner/name` was read as a pull-request
+            title on a real deployment; a count of reviews next to it is what makes it read as the
+            repository those reviews belong to. */}
         {repos.kind === 'ready' && repos.value.length > 0 && (
           <table className="prov-table">
+            <thead>
+              <tr>
+                <th>Repository</th>
+                <th className="cell-r">Reviews</th>
+                <th className="cell-r">Findings</th>
+              </tr>
+            </thead>
             <tbody>
-              {repos.value.map((repo) => (
-                <tr key={repo}>
+              {repos.value.map((row) => (
+                <tr key={row.repo}>
                   <td>
-                    <Link className="an-repo" to={`/analytics/${repo}`}>
-                      {repo}
+                    <Link className="an-repo" to={`/analytics/${row.repo}`}>
+                      {row.repo}
                     </Link>
                   </td>
+                  <td className="cell-r">{row.reviews}</td>
+                  <td className="cell-r">{row.findings}</td>
                 </tr>
               ))}
             </tbody>

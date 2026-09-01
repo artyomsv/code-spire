@@ -181,19 +181,33 @@ public class AnalyticsQueries {
      * a repository registered but never reviewed has nothing to show, and one whose registration was
      * removed still has history worth reading.
      */
-    public List<String> repositories() {
-        List<String> repos = new ArrayList<>();
+    /**
+     * A repository that has recorded findings, with enough beside its name to read AS a repository.
+     *
+     * <p>The list used to be bare {@code workspace/slug} strings, and on a real deployment an
+     * operator read {@code artyomsv/pr-test} as a pull request title. Nothing on the card said
+     * otherwise: a slash-separated name with no figure next to it is ambiguous, and it only resolves
+     * in favour of "repository" once a count of reviews sits beside it.
+     */
+    public record RepositoryRow(String repo, long reviews, long findings) {
+    }
+
+    public List<RepositoryRow> repositories() {
+        List<RepositoryRow> repos = new ArrayList<>();
         String sql = """
-                SELECT DISTINCT s.workspace || '/' || s.slug AS repo
+                SELECT s.workspace || '/' || s.slug AS repo,
+                       count(DISTINCT s.review_id)  AS reviews,
+                       count(f.id)                  AS findings
                   FROM review_finding f JOIN review_status s ON s.review_id = f.review_id
                  WHERE s.archived_at IS NULL
-                 ORDER BY repo
+                 GROUP BY s.workspace, s.slug
+                 ORDER BY findings DESC, repo
                 """;
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                repos.add(rs.getString(1));
+                repos.add(new RepositoryRow(rs.getString("repo"), rs.getLong("reviews"), rs.getLong("findings")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("could not list analytics repositories", e);

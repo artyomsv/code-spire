@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { AnalyticsOverview, MyAnalytics } from './Analytics';
 import * as api from '../api';
@@ -142,6 +142,33 @@ describe('AnalyticsOverview', () => {
    * findings" and not "reviews this author opened". Labelled plain "Reviews" the number was right
    * and the label was a promise it never made, which reads as data loss rather than an empty corpus.
    */
+  /**
+   * A bare `owner/name` was read as a pull-request title on a real deployment, because nothing on
+   * the card said otherwise. The counts are what make it read as the repository the reviews belong
+   * to, so their presence — not just the name — is the assertion.
+   */
+  it('lists each repository with the reviews and findings that make it read as one', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
+      totals: EMPTY_TOTALS,
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-REPO', reviews: 5, findings: 12 },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    const row = (await screen.findByText('TEST-WS/TEST-REPO')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('5')).toBeTruthy();
+    expect(within(row).getByText('12')).toBeTruthy();
+    expect(screen.getByText('Repository')).toBeTruthy();
+    expect(screen.getByText('Reviews')).toBeTruthy();
+  });
+
   it('says the review count is of reviews that recorded findings', async () => {
     vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
       totals: EMPTY_TOTALS,
