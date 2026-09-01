@@ -3,8 +3,10 @@ package dev.codespire.workspace;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -22,6 +24,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * binary — {@link PublishRepo} is JGit.
  */
 class PublishRepoTest {
+
+    /**
+     * JGit keeps a pack open in a JVM-wide cache after the repository is closed, so @TempDir cannot
+     * delete the clone directory. There is no per-repository purge in its public API — see
+     * PublishRepo.releaseAllPackWindows.
+     */
+    @org.junit.jupiter.api.AfterEach
+    void releasePackHandles() {
+        PublishRepo.releaseAllPackWindows();
+    }
 
     private void git(Path cwd, String... argv) throws Exception {
         Process p = new ProcessBuilder(argv).directory(cwd.toFile()).inheritIO().start();
@@ -132,24 +144,6 @@ class PublishRepoTest {
     }
 
     @Test
-    void theSizeCapIsCheckedBeforeAnyObjectIsRead(@TempDir Path dir) throws Exception {
-        Path bare = origin(dir);
-        String base = rev(dir.resolve("seed"), "HEAD");
-        Path bundle = agentBundle(dir, bare, base);
-
-        Path publish = dir.resolve("publish");
-        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
-                publish, null)) {
-            assertThrows(BundleTooLargeException.class, () -> repo.fetchBundle(bundle, 16L));
-
-            // Refusing after the fetch would leave the agent's objects in the publisher's store,
-            // which is the thing the cap exists to prevent.
-            assertTrue(repo.changesSince(base, base).isEmpty(),
-                    "a refused bundle must leave nothing behind");
-        }
-    }
-
-    @Test
     void neverCreatesAWorkingTree(@TempDir Path dir) throws Exception {
         Path bare = origin(dir);
         String base = rev(dir.resolve("seed"), "HEAD");
@@ -203,18 +197,6 @@ class PublishRepoTest {
     }
 
     @Test
-    void refusesABundleCarryingNoBranchAtAll(@TempDir Path dir) throws Exception {
-        Path bare = origin(dir);
-        Path empty = dir.resolve("empty.bundle");
-        Files.writeString(empty, "# v2 git bundle\n");
-
-        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
-                dir.resolve("publish"), null)) {
-            assertThrows(Exception.class, () -> repo.fetchBundle(empty, 10_000_000L));
-        }
-    }
-
-    @Test
     void changesSinceReportsNothingWhenNothingChanged(@TempDir Path dir) throws Exception {
         Path bare = origin(dir);
         String base = rev(dir.resolve("seed"), "HEAD");
@@ -246,5 +228,164 @@ class PublishRepoTest {
 
         assertTrue(kinds.containsAll(Set.of(ChangeKind.ADDED, ChangeKind.MODIFIED, ChangeKind.DELETED,
                 ChangeKind.RENAMED_FROM, ChangeKind.RENAMED_TO)));
+    }
+    @Test
+    void aRefusedBundleWritesNoObjectIntoTheStore(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+        String agentSha = rev(dir.resolve("agent-ws"), "HEAD");
+
+        Path publish = dir.resolve("publish");
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                publish, null)) {
+            assertThrows(BundleTooLargeException.class, () -> repo.fetchBundle(bundle, 16L));
+
+            // Asserted against the OBJECT STORE, not through a diff. The version this replaces
+            // asked whether changesSince(base, base) was empty — a commit compared against itself,
+            // which is empty whatever the fetch did. Proven vacuous: moving the size check to AFTER
+            // a real fetch, so the objects were genuinely written, left the test passing 10/10.
+            assertFalse(repo.hasObject(agentSha),
+                    "a refused bundle must leave the agent's commit out of the publisher's store");
+        }
+    }
+
+    @Test
+    void aBundleSwappedAfterTheSizeCheckIsStillRefused(@TempDir Path dir) throws Exception {
+        // /handoff is read-write to the CONCURRENTLY RUNNING agent, and the handoff protocol
+        // replaces a bundle by renaming over its name, which swaps the inode. Checking the size and
+        // then re-opening the path is a time-of-check/time-of-use race: a small bundle passes, is
+        // replaced, and the fetch reads the replacement. The cap is now enforced during a copy the
+        // agent cannot reach, so the bytes counted are the bytes consumed.
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+
+        long realSize = Files.size(bundle);
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            // A cap that the file's stat would satisfy, but its contents do not.
+            assertThrows(BundleTooLargeException.class,
+                    () -> repo.fetchBundle(bundle, realSize - 1));
+        }
+    }
+
+    @Test
+    void aHandoffPathThatIsNotARegularFileIsRefused(@TempDir Path dir) throws Exception {
+        // The agent names this inode. JGit chooses its transport by inspecting the target, so a
+        // directory that happens to be a git repository selects the LOCAL transport — which reads
+        // agent-authored config and follows objects/info/alternates — instead of the bundle
+        // transport.
+        Path bare = origin(dir);
+        Path decoy = dir.resolve("decoy.bundle");
+        Files.createDirectories(decoy);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertThrows(IOException.class, () -> repo.fetchBundle(decoy, 10_000_000L));
+        }
+    }
+
+    @Test
+    void aRefusedPushIsReportedAsARefusal(@TempDir Path dir) throws Exception {
+        // JGit's push().call() does NOT throw on rejection — it answers per-ref statuses that the
+        // first version discarded, so a non-fast-forward, an auth failure and a pre-receive hook
+        // refusal all returned the ref name as though the push had happened. That defeats the
+        // forge-side ruleset RUN-TOPOLOGY §6.3 recommends as the second layer, and falsifies §5's
+        // "a crash loses minutes": a run whose every checkpoint reported success while the branch
+        // stood still loses all of it.
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+
+        // Someone else puts an unrelated commit on the target branch first.
+        Path seed = dir.resolve("seed");
+        git(seed, "git", "checkout", "-b", "spire/run_1");
+        Files.writeString(seed.resolve("OTHER.md"), "other\n");
+        git(seed, "git", "add", "-A");
+        git(seed, "git", "commit", "-m", "someone else");
+        git(seed, "git", "push", "origin", "spire/run_1");
+        String theirs = rev(seed, "HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+
+            PushRefusedException refused = assertThrows(PushRefusedException.class,
+                    () -> repo.pushRef(sha, "spire/run_1", null));
+
+            assertFalse(refused.refusals().isEmpty(), "a refusal must name what was refused");
+            assertEquals(theirs, rev(bare, "refs/heads/spire/run_1"),
+                    "and the remote must be exactly where it was");
+        }
+    }
+
+    @Test
+    void anEmptyBundleIsRefusedByTheGuardThatNamesIt(@TempDir Path dir) throws Exception {
+        // The version this replaces asserted only Exception.class, and its fixture never reached
+        // the guard at all — it died earlier in JGit's parser as "Short read of block". One extra
+        // newline makes the bundle parseable and genuinely refless, which is the condition the
+        // guard is about.
+        Path bare = origin(dir);
+        Path empty = dir.resolve("empty.bundle");
+        Files.writeString(empty, "# v2 git bundle\n\n");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            EmptyBundleException refused = assertThrows(EmptyBundleException.class,
+                    () -> repo.fetchBundle(empty, 10_000_000L));
+
+            assertTrue(refused.getMessage().contains("incoming.bundle"), refused.getMessage());
+        }
+    }
+
+    @Test
+    void aMalformedBundleIsRefusedToo(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        Path junk = dir.resolve("junk.bundle");
+        Files.writeString(junk, "# v2 git bundle\n");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertThrows(Exception.class, () -> repo.fetchBundle(junk, 10_000_000L));
+        }
+    }
+
+    @Test
+    void aModifiedFileIsReportedAsModified(@TempDir Path dir) throws Exception {
+        // MODIFIED was the one ChangeKind no fixture produced, so the arm mapping it was untested.
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+
+        Path ws = dir.resolve("agent-ws");
+        git(dir, "git", "clone", bare.toUri().toString(), ws.toString());
+        git(ws, "git", "config", "user.email", "bot@spire");
+        git(ws, "git", "config", "user.name", "spire-bot");
+        git(ws, "git", "checkout", "-b", "spire/run_1");
+        Files.writeString(ws.resolve("README.md"), "hello, edited\n");
+        git(ws, "git", "add", "-A");
+        git(ws, "git", "commit", "-m", "edit");
+        Path bundle = dir.resolve("m.bundle");
+        git(ws, "git", "bundle", "create", bundle.toString(), base + "..HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            ChangeSet changes = repo.changesSince(base, sha);
+
+            assertFalse(changes.isEmpty(), "a run that edited a file changed something");
+            assertEquals(List.of(new ChangedPath("README.md", ChangeKind.MODIFIED)), changes.paths());
+        }
+    }
+
+    @Test
+    void theCloneDirectoryIsReportedBack(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        Path publish = dir.resolve("publish");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                publish, null)) {
+            assertEquals(publish, repo.path());
+        }
     }
 }
