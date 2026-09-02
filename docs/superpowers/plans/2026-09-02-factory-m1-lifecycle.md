@@ -36,7 +36,7 @@ debt file is deleted in the same commit that closes it.
 | `spire-orchestrator/3-3-run-token-usage-is-dropped-and-a-run-writes-no-charge` | Task 4 |
 | `spire-orchestrator/3-3-a-run-defaults-to-the-reviewers-own-model-key` | Task 10 |
 | `spire-orchestrator/4-1-a-runs-failure-detail-is-readable-by-a-viewer` | Task 1 |
-| `global/3-3-run-event-accumulation-is-unbounded` | Task 2 |
+| `global/3-3-run-event-accumulation-is-unbounded` | **Nothing here — see the correction below** |
 
 Deliberately **not** closed here, with the reason: `spire-runtime-docker/4-3-…default-bridge…` and
 `spire-run-worker/4-2-the-m0-test-origin-runs-as-root…` are network-isolation items that belong with
@@ -167,8 +167,16 @@ the aggregate's durable log.
 - New: `spire-orchestrator/…/factory/RunEventProjection.java`, `RunEventSweep.java`
 - New: `V47__run_event.sql` — bounded, TTL'd, payload encrypted (ADR-011: a tool result may quote source)
 - New: `spire-orchestrator/…/factory/RunEventSocket.java` (`/api/ws/runs/{runId}`)
-- Modify: `RunLauncher` to publish, `application.yml` channels, `DlqTopics`
-- Delete: `techdebt/global/3-3-run-event-accumulation-is-unbounded.md`
+- Modify: `RunLauncher` to publish, `application.yml` channels
+
+**Two corrections, made after building it.** This task does NOT close
+`techdebt/global/3-3-run-event-accumulation-is-unbounded.md`: that entry's remaining content is
+about `RunEventSummary`'s list-shaped SPI and a `sawAnyOutput` flag with two meanings depending
+on which constructor built it, both in `spire-harness`, which this task never touches. Deleting it
+on this plan's authority would close a debt about one module on the strength of work done in two
+others. The flag ambiguity is a real defect and Task 1 made it worse by making causes durable, so it
+needs its own fix. And `DlqTopics` needs no entry: `cs.run-events` deliberately never
+dead-letters, so there is nothing to route back.
 
 **Test scenarios**
 
