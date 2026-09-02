@@ -251,7 +251,7 @@ public class RunResource {
     public List<RunEventRecord> transcript(@PathParam("runId") String runId,
                                            @QueryParam("limit") Integer limit) {
         projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
-        return transcripts.transcript(runId, boundedLimit(limit));
+        return transcripts.newestPage(runId, boundedLimit(limit));
     }
 
     /**

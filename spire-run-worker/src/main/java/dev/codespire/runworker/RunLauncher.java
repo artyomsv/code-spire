@@ -68,20 +68,6 @@ public class RunLauncher {
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
     }
 
-    /**
-     * For callers with no interest in the transcript; the stream is discarded.
-     *
-     * <p><b>A test double must override the two-argument form below, not this one.</b> Overriding
-     * this one compiles, does not intercept the dispatcher's call, and silently runs the real
-     * launcher — so every assertion about ordering and idempotency measures nothing. That is the
-     * same shape as the convenience constructors which let a new wire component be dropped at every
-     * rebuild site while still compiling, and it cost this module five green-looking tests when the
-     * overload was introduced.
-     */
-    public RunResult launch(RunCommand.ExecuteRun command) {
-        return launch(command, event -> { });
-    }
-
     public RunResult launch(RunCommand.ExecuteRun command, Consumer<RunEventRecord> stream) {
         HarnessAdapter adapter;
         RunUnitSpec unit;
@@ -121,7 +107,7 @@ public class RunLauncher {
         // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
         // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
         // the process.
-        RunEventStream transcript = new RunEventStream(command.runId(), stream);
+        RunEventStream transcript = new RunEventStream(command.runId(), failures.scrubFor(command), stream);
         Future<?> agentStream = streams.submit(() ->
                 runtime.attach(handle, LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
                     // One parse, two readers. The fold decides the run's outcome and stays bounded;

@@ -11,6 +11,7 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
+import org.eclipse.microprofile.reactive.messaging.OnOverflow;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.jboss.logging.Logger;
@@ -65,6 +66,7 @@ public class RunDispatcher {
      * run's result. The results channel above is the opposite and awaits its acks.
      */
     @Channel("run-events-out")
+    @OnOverflow(OnOverflow.Strategy.DROP)
     Emitter<Record<String, RunEventRecord>> events;
 
     @Incoming("run-commands-in")
@@ -108,7 +110,16 @@ public class RunDispatcher {
         emit(new RunResult.RunStarted(execute.runId(), execute.runId()));
         RunResult result;
         try {
-            result = launcher.launch(execute, event -> events.send(Record.of(event.runId(), event)));
+            result = launcher.launch(execute, event -> events.send(Record.of(event.runId(), event))
+                    .whenComplete((sent, refused) -> {
+                        if (refused != null) {
+                            // The channel does not wait for write completion, so a broker refusal
+                            // arrives here and nowhere else. Discarding this stage meant the
+                            // stream's own "gap" warning could not fire for the most likely loss.
+                            LOG.warnf("run %s: transcript event %d was refused by the broker (%s)",
+                                    event.runId(), event.sequence(), refused.getClass().getSimpleName());
+                        }
+                    }));
         } catch (RuntimeException e) {
             // Never let an unexpected failure leave a run with no terminal result: a run that
             // reports nothing is indistinguishable from one still working.

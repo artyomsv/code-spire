@@ -30,8 +30,11 @@ class RunEventStreamTest {
     /** Collects what would have gone to the topic, in the order it was offered. */
     private final List<RunEventRecord> published = new ArrayList<>();
 
+    /** A secret long enough to clear the scrub's floor, in the shape a real token has. */
+    private static final String MODEL_KEY = "TEST-model-key-9876543210";
+
     private RunEventStream stream() {
-        return new RunEventStream(RUN_ID, published::add);
+        return new RunEventStream(RUN_ID, SecretScrub.of("TEST-bot", MODEL_KEY), published::add);
     }
 
     @Test
@@ -47,6 +50,23 @@ class RunEventStreamTest {
         assertEquals(List.of("THINKING", "TOOL_USE", "TOOL_RESULT", "OUTPUT", "STATE_CHANGE"),
                 published.stream().map(RunEventRecord::kind).toList(),
                 "a kind the stream cannot name would reach an operator as an unlabelled row");
+    }
+
+    @Test
+    void aCredentialInToolOutputNeverLeavesTheWorker() {
+        // The agent runs at full access and the harness relays tool output verbatim, so a call as
+        // ordinary as printenv puts the model key in a tool result. The transcript is read by a
+        // viewer, unlike a failure detail, and EXECUTION-LAYER.md requires credentials redacted
+        // from every event and transcript before it leaves the worker.
+        RunEventStream stream = stream();
+
+        stream.accept(new RunEvent.ToolResult(Instant.EPOCH, "bash",
+                false, "OPENAI_API_KEY=" + MODEL_KEY));
+
+        assertFalse(published.getFirst().text().contains(MODEL_KEY),
+                "the model key reached the transcript: " + published.getFirst().text());
+        assertTrue(published.getFirst().text().contains("OPENAI_API_KEY"),
+                "the surrounding output must survive, or the line stops being diagnosable");
     }
 
     @Test
@@ -109,7 +129,7 @@ class RunEventStreamTest {
         // The transcript is a convenience; the run is the paid work. A broker that refuses an event
         // must not take down the run that produced it, and must not be retried into a stall either.
         List<RunEventRecord> after = new ArrayList<>();
-        RunEventStream stream = new RunEventStream(RUN_ID, event -> {
+        RunEventStream stream = new RunEventStream(RUN_ID, SecretScrub.none(), event -> {
             if (event.sequence() == 1) {
                 throw new IllegalStateException("broker refused");
             }

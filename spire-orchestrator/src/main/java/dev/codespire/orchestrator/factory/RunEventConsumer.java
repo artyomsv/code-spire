@@ -1,7 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunEventRecord;
-import dev.codespire.orchestrator.ws.RunTranscriptSocket;
 import io.quarkus.scheduler.Scheduled;
 import io.smallrye.common.annotation.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -9,6 +8,7 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import java.time.Duration;
 
@@ -30,7 +30,7 @@ public class RunEventConsumer {
     RunEventProjection transcript;
 
     @Inject
-    RunTranscriptSocket.Tail tail;
+    RunTranscriptBroadcaster tail;
 
     /**
      * How long a run's transcript is kept.
@@ -51,15 +51,24 @@ public class RunEventConsumer {
             LOG.debug("an unreadable run event was skipped");
             return;
         }
-        transcript.record(event);
-        // Recorded first, then pushed. A tail that received an event the transcript does not hold
-        // would show a line that vanishes on the next page load, which is worse than a tail that
-        // lags by one write.
-        tail.push(event);
+        // The runId on the MDC, as every other consumer in this service does: the observability
+        // rule asks for contextual data as a field rather than concatenated into a message.
+        MDC.put("runId", event.runId());
+        try {
+            if (transcript.record(event)) {
+                // Pushed only when the row was actually written. A tail that received an event the
+                // transcript does not hold would show a line that vanishes on the next page load.
+                tail.push(event);
+            }
+        } finally {
+            MDC.remove("runId");
+        }
     }
 
-    @Scheduled(every = "1h", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    @Scheduled(every = "${spire.run.transcript-sweep-interval:1h}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void trim() {
-        transcript.sweep(Duration.ofDays(retentionDays));
+        // Clamped: a zero or negative setting would delete every transcript on the next tick, and
+        // one typo should not be able to do that silently.
+        transcript.sweep(Duration.ofDays(Math.max(1, retentionDays)));
     }
 }

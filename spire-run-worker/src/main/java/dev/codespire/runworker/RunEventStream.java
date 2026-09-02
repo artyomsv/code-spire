@@ -44,19 +44,25 @@ final class RunEventStream implements Consumer<RunEvent> {
 
     private boolean announcedTruncation;
 
-    RunEventStream(String runId, Consumer<RunEventRecord> sink) {
+    private final SecretScrub scrub;
+
+    RunEventStream(String runId, SecretScrub scrub, Consumer<RunEventRecord> sink) {
         this.runId = runId;
+        this.scrub = scrub;
         this.sink = sink;
     }
 
     @Override
     public synchronized void accept(RunEvent event) {
-        RunEventRecord record = translate(event);
-        if (record == null) {
+        if (sequence >= MAX_EVENTS_PER_RUN) {
+            // Checked BEFORE translating. Past the cap the run keeps working and this must cost
+            // nothing per event; building and clipping a record only to discard it paid the whole
+            // price of a transcript that had already stopped.
+            announceTruncation();
             return;
         }
-        if (sequence >= MAX_EVENTS_PER_RUN) {
-            announceTruncation();
+        RunEventRecord record = translate(event);
+        if (record == null) {
             return;
         }
         publish(record);
@@ -91,6 +97,21 @@ final class RunEventStream implements Consumer<RunEvent> {
     }
 
     /**
+     * The run's own credentials removed before the event leaves the worker.
+     *
+     * <p>Applied here rather than at each translation site so no future kind can reach the sink
+     * unredacted. The agent runs at full access and the harness relays tool output verbatim, so a
+     * call as ordinary as {@code printenv} puts the model key in a tool result — and the transcript
+     * is viewer-readable, unlike a failure detail.
+     */
+    private RunEventRecord redacted(RunEventRecord record) {
+        String clean = scrub.clean(record.text());
+        return clean.equals(record.text()) ? record
+                : new RunEventRecord(record.runId(), record.sequence(), record.at(),
+                        record.kind(), clean, record.error());
+    }
+
+    /**
      * The sequence advances whether or not the sink accepted it, deliberately.
      *
      * <p>The transcript is a convenience and the run is the paid work, so a broker refusing an event
@@ -101,7 +122,7 @@ final class RunEventStream implements Consumer<RunEvent> {
     private void publish(RunEventRecord record) {
         sequence = record.sequence();
         try {
-            sink.accept(record);
+            sink.accept(redacted(record));
         } catch (RuntimeException refused) {
             LOG.warnf("run %s: event %d was not published (%s); the transcript will have a gap",
                     runId, record.sequence(), refused.getClass().getSimpleName());

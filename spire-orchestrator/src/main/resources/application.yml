@@ -154,11 +154,15 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
-      # The transcript (ADR-034). NO failure-strategy, and that absence is the decision rather than
-      # an omission: this tier is not replayable and nothing derives state from it, so routing it to
-      # a dead-letter queue -- which exists for work that must not be lost -- would fill that queue
-      # with lines nobody will ever replay. The deserializer answers null for an unreadable record
-      # and the consumer skips it, so a poison record cannot stall every other run's live tail.
+      # The transcript (ADR-034). Not dead-lettered, because this tier is not replayable and nothing
+      # derives state from it: a dead-letter queue exists for work that must not be lost, and filling
+      # it with lines nobody will ever replay would crowd out the things it is for.
+      #
+      # But "not dead-lettered" is NOT the same as "no failure-strategy". The default is `fail`, so
+      # leaving it out bought a stopped channel rather than a dropped line: one malformed record was
+      # never committed and came back on every restart, and since readiness covers the whole service
+      # that took the dashboard, the REST surface and the review pipeline down over one transcript
+      # event. `ignore` is what the comment above always meant, and dlq-in below already says it.
       run-events-in:
         connector: smallrye-kafka
         topic: cs.run-events
@@ -169,6 +173,7 @@ mp:
         auto:
           offset:
             reset: latest
+        failure-strategy: ignore
       events-in:
         connector: smallrye-kafka
         topic: cs.events

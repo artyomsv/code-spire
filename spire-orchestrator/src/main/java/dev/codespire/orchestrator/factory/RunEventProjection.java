@@ -41,6 +41,9 @@ public class RunEventProjection {
     @Inject
     EncryptionService encryption;
 
+    /** Runs already reported as unrecordable, so a permanent fault is logged once, not per event. */
+    private final java.util.Set<String> reported = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /**
      * Records one event, ignoring a redelivery of the same one.
      *
@@ -49,7 +52,7 @@ public class RunEventProjection {
      * delivery this side sees. The key is the run and its place in the stream, so a redelivery
      * conflicts rather than appending a second copy, and no reader has to de-duplicate.
      */
-    public void record(RunEventRecord event) {
+    public boolean record(RunEventRecord event) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
                      "INSERT INTO run_event (run_id, seq, at, kind, is_error, payload)"
@@ -60,38 +63,98 @@ public class RunEventProjection {
             ps.setString(4, event.kind());
             ps.setBoolean(5, event.error());
             ps.setString(6, encryption.encryptString(event.text(), aad(event.runId())));
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            // Never rethrown. A transcript line that cannot be stored is a gap in a convenience;
-            // failing here would dead-letter an event on a topic that is deliberately not
-            // replayable, and would put an unbounded TTL'd record into a queue meant for things
-            // that must not be lost.
-            LOG.warnf("run %s: event %d was not recorded (%s); the transcript will have a gap",
-                    event.runId(), event.sequence(), e.getClass().getSimpleName());
+            // Zero means the conflict clause absorbed a redelivery, which is success, not loss.
+            return ps.executeUpdate() > 0;
+        } catch (RuntimeException | SQLException e) {
+            // RuntimeException as well as SQLException: encryption throws one on a key fault, and
+            // before this it escaped here, escaped the consumer, and stopped the channel — taking
+            // the whole service out of rotation over one transcript line.
+            //
+            // Never rethrown. Failing would stop a channel that deliberately has no dead-letter
+            // route, so the record could never be redeemed. A transcript line is a convenience; a
+            // run result is not, and they do not share a failure policy.
+            reportOnce(event.runId(), e);
+            return false;
         }
     }
 
-    /** One run's events in stream order, at most {@code limit} of them. */
-    public List<RunEventRecord> transcript(String runId, int limit) {
+    /**
+     * One report per run, with the throwable.
+     *
+     * <p>Logging only the exception's class name made a permanent fault — a bad keyset, schema
+     * drift, an oversized payload — indistinguishable from a transient blip, and repeated it for
+     * every event of the run. The cause is what an operator needs, and they need it once.
+     */
+    private void reportOnce(String runId, Exception cause) {
+        if (reported.add(runId)) {
+            LOG.warnf(cause, "run %s: its transcript is not being recorded; the tail will have gaps", runId);
+        }
+    }
+
+    /**
+     * The run's NEWEST events, returned oldest-first so a reader can render them in order.
+     *
+     * <p>Newest rather than oldest, which the first version got backwards while three comments
+     * claimed otherwise. A run may produce ten thousand events; a page of the first two hundred
+     * shows the agent starting up, and the end — where a failure is — is unreachable.
+     */
+    public List<RunEventRecord> newestPage(String runId, int limit) {
+        return read(runId, "SELECT * FROM (SELECT seq, at, kind, is_error, payload FROM run_event"
+                + " WHERE run_id = ? ORDER BY seq DESC LIMIT ?) newest ORDER BY seq", runId, limit);
+    }
+
+    /** Everything after {@code afterSeq}, so a reader can page forward through a long run. */
+    public List<RunEventRecord> since(String runId, long afterSeq, int limit) {
+        return read(runId, "SELECT seq, at, kind, is_error, payload FROM run_event"
+                + " WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?", runId, afterSeq, limit);
+    }
+
+    /** How many events a run has recorded, or -1 when the run itself is unknown to the transcript. */
+    public long countFor(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM run_event WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not count the transcript of " + runId, e);
+        }
+    }
+
+    private List<RunEventRecord> read(String runId, String sql, Object... binds) {
         List<RunEventRecord> events = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT seq, at, kind, is_error, payload FROM run_event"
-                             + " WHERE run_id = ? ORDER BY seq LIMIT ?")) {
-            ps.setString(1, runId);
-            ps.setInt(2, limit);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            for (int i = 0; i < binds.length; i++) {
+                ps.setObject(i + 1, binds[i]);
+            }
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     events.add(new RunEventRecord(runId, rs.getLong("seq"),
                             rs.getTimestamp("at").toInstant(), rs.getString("kind"),
-                            encryption.decryptString(rs.getString("payload"), aad(runId)),
-                            rs.getBoolean("is_error")));
+                            textOf(rs.getString("payload"), runId), rs.getBoolean("is_error")));
                 }
             }
         } catch (SQLException e) {
             throw new IllegalStateException("could not read the transcript of " + runId, e);
         }
         return events;
+    }
+
+    /**
+     * One unreadable row costs that row, not the page.
+     *
+     * <p>A rotated key or a single corrupt payload used to take out the whole transcript and the
+     * socket's snapshot with it, because the only catch here was for SQL. Every other decrypt site
+     * in this service already guards the same way.
+     */
+    private String textOf(String stored, String runId) {
+        try {
+            return encryption.decryptString(stored, aad(runId));
+        } catch (RuntimeException unreadable) {
+            return "[this line could not be decrypted]";
+        }
     }
 
     /**

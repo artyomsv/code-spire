@@ -31,8 +31,9 @@ CREATE TABLE run_event (
     PRIMARY KEY (run_id, seq)
 );
 
--- The tail and the transcript page both read one run in order.
-CREATE INDEX run_event_by_run ON run_event (run_id, seq);
+-- No index on (run_id, seq): the PRIMARY KEY above already builds a unique btree on exactly those
+-- columns in that order, and it serves both reads. A second identical one would be pure write
+-- amplification on what this same file calls the largest table in the schema.
 
 -- The sweep deletes by age across every run, so it needs its own index: without it the retention
 -- job degrades into a full scan of the largest table in the schema, which is exactly when it is

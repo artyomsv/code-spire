@@ -54,7 +54,7 @@ class RunEventProjectionTest {
         projection.record(event(runId, 2, "TOOL_USE", "second"));
 
         assertEquals(List.of("first", "second", "third"),
-                projection.transcript(runId, 100).stream().map(RunEventRecord::text).toList());
+                projection.newestPage(runId, 100).stream().map(RunEventRecord::text).toList());
     }
 
     @Test
@@ -64,22 +64,51 @@ class RunEventProjectionTest {
         projection.record(event(mine, 1, "OUTPUT", "mine"));
         projection.record(event(theirs, 1, "OUTPUT", "theirs"));
 
-        assertEquals(List.of("mine"), projection.transcript(mine, 100).stream()
+        assertEquals(List.of("mine"), projection.newestPage(mine, 100).stream()
                 .map(RunEventRecord::text).toList());
     }
 
     @Test
-    void aRedeliveredEventDoesNotDuplicateATranscriptLine() {
-        // The producer does not await the broker, so at-least-once is the delivery this side sees.
-        // The key is the run and its place in the stream, so a redelivery conflicts rather than
-        // appending a second copy — and no reader has to de-duplicate.
+    void aRedeliveredEventIsAbsorbedRatherThanFailingTheInsert() {
+        // The first version of this test asserted only the row COUNT, which cannot fail: with a
+        // plain insert the second write violates the primary key, record()'s own catch eats it, and
+        // exactly one row still remains. Worse, it logged "the transcript will have a gap" on every
+        // redelivery — a false alarm the test could not see.
+        //
+        // What discriminates is whether the statement RAN. The conflict clause absorbs a redelivery
+        // and reports false; a primary-key violation reports false too, but only after failing, so
+        // the first write reporting true and the second false is the pair that pins the mechanism.
         String runId = runId();
         RunEventRecord once = event(runId, 1, "OUTPUT", "only once");
 
-        projection.record(once);
-        projection.record(once);
+        assertTrue(projection.record(once), "the first write must report that it stored the row");
+        assertFalse(projection.record(once), "a redelivery must be absorbed, not stored twice");
+        assertEquals(1, projection.newestPage(runId, 100).size());
+    }
 
-        assertEquals(1, projection.transcript(runId, 100).size());
+    @Test
+    void aRowCannotBeReadBackUnderAnotherRun() {
+        // The AAD binds ciphertext to its run. Without this the encryption test still passes with a
+        // constant AAD, so "cannot be replayed under another run" was asserted by nothing.
+        String mine = runId();
+        String theirs = runId();
+        projection.record(event(mine, 1, "OUTPUT", "TEST-only-for-my-run"));
+
+        moveRowTo(mine, theirs);
+
+        assertEquals("[this line could not be decrypted]", projection.newestPage(theirs, 100).getFirst().text(),
+                "a row moved to another run must not decrypt, and must not take the page down with it");
+    }
+
+    private void moveRowTo(String from, String to) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("UPDATE run_event SET run_id = ? WHERE run_id = ?")) {
+            ps.setString(1, to);
+            ps.setString(2, from);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not move the fixture", e);
+        }
     }
 
     @Test
@@ -94,7 +123,7 @@ class RunEventProjectionTest {
 
         assertFalse(rawPayload(runId).contains(secretish),
                 "the payload is readable as plaintext in the column");
-        assertEquals(secretish, projection.transcript(runId, 100).getFirst().text(),
+        assertEquals(secretish, projection.newestPage(runId, 100).getFirst().text(),
                 "and it must still decrypt back for the operator who is allowed to read it");
     }
 
@@ -111,8 +140,8 @@ class RunEventProjectionTest {
         int deleted = projection.sweep(Duration.ofDays(14));
 
         assertTrue(deleted >= 1, "the aged row was not swept");
-        assertEquals(List.of(), projection.transcript(old, 100));
-        assertEquals(1, projection.transcript(recent, 100).size(),
+        assertEquals(List.of(), projection.newestPage(old, 100));
+        assertEquals(1, projection.newestPage(recent, 100).size(),
                 "a row inside the window must survive the same sweep that deleted one outside it");
     }
 
@@ -125,7 +154,7 @@ class RunEventProjectionTest {
             projection.record(event(runId, seq, "OUTPUT", "line " + seq));
         }
 
-        assertEquals(5, projection.transcript(runId, 5).size());
+        assertEquals(5, projection.newestPage(runId, 5).size());
     }
 
     private String rawPayload(String runId) throws SQLException {

@@ -61,11 +61,17 @@ public class RunFailures {
      * failure disarmed the scrub for both, which is the opposite of what a defence in depth should
      * do when part of it breaks.
      *
+     * <p>Package-visible because the transcript needs the same scrub. The agent runs at full
+     * access and writes tool output the harness relays verbatim, so a call as ordinary as
+     * {@code printenv} puts the model key into a tool result — and the transcript is read by a
+     * viewer. EXECUTION-LAYER.md requires credentials to be redacted from every event, artefact and
+     * transcript before it leaves the worker; before this, only failure details were.
+     *
      * <p>Each catch is silent about what failed. Naming the credential that would not decrypt, or
      * logging the exception carrying it, is itself a way for one to reach a log line. The
      * degradation is reported once, below, without either.
      */
-    private SecretScrub scrubFor(RunCommand.ExecuteRun command) {
+    SecretScrub scrubFor(RunCommand.ExecuteRun command) {
         List<String> secrets = new ArrayList<>();
         String username = null;
         try {
