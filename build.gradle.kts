@@ -123,7 +123,8 @@ val devServicesReaper =
  *
  * A shared service rather than `org.gradle.parallel=false`, because only these tasks contend: the
  * other three service modules boot their own Dev Services containers and are free to run alongside
- * anything. `DockerTestsAreSerialisedTest` asserts both halves, and derives the list below from the
+ * anything. `DockerTestsAreSerialisedTest` asserts both halves -- including, against gradle.properties,
+ * that parallelism is on at all -- and derives the list below from the
  * test sources rather than trusting it — a module that starts driving the daemon and forgets to
  * declare itself fails the build instead of flaking months later.
  */
@@ -242,7 +243,7 @@ tasks.register("testFast") {
 
 tasks.register("testServices") {
     group = "verification"
-    description = "Runs the three deployables' tests (Quarkus Dev Services: Postgres + Kafka)."
+    description = "Runs the four deployables plus spire-runtime-docker (Dev Services: Postgres + Kafka)."
     dependsOn(serviceTestModules.map { ":$it:test" })
 }
 

@@ -119,18 +119,7 @@ class TestTierCoverageTest {
     }
 
     private static Set<String> tierList(String name) throws IOException {
-        String build = Files.readString(repoRoot().resolve("build.gradle.kts"));
-        Matcher declaration = Pattern
-                .compile("val\\s+" + name + "\\s*=\\s*listOf\\(([^)]*)\\)", Pattern.DOTALL)
-                .matcher(build);
-        assertTrue(declaration.find(),
-                "no `val " + name + " = listOf(...)` in the root build.gradle.kts");
-        Set<String> modules = new LinkedHashSet<>();
-        Matcher entry = QUOTED.matcher(declaration.group(1));
-        while (entry.find()) {
-            modules.add(entry.group(1));
-        }
-        return modules;
+        return RootBuild.declaredList(name);
     }
 
     private static Set<String> includedModules() throws IOException {

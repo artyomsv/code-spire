@@ -1538,3 +1538,14 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   rejected: they spread one registry across every `ObjectMapper` in three services, where a missed
   site is a runtime wire break rather than a compile error. Adding a second exception means
   amending that allowlist, on purpose.
+- **Test tasks that drive the real Docker daemon hold a lock, one at a time.** `spire-runtime-docker`,
+  `spire-run-worker` and `spire-e2e` create, inspect and destroy containers on the one daemon, and
+  `org.gradle.parallel=true` used to let two of them meet there — `DockerRunRuntimeIT` failed two
+  cases whose symptoms ("no such container", a destroy that removed nothing) impersonate the exact
+  defects the runtime exists to prevent, while passing 15/15 run alone. They now share a build service
+  with `maxParallelUsages = 1`; the other service modules stay parallel, which is why this is a
+  service and not `org.gradle.parallel=false`. `DockerTestsAreSerialisedTest` **derives** the module
+  list by scanning test sources rather than trusting the declaration, so a module that starts driving
+  the daemon and forgets to declare itself fails the build. Two bounds are deliberate: the lock covers
+  one Gradle invocation (a second `./gradlew` or a `quarkusDev` worker still contends), and it is held
+  for a whole `Test` task, since Gradle schedules tasks and not suites.

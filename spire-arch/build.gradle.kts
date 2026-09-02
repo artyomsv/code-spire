@@ -39,6 +39,12 @@ tasks.test {
     inputs.files(
         fileTree(rootProject.projectDir) {
             include("spire-*/src/main/java/**/*.java")
+            // DockerTestsAreSerialisedTest scans TEST sources, because a module starts driving the
+            // daemon by an edit to src/test. Undeclared, that edit changes no input of this task, so
+            // Gradle reports UP-TO-DATE or FROM-CACHE — a cached PASS from the very edit the check
+            // exists to catch. Measured, not assumed: with this line absent, adding a Docker-driving
+            // test to another module left `:spire-arch:test` UP-TO-DATE and the guard silent.
+            include("spire-*/src/test/java/**/*.java")
         }
     ).withPropertyName("scannedSources").withPathSensitivity(PathSensitivity.RELATIVE)
 
@@ -53,7 +59,10 @@ tasks.test {
         rootProject.file("settings.gradle.kts"),
         rootProject.file("build.gradle.kts"),
         rootProject.file("Dockerfile"),
-        rootProject.file("LICENSING.md")
+        rootProject.file("LICENSING.md"),
+        // DockerTestsAreSerialisedTest asserts org.gradle.parallel is still on: the Docker lock is
+        // only worth its cost while the build is parallel. Turning it off is a one-line edit here.
+        rootProject.file("gradle.properties")
     ).withPropertyName("buildDeclarations").withPathSensitivity(PathSensitivity.RELATIVE)
 
     // ModuleLicensingIsDeclaredTest reads every module LICENSE. Undeclared they are invisible to
