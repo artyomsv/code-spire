@@ -57,11 +57,14 @@ class FactoryRunProjectionTest {
         String harnessWord = queuedRun();
         projection.apply(new RunResult.RunFailed(harnessWord, "PUSH_GATE_REFUSED", "protected path", false));
 
+        // PUSH_FAILED is the publisher's OLD ambiguous word, and it aliases to the transport
+        // reading rather than to a refusal: told a network fault is the forge answering no, a blip
+        // is never retried. "remote hung up" is exactly that case.
         String publisherWord = queuedRun();
         projection.apply(new RunResult.RunFailed(publisherWord, "PUSH_FAILED", "remote hung up", true));
 
         assertEquals(List.of("GATE_REFUSED"), column(harnessWord, "failure_cause"));
-        assertEquals(List.of("PUSH_REJECTED"), column(publisherWord, "failure_cause"));
+        assertEquals(List.of("PUSH_TRANSPORT_FAILED"), column(publisherWord, "failure_cause"));
     }
 
     @Test

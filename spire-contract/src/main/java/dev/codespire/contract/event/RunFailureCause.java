@@ -75,7 +75,6 @@ public enum RunFailureCause {
     /** The agent outlived its wall clock and was stopped. */
     AGENT_TIMEOUT(false),
 
-
     /** The agent's egress was blocked, so it could not reach the model or a dependency. */
     BLOCKED_EGRESS(true),
 
@@ -92,8 +91,18 @@ public enum RunFailureCause {
     /** The push gate refused the change. It refuses the same tree the same way (ADR-037). */
     GATE_REFUSED(false),
 
-    /** The forge rejected the push for a reason that is not a stale parent. */
+    /** The forge rejected the push for a reason that is not a stale parent. It will reject it again. */
     PUSH_REJECTED(false),
+
+    /**
+     * The push never reached the forge — a network, DNS or TLS fault on the way out.
+     *
+     * <p>Distinct from {@link #PUSH_REJECTED} because the forge never answered, so the same push
+     * may well succeed. Collapsing the two answered "never retry" for a transient fault, which is
+     * the opposite of what {@link #CLONE_FAILED} already answers for the identical condition on the
+     * way in.
+     */
+    PUSH_TRANSPORT_FAILED(true),
 
     /** The branch moved under the run; a retry pushes the same stale parent again. */
     NON_FAST_FORWARD(false),
@@ -122,6 +131,15 @@ public enum RunFailureCause {
     WORKER_FAILED(true),
 
     /**
+     * The broker refused the run's result, in full and again compacted.
+     *
+     * <p>Not retryable, and not an alias of {@link #WORKER_FAILED}, which answers the opposite: a
+     * re-run produces a result refused again for the same reason. An operator raises the record
+     * limit; nobody re-runs anything. Different person, different action, so its own value.
+     */
+    RESULT_UNPUBLISHABLE(false),
+
+    /**
      * A wire value this version does not recognise.
      *
      * <p>Not choosable by a writer: it exists so an unknown string has somewhere to land instead of
@@ -148,10 +166,19 @@ public enum RunFailureCause {
             Map.entry("SANDBOX_UNREACHABLE", SANDBOX_LOST),
             Map.entry("PUSH_GATE_REFUSED", GATE_REFUSED),
             // spire-publisher outcome JSON.
-            Map.entry("PUSH_FAILED", PUSH_REJECTED),
-            Map.entry("PUBLISHER_FAILED", WORKER_FAILED),
-            // The worker's own older spellings.
-            Map.entry("RESULT_UNPUBLISHABLE", WORKER_FAILED));
+            Map.entry("PUSH_FAILED", PUSH_TRANSPORT_FAILED),
+            Map.entry("PUBLISHER_FAILED", WORKER_FAILED));
+
+    /**
+     * Canonical names and aliases in one lookup.
+     *
+     * <p>{@code toUnmodifiableMap} throws on a duplicate key, so an alias that shadows a canonical
+     * name fails at class initialisation rather than quietly winning at runtime.
+     */
+    private static final Map<String, RunFailureCause> BY_WIRE_VALUE = Stream.concat(
+                    Stream.of(values()).map(cause -> Map.entry(cause.name(), cause)),
+                    ALIASES.entrySet().stream())
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
     private final boolean retryable;
 
@@ -185,15 +212,7 @@ public enum RunFailureCause {
         if (wireValue == null || wireValue.isBlank()) {
             return UNCLASSIFIED;
         }
-        String normalized = wireValue.strip().toUpperCase(Locale.ROOT);
-        RunFailureCause alias = ALIASES.get(normalized);
-        if (alias != null) {
-            return alias;
-        }
-        return Stream.of(values())
-                .filter(candidate -> candidate.name().equals(normalized))
-                .findFirst()
-                .orElse(UNCLASSIFIED);
+        return BY_WIRE_VALUE.getOrDefault(wireValue.strip().toUpperCase(Locale.ROOT), UNCLASSIFIED);
     }
 
     /** The names a writer may legitimately produce, for a check that wants to enumerate them. */

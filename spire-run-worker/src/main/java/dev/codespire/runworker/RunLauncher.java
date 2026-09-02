@@ -60,7 +60,7 @@ public class RunLauncher {
     HarnessRegistry harnesses;
 
     @Inject
-    Credentials credentials;
+    RunFailures failures;
 
     /** Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit. */
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
@@ -82,7 +82,10 @@ public class RunLauncher {
         try {
             handle = runtime.create(unit);
         } catch (RuntimeException e) {
-            return failure(command, "SANDBOX_UNREACHABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
+            // RUNTIME_UNAVAILABLE, not SANDBOX_LOST: nothing has started yet, so nothing was lost.
+            // The daemon is down or refusing, which is a different person looking in a different
+            // place from an eviction mid-run — and that discrimination is the whole point of FR-F9.
+            return failure(command, "RUNTIME_UNAVAILABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         return observe(command, adapter, handle);
     }
@@ -143,38 +146,9 @@ public class RunLauncher {
         return result;
     }
 
-    /**
-     * A failure whose retryability comes from its cause, never from the call site.
-     *
-     * <p>Both of these paths used to pass a literal {@code true}. A push the forge rejected, a gate
-     * refusal and a timed-out agent all refuse identically next time, so the retry bought nothing
-     * and cost another full agent run — and by this point the model has already been paid for, which
-     * is the expensive half. The producer's own word for the cause is preserved on the wire; only
-     * the retry decision is taken from the closed set's answer for it.
-     */
+    /** Delegated so the dispatcher's failures get the same scrub and the same retry answer. */
     private RunResult.RunFailed failure(RunCommand.ExecuteRun command, String cause, String detail) {
-        return new RunResult.RunFailed(command.runId(), cause, scrubFor(command).clean(detail),
-                RunFailureCause.of(cause).isRetryable());
-    }
-
-    /**
-     * This run's credentials, decrypted only to redact them from a failure detail.
-     *
-     * <p>Decrypted on the failure path rather than held for the run's life: failures are rare, so
-     * the plaintext's lifetime stays as short as the string it is cleaning. A run whose credentials
-     * cannot be decrypted scrubs nothing, because there is nothing to match — which is honest, and
-     * is why the injected secrets are still kept out of exception messages at the source. This is
-     * the second line of defence, not the first.
-     */
-    private SecretScrub scrubFor(RunCommand.ExecuteRun command) {
-        try {
-            Credentials.Scm scm = credentials.scm(command.runId(), command.scmCredential());
-            return SecretScrub.of(scm.readUsername(), scm.readSecret(), scm.writeSecret());
-        } catch (RuntimeException undecryptable) {
-            // Deliberately silent: naming what failed to decrypt, or logging the exception, is
-            // itself a way for a credential to reach a log line.
-            return SecretScrub.none();
-        }
+        return failures.of(command, cause, detail);
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {

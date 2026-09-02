@@ -1436,6 +1436,32 @@ The design is fully specified in `docs/` — **treat those files as the source o
   review-worker 226/27, run-worker 80/12 incl. the M0 walking skeleton, runtime-docker 15/2);
   `spire-ui` untouched. The two images are not on GHCR and `spire-run-worker` is not in
   `deploy/` yet — packaging follows M1, and the runbook builds both locally.
+- **Software factory M1 in progress (2026-09-02, PR #96):** the lifecycle milestone — a run that
+  meets a hostile world behaves correctly. Plan with per-task test scenarios in
+  `docs/superpowers/plans/2026-09-02-factory-m1-lifecycle.md`. Delivered so far:
+  - **Docker-driving test tasks hold a lock, one at a time.** `spire-runtime-docker`,
+    `spire-run-worker` and `spire-e2e` all create and destroy containers on the one daemon, and
+    `org.gradle.parallel=true` let two of them meet there — `DockerRunRuntimeIT` failed two cases
+    whose symptoms ("no such container", a destroy that removed nothing) impersonate the exact
+    defects that runtime exists to prevent, while passing 15/15 alone. A shared build service with
+    `maxParallelUsages = 1` serialises them; the other service modules stay parallel, which is why
+    this is a service and not `org.gradle.parallel=false`. `DockerTestsAreSerialisedTest` **derives**
+    the module list by scanning test sources rather than trusting a declaration.
+  - **A failed run carries a cause from a closed set (FR-F9).** `RunFailureCause` is the wire
+    vocabulary and owns the aliases translating each producer's older words into it — three
+    vocabularies used to reach the wire agreeing only partly, one of them an arbitrary string from
+    the publisher's JSON, landing in an unconstrained `VARCHAR(32)`. Enforced twice: the application
+    normalises on the way in, `V46` refuses whatever escaped, and a test binds the enum to that
+    CHECK so the two cannot drift. Parsing is lenient though the set is closed — an unknown value
+    becomes `UNCLASSIFIED` rather than throwing, because a classification failure must never become
+    a second failure after the model is paid for.
+  - **Retryability is a property of the cause, not the call site.** Every publisher failure was
+    reported retryable, so a run refused for a reason that refuses it identically was retried at the
+    price of another agent run. `RunFailures` is the one collaborator the launcher and the dispatcher
+    both build failures through, which is also what makes the credential scrub unbypassable.
+  - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
+    than `succeeded` with no ref — the same call already made for `push_gate_refused`.
+  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V47.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -139,6 +140,79 @@ class RunFailureCauseTest {
                         + "another name. Unmapped: " + unmapped);
     }
 
+    /**
+     * The second half of the doubled enforcement, which was missing.
+     *
+     * <p>The application normalises on the way in and the database refuses whatever escaped — but
+     * only while both halves know the same values. Add a value to this enum without a migration and
+     * the first run that fails that way violates the CHECK inside a result handler, after the model
+     * has been paid for. That is the failure this class's own javadoc says cannot happen, and the
+     * design defended against an unknown PRODUCER string rather than against the enum drifting
+     * ahead of the schema.
+     *
+     * <p>{@code choosableNames()} was written for this check and had no caller until now.
+     */
+    @Test
+    void everyCauseTheEnumCanProduceIsAcceptedByTheColumn() throws IOException {
+        String check = latestClosedSetConstraint();
+
+        for (String name : RunFailureCause.choosableNames()) {
+            assertTrue(check.contains("'" + name + "'"),
+                    name + " is in the enum but not in the migration's CHECK. The first run that "
+                            + "fails this way violates the constraint inside a result handler, after "
+                            + "the model has been paid for — add a migration replacing the CHECK.");
+        }
+        assertTrue(check.contains("'" + RunFailureCause.UNCLASSIFIED.name() + "'"),
+                "the landing spot for an unrecognised value must itself be storable, or leniency "
+                        + "at the boundary just moves the throw to the database");
+
+        // The other direction. A literal in the CHECK the enum no longer knows is a value no writer
+        // can produce and every reader turns into UNCLASSIFIED.
+        Matcher literals = Pattern.compile("'([A-Z][A-Z0-9_]+)'").matcher(check);
+        while (literals.find()) {
+            String stored = literals.group(1);
+            // UNCLASSIFIED is exempt because it is the landing value itself: it is legitimately in
+            // the CHECK and legitimately maps to itself, so the test below would read it as the one
+            // thing it is looking for.
+            if (stored.equals(RunFailureCause.UNCLASSIFIED.name())) {
+                continue;
+            }
+            assertNotEquals(RunFailureCause.UNCLASSIFIED, RunFailureCause.of(stored),
+                    stored + " is in the migration's CHECK but is not a value the enum knows, so no "
+                            + "writer can produce it and every reader turns it into UNCLASSIFIED");
+        }
+    }
+
+    /** The CHECK from the newest migration that closes the cause set, whichever that is. */
+    private static String latestClosedSetConstraint() throws IOException {
+        Path migrations = repoRoot().resolve("spire-orchestrator/src/main/resources/db/migration");
+        try (Stream<Path> files = Files.list(migrations)) {
+            Path newest = files
+                    .filter(f -> f.getFileName().toString().endsWith(".sql"))
+                    .filter(RunFailureCauseTest::declaresTheClosedSet)
+                    .max(Comparator.comparingInt(RunFailureCauseTest::migrationVersion))
+                    .orElseThrow(() -> new AssertionError(
+                            "no migration constrains failure_cause, so nothing enforces the closed "
+                                    + "set at rest and this check is asserting against nothing"));
+            String sql = Files.readString(newest);
+            return sql.substring(sql.lastIndexOf("ADD CONSTRAINT"));
+        }
+    }
+
+    private static boolean declaresTheClosedSet(Path migration) {
+        try {
+            String sql = Files.readString(migration);
+            return sql.contains("ADD CONSTRAINT") && sql.contains("failure_cause IN (");
+        } catch (IOException unreadable) {
+            return false;
+        }
+    }
+
+    private static int migrationVersion(Path migration) {
+        Matcher version = Pattern.compile("^V(\\d+)__").matcher(migration.getFileName().toString());
+        return version.find() ? Integer.parseInt(version.group(1)) : -1;
+    }
+
     @Test
     void theScanSeesTheProducersItClaimsTo() throws IOException {
         // Guards the guard. The assertion above is satisfied by an empty scan, and the scan reads
@@ -148,7 +222,14 @@ class RunFailureCauseTest {
 
         assertTrue(emitted.contains("BAD_COMMAND"), "the launcher's own literals are not being seen");
         assertTrue(emitted.contains("PUSH_GATE_REFUSED"), "the harness enum is not being seen");
-        assertTrue(emitted.contains("BUNDLE_UNREADABLE"), "the publisher's literals are not being seen");
+        assertTrue(emitted.contains("EVICTED"),
+                "a single-word harness value is not being seen — the enum scan requires an underscore");
+        assertTrue(emitted.contains("PUBLISHER_MISCONFIGURED"),
+                "the publisher's literals are not being seen (BUNDLE_UNREADABLE is NOT a valid "
+                        + "sentinel here: it appears in the worker too, so it holds while the "
+                        + "publisher scan is entirely broken)");
+        assertTrue(emitted.contains("NON_FAST_FORWARD"),
+                "a cause assigned to a local rather than passed inline is not being seen");
         assertNotEquals(0, emitted.size());
     }
 
@@ -178,7 +259,8 @@ class RunFailureCauseTest {
         return causes;
     }
 
-    private static final Pattern ENUM_CONSTANT = Pattern.compile("\\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\\b");
+    private static final Pattern ENUM_CONSTANT =
+            Pattern.compile("\\b([A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+)*)\\b");
 
     /**
      * A literal in a CAUSE position, not merely a SCREAMING_CASE string.
@@ -189,17 +271,12 @@ class RunFailureCauseTest {
      * the publisher's {@code failed(...)}, and the default the worker reads when the publisher's
      * JSON carries none.
      */
-    private static final Pattern CAUSE_POSITION = Pattern.compile(
-            "RunFailed\\([^;]*?\"([A-Z][A-Z0-9_]+)\""
-                    // The launcher's own helper, which every failure path there now routes through.
-                    // Adding it was not optional: consolidating those paths onto one method made the
-                    // RunFailed shape above stop matching, and this scan went blind to a whole
-                    // producer while still passing. theScanSeesTheProducersItClaimsTo caught it.
-                    + "|\\bfailure\\([^;]*?\"([A-Z][A-Z0-9_]+)\""
-                    + "|\\bfailed\\(\\s*\"([A-Z][A-Z0-9_]+)\""
-                    + "|asText\\(\\s*\"([A-Z][A-Z0-9_]+)\""
-                    + "|NON_TERMINAL_CAUSES[^;]*?\"([A-Z][A-Z0-9_]+)\"",
+    private static final Pattern CAUSE_STATEMENT = Pattern.compile(
+            "(?:RunFailed\\(|\\bfail(?:ed|ure)\\(|\\bof\\(\\s*\\w+\\s*,|asText\\(|NON_TERMINAL_CAUSES"
+                    + "|\\bString\\s+cause\\s*=)[^;]*",
             Pattern.DOTALL);
+
+    private static final Pattern QUOTED_CAUSE = Pattern.compile("\"([A-Z][A-Z0-9_]{3,})\"");
 
     private static Set<String> screamingTokensIn(String body) {
         return tokens(ENUM_CONSTANT.matcher(body));
@@ -207,12 +284,11 @@ class RunFailureCauseTest {
 
     private static Set<String> causeLiteralsIn(String source) {
         Set<String> found = new TreeSet<>();
-        Matcher matcher = CAUSE_POSITION.matcher(source);
-        while (matcher.find()) {
-            for (int group = 1; group <= matcher.groupCount(); group++) {
-                if (matcher.group(group) != null) {
-                    found.add(matcher.group(group));
-                }
+        Matcher statement = CAUSE_STATEMENT.matcher(source);
+        while (statement.find()) {
+            Matcher literal = QUOTED_CAUSE.matcher(statement.group());
+            while (literal.find()) {
+                found.add(literal.group(1));
             }
         }
         return found;

@@ -23,7 +23,17 @@ public class PushRefusedException extends RuntimeException {
         this(refusals, false);
     }
 
-    public PushRefusedException(List<String> refusals, boolean nonFastForward) {
+    /** The forge refused for reasons of its own: a ruleset, a hook, or nothing attempted. */
+    public static PushRefusedException refused(List<String> refusals) {
+        return new PushRefusedException(refusals, false);
+    }
+
+    /** The remote's branch moved under this run, so the push is not a fast-forward. */
+    public static PushRefusedException branchMoved(List<String> refusals) {
+        return new PushRefusedException(refusals, true);
+    }
+
+    private PushRefusedException(List<String> refusals, boolean nonFastForward) {
         super("the forge refused the push: " + String.join("; ", refusals));
         this.refusals = List.copyOf(refusals);
         this.nonFastForward = nonFastForward;

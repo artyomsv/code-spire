@@ -152,6 +152,21 @@ class RunDispatcherTest {
         d.claims = claims;
         d.launcher = launcher;
         d.results = results;
+        // The real collaborator with a faked credential source, so the dispatcher's own failures
+        // get the same scrub and the same retry answer the launcher's do. Leaving it unwired is
+        // what the review found: this class built details the launcher's rules never touched.
+        d.failures = RunLauncherTest.failuresWith(new Credentials() {
+            @Override
+            public Scm scm(String runId, String packed) {
+                return new Scm(RunLauncherTest.SCM_USERNAME, RunLauncherTest.READ_SECRET,
+                        RunLauncherTest.SCM_USERNAME, RunLauncherTest.WRITE_SECRET);
+            }
+
+            @Override
+            public java.util.Map<String, String> harnessEnv(String runId, String packed) {
+                return java.util.Map.of("OPENAI_API_KEY", RunLauncherTest.MODEL_KEY);
+            }
+        });
         return d;
     }
 
@@ -182,14 +197,19 @@ class RunDispatcherTest {
     @Test
     void anUnexpectedLauncherFailureStillReportsATerminalResult() {
         // A run that reports nothing is indistinguishable from one still working.
-        launcher.failWith = new IllegalStateException("daemon vanished");
+        // The catch-all: the exception nobody has reviewed, by definition. Its message therefore
+        // gets the same scrub as every other failure detail, which it did not before.
+        launcher.failWith = new IllegalStateException(
+                "daemon vanished: env=[OPENAI_API_KEY=" + RunLauncherTest.MODEL_KEY + "]");
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         RunResult last = results.sent.getLast();
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, last);
         assertEquals("WORKER_FAILED", failed.cause());
-        assertTrue(failed.detail().contains("daemon vanished"));
-        assertTrue(failed.retryable());
+        assertTrue(failed.detail().contains("daemon vanished"), "the diagnosis must survive");
+        assertFalse(failed.detail().contains(RunLauncherTest.MODEL_KEY),
+                "a credential reached failure_detail through the dispatcher's catch-all");
+        assertTrue(failed.retryable(), "and the answer comes from the cause, not from this call site");
     }
 
     @Test

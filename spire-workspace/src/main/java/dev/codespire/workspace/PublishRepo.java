@@ -271,7 +271,7 @@ public final class PublishRepo implements AutoCloseable {
             throw new PushRefusedException(List.of("no ref update was attempted"));
         }
         if (!refused.isEmpty()) {
-            throw new PushRefusedException(refused, nonFastForward);
+            throw nonFastForward ? PushRefusedException.branchMoved(refused) : PushRefusedException.refused(refused);
         }
         return "refs/heads/" + branch;
     }

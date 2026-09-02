@@ -57,6 +57,9 @@ class RunLauncherTest {
 
     static final String WRITE_SECRET = "TEST-write-secret-abcdefgh";
 
+    /** The credential the deleted debt entry named as its risk, and the one the first scrub omitted. */
+    static final String MODEL_KEY = "TEST-model-key-9876543210";
+
     /** Exit 0 succeeds; anything else is a harness failure. Nothing parsed, usage unknown. */
     static final class FakeAdapter implements HarnessAdapter {
         @Override
@@ -181,6 +184,13 @@ class RunLauncherTest {
     private final FakeRuntime runtime = new FakeRuntime();
     private final RunLauncher launcher = launcher(runtime);
 
+    /** The real collaborator, with only its credential source faked. */
+    static RunFailures failuresWith(Credentials credentials) {
+        RunFailures failures = new RunFailures();
+        failures.credentials = credentials;
+        return failures;
+    }
+
     private static RunLauncher launcher(FakeRuntime runtime) {
         RunLauncher launcher = new RunLauncher();
         launcher.runtime = runtime;
@@ -190,12 +200,17 @@ class RunLauncherTest {
                 return new FakeAdapter();
             }
         };
-        launcher.credentials = new Credentials() {
+        launcher.failures = failuresWith(new Credentials() {
             @Override
             public Scm scm(String runId, String packed) {
                 return new Scm(SCM_USERNAME, READ_SECRET, SCM_USERNAME, WRITE_SECRET);
             }
-        };
+
+            @Override
+            public Map<String, String> harnessEnv(String runId, String packed) {
+                return Map.of("OPENAI_API_KEY", MODEL_KEY);
+            }
+        });
         launcher.builder = new RunUnitBuilder() {
             @Override
             public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
@@ -312,12 +327,16 @@ class RunLauncherTest {
         // request it made -- docker-java includes the create request, environment and all, in some
         // errors. The publisher has scrubbed its own failure lines since M0; the worker's did not.
         runtime.salvageFails = new IllegalStateException(
-                "create failed: env=[SPIRE_WRITE_TOKEN=" + WRITE_SECRET + ", X=1] read=" + READ_SECRET);
+                "create failed: env=[SPIRE_WRITE_TOKEN=" + WRITE_SECRET + ", OPENAI_API_KEY=" + MODEL_KEY
+                        + "] read=" + READ_SECRET);
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
 
         assertFalse(failed.detail().contains(WRITE_SECRET), "the write token reached failure_detail");
         assertFalse(failed.detail().contains(READ_SECRET), "the read token reached failure_detail");
+        assertFalse(failed.detail().contains(MODEL_KEY),
+                "the model key reached failure_detail — it rides the same container environment as "
+                        + "the machine account's token, and is the credential the debt entry named");
         assertTrue(failed.detail().contains("create failed"), "the diagnosis itself must survive");
     }
 
@@ -327,10 +346,19 @@ class RunLauncherTest {
         // the same way next time, so the retry bought nothing and cost another whole agent run --
         // the expensive half, since the model has already been paid for by the time we get here.
         runtime.publisherLines = List.of(
-                "{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"rejected\"}");
+                "{\"event\":\"failed\",\"cause\":\"PUSH_REJECTED\",\"detail\":\"blocked by policy\"}");
         RunResult.RunFailed rejected = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
         assertEquals(RunFailureCause.PUSH_REJECTED, RunFailureCause.of(rejected.cause()));
-        assertFalse(rejected.retryable(), "a rejected push is an answer, not weather");
+        assertFalse(rejected.retryable(), "the forge answered no, and will answer no again");
+
+        // ...and the forge never answering is the opposite call. The legacy PUSH_FAILED spelling
+        // aliases here rather than to a refusal, because a transport fault is the reading that costs
+        // money to get wrong: told it is a refusal, a network blip is never retried.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"connection reset\"}");
+        RunResult.RunFailed transport = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+        assertEquals(RunFailureCause.PUSH_TRANSPORT_FAILED, RunFailureCause.of(transport.cause()));
+        assertTrue(transport.retryable(), "the push never reached the forge, so it may yet succeed");
 
         // ...while a clone that could not reach the forge genuinely might succeed on a retry.
         runtime.publisherLines = List.of(
@@ -383,12 +411,16 @@ class RunLauncherTest {
     }
 
     @Test
-    void anUnreachableSandboxIsRetryable() {
+    void aRuntimeThatCannotPlaceTheUnitIsRetryable() {
         runtime.createFails = new IllegalStateException("no daemon");
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
-        assertEquals("SANDBOX_UNREACHABLE", failed.cause());
-        assertTrue(failed.retryable());
+
+        // RUNTIME_UNAVAILABLE rather than SANDBOX_LOST: create() failed, so nothing started and
+        // nothing was lost. An operator checking a daemon and an operator reading an eviction are
+        // two different people looking in two different places, which is what FR-F9 is for.
+        assertEquals("RUNTIME_UNAVAILABLE", failed.cause());
+        assertTrue(failed.retryable(), "a daemon comes back");
     }
 
     @Test

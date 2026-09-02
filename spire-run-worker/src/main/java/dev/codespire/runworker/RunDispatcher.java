@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.Record;
@@ -51,6 +52,9 @@ public class RunDispatcher {
     RunLauncher launcher;
 
     @Inject
+    RunFailures failures;
+
+    @Inject
     @Channel("run-results-out")
     Emitter<Record<String, RunResult>> results;
 
@@ -99,9 +103,11 @@ public class RunDispatcher {
         } catch (RuntimeException e) {
             // Never let an unexpected failure leave a run with no terminal result: a run that
             // reports nothing is indistinguishable from one still working.
-            LOG.error("run failed unexpectedly", e);
-            result = new RunResult.RunFailed(execute.runId(), "WORKER_FAILED",
-                    e.getClass().getSimpleName() + ": " + e.getMessage(), true);
+            // Logged without the exception: its message is the text RunFailures is about to scrub,
+            // and a stack trace beside a redacted detail defeats the redaction.
+            LOG.errorf("run %s failed unexpectedly (%s)", execute.runId(), e.getClass().getName());
+            result = failures.of(execute, "WORKER_FAILED",
+                    e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         emit(result);
         return DONE;
@@ -122,11 +128,15 @@ public class RunDispatcher {
             return;
         }
         if (result instanceof RunResult.RunFinished finished) {
+            // Its own cause rather than an alias of WORKER_FAILED, which answers "retryable". The
+            // broker refused this result twice, the second time compacted, so re-running the agent
+            // produces a result it refuses again for the same reason. An operator raises the record
+            // limit; nobody re-runs anything. Different person, different action, different value.
             RunResult compact = new RunResult.RunFailed(result.runId(), "RESULT_UNPUBLISHABLE",
                     "the broker refused the run's full result (" + finished.changedPaths().size()
                             + " changed paths, " + finished.blockedPaths().size() + " blocked); the branch"
                             + (finished.pushedRef() == null ? " was not pushed" : " is at " + finished.pushedRef()),
-                    false);
+                    RunFailureCause.RESULT_UNPUBLISHABLE.isRetryable());
             if (publish(compact)) {
                 return;
             }

@@ -145,30 +145,19 @@ class PublishRepoTest {
     }
 
     @Test
-    void aTransportRefusalIsNotReportedAsAMovedBranch(@TempDir Path dir) throws Exception {
-        // The other half of the same property. Without this, isNonFastForward() could return true
-        // unconditionally and the test above would still pass, which is the whole failure it exists
-        // to prevent -- every push failure told apart as the one thing that is never retried.
-        Path bare = origin(dir);
-        String base = rev(dir.resolve("seed"), "HEAD");
-        Path bundle = agentBundle(dir, bare, base);
-
-        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
-                dir.resolve("publish"), null)) {
-            String sha = repo.fetchBundle(bundle, 10_000_000L);
-            // main is checked out in the seed clone, but the bare origin refuses a non-fast-forward
-            // to a branch that has diverged -- here the refusal is instead the protected default
-            // ref rule, reached by pushing a commit whose parent the branch does not contain.
-            git(dir.resolve("seed"), "git", "checkout", "-b", "diverged");
-            Files.writeString(dir.resolve("seed").resolve("other.txt"), "diverge\n");
-            git(dir.resolve("seed"), "git", "add", ".");
-            git(dir.resolve("seed"), "git", "-c", "user.email=s@test", "-c", "user.name=S",
-                    "commit", "-m", "diverge");
-            git(dir.resolve("seed"), "git", "push", "origin", "diverged");
-
-            // A fresh branch name always fast-forwards, so this push succeeds and nothing is refused.
-            assertEquals("refs/heads/spire/fresh", repo.pushRef(sha, "spire/fresh", null));
-        }
+    void aRefusalThatIsNotADivergenceAnswersFalse() {
+        // The other half of a one-sided property. The first version of this test asserted nothing
+        // about it: it pushed to a fresh branch that SUCCEEDED, so no refusal was ever constructed
+        // and isNonFastForward() was never called. Hardcoding the flag to true passed it, which is
+        // the exact failure it was written to prevent.
+        //
+        // Driven by construction rather than through a real refusal, deliberately. A forge ruleset
+        // refusal needs a server-side hook, and JGit's local transport implements receive-pack
+        // in-process without running one — a pre-receive hook in the bare origin is simply never
+        // invoked, so that test passed by pushing successfully and proved nothing a second time.
+        // Both shapes the production code constructs for a non-divergence must answer false.
+        assertFalse(new PushRefusedException(List.of("no ref update was attempted")).isNonFastForward());
+        assertFalse(new PushRefusedException(List.of("origin: REJECTED_OTHER_REASON")).isNonFastForward());
     }
 
     @Test

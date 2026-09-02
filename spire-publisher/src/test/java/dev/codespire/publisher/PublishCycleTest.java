@@ -98,6 +98,35 @@ class PublishCycleTest {
     }
 
     @Test
+    void aBranchThatMovedIsReportedAsItsOwnCauseNotAsAGenericPushFailure(@TempDir Path dir) throws Exception {
+        // The publisher's half of the mapping had no test at all: the whole push-refusal catch was
+        // unreached by this class, so both the new NON_FAST_FORWARD branch and the pre-existing one
+        // were unexercised. The workspace half is tested against a real origin; this is what turns
+        // that flag into the word an operator actually reads.
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base, "echo new > NEW.md");
+
+        // Someone else moves the branch this run is about to push to.
+        Path other = dir.resolve("other");
+        git(dir, "git", "clone", bare.toUri().toString(), other.toString());
+        git(other, "git", "checkout", "-b", "spire/run_1");
+        Files.writeString(other.resolve("moved.txt"), "a commit this run has never seen\n");
+        git(other, "git", "add", ".");
+        git(other, "git", "-c", "user.email=other@test", "-c", "user.name=Other", "commit", "-m", "move it");
+        git(other, "git", "push", "origin", "spire/run_1");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertFalse(cycle(repo, base).handle(bundle), "a refused push ends the run");
+        }
+
+        assertTrue(written().contains("\"cause\":\"NON_FAST_FORWARD\""), written());
+        assertFalse(written().contains("\"event\":\"pushed\""),
+                "a refusal must never also report a push");
+    }
+
+    @Test
     void pushesAnOrdinaryChangeAndSaysWhatItPushed(@TempDir Path dir) throws Exception {
         Path bare = origin(dir);
         String base = rev(dir.resolve("seed"), "HEAD");
