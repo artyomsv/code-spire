@@ -27,6 +27,29 @@ class FactoryRunProjectionTest {
     FactoryRunProjection projection;
 
     @Test
+    void aRunThatDeliveredNothingIsNotRecordedAsSucceeded() {
+        // The agent exited cleanly and committed nothing. A legitimate outcome, and the walking
+        // skeleton produces it for a script that commits nothing — but recorded as 'succeeded' it
+        // was indistinguishable in the list from a run whose branch is on the remote, and any
+        // "runs succeeded" number counted both.
+        //
+        // This also proves V47 actually replaced the status CHECK. That constraint was unnamed in
+        // V43, so the migration drops it by the name Postgres gives it; if that guess were wrong the
+        // old constraint would survive and this insert would be refused.
+        String delivered = queuedRun();
+        projection.apply(new RunResult.RunFinished(delivered, "refs/heads/spire/x", List.of(), List.of(), null));
+
+        String empty = queuedRun();
+        projection.apply(new RunResult.RunFinished(empty, null, List.of(), List.of(), null));
+
+        assertEquals(FactoryRunProjection.SUCCEEDED, projection.find(delivered).orElseThrow().status());
+        assertEquals(FactoryRunProjection.DELIVERED_NOTHING, projection.find(empty).orElseThrow().status());
+        assertNull(projection.find(empty).orElseThrow().pushedRef());
+        // Not a failure: nothing to send an operator hunting for.
+        assertNull(projection.find(empty).orElseThrow().failureCause());
+    }
+
+    @Test
     void aProducersOwnVocabularyIsStoredAsTheClosedSetsValue() {
         // The harness says PUSH_GATE_REFUSED and the publisher says PUSH_FAILED; V46 constrains the
         // column to the wire set. Translating on the way in is what lets both keep their own words

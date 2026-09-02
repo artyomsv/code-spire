@@ -75,8 +75,6 @@ public enum RunFailureCause {
     /** The agent outlived its wall clock and was stopped. */
     AGENT_TIMEOUT(false),
 
-    /** The agent finished cleanly and produced no bundle. A run that delivered nothing. */
-    NOTHING_PRODUCED(false),
 
     /** The agent's egress was blocked, so it could not reach the model or a dependency. */
     BLOCKED_EGRESS(true),

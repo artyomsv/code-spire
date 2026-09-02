@@ -39,6 +39,16 @@ public class FactoryRunProjection {
 
     static final String PUSH_GATE_REFUSED = "push_gate_refused";
 
+    /**
+     * Finished, and there was nothing to deliver: the agent exited cleanly and committed nothing.
+     *
+     * <p>A status rather than a failure, for the reason {@link #PUSH_GATE_REFUSED} is one. The run
+     * did what it was asked; calling it failed sends an operator hunting for a bug that does not
+     * exist. It used to be written as {@link #SUCCEEDED}, indistinguishable in the list from a run
+     * whose branch is on the remote.
+     */
+    static final String DELIVERED_NOTHING = "delivered_nothing";
+
     /** The one failure cause a retried {@link #queued} re-arms — see {@link #dispatchFailed}. */
     static final String DISPATCH_FAILED = "DISPATCH_FAILED";
 
@@ -152,9 +162,10 @@ public class FactoryRunProjection {
                     finished.runId(), PUSH_GATE_REFUSED, String.join("\n", finished.blockedPaths()), finished.runId());
             return;
         }
+        String status = finished.pushedRef() == null ? DELIVERED_NOTHING : SUCCEEDED;
         update("UPDATE factory_run SET status = ?, pushed_ref = ?, failure_cause = NULL, failure_detail = NULL,"
                         + " ended_at = now() WHERE run_id = ? AND " + LIVE,
-                finished.runId(), SUCCEEDED, finished.pushedRef(), finished.runId());
+                finished.runId(), status, finished.pushedRef(), finished.runId());
     }
 
     /**

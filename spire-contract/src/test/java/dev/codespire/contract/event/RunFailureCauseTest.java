@@ -78,9 +78,6 @@ class RunFailureCauseTest {
                 "the branch moved under the run; a retry pushes the same stale parent again");
         assertFalse(RunFailureCause.CREDENTIAL_REJECTED.isRetryable(),
                 "a rejected credential is an answer, not a blip — retrying spends a request to be told again");
-        assertFalse(RunFailureCause.NOTHING_PRODUCED.isRetryable(),
-                "the agent ran and produced nothing; the same prompt will produce nothing again");
-
         assertTrue(RunFailureCause.IMAGE_UNAVAILABLE.isRetryable(), "a registry blip is transient");
         assertTrue(RunFailureCause.SANDBOX_LOST.isRetryable(), "an evicted sandbox can be replaced");
         assertTrue(RunFailureCause.RUNTIME_UNAVAILABLE.isRetryable(), "a daemon comes back");
