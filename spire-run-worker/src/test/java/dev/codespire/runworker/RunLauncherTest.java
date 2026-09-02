@@ -793,4 +793,69 @@ class RunLauncherTest {
         assertFalse(observer.released);
         assertEquals(1, observer.announced.size(), "it did exist, and the caller needs to know which");
     }
+
+    @Test
+    void aGateRefusalStopsTheAgentRatherThanLettingItSpend() {
+        // RUN-TOPOLOGY says a refusal mid-run terminates the run. What terminated was the
+        // PUBLISHER: it stopped reading bundles and exited, and nothing reached the remote. The
+        // agent knew none of that and kept working until it finished or its wall clock expired,
+        // buying model calls for work that can never be published -- so the whole cost of the
+        // refusal fell on the operator rather than on the run.
+        //
+        // Stopped from the publisher's reader, the moment the refusal is read, rather than at
+        // salvage -- by which time the money is already spent.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}],"
+                        + "\"changed\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertTrue(finished.refused(), "the refusal is still the run's outcome");
+        assertEquals(1, runtime.cancelled.size(),
+                "and the agent is stopped, so it cannot go on spending on work that cannot be published");
+    }
+
+    @Test
+    void aRunThatWasNotRefusedIsNeverStopped() {
+        // The other half. Without it the stop could be unconditional and every test above would
+        // still pass, because none of them asserts that a healthy run runs to completion untouched.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        launcher.launch(COMMAND, RunObserver.IGNORING);
+
+        assertTrue(runtime.cancelled.isEmpty());
+    }
+
+    @Test
+    void theAgentIsStoppedOnceHoweverManyLinesFollowTheRefusal() {
+        // The publisher keeps emitting after it refuses, and the reader is called per line. A stop
+        // per line would be harmless on a healthy daemon and a burst of container kills on a slow
+        // one, at the exact moment the run is already going wrong.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\"ci.yml\",\"kind\":\"MODIFIED\"}],\"changed\":[]}",
+                "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\"ci.yml\",\"kind\":\"MODIFIED\"}],\"changed\":[]}",
+                "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\"ci.yml\",\"kind\":\"MODIFIED\"}],\"changed\":[]}");
+
+        launcher.launch(COMMAND, RunObserver.IGNORING);
+
+        assertEquals(1, runtime.cancelled.size());
+    }
+
+    @Test
+    void aRuntimeThatCannotStopTheAgentStillReportsTheRefusal() {
+        // This runs on the publisher's reader thread, so throwing would end that stream and lose
+        // the blocked paths the refusal is about to be reported with -- trading the operator's
+        // explanation for a failed attempt at saving them money.
+        runtime.cancelFails = new IllegalStateException("the daemon refused");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\"ci.yml\",\"kind\":\"MODIFIED\"}],\"changed\":[]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertTrue(finished.refused());
+        assertEquals(List.of("ci.yml"), finished.blockedPaths());
+    }
 }

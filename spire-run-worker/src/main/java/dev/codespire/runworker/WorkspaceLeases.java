@@ -157,7 +157,7 @@ public class WorkspaceLeases {
      * orphan is to destroy it — so the failure mode of a heartbeat that is too slow is killing real
      * work, which is why this is the cheap operation and the sweep is frequent.
      */
-    @Scheduled(every = "${spire.run.lease-heartbeat:30s}",
+    @Scheduled(every = "${spire.run.lease-heartbeat}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void heartbeat() {
         update("""
@@ -234,6 +234,35 @@ public class WorkspaceLeases {
         } catch (SQLException e) {
             LOG.errorf(e, "the stale-lease scan failed; nothing is being reclaimed this tick");
             return List.of();
+        }
+    }
+
+    /**
+     * The instant before which a heartbeat counts as stale, read from the DATABASE.
+     *
+     * <p>{@code heartbeat_at} is written with the database's {@code now()}, so a caller comparing
+     * it to its own {@code Instant.now()} makes reclamation depend on a container's clock agreeing
+     * with a database host's — and the failure is silent in the destroying direction, because a
+     * worker running ahead reads every live lease as abandoned. This is the same clock on both
+     * sides, which is the invariant this class states and had not applied to its readers.
+     *
+     * <p>Empty on a read fault. The caller must reclaim nothing rather than guess a horizon.
+     */
+    public Optional<Instant> staleBefore(Duration staleAfter) {
+        if (staleAfter.isNegative() || staleAfter.isZero()) {
+            throw new IllegalArgumentException("a staleness window must be positive; " + staleAfter
+                    + " would put the horizon at or after now and condemn every lease");
+        }
+        String sql = "SELECT now() - make_interval(secs => ?) AS horizon";
+        try (Connection c = dataSource.getConnection(); PreparedStatement statement = c.prepareStatement(sql)) {
+            statement.setQueryTimeout(STATEMENT_TIMEOUT_SECONDS);
+            statement.setDouble(1, staleAfter.toMillis() / 1000.0);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getTimestamp("horizon").toInstant()) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            LOG.errorf(e, "the staleness horizon could not be read from the database");
+            return Optional.empty();
         }
     }
 

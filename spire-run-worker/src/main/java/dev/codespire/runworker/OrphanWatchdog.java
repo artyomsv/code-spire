@@ -12,11 +12,12 @@ import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 /**
  * Reclaims a sandbox nobody owns, and only one nobody owns.
@@ -26,33 +27,53 @@ import java.util.function.Consumer;
  * INPUT; the lease is the predicate — which is why the SPI method that produces it is named
  * {@link RunRuntime#discoverUnits()} rather than for a judgement a runtime has no way to make.
  *
- * <p>A unit is an orphan when its lease is <b>absent</b> (the control plane lost it entirely — a
- * replica evicted between claim and lease, or a lease released while the unit survived), when its
- * lease is <b>preserved</b> (the run is over and the sandbox was deliberately kept, so there is
- * nothing left to wait for), or when its heartbeat is <b>older than the staleness window</b>.
+ * <p>A unit is an orphan when its lease is <b>absent</b> (the control plane lost it entirely), when
+ * its lease is <b>preserved</b> (the run is over and the sandbox was deliberately kept, so there is
+ * nothing left to wait for), or when its heartbeat is <b>older than the staleness window</b>. A run
+ * this process is executing is never an orphan whatever the lease says — that fact is local and
+ * exact, where the heartbeat is best-effort and a database outage ages it while the run works
+ * perfectly well.
  *
- * <p>Reaping salvages before it destroys, and a failed salvage keeps the unit — the watchdog must not
- * become the delete path that rule forbids, and it is the caller most likely to be looking at
- * something nobody will ever look at again.
+ * <p>Reaping salvages before it destroys, and <b>a salvage that did not observe the agent keeps the
+ * unit</b> — the watchdog must not become the delete path that rule forbids, and it is the caller
+ * most likely to be looking at something nobody will ever look at again. The decision is made on the
+ * salvage's own VALUE, not on whether it threw: the shipped runtime reports a fault as data far more
+ * often than it raises one, so branching on the exception left the rule inoperative in production.
  *
  * <p>Every decision fails in the direction that destroys nothing. A lease that cannot be read skips
- * its unit rather than reading the silence as "unowned"; one bad unit does not abandon the tick.
+ * its unit rather than reading the silence as "unowned"; one bad unit does not abandon the tick; a
+ * teardown that failed keeps its lease, so the next sweep tries again.
  */
 @ApplicationScoped
 public class OrphanWatchdog {
 
     private static final Logger LOG = Logger.getLogger(OrphanWatchdog.class);
 
+    private static final String RUN_ID_MDC = "runId";
+
     /**
      * The slot the terminal report is claimed under.
      *
      * <p>Distinct from the execute slot on purpose: the run may have been claimed and executed
-     * normally, and this is a second, later fact about the same run. A constant rather than anything
-     * per-sweep, because it must make the report once EVER — a unit preserved after a failed salvage
-     * is rediscovered on every tick, and without the claim it would emit the same terminal failure
-     * forever.
+     * normally, and this is a second, later fact about the same run.
+     *
+     * <p><b>The claim bounds the REPORT, never the attempt.</b> Around the whole reap it was being
+     * asked to carry two properties, and only one is real: re-emitting the same terminal failure
+     * every tick is noise worth preventing, but declining to RETRY a teardown is how one transient
+     * daemon blip permanently disqualifies a credential-bearing sandbox from ever being reclaimed —
+     * with the mechanism built to find it logging "already reported" at DEBUG, where nobody looks.
      */
     static final String REAP_SLOT = "reap";
+
+    /**
+     * How many consecutive missed heartbeats a live run must survive before it looks abandoned.
+     *
+     * <p>A floor rather than a target: the shipped defaults give twenty, so nothing near the boundary
+     * ships and this only binds an operator who tightens the threshold. It covers a DELAYED sweep. It
+     * cannot cover a database outage, because no multiplier can — that is what the in-flight guard is
+     * for.
+     */
+    static final int MISSED_HEARTBEATS_TOLERATED = 4;
 
     @Inject
     RunRuntime runtime;
@@ -64,39 +85,59 @@ public class OrphanWatchdog {
     RunClaimStore claims;
 
     /**
-     * Where a reaped run's terminal result goes.
+     * The runs this process is executing, which are never orphans.
      *
-     * <p>A {@link Consumer} rather than the emitter itself, so the sweep can be driven without a
-     * broker. The dispatcher owns publishing; this owns deciding.
+     * <p>Local, exact, and impossible to be wrong about — unlike the heartbeat, which
+     * {@code WorkspaceLeases} writes best-effort and skips on a database fault. Without this, an
+     * outage longer than the staleness window ages every lease this replica holds while its runs
+     * carry on working, and the sweep destroys an hour of paid work under a launcher that is blocked
+     * waiting for it.
      */
+    @Inject
+    RunRegistry registry;
+
     @Inject
     RunResultReporter results;
 
-    Consumer<RunResult> reporter;
+    /**
+     * Whether the sweep runs at all.
+     *
+     * <p>It destroys containers, on a timer, and it is the first thing in this module that does. The
+     * project's own precedent for a feature with that blast radius is an off switch, so an operator
+     * seeing it misbehave has a control rather than a workaround. Logged once at startup when off,
+     * so it cannot be disabled by accident and forgotten.
+     */
+    @ConfigProperty(name = "spire.run.orphan-watchdog-enabled", defaultValue = "true")
+    boolean enabled;
 
-    @ConfigProperty(name = "spire.run.orphan-stale-after-seconds", defaultValue = "600")
+    @ConfigProperty(name = "spire.run.orphan-stale-after-seconds")
     long staleAfterSeconds;
 
     /**
      * The heartbeat interval, read so the pair can be checked rather than assumed.
      *
      * <p>The staleness threshold and the heartbeat interval are ONE decision made in two places, and
-     * a threshold that does not exceed the interval reaps healthy runs by construction.
+     * a threshold that does not exceed the interval reaps healthy runs by construction. Both this and
+     * the scheduler that uses it resolve the same property from {@code application.yml}, with no
+     * inline default on either — two literals for one decision is the very fault this check exists to
+     * catch, reproduced inside the check.
      */
-    @ConfigProperty(name = "spire.run.lease-heartbeat", defaultValue = "30s")
+    @ConfigProperty(name = "spire.run.lease-heartbeat")
     Duration heartbeatEvery;
 
     void check(@Observes StartupEvent event) {
         verify(Duration.ofSeconds(staleAfterSeconds), heartbeatEvery);
+        if (!enabled) {
+            LOG.warn("the orphan watchdog is DISABLED; a sandbox that outlives its run will not be "
+                    + "reclaimed and will keep its credentials until an operator removes it");
+        }
     }
 
     /**
      * The rule, separable from CDI so a test can drive it with values that match nothing shipped.
      *
      * <p>The margin is deliberate rather than a strict inequality: a threshold one second above the
-     * interval means a single delayed sweep condemns a live run, and the sweep is best-effort by
-     * design — a lease write that fails is logged and skipped. Several missed heartbeats have to be
-     * survivable, because the alternative is destroying work that is still happening.
+     * interval means a single delayed sweep condemns a live run.
      */
     static void verify(Duration staleAfter, Duration heartbeat) {
         Duration needed = heartbeat.multipliedBy(MISSED_HEARTBEATS_TOLERATED);
@@ -110,54 +151,65 @@ public class OrphanWatchdog {
         }
     }
 
-    /** How many consecutive missed heartbeats a live run must survive before it looks abandoned. */
-    static final int MISSED_HEARTBEATS_TOLERATED = 4;
-
     /**
      * One pass over the daemon's units.
      *
-     * <p>Scheduled at the staleness window rather than at the heartbeat interval: sweeping faster
-     * than a unit can become an orphan only costs listings.
+     * <p>The staleness horizon is read from the DATABASE once per tick, not from this JVM's clock.
+     * {@code heartbeat_at} is written with the database's {@code now()}, so comparing it to a local
+     * instant makes reclamation depend on a container's clock agreeing with a database host's — and
+     * the failure is silent in the destroying direction. One read also gives the whole tick one
+     * consistent horizon instead of a moving one.
      */
-    @Scheduled(every = "${spire.run.orphan-sweep:5m}",
+    @Scheduled(every = "${spire.run.orphan-sweep}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void sweep() {
+        if (!enabled) {
+            return;
+        }
+        Optional<Instant> horizon = leases.staleBefore(Duration.ofSeconds(staleAfterSeconds));
+        if (horizon.isEmpty()) {
+            // The database could not answer, so nothing can be judged stale. Reclaiming nothing is a
+            // leak an operator can still see; reclaiming on an unknown clock destroys running work.
+            LOG.error("the staleness horizon could not be read; nothing is being reclaimed this tick");
+            return;
+        }
         for (RunHandle unit : units()) {
+            MDC.put(RUN_ID_MDC, unit.runId());
             try {
-                reapIfOrphaned(unit);
+                reapIfOrphaned(unit, horizon.orElseThrow());
             } catch (RuntimeException e) {
                 // One unit that cannot be judged must not abandon the tick: every orphan behind it
                 // would leak, and the next tick meets the same one first.
-                LOG.errorf(e, "run %s: this unit could not be examined; leaving it for the next sweep",
-                        unit.runId());
+                LOG.errorf(e, "this unit could not be examined; leaving it for the next sweep");
+            } finally {
+                MDC.remove(RUN_ID_MDC);
             }
         }
     }
 
-    private Iterable<RunHandle> units() {
+    private List<RunHandle> units() {
         try {
             return runtime.discoverUnits();
         } catch (RuntimeException e) {
             LOG.errorf(e, "the run units could not be listed; nothing is being reclaimed this tick");
-            return java.util.List.of();
+            return List.of();
         }
     }
 
-    private void reapIfOrphaned(RunHandle unit) {
+    private void reapIfOrphaned(RunHandle unit, Instant staleBefore) {
+        if (registry.isExecuting(unit.runId())) {
+            // This process is running it. No lease state can outrank that.
+            return;
+        }
         Optional<WorkspaceLeases.Lease> lease = leases.find(unit.runId());
-        if (lease.isPresent() && !isOrphaned(lease.orElseThrow())) {
+        if (lease.isPresent() && !isOrphaned(lease.orElseThrow(), staleBefore)) {
             return;
         }
-        if (!claims.claim(unit.runId(), REAP_SLOT)) {
-            // Already reported. A preserved unit is rediscovered on every tick, and a second terminal
-            // result would overwrite the first with a later timestamp and no new information.
-            LOG.debugf("run %s: already reported as reclaimed", unit.runId());
-            return;
-        }
-        LOG.warnf("run %s: reclaiming a sandbox with %s", unit.runId(),
-                lease.map(l -> l.preserved() ? "a lease marked preserved" : "a lease nobody has heartbeated")
-                        .orElse("no lease at all"));
-        reap(unit);
+        boolean preserved = lease.map(WorkspaceLeases.Lease::preserved).orElse(false);
+        LOG.warnf("reclaiming a sandbox with %s", preserved
+                ? "a lease marked preserved" : lease.isPresent()
+                ? "a lease nobody has heartbeated" : "no lease at all");
+        reap(unit, preserved);
     }
 
     /**
@@ -167,61 +219,96 @@ public class OrphanWatchdog {
      * for its heartbeat to age would leave a credential-bearing container up for the whole staleness
      * window after every timeout and every failed salvage.
      */
-    private boolean isOrphaned(WorkspaceLeases.Lease lease) {
-        return lease.preserved()
-                || lease.heartbeatAt().isBefore(Instant.now().minusSeconds(staleAfterSeconds));
+    private static boolean isOrphaned(WorkspaceLeases.Lease lease, Instant staleBefore) {
+        return lease.preserved() || lease.heartbeatAt().isBefore(staleBefore);
     }
 
-    private void reap(RunHandle unit) {
-        Finalization finalization;
-        try {
-            // Salvage BEFORE destroy, the same rule the launcher keeps. Destroying first throws away
-            // exactly what salvage exists to read, and this is the caller most likely to be looking
-            // at a unit nobody will ever look at again.
-            finalization = runtime.salvage(unit);
-        } catch (RuntimeException e) {
-            // The watchdog must not become the delete path that rule forbids. A unit salvage could
-            // not read keeps its containers, and its lease is left alone so the next sweep still
-            // finds it — the claim above is what stops it being REPORTED a second time.
-            LOG.errorf(e, "run %s: its salvage failed during reclamation; the sandbox is kept", unit.runId());
-            report(unit, "its sandbox was reclaimed but could not be read; the unit is preserved");
+    /**
+     * @param alreadyReported whether the run's own terminal result has already been published —
+     *                        true for a unit the launcher deliberately preserved, which is over and
+     *                        was reported by the dispatcher before the lease was stamped. Reporting
+     *                        it again would contradict that result with a retryable failure the
+     *                        launcher's own rules forbid, and land a second, unpriceable charge line
+     *                        on a run whose spend is already recorded.
+     */
+    private void reap(RunHandle unit, boolean alreadyReported) {
+        Finalization finalization = salvage(unit);
+        if (!finalization.salvaged()) {
+            // Decided on the VALUE, not on a throw. The shipped runtime reports "could not observe
+            // the agent" as Finalization.faulted or .overran and raises nothing, so branching on the
+            // exception left this rule inoperative exactly where it matters — and destroying here
+            // removes the only remaining evidence of what the agent was doing.
+            if (!alreadyReported) {
+                report(unit, "its sandbox outlived the control plane and could NOT be read ("
+                        + finalization.detail() + "); the unit is preserved and was not destroyed");
+            }
+            stop(unit);
             return;
         }
-        report(unit, finalization.salvaged()
-                ? "its sandbox outlived the control plane and was reclaimed (exit " + finalization.exitCode() + ")"
-                : "its sandbox outlived the control plane and was reclaimed; " + finalization.detail());
-        destroy(unit);
-        leases.release(unit.runId());
+        if (!alreadyReported) {
+            report(unit, "its sandbox outlived the control plane and was reclaimed (exit "
+                    + finalization.exitCode() + ")");
+        }
+        if (destroy(unit)) {
+            leases.release(unit.runId());
+        }
     }
 
-    private void destroy(RunHandle unit) {
+    private Finalization salvage(RunHandle unit) {
         try {
-            runtime.destroy(unit);
+            // Salvage BEFORE destroy, the same rule the launcher keeps.
+            return runtime.salvage(unit);
         } catch (RuntimeException e) {
-            // The lease stays, so the next sweep sees it again; the claim stops a second report.
-            LOG.errorf(e, "run %s: its sandbox could not be destroyed during reclamation", unit.runId());
+            LOG.errorf(e, "its salvage threw during reclamation; the sandbox is kept");
+            return Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
     /**
-     * Say what happened, with a cause.
+     * Stop a unit that is being kept.
+     *
+     * <p>Kept is not the same as left running. That an unobservable agent has already exited is one
+     * arm's private promise, not something the SPI states, and this is the caller most likely to be
+     * looking at a container whose agent is still spending on a model nobody is watching.
+     */
+    private void stop(RunHandle unit) {
+        try {
+            runtime.cancel(unit);
+        } catch (RuntimeException e) {
+            LOG.errorf(e, "the preserved sandbox could not be stopped (%s)", e.getClass().getSimpleName());
+        }
+    }
+
+    /** @return whether the sandbox is actually gone. False keeps the lease, so the next sweep retries. */
+    private boolean destroy(RunHandle unit) {
+        try {
+            runtime.destroy(unit);
+            return true;
+        } catch (RuntimeException e) {
+            LOG.errorf(e, "its sandbox could not be destroyed during reclamation; the lease is kept "
+                    + "so the next sweep tries again");
+            return false;
+        }
+    }
+
+    /**
+     * Say what happened, with a cause, once ever.
      *
      * <p>{@code SANDBOX_LOST} rather than a bare failure: FR-F9's rule is that a failure with no
      * named cause reaches an operator as a row saying only that something went wrong, and this one
-     * has a specific, actionable meaning — the run outlived whatever was supposed to be watching it.
-     * It is retryable, because a replica eviction says nothing about the work.
+     * has a specific meaning — the run outlived whatever was supposed to be watching it. It is
+     * retryable, because a replica eviction says nothing about the work.
      */
     private void report(RunHandle unit, String detail) {
-        RunResult.RunFailed failed = new RunResult.RunFailed(unit.runId(),
-                RunFailureCause.SANDBOX_LOST.name(), detail,
+        if (!claims.claim(unit.runId(), REAP_SLOT)) {
+            LOG.debugf("its reclamation was already reported; retrying the teardown only");
+            return;
+        }
+        results.report(new RunResult.RunFailed(unit.runId(),
+                RunFailureCause.SANDBOX_LOST.name(), RunFailures.clip(detail),
                 RunFailureCause.SANDBOX_LOST.isRetryable(),
                 // Unknown, and it stays unknown: nothing here measured what the agent spent, and a
                 // zero would price a reclaimed run as free.
-                null);
-        if (reporter != null) {
-            reporter.accept(failed);
-            return;
-        }
-        results.report(failed);
+                null));
     }
 }

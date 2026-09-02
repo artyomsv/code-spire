@@ -100,7 +100,17 @@ public class RunFailures {
                 : SecretScrub.of(username, secrets.toArray(String[]::new));
     }
 
-    private static String clip(String detail) {
+    /**
+     * Bound a failure detail.
+     *
+     * <p>Package-visible so the orphan watchdog can use it. That path reports on a run it holds no
+     * COMMAND for, so it cannot decrypt that run's credentials and cannot scrub them — and it has
+     * no need to: its details are the runtime's own constants plus an exception class name and a
+     * run id, none of which can carry one. The LENGTH bound applies regardless, because
+     * {@code failure_detail} is a TEXT column with no bound of its own and the runtime's detail is
+     * not text this module authors.
+     */
+    static String clip(String detail) {
         if (detail == null || detail.length() <= MAX_DETAIL_CHARS) {
             return detail;
         }

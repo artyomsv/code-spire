@@ -132,6 +132,8 @@ public class RunLauncher {
                               RunObserver observer) {
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
+        // One stop per run, however many lines the publisher emits after refusing.
+        java.util.concurrent.atomic.AtomicBoolean refusalStops = new java.util.concurrent.atomic.AtomicBoolean();
         // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
         // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
         // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
@@ -145,7 +147,12 @@ public class RunLauncher {
                     transcript.accept(event);
                 })));
         Future<?> publisherStream = streams.submit(() ->
-                runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept));
+                runtime.attach(handle, LogChannel.PUBLISHER, line -> {
+                    outcome.accept(line);
+                    if (outcome.refused() && refusalStops.compareAndSet(false, true)) {
+                        stopAgent(command, handle);
+                    }
+                }));
 
         Finalization finalization;
         try {
@@ -229,6 +236,32 @@ public class RunLauncher {
      * fired, and a forge rejecting the final checkpoint — the case FR-F7 uses as its example — was
      * reported as the clock running out around it.
      */
+    /**
+     * Stop the agent once the push gate has refused this run.
+     *
+     * <p>A refusal terminates the PUBLISHER: it stops reading bundles and exits, and nothing
+     * reaches the remote. The agent knows none of that and keeps working until it finishes or
+     * its wall clock expires, buying model calls for work that can never be published — which is
+     * the whole cost of the refusal falling on the operator rather than on the run.
+     *
+     * <p>Called from the publisher reader, so it runs the moment the refusal is read rather than
+     * at salvage, when the money is already spent. The caller holds the once-only latch, because
+     * the publisher keeps emitting lines after it refuses.
+     */
+    private void stopAgent(RunCommand.ExecuteRun command, RunHandle handle) {
+        LOG.warnf("run %s: the push gate refused, so the agent is stopped rather than left to spend"
+                + " its wall clock on work that cannot be published", command.runId());
+        try {
+            runtime.cancel(handle);
+        } catch (RuntimeException e) {
+            // Reported, not rethrown: this runs on the publisher's reader thread, and throwing
+            // here would end that stream and lose the blocked paths the refusal is about to be
+            // reported with. The wall clock remains the bound.
+            LOG.errorf(e, "run %s: the agent could not be stopped after the gate refused (%s)",
+                    command.runId(), e.getClass().getSimpleName());
+        }
+    }
+
     private RunResult unobserved(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
         PublisherOutcome outcome = observed.outcome();
         Finalization finalization = observed.finalization();

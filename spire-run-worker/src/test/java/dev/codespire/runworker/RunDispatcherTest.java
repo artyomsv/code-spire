@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.scm.RepoRef;
 import io.smallrye.reactive.messaging.kafka.Record;
@@ -77,15 +78,24 @@ class RunDispatcherTest {
         /** Whether the fake reports the sandbox destroyed. Silence means it is still there. */
         boolean releasesTheUnit = true;
 
+        /** Runs while the launcher is "executing", so a test can cancel a run in flight. */
+        Runnable onLaunch;
+
         @Override
         public RunResult launch(RunCommand.ExecuteRun command, RunObserver observer) {
             order.add("launch");
             launches++;
+
             if (failWith != null) {
                 throw failWith;
             }
             if (unitId != null) {
                 observer.unitCreated(unitId);
+            }
+            // AFTER the unit exists, because that is the only window in which a real cancel can
+            // reach a run: the registry has nothing to cancel before the sandbox is registered.
+            if (onLaunch != null) {
+                onLaunch.run();
             }
             if (releasesTheUnit) {
                 observer.unitReleased();
@@ -164,6 +174,7 @@ class RunDispatcherTest {
     private final FakeLauncher launcher = new FakeLauncher(order);
     private final FakeEmitter results = new FakeEmitter();
     private final FakeLeases leases = new FakeLeases(order);
+    private final RunRegistry registry = new RunRegistry();
     private final RunDispatcher dispatcher = dispatcher();
 
     /**
@@ -220,6 +231,7 @@ class RunDispatcherTest {
         d.launcher = launcher;
         d.results = results;
         d.leases = leases;
+        d.registry = registry;
         // The real collaborator with a faked credential source, so the dispatcher's own failures
         // get the same scrub and the same retry answer the launcher's do. Leaving it unwired is
         // what the review found: this class built details the launcher's rules never touched.
@@ -443,5 +455,57 @@ class RunDispatcherTest {
 
         assertFalse(leases.released);
         assertTrue(leases.preserved);
+    }
+
+    @Test
+    void aRunIsRegisteredWhileItExecutesAndForgottenAfterwards() {
+        // The registry is what lets a cancel on the control topic reach a run the ordered blocking
+        // command channel is still holding. Registered the instant the sandbox exists, so the
+        // window in which a cancel cannot reach the run is the container's creation and nothing
+        // more; forgotten at the end, so a late cancel cannot resurrect a destroyed handle.
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(0, registry.size(), "a finished run is not live work");
+    }
+
+    @Test
+    void aCancelledRunIsReportedCancelledRatherThanBroken() {
+        // Cancelling kills the agent, so the launcher sees a non-zero exit and classifies an
+        // ordinary agent failure. That is true of what it observed and wrong about what happened:
+        // an operator who stopped a run must not be told it broke, and CANCELLED is not retryable
+        // while the causes it would otherwise be given are.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false, null);
+        launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
+        assertEquals(RunFailureCause.CANCELLED, RunFailureCause.of(reported.cause()));
+        assertFalse(reported.retryable(), "a run somebody stopped must not be retried on its own");
+    }
+
+    @Test
+    void aCancelThatRacedASuccessfulPushDoesNotUndoIt() {
+        // A cancel arriving in the last second of a successful push did not un-push anything.
+        // Rewriting a delivered branch as cancelled would lose the one fact an operator needs.
+        launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertInstanceOf(RunResult.RunFinished.class, results.sent.getLast());
+    }
+
+    @Test
+    void aCancelledRunKeepsWhatTheAgentSpent() {
+        // The tokens were bought before the operator stopped it, and this failure is the only
+        // record of them that reaches the orchestrator.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false,
+                java.util.Map.of("INPUT", 1200L));
+        launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
+        assertEquals(1200L, reported.tokenUsage().get("INPUT"));
     }
 }

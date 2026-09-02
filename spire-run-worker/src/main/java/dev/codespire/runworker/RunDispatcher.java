@@ -4,6 +4,7 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.runtime.RunHandle;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.Record;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -14,6 +15,7 @@ import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.OnOverflow;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import org.jboss.logging.MDC;
 
@@ -43,7 +45,7 @@ public class RunDispatcher {
 
     static final String RUN_ID_MDC = "runId";
 
-    private static final long RESULT_ACK_SECONDS = 30;
+    
 
     private static final CompletionStage<Void> DONE = CompletableFuture.completedFuture(null);
 
@@ -55,6 +57,18 @@ public class RunDispatcher {
 
     @Inject
     WorkspaceLeases leases;
+
+    @Inject
+    RunRegistry registry;
+
+    /**
+     * One ack budget for both publish paths.
+     *
+     * <p>It was a constant here and a property on the reclamation reporter -- two numbers for one
+     * broker wait, free to drift, which is the shape this module keeps having to fix.
+     */
+    @ConfigProperty(name = "spire.run.result-ack-seconds")
+    long resultAckSeconds;
 
     @Inject
     RunFailures failures;
@@ -137,7 +151,11 @@ public class RunDispatcher {
             result = failures.of(execute, "WORKER_FAILED",
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
-        emit(result);
+        // Read BEFORE the registry forgets the run, and applied before the result is published:
+        // the terminal result is the only thing that reaches the orchestrator, so a cancellation
+        // not reflected here is a run an operator stopped being reported as one that broke.
+        emit(asCancellationIfCancelled(execute, result));
+        registry.forget(execute.runId());
         keeper.settle();
         return DONE;
     }
@@ -185,6 +203,9 @@ public class RunDispatcher {
         @Override
         public void unitCreated(String unitId) {
             unitExists = true;
+            // Registered the instant the sandbox exists, so the window in which a cancel cannot
+            // reach the run is the container's creation and nothing more.
+            registry.register(runId, new RunHandle(runId, unitId));
             // The lease is recorded BEFORE the started event is emitted, deliberately: the cheap
             // local write goes first, so a broker that stalls cannot leave the lease unable to name
             // the unit an operator would then be looking for.
@@ -215,6 +236,26 @@ public class RunDispatcher {
             LOG.infof("run %s: its unit was not destroyed, so the lease is kept for the watchdog", runId);
             leases.preserve(runId);
         }
+    }
+
+    /**
+     * Relabel a cancelled run's outcome.
+     *
+     * <p>Cancelling kills the agent, so the launcher sees a non-zero exit and classifies an
+     * ordinary agent failure. That is true of what it observed and wrong about what happened —
+     * an operator who stopped a run must not be told it broke, and CANCELLED is not retryable
+     * while AGENT_FAILED's neighbours are.
+     *
+     * <p>A run that FINISHED is left alone. A cancel racing the last second of a successful push
+     * did not undo the push, and rewriting a delivered branch as cancelled would lose it.
+     */
+    private RunResult asCancellationIfCancelled(RunCommand.ExecuteRun execute, RunResult result) {
+        if (!registry.wasCancelled(execute.runId()) || !(result instanceof RunResult.RunFailed failed)) {
+            return result;
+        }
+        return failures.of(execute, RunFailureCause.CANCELLED.name(),
+                "cancelled while running; the agent reported " + failed.cause())
+                .withUsage(failed.tokenUsage());
     }
 
     private static void ack(Message<RunCommand> message) {
@@ -258,7 +299,7 @@ public class RunDispatcher {
             // downstream was cancelled at shutdown — and that throw would be the one escaping after
             // the ack. Inside the guard with the rest.
             results.send(Record.of(result.runId(), result)).toCompletableFuture()
-                    .get(RESULT_ACK_SECONDS, TimeUnit.SECONDS);
+                    .get(resultAckSeconds, TimeUnit.SECONDS);
             return true;
         } catch (IllegalStateException e) {
             LOG.errorf(e, "the channel refused %s", describe(result));
@@ -271,7 +312,7 @@ public class RunDispatcher {
             LOG.errorf(e.getCause(), "the broker did not accept %s", describe(result));
             return false;
         } catch (TimeoutException e) {
-            LOG.errorf("no broker acknowledgment within %ds for %s", RESULT_ACK_SECONDS, describe(result));
+            LOG.errorf("no broker acknowledgment within %ds for %s", resultAckSeconds, describe(result));
             return false;
         }
     }
