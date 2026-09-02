@@ -12,7 +12,6 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Acknowledgment;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
-import org.eclipse.microprofile.reactive.messaging.OnOverflow;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -44,8 +43,6 @@ public class RunDispatcher {
     static final String EXECUTE_SLOT = "execute";
 
     static final String RUN_ID_MDC = "runId";
-
-    
 
     private static final CompletionStage<Void> DONE = CompletableFuture.completedFuture(null);
 
@@ -102,7 +99,15 @@ public class RunDispatcher {
 
     private CompletionStage<Void> handle(Message<RunCommand> message, RunCommand command) {
         if (command instanceof RunCommand.CancelRun cancel) {
-            LOG.infof("cancel requested: %s", cancel.reason());
+            // Loud, because this branch cannot cancel anything: control rides cs.run-control into a
+            // listener beside this executor, and a cancel read HERE queues behind the very run it
+            // means to stop. The old line said "cancel requested" and acked, which reads as though
+            // something happened — the same silent no-op the control topic was created to remove,
+            // reachable now only by a DLQ replay onto the wrong topic or a stale producer.
+            // RunControlListener warns about the mirror-image case for the same reason.
+            LOG.warnf("run %s: a cancel arrived on cs.run-commands, where it cannot take effect and"
+                            + " was NOT applied (reason: %s). Control rides cs.run-control; re-send it"
+                            + " there.", cancel.runId(), cancel.reason());
             ack(message);
             return DONE;
         }
@@ -149,9 +154,18 @@ public class RunDispatcher {
         // Read BEFORE the registry forgets the run, and applied before the result is published:
         // the terminal result is the only thing that reaches the orchestrator, so a cancellation
         // not reflected here is a run an operator stopped being reported as one that broke.
-        emit(asCancellationIfCancelled(execute, result));
-        registry.forget(execute.runId());
-        keeper.settle();
+        try {
+            emit(asCancellationIfCancelled(execute, result));
+        } finally {
+            // In a finally because a leaked registry entry never expires, and isExecuting() is the
+            // watchdog's one absolute exemption — "this process is running it, no lease state can
+            // outrank that". A throw between the emit and the forget would therefore make a
+            // credential-bearing sandbox permanently unreclaimable by the mechanism that exists to
+            // reclaim it. emit is guarded, but asCancellationIfCancelled reaches SecretScrub, which
+            // is not, so "nothing after the ack may throw" was a rule this line did not enforce.
+            registry.forget(execute.runId());
+            keeper.settle();
+        }
         return DONE;
     }
 
@@ -199,11 +213,13 @@ public class RunDispatcher {
         }
 
         @Override
-        public void unitCreated(String unitId) {
+        public void unitCreated(String unitId, RunNotes notes) {
             unitExists = true;
             // Registered the instant the sandbox exists, so the window in which a cancel cannot
-            // reach the run is the container's creation and nothing more.
-            registry.register(runId, harness, new RunHandle(runId, unitId));
+            // reach the run is the container's creation and nothing more. The run's transcript is
+            // registered with it, so a control action writes into the run's own numbered stream
+            // rather than a second counter that would collide with the agent's.
+            registry.register(runId, harness, new RunHandle(runId, unitId), notes);
             // The lease is recorded BEFORE the started event is emitted, deliberately: the cheap
             // local write goes first, so a broker that stalls cannot leave the lease unable to name
             // the unit an operator would then be looking for.

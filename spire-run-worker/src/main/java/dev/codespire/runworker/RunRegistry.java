@@ -29,26 +29,29 @@ public class RunRegistry {
 
     private final Map<String, LiveRun> live = new ConcurrentHashMap<>();
 
-    /** Record a run's sandbox and which harness is driving it, from the moment it exists. */
-    public void register(String runId, String harness, RunHandle handle) {
-        live.put(runId, new LiveRun(handle, harness, false));
+    /** Record a run's sandbox, its harness and its transcript, from the moment the unit exists. */
+    public void register(String runId, String harness, RunHandle handle, RunNotes notes) {
+        live.put(runId, new LiveRun(handle, harness, notes, false));
+    }
+
+    /**
+     * Everything about a live run, read ONCE.
+     *
+     * <p>This replaced a pair of lookups — a handle, then separately the harness name — and the pair
+     * was a defect rather than a tidiness point. A run reaching its terminal path between the two
+     * reads made the second answer null, the harness registry rejected that with an
+     * {@code IllegalArgumentException}, and it escaped the control listener into a channel configured
+     * to IGNORE failures: the record was dropped with no log line and no transcript note, which is
+     * precisely the silence that listener exists to remove. A map entry cannot half-exist, so one
+     * read cannot race itself.
+     */
+    public Optional<LiveRun> liveRun(String runId) {
+        return Optional.ofNullable(live.get(runId));
     }
 
     /** This run's sandbox, without marking anything. Empty when this replica is not running it. */
     public Optional<RunHandle> find(String runId) {
         return Optional.ofNullable(live.get(runId)).map(LiveRun::handle);
-    }
-
-    /**
-     * Which harness is driving this run, or null.
-     *
-     * <p>Recorded rather than re-read from the command, because a steer arrives on its own topic
-     * carrying only a run id -- and the capability that decides whether it may be delivered is the
-     * HARNESS's fact, not the runtime's.
-     */
-    public String harnessOf(String runId) {
-        LiveRun run = live.get(runId);
-        return run == null ? null : run.harness();
     }
 
     /**
@@ -59,9 +62,8 @@ public class RunRegistry {
      * is an error — a control channel that failed on a late cancel would stop delivering the ones
      * that still matter.
      */
-    public Optional<RunHandle> cancel(String runId) {
-        LiveRun cancelled = live.computeIfPresent(runId, (id, run) -> run.asCancelled());
-        return Optional.ofNullable(cancelled).map(LiveRun::handle);
+    public Optional<LiveRun> cancel(String runId) {
+        return Optional.ofNullable(live.computeIfPresent(runId, (id, run) -> run.asCancelled()));
     }
 
     /**
@@ -98,10 +100,19 @@ public class RunRegistry {
         return live.size();
     }
 
-    private record LiveRun(RunHandle handle, String harness, boolean cancelled) {
+    /**
+     * One live run.
+     *
+     * <p>{@code harness} is recorded rather than re-read from the command, because control arrives on
+     * its own topic carrying only a run id — and the capability deciding whether an instruction may
+     * be delivered is the HARNESS's fact, not the runtime's. {@code notes} is this run's transcript,
+     * so a control action joins the same numbered stream the agent's own output is written to rather
+     * than a second one that would collide with it.
+     */
+    public record LiveRun(RunHandle handle, String harness, RunNotes notes, boolean cancelled) {
 
         LiveRun asCancelled() {
-            return new LiveRun(handle, harness, true);
+            return new LiveRun(handle, harness, notes, true);
         }
     }
 }

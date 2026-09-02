@@ -114,6 +114,89 @@ class RunResourceTest {
         return runId;
     }
 
+    /**
+     * The producer the control listener shipped without.
+     *
+     * <p>Nothing in the repository published to {@code cs.run-control}, so cancel and steer were
+     * reachable only by hand-producing to the topic — a consumer delivered for an operator control an
+     * operator could not use, and the plan's own Task 7 file list named this endpoint.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunningRunAcceptsACancel() {
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/" + runId + "/cancel")
+                .then().statusCode(202);
+    }
+
+    /**
+     * The refusal an operator can actually see, and the reason it lives here rather than in the
+     * worker.
+     *
+     * <p>Every replica reads every control record, so a listener cannot tell "not running on me" from
+     * "not running anywhere" and has to pass over both quietly. This endpoint reads the row, so it
+     * can say which — synchronously, instead of leaving an operator watching a timeline that will
+     * never change.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aFinishedRunRefusesControlRatherThanAcceptingItSilently() {
+        String runId = registeredRun();
+        projection.apply(new dev.codespire.contract.event.RunResult.RunFinished(
+                runId, "refs/heads/spire/x", List.of("a.txt"), List.of(), null, false));
+
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/" + runId + "/cancel")
+                .then().statusCode(409).body(containsString("cannot be cancelled"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void controlForAnUnknownRunIsNotFound() {
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/run::github:TEST-acme/app:never-registered:1/cancel")
+                .then().statusCode(404);
+    }
+
+    /**
+     * A blank instruction is refused where the caller can read the reason.
+     *
+     * <p>{@code SteerRun}'s own constructor bounds it, but over Kafka those guards fire inside the
+     * worker's deserializer, which answers null and drops the record — so the operator would be told
+     * nothing at all. Building the command here turns that into a 400.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aBlankInstructionIsRefusedAtTheEdge() {
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"instruction\":\"\"}")
+                .when().post("/api/runs/" + runId + "/steer")
+                .then().statusCode(400);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunningRunAcceptsASteer() {
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"instruction\":\"prefer the smaller change\"}")
+                .when().post("/api/runs/" + runId + "/steer")
+                .then().statusCode(202);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerMayNotStopARun() {
+        // Control is admin, by ADR-022's first rule: a steer directs a credentialed agent and costs
+        // model calls, and a cancel ends work someone else started.
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/run::github:TEST-acme/app:any:1/cancel")
+                .then().statusCode(403);
+    }
+
     @Test
     @TestSecurity(user = "viewer", roles = "spire-viewer")
     void aViewersTranscriptRequestIsNotSwallowedByTheRunDetailRoute() {

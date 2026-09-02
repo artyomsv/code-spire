@@ -124,6 +124,67 @@ class RunEventStreamTest {
                 "the notice must say how much was kept, or it tells a reader nothing actionable");
     }
 
+    /**
+     * The regression this class now exists to prevent, and the reason notes moved here.
+     *
+     * <p>An operator's note used to be numbered by a process-wide counter in {@code RunTranscript}
+     * while the agent's events were numbered per run from 1. Both land in {@code run_event}, whose
+     * primary key is {@code (run_id, seq)} and whose writer inserts {@code ON CONFLICT DO NOTHING} so
+     * a redelivery cannot duplicate a line — so whichever arrived second at a given number was
+     * discarded with no log, no error and nothing to read. The line most likely to lose is the
+     * operator's, because an agent stream runs to hundreds of events and a note is one.
+     *
+     * <p>Asserted as a property of the sequence rather than of specific numbers: what must hold is
+     * that no two lines of one run's transcript ever share a sequence, whoever wrote them.
+     */
+    @Test
+    void aNoteAndAnAgentEventNeverShareASequence() {
+        RunEventStream stream = stream();
+
+        stream.accept(new RunEvent.Output(Instant.EPOCH, "first"));
+        stream.note("STEERED", "prefer the smaller change", false);
+        stream.accept(new RunEvent.Output(Instant.EPOCH, "second"));
+        stream.note("CANCELLED", "stopped by an operator", false);
+
+        List<Long> sequences = published.stream().map(RunEventRecord::sequence).toList();
+        assertEquals(List.of(1L, 2L, 3L, 4L), sequences,
+                "one allocator per run, so the two producers interleave in a single dense sequence");
+        assertEquals(4, published.size());
+    }
+
+    @Test
+    void aNoteCarriesItsKindAndItsErrorFlag() {
+        RunEventStream stream = stream();
+
+        stream.note("STEER_REFUSED", "the harness does not support steering", true);
+
+        assertEquals(RUN_ID, published.getFirst().runId());
+        assertEquals("STEER_REFUSED", published.getFirst().kind());
+        assertEquals("the harness does not support steering", published.getFirst().text());
+        assertTrue(published.getFirst().error(), "a refusal must stand out on a live tail");
+    }
+
+    @Test
+    void anOperatorsOwnTextIsScrubbedLikeTheAgentsIs() {
+        // A steer's text is written by a person, so nothing upstream has redacted it, and the
+        // transcript is viewer-readable. An instruction that quotes a credential must not become
+        // the one place in the system that publishes it.
+        stream().note("STEERED", "retry with " + MODEL_KEY, false);
+
+        assertFalse(published.getFirst().text().contains(MODEL_KEY));
+    }
+
+    @Test
+    void anOverlongNoteIsClippedRatherThanRefused() {
+        // The wire's bound, applied here because a note's text never passed through an adapter --
+        // the harness adapters clip their own output, which is one adapter's courtesy rather than a
+        // guarantee. An over-length record would be refused by its own constructor.
+        stream().note("STEERED", "x".repeat(RunEventRecord.MAX_TEXT_CHARS + 500), false);
+
+        assertEquals(RunEventRecord.MAX_TEXT_CHARS, published.getFirst().text().length());
+        assertTrue(published.getFirst().text().endsWith(RunEventRecord.CLIPPED));
+    }
+
     @Test
     void aPublishFailureNeverStopsTheRun() {
         // The transcript is a convenience; the run is the paid work. A broker that refuses an event

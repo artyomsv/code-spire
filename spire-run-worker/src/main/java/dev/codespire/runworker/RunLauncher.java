@@ -28,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Creates the run unit and reads its two log streams.
@@ -100,11 +101,41 @@ public class RunLauncher {
             // place from an eviction mid-run — and that discrimination is the whole point of FR-F9.
             return failure(command, "RUNTIME_UNAVAILABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        // Built before the unit is announced, because the announcement hands it over: it is this
+        // run's numbering authority for its transcript, and anything adding a line to that run --
+        // the log readers here, an operator's steer on the control channel -- must go through this
+        // one instance rather than counting for itself. See RunNotes.
+        Watchers watchers = new Watchers(observer,
+                new RunEventStream(command.runId(), failures.scrubFor(command), observer::event));
         // Announced BEFORE observing, so a run that then hangs is still findable by its unit.
         // Guarded: this is bookkeeping about the run, and a caller that throws here must not cost
         // the run its outcome — the unit exists whether or not anybody recorded that it does.
-        announce(command, handle, observer);
-        return observe(command, adapter, handle, observer);
+        announce(command, handle, watchers);
+        return observe(command, adapter, handle, watchers);
+    }
+
+    /**
+     * The caller's two views of a live run: what it is told, and where a line joins the transcript.
+     *
+     * <p>One parameter rather than two because they travel together everywhere and are created
+     * together — and because the transcript stream is derived from the observer, so a method holding
+     * one without the other could number a run's events into a sink nobody is reading.
+     */
+    private record Watchers(RunObserver observer, RunEventStream transcript) {
+    }
+
+    /**
+     * Tell the caller the unit exists. Guarded: this is bookkeeping about the run, and a caller
+     * that throws here must not cost the run its outcome — the unit exists whether or not anybody
+     * recorded that it does, and it carries the label either way.
+     */
+    private static void announce(RunCommand.ExecuteRun command, RunHandle handle, Watchers watchers) {
+        try {
+            watchers.observer().unitCreated(handle.providerRunId(), watchers.transcript());
+        } catch (RuntimeException e) {
+            LOG.warnf("run %s: its unit could not be announced (%s); the sandbox is labelled either way",
+                    command.runId(), e.getClass().getSimpleName());
+        }
     }
 
     /**
@@ -114,31 +145,17 @@ public class RunLauncher {
      * result or leave a reader blocked on a log stream for the life of the process: the siblings
      * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
      */
-    /**
-     * Tell the caller the unit exists. Guarded: this is bookkeeping about the run, and a caller
-     * that throws here must not cost the run its outcome — the unit exists whether or not anybody
-     * recorded that it does, and it carries the label either way.
-     */
-    private static void announce(RunCommand.ExecuteRun command, RunHandle handle, RunObserver observer) {
-        try {
-            observer.unitCreated(handle.providerRunId());
-        } catch (RuntimeException e) {
-            LOG.warnf("run %s: its unit could not be announced (%s); the sandbox is labelled either way",
-                    command.runId(), e.getClass().getSimpleName());
-        }
-    }
-
     private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle,
-                              RunObserver observer) {
+                              Watchers watchers) {
+        RunEventStream transcript = watchers.transcript();
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
         // One stop per run, however many lines the publisher emits after refusing.
-        java.util.concurrent.atomic.AtomicBoolean refusalStops = new java.util.concurrent.atomic.AtomicBoolean();
+        AtomicBoolean refusalStops = new AtomicBoolean();
         // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
         // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
         // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
         // the process.
-        RunEventStream transcript = new RunEventStream(command.runId(), failures.scrubFor(command), observer::event);
         Future<?> agentStream = streams.submit(() ->
                 runtime.attach(handle, LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
                     // One parse, two readers. The fold decides the run's outcome and stays bounded;
@@ -200,7 +217,7 @@ public class RunLauncher {
                 // caller infer it from the result is what closed four leaking paths: an init
                 // failure the arm deliberately leaves behind, a throwing salvage after a publisher
                 // failure, this catch, and anything escaping the loop above.
-                observer.unitReleased();
+                watchers.observer().unitReleased();
             } catch (RuntimeException e) {
                 LOG.warnf("run %s: the unit could not be destroyed (%s); it is labelled for cleanup"
                         + " and keeps its lease, because it is still there",
@@ -228,15 +245,6 @@ public class RunLauncher {
     }
 
     /**
-     * A run whose exit nobody observed — it overran, or the runtime could not look.
-     *
-     * <p>The outcomes are ranked exactly as {@link #interpret} ranks them for a salvaged run, which
-     * the first version of this branch did not do: it looked only for a push, so a gate refusal fell
-     * through to a timeout with its blocked paths discarded and the refusal's attention row never
-     * fired, and a forge rejecting the final checkpoint — the case FR-F7 uses as its example — was
-     * reported as the clock running out around it.
-     */
-    /**
      * Stop the agent once the push gate has refused this run.
      *
      * <p>A refusal terminates the PUBLISHER: it stops reading bundles and exits, and nothing
@@ -262,6 +270,15 @@ public class RunLauncher {
         }
     }
 
+    /**
+     * A run whose exit nobody observed — it overran, or the runtime could not look.
+     *
+     * <p>The outcomes are ranked exactly as {@link #interpret} ranks them for a salvaged run, which
+     * the first version of this branch did not do: it looked only for a push, so a gate refusal fell
+     * through to a timeout with its blocked paths discarded and the refusal's attention row never
+     * fired, and a forge rejecting the final checkpoint — the case FR-F7 uses as its example — was
+     * reported as the clock running out around it.
+     */
     private RunResult unobserved(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
         PublisherOutcome outcome = observed.outcome();
         Finalization finalization = observed.finalization();

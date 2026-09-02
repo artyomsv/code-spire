@@ -22,8 +22,28 @@ public class RunCommandEmitter {
     @Channel("run-commands-out")
     Emitter<RunCommand> commands;
 
+    /**
+     * Control, onto {@code cs.run-control} — a different topic, on purpose.
+     *
+     * <p>The work topic is read by an ordered, blocking consumer that holds each record for the whole
+     * duration of the run it started, so a cancel published there is read only once the run it
+     * cancels has already finished. Publishing control on the work topic is therefore not a
+     * near-equivalent shortcut; it is the no-op the separate topic exists to remove.
+     *
+     * <p>Awaits the ack like {@link #dispatch}, so an operator's cancel that never reached the broker
+     * is a 5xx rather than a 202 for a run that keeps going.
+     */
+    @Inject
+    @Channel("run-control-out")
+    Emitter<RunCommand> control;
+
     public void dispatch(RunCommand command) {
         KafkaSends.sendAndAwait(commands, command.runId(), command,
                 "run command " + command.getClass().getSimpleName() + " for " + command.runId());
+    }
+
+    public void control(RunCommand command) {
+        KafkaSends.sendAndAwait(control, command.runId(), command,
+                "run control " + command.getClass().getSimpleName() + " for " + command.runId());
     }
 }

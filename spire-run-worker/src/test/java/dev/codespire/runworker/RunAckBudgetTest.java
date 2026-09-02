@@ -87,4 +87,37 @@ class RunAckBudgetTest {
         assertThrows(IllegalStateException.class,
                 () -> RunAckBudget.verify(WALL_CLOCK, DRAIN, Duration.ofHours(2), 1, RunAckBudget.DEFAULT_QUEUE_FACTOR));
     }
+
+    /**
+     * The control channel needs the same guard for a different reason.
+     *
+     * <p>It shipped declaring only its topic, group and offset reset, so it inherited the same
+     * 60-second default the work channel was explicitly raised from -- and its handler is a docker
+     * call with no timeout of its own. The moment an operator most needs to cancel runs is when the
+     * daemon is wedged, which is exactly when that default would age the record out and fail the
+     * channel, ending cancellation for every run.
+     */
+    @Test
+    void refusesAControlChannelLeftOnTheConnectorDefault() {
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> RunAckBudget.verifyControl(Duration.ofMillis(RunAckBudget.DEFAULT_MAX_AGE_MS), 1, 1));
+
+        assertTrue(refused.getMessage().contains("run-control-in"));
+    }
+
+    @Test
+    void refusesAPrefetchQueueOnTheControlChannelToo() {
+        // A prefetched cancel ages behind the one in hand, and the connector fails the channel on
+        // the record that ages out -- taking every later cancel with it.
+        assertThrows(IllegalStateException.class,
+                () -> RunAckBudget.verifyControl(Duration.ofHours(2), RunAckBudget.DEFAULT_POLL_RECORDS, 1));
+        assertThrows(IllegalStateException.class,
+                () -> RunAckBudget.verifyControl(Duration.ofHours(2), 1, RunAckBudget.DEFAULT_QUEUE_FACTOR));
+    }
+
+    @Test
+    void acceptsTheShippedControlSettings() {
+        // The half that keeps the guard from being unconditional.
+        RunAckBudget.verifyControl(Duration.ofMinutes(15), 1, 1);
+    }
 }

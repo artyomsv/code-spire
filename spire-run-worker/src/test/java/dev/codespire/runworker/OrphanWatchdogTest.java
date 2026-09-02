@@ -221,7 +221,7 @@ class OrphanWatchdogTest {
         // over, because the watchdog never read the owner at all.
         String runId = "run::github:TEST-acme/app:mine:1";
         unitWithLease(runId, MINE, STALE_AFTER.plusHours(1));
-        registry.register(runId, "codex", new RunHandle(runId, "container-mine"));
+        registry.register(runId, "codex", new RunHandle(runId, "container-mine"), RunNotes.IGNORING);
 
         watchdog().sweep();
 

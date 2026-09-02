@@ -18,27 +18,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The one writer to the run transcript.
  *
- * <p>One because SmallRye permits a single emitter per outgoing channel, and a second injection
- * fails the whole deployment at build time. The constraint points at the right shape anyway: the
- * transcript has two producers — the agent's own output and an operator's interventions — and they
- * belong behind one door.
+ * <p>One because SmallRye permits a single emitter per outgoing channel, and a second injection fails
+ * the whole deployment at build time. It sends; it does not number. Numbering belongs to the run's own
+ * {@link RunEventStream} — see {@link RunNotes} for what a second counter cost.
  */
 class RunTranscriptTest {
 
     private static final String RUN_ID = "run::github:TEST-acme/app:s:1";
 
-    /** An emitter the test can make refuse. */
+    /** An emitter the test can make refuse, synchronously or asynchronously. */
     private static final class FakeEmitter implements Emitter<Record<String, RunEventRecord>> {
         final List<RunEventRecord> sent = new ArrayList<>();
-        RuntimeException refuses;
+        RuntimeException throwsOnSend;
+        RuntimeException failsTheFuture;
 
         @Override
         public CompletionStage<Void> send(Record<String, RunEventRecord> payload) {
-            if (refuses != null) {
-                throw refuses;
+            if (throwsOnSend != null) {
+                throw throwsOnSend;
             }
             sent.add(payload.value());
-            return CompletableFuture.completedFuture(null);
+            return failsTheFuture == null
+                    ? CompletableFuture.completedFuture(null)
+                    : CompletableFuture.failedFuture(failsTheFuture);
         }
 
         @Override
@@ -73,61 +75,56 @@ class RunTranscriptTest {
         return transcript;
     }
 
+    private static RunEventRecord event(long sequence) {
+        return new RunEventRecord(RUN_ID, sequence, Instant.now(), "OUTPUT", "hello", false);
+    }
+
     @Test
-    void aNoteReachesTheTranscriptWithItsRunAndKind() {
-        transcript().note(RUN_ID, "STEERED", "prefer the smaller change", false);
+    void anEventReachesTheBrokerKeyedByItsRun() {
+        transcript().emit(event(1L), (sent, refused) -> {
+        });
 
         assertEquals(1, emitter.sent.size());
-        RunEventRecord note = emitter.sent.getFirst();
-        assertEquals(RUN_ID, note.runId());
-        assertEquals("STEERED", note.kind());
-        assertEquals("prefer the smaller change", note.text());
+        assertEquals(RUN_ID, emitter.sent.getFirst().runId());
+        assertEquals(1L, emitter.sent.getFirst().sequence());
     }
 
     @Test
-    void aBrokerThatRefusesDoesNotStopTheCallerThatAlreadyActed() {
-        // A steer or a cancel has already happened by the time its note is written. Losing the line
-        // is worse than nothing; throwing it back at a control channel that would then stop
-        // delivering every later cancel is worse than both.
-        emitter.refuses = new IllegalStateException("no subscriber");
-
-        transcript().note(RUN_ID, "STEERED", "prefer the smaller change", false);
-    }
-
-    @Test
-    void anAgentEventCarriesItsRefusalBackToTheCaller() {
-        // The channel does not wait for write completion, so a broker refusal arrives at the
-        // completion handler and nowhere else — the launcher's gap warning depends on seeing it.
-        emitter.refuses = new IllegalStateException("no subscriber");
+    void aBrokerRefusalArrivesAtTheHandlerTheGapWarningDependsOn() {
+        // The channel does not wait for write completion, so an asynchronous refusal reaches the
+        // completion handler and nowhere else. This is the case the launcher's gap warning is built
+        // on, and it was the one case the previous suite never exercised: the fake could only throw
+        // synchronously or answer an already-completed future, so `whenComplete` never saw a cause.
+        IllegalStateException refusal = new IllegalStateException("broker said no");
+        emitter.failsTheFuture = refusal;
         List<Throwable> refusals = new ArrayList<>();
 
-        transcript().emit(new RunEventRecord(RUN_ID, 1L, Instant.now(), "OUTPUT", "hello", false),
-                (sent, refused) -> refusals.add(refused));
+        transcript().emit(event(1L), (sent, refused) -> refusals.add(refused));
+
+        assertEquals(List.of(refusal), refusals);
+    }
+
+    @Test
+    void aSynchronousRefusalIsLoggedRatherThanHandedToTheHandler() {
+        // Named for what it asserts. The previous name claimed the refusal was carried back to the
+        // caller while the body asserted the opposite, which invites a future reader to "fix" the
+        // production code until the name comes true.
+        emitter.throwsOnSend = new IllegalStateException("no subscriber");
+        List<Throwable> refusals = new ArrayList<>();
+
+        transcript().emit(event(1L), (sent, refused) -> refusals.add(refused));
 
         assertTrue(refusals.isEmpty(),
-                "a synchronous refusal is swallowed here rather than reaching a handler that expects"
-                        + " an asynchronous one; the warning comes from the send that did reach the broker");
+                "a send that never reached the broker cannot complete; it is logged here instead");
     }
 
     @Test
-    void theWorkersOwnNotesHaveTheirOwnSequence() {
-        // The launcher's fold numbers what the AGENT emitted. Sharing a counter would make a gap in
-        // one look like a loss in the other.
-        RunTranscript transcript = transcript();
+    void aTranscriptThatCannotBeWrittenNeverStopsTheRun() {
+        // A transcript is what an operator watches, not what a run depends on. Throwing back at the
+        // caller would end a log reader, or fail a control channel that must keep delivering cancels.
+        emitter.throwsOnSend = new IllegalStateException("no subscriber");
 
-        transcript.note(RUN_ID, "STEERED", "one", false);
-        transcript.note(RUN_ID, "STEERED", "two", false);
-
-        assertEquals(List.of(1L, 2L), emitter.sent.stream().map(RunEventRecord::sequence).toList());
-    }
-
-    @Test
-    void anOverlongNoteIsClippedRatherThanRefused() {
-        // The bound is the wire's, applied here because this text is an operator's rather than an
-        // agent's — the reference adapter's own clipping is one adapter's courtesy.
-        transcript().note(RUN_ID, "STEERED", "x".repeat(RunEventRecord.MAX_TEXT_CHARS + 500), false);
-
-        assertEquals(RunEventRecord.MAX_TEXT_CHARS, emitter.sent.getFirst().text().length());
-        assertTrue(emitter.sent.getFirst().text().endsWith(RunEventRecord.CLIPPED));
+        transcript().emit(event(1L), (sent, refused) -> {
+        });
     }
 }

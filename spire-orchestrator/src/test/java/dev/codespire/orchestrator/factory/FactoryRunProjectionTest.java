@@ -68,6 +68,40 @@ class FactoryRunProjectionTest {
         assertNull(view.failureCause(), "nothing infrastructural broke, so nothing is classified");
     }
 
+    /**
+     * A run an operator stopped is not a run that broke.
+     *
+     * <p>The worker already separates recording the cancellation from acting on it, precisely so the
+     * killed agent's non-zero exit is not read as a fault — and then this projection wrote
+     * {@code failed} unconditionally and threw that away, telling whoever pressed the button that the
+     * thing they stopped was broken. {@code 'cancelled'} has been in the V43 status set since M0 with
+     * nothing writing it.
+     *
+     * <p>The status assertion is the discriminating one: the cause was already correct, so a test
+     * checking only the cause passes both before and after the fix.
+     */
+    @Test
+    void aCancelledRunIsNotReportedAsAFailure() {
+        String runId = queuedRun();
+
+        projection.apply(new RunResult.RunFailed(runId, "CANCELLED", "stopped by an operator", false, null));
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.CANCELLED, view.status());
+        assertEquals("CANCELLED", view.failureCause(),
+                "the cause stays on the row, so it says both what happened and who ended it");
+    }
+
+    @Test
+    void anOrdinaryFailureIsStillAFailure() {
+        // The other half: the cancelled branch must not swallow everything that reaches failed().
+        String runId = queuedRun();
+
+        projection.apply(new RunResult.RunFailed(runId, "AGENT_FAILED", "exit 1", true, null));
+
+        assertEquals(FactoryRunProjection.FAILED, projection.find(runId).orElseThrow().status());
+    }
+
     @Test
     void aProducersOwnVocabularyIsStoredAsTheClosedSetsValue() {
         // The harness says PUSH_GATE_REFUSED and the publisher says PUSH_FAILED; V46 constrains the

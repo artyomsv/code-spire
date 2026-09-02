@@ -90,7 +90,7 @@ class RunDispatcherTest {
                 throw failWith;
             }
             if (unitId != null) {
-                observer.unitCreated(unitId);
+                observer.unitCreated(unitId, RunNotes.IGNORING);
             }
             // AFTER the unit exists, because that is the only window in which a real cancel can
             // reach a run: the registry has nothing to cancel before the sandbox is registered.
@@ -463,6 +463,14 @@ class RunDispatcherTest {
         // command channel is still holding. Registered the instant the sandbox exists, so the
         // window in which a cancel cannot reach the run is the container's creation and nothing
         // more; forgotten at the end, so a late cancel cannot resurrect a destroyed handle.
+        // Both halves. Asserting only the second passes when the run was never registered at all,
+        // which a mutation proved: deleting registry.register from LeaseKeeper.unitCreated left this
+        // green while the cancel path and the watchdog's one absolute exemption both went inert.
+        launcher.onLaunch = () -> {
+            assertTrue(registry.isExecuting(EXECUTE.runId()), "live while the launcher holds it");
+            assertEquals(1, registry.size());
+        };
+
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         assertEquals(0, registry.size(), "a finished run is not live work");

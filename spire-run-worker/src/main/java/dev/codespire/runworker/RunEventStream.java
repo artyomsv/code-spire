@@ -23,7 +23,7 @@ import java.util.function.Consumer;
  * forgotten the second record of what a run cost, and the two would disagree the moment the TTL
  * fired.
  */
-final class RunEventStream implements Consumer<RunEvent> {
+final class RunEventStream implements Consumer<RunEvent>, RunNotes {
 
     private static final Logger LOG = Logger.getLogger(RunEventStream.class);
 
@@ -66,6 +66,38 @@ final class RunEventStream implements Consumer<RunEvent> {
             return;
         }
         publish(record);
+    }
+
+    /**
+     * One of the worker's own lines, numbered from the same counter as the agent's.
+     *
+     * <p>Synchronized with {@link #accept} because the two callers are different threads: the agent's
+     * events arrive on the log-reader thread while a note arrives on the control channel. Sharing the
+     * counter is the point — see {@link RunNotes} for what two counters cost.
+     *
+     * <p>Subject to the same cap. Past it the transcript has already announced that it stops, and
+     * appending after that line would contradict it; the control action still happens either way,
+     * and its log line is unaffected.
+     */
+    @Override
+    public synchronized void note(String kind, String text, boolean error) {
+        if (sequence >= MAX_EVENTS_PER_RUN) {
+            announceTruncation();
+            return;
+        }
+        publish(new RunEventRecord(runId, sequence + 1, java.time.Instant.now(), kind, clip(text), error));
+    }
+
+    /**
+     * The wire's own bound, applied here because a note's text is an operator's rather than an
+     * agent's — the harness adapters clip their own output, which is one adapter's courtesy and not
+     * a guarantee this class can rely on for text that never passed through one.
+     */
+    private static String clip(String text) {
+        return text.length() <= RunEventRecord.MAX_TEXT_CHARS
+                ? text
+                : text.substring(0, RunEventRecord.MAX_TEXT_CHARS - RunEventRecord.CLIPPED.length())
+                        + RunEventRecord.CLIPPED;
     }
 
     private RunEventRecord translate(RunEvent event) {

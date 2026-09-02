@@ -1,10 +1,8 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
-import dev.codespire.harness.HarnessCapabilities;
-import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
-import io.smallrye.common.annotation.Blocking;
+import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
@@ -22,19 +20,33 @@ import java.util.Optional;
  * indistinguishable from the no-op this replaces.
  *
  * <p>So control has its own topic and its own listener, running beside the executor rather than
- * behind it. {@code @Blocking} without {@code ordered} keeps the Docker call off the event loop
- * while letting two cancels for different runs proceed independently.
+ * behind it. <b>{@code ordered = false} is load-bearing and is the reactive-messaging annotation,
+ * not the common one.</b> The class previously used {@code io.smallrye.common.annotation.Blocking},
+ * whose javadoc here claimed it left execution unordered — it has no such attribute, and Quarkus
+ * maps its absence to {@code setBlockingExecutionOrdered(true)}. Control records were therefore
+ * processed strictly one at a time, so a {@code cancel} hung on an unresponsive daemon blocked every
+ * later cancel, for every other run. That is the outage this topic exists to prevent, reached from
+ * inside instead of from the work channel.
  *
- * <p><b>A cancel for a run this replica is not executing is not an error.</b> It arrived late, or
- * twice, or it belongs to a sibling — and a listener that failed on any of those would stop
- * delivering the cancels that still matter.
+ * <p><b>Every replica reads every control record</b> (the channel's group id is per instance), so a
+ * command for a run this replica is not executing is the ordinary case rather than an error, and is
+ * passed over quietly. Whether the run exists at all is answered synchronously by the endpoint that
+ * publishes the command, which can see the run's status; a listener cannot, because "not here" and
+ * "nowhere" look identical from one replica.
  */
 @ApplicationScoped
 public class RunControlListener {
 
     private static final Logger LOG = Logger.getLogger(RunControlListener.class);
 
-    private static final String RUN_ID_MDC = "runId";
+    /** Written when an instruction reached the agent. */
+    private static final String STEERED = "STEERED";
+
+    /** Written when it did not, whatever the reason — the line an operator must be able to see. */
+    private static final String STEER_REFUSED = "STEER_REFUSED";
+
+    /** Written when a human stopped the run, so the timeline says who ended it and why. */
+    private static final String CANCELLED = "CANCELLED";
 
     @Inject
     RunRegistry registry;
@@ -45,128 +57,143 @@ public class RunControlListener {
     @Inject
     HarnessRegistry harnesses;
 
-    /**
-     * The run's live transcript, so a human intervention is visible where the run is watched.
-     *
-     * <p>A steer changes what the agent does, so a transcript that shows only the agent's own
-     * output would make the change look spontaneous. The REFUSALS go on it too: an operator who
-     * steered a run and sees nothing on its timeline cannot tell "not supported" from "the message
-     * never arrived".
-     *
-     * <p>Shared rather than a second emitter, because SmallRye permits one per outgoing channel —
-     * and the constraint points at the right shape, since the transcript now has two producers.
-     */
-    @Inject
-    RunTranscript transcript;
-
     @Incoming("run-control-in")
-    @Blocking
+    @Blocking(ordered = false)
     public void onControl(RunCommand command) {
         if (command == null) {
             // A poison record: the deserializer already logged it and the failure strategy has it.
             return;
         }
-        MDC.put(RUN_ID_MDC, command.runId());
+        MDC.put(RunDispatcher.RUN_ID_MDC, command.runId());
         try {
-            if (command instanceof RunCommand.CancelRun cancel) {
-                cancel(cancel);
-                return;
-            }
-            if (command instanceof RunCommand.SteerRun steer) {
-                steer(steer);
-                return;
-            }
-            // Only control belongs here. An ExecuteRun on this topic would otherwise be silently
-            // ignored, which is the shape of a run that never happens and nobody is told about.
-            LOG.warnf("ignoring %s on the control topic; execution rides cs.run-commands",
-                    command.getClass().getSimpleName());
+            dispatch(command);
+        } catch (RuntimeException e) {
+            // The channel's failure strategy is `ignore`, so anything escaping here is dropped with
+            // no record at all — the precise silence this class exists to remove. Everything below
+            // is guarded individually; this is the backstop for whatever is not, and it must never
+            // rethrow: a control channel that fails stops delivering the cancels that still matter.
+            LOG.errorf(e, "run %s: its control command could not be handled (%s) and was not applied",
+                    command.runId(), e.getClass().getSimpleName());
         } finally {
-            MDC.remove(RUN_ID_MDC);
+            MDC.remove(RunDispatcher.RUN_ID_MDC);
         }
+    }
+
+    private void dispatch(RunCommand command) {
+        if (command instanceof RunCommand.CancelRun cancel) {
+            cancel(cancel);
+            return;
+        }
+        if (command instanceof RunCommand.SteerRun steer) {
+            steer(steer);
+            return;
+        }
+        // Only control belongs here. An ExecuteRun on this topic would otherwise be silently
+        // ignored, which is the shape of a run that never happens and nobody is told about.
+        LOG.warnf("ignoring %s on the control topic; execution rides cs.run-commands",
+                command.getClass().getSimpleName());
     }
 
     /**
      * Deliver a new instruction to a run that is already going, or refuse VISIBLY.
      *
      * <p>Gated on what the harness declares rather than on what the runtime happens to support,
-     * because the capability is the harness's fact: a one-shot agent has no session to steer
-     * whatever the container could carry. Refusing here means the runtime's own refusal is a
-     * backstop rather than the mechanism.
+     * because the capability is the harness's fact: a one-shot agent has no session to steer whatever
+     * the container could carry. Refusing here means the runtime's own refusal is a backstop rather
+     * than the mechanism.
      *
-     * <p>A refusal is logged at WARN and recorded on the run's transcript, never dropped. An
-     * operator who steers a run and sees nothing cannot tell "not supported" from "the message was
-     * lost", and the second sends them looking for a broker fault that is not there.
+     * <p>A refusal is logged at WARN and recorded on the run's transcript, never dropped. An operator
+     * who steers a run and sees nothing cannot tell "not supported" from "the message was lost", and
+     * the second sends them looking for a broker fault that is not there.
      */
     private void steer(RunCommand.SteerRun request) {
-        Optional<RunHandle> handle = registry.find(request.runId());
-        if (handle.isEmpty()) {
-            LOG.warnf("steer refused: this replica is not executing %s, so there is no run to steer",
-                    request.runId());
-            transcript.note(request.runId(), "STEER_REFUSED", "this replica is not executing the run", true);
+        // ONE read. Reading the handle and then the harness separately let a run end between them,
+        // and the second read's null reached HarnessRegistry.forName, which rejects it — straight
+        // out of this listener into a channel that ignores failures. No log, no note, nothing.
+        Optional<RunRegistry.LiveRun> live = registry.liveRun(request.runId());
+        if (live.isEmpty()) {
+            LOG.debugf("steer for %s: not executing here", request.runId());
             return;
         }
-        HarnessCapabilities capabilities = harnesses.forName(registry.harnessOf(request.runId())).capabilities();
-        if (!capabilities.steer()) {
+        RunRegistry.LiveRun run = live.orElseThrow();
+        if (!harnesses.forName(run.harness()).capabilities().steer()) {
             LOG.warnf("steer refused for %s: its harness does not support steering, so the"
                     + " instruction was not delivered", request.runId());
-            transcript.note(request.runId(), "STEER_REFUSED",
-                    "the harness driving this run does not support steering", true);
+            refused(run, "the harness driving this run does not support steering");
             return;
         }
-        deliver(handle.orElseThrow(), request);
+        deliver(run, request);
     }
 
-    private void deliver(RunHandle handle, RunCommand.SteerRun request) {
+    private void deliver(RunRegistry.LiveRun run, RunCommand.SteerRun request) {
         LOG.infof("steering %s", request.runId());
         try {
-            runtime.steer(handle, request.instruction());
-            transcript.note(request.runId(), "STEERED", request.instruction(), false);
+            runtime.steer(run.handle(), request.instruction());
+            // The instruction itself, so the transcript shows what the agent was told rather than
+            // only that it was told something. It is scrubbed on the way out like any other line.
+            run.notes().note(STEERED, request.instruction(), false);
         } catch (UnsupportedOperationException e) {
             // The backstop firing means a harness declared a capability its runtime does not have.
             // That is a deployment fault worth naming, not a control-channel failure.
-            LOG.errorf("steer refused for %s: the harness declares steering but the runtime cannot"
-                    + " deliver it (%s)", request.runId(), e.getMessage());
-            transcript.note(request.runId(), "STEER_REFUSED", "the runtime cannot reach this run's agent", true);
+            LOG.errorf(e, "steer refused for %s: the harness declares steering but the runtime"
+                    + " cannot deliver it", request.runId());
+            refused(run, "the runtime cannot reach this run's agent");
         } catch (RuntimeException e) {
             LOG.errorf(e, "run %s: its steer instruction could not be delivered (%s)",
                     request.runId(), e.getClass().getSimpleName());
-            transcript.note(request.runId(), "STEER_REFUSED", "the instruction could not be delivered ("
-                    + e.getClass().getSimpleName() + ")", true);
+            refused(run, "the instruction could not be delivered (" + e.getClass().getSimpleName() + ")");
         }
     }
 
+    /**
+     * A line the operator needs to notice, rather than one that scrolls past.
+     *
+     * <p>Two named methods instead of one taking a boolean: every call site here passed a literal,
+     * and at the call site {@code true} said nothing about what it meant.
+     */
+    private static void refused(RunRegistry.LiveRun run, String why) {
+        run.notes().note(STEER_REFUSED, why, true);
+    }
+
     private void cancel(RunCommand.CancelRun request) {
-        Optional<RunHandle> handle = registry.cancel(request.runId());
-        if (handle.isEmpty()) {
-            // Late, duplicate, or another replica's. Logged at INFO rather than WARN: an operator
-            // cancelling a run that has just finished has done nothing wrong, and a warning with no
-            // action implied is noise.
-            LOG.infof("cancel ignored: this replica is not executing %s (%s)",
-                    request.runId(), request.reason());
+        Optional<RunRegistry.LiveRun> live = registry.cancel(request.runId());
+        if (live.isEmpty()) {
+            // Late, duplicate, or another replica's — and under a per-instance group id, most of
+            // these are simply the other replicas. Nothing is wrong, so nothing is warned about.
+            LOG.debugf("cancel for %s: not executing here (%s)", request.runId(), request.reason());
             return;
         }
+        RunRegistry.LiveRun run = live.orElseThrow();
         LOG.warnf("cancelling %s: %s", request.runId(), request.reason());
-        stop(handle.orElseThrow(), request.runId());
+        // On the transcript for the same reason a steer is: a run that simply stops, with the only
+        // record a line in the worker's own log, leaves whoever reads the timeline unable to tell a
+        // deliberate stop from a fault. Sharper here than for a steer — when the run had already
+        // pushed a checkpoint the result is a RunFinished carrying its ref, deliberately not
+        // relabelled, so without this line nothing anywhere says a human ended it.
+        run.notes().note(CANCELLED, "stopped by an operator: " + request.reason(), false);
+        stop(run, request.runId());
     }
 
     /**
      * Stop the sandbox, and let the launcher finish the run.
      *
-     * <p>Nothing is salvaged or destroyed here. The launcher is still blocked on the agent's exit,
-     * so killing the containers makes that call return and the ordinary terminal path runs — which
+     * <p>Nothing is salvaged or destroyed here. The launcher is still blocked on the agent's exit, so
+     * killing the containers makes that call return and the ordinary terminal path runs — which
      * already salvages before it destroys. A cancel that salvaged for itself would race the launcher
      * for the same streams, and one that destroyed would throw away the checkpoints the run had
      * already pushed. Cancel is not delete.
      */
-    private void stop(RunHandle handle, String runId) {
+    private void stop(RunRegistry.LiveRun run, String runId) {
         try {
-            runtime.cancel(handle);
+            runtime.cancel(run.handle());
         } catch (RuntimeException e) {
             // Reported, not rethrown. A control record that nacks is redelivered and tries to cancel
             // a run that may by then have ended normally, and the registry has already recorded the
             // cancellation so the result will say so either way.
             LOG.errorf(e, "run %s: its sandbox could not be stopped (%s); the run continues until its"
                     + " wall clock", runId, e.getClass().getSimpleName());
+            run.notes().note(CANCELLED, "the sandbox could not be stopped; the run continues until"
+                    + " its wall clock expires", true);
         }
     }
 }

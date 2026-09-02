@@ -112,6 +112,17 @@ mp:
         value:
           serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
         waitForWriteCompletion: true
+      # Control rides its own topic, read by a listener beside the worker's executor rather than
+      # behind it. Published here so an operator has a way to reach it: the consumer shipped first
+      # and nothing produced to this topic, which made cancel reachable only by hand.
+      run-control-out:
+        connector: smallrye-kafka
+        topic: cs.run-control
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
+        waitForWriteCompletion: true
     incoming:
       integration-in:
         connector: smallrye-kafka

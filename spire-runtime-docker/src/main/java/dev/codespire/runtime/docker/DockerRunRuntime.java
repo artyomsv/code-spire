@@ -387,21 +387,6 @@ public final class DockerRunRuntime implements RunRuntime {
     }
 
     /**
-     * Waits for the agent within the unit's wall clock, stops it if it overran, then drains the
-     * publisher.
-     *
-     * <p><b>The clock has to STOP the run, not merely stop waiting for it.</b> Two versions of this
-     * method got that wrong in different ways. The first waited on the agent indefinitely, so the
-     * limit existed in {@link RunUnitSpec} and constrained nothing. The second bounded the wait and
-     * returned — but a timeout arrives as an EXCEPTION from the callback rather than a null status,
-     * so the cancel sat in a branch that never ran, and a hung run kept its memory, its CPU
-     * reservation and its model credential exactly as before. The commit message claimed it was
-     * enforced; only a test that inspected the container's state afterwards disagreed.
-     *
-     * <p>Cancelling is not destroying. The unit is preserved either way — {@link #destroy} is a
-     * separate call — so an operator can still read what the agent was doing when its time ran out.
-     */
-    /**
      * Not supported by this arm, and saying so is the implementation.
      *
      * <p>Reaching a running agent's input needs the container created with an open stdin and an
@@ -421,6 +406,21 @@ public final class DockerRunRuntime implements RunRuntime {
                 + " an open input stream, and no shipped harness declares the steer capability");
     }
 
+    /**
+     * Waits for the agent within the unit's wall clock, stops it if it overran, then drains the
+     * publisher.
+     *
+     * <p><b>The clock has to STOP the run, not merely stop waiting for it.</b> Two versions of this
+     * method got that wrong in different ways. The first waited on the agent indefinitely, so the
+     * limit existed in {@link RunUnitSpec} and constrained nothing. The second bounded the wait and
+     * returned — but a timeout arrives as an EXCEPTION from the callback rather than a null status,
+     * so the cancel sat in a branch that never ran, and a hung run kept its memory, its CPU
+     * reservation and its model credential exactly as before. The commit message claimed it was
+     * enforced; only a test that inspected the container's state afterwards disagreed.
+     *
+     * <p>Cancelling is not destroying. The unit is preserved either way — {@link #destroy} is a
+     * separate call — so an operator can still read what the agent was doing when its time ran out.
+     */
     @Override
     public Finalization salvage(RunHandle handle) {
         Optional<String> agent = containerOf(handle.runId(), AGENT);

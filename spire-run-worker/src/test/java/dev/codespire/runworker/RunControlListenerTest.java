@@ -38,6 +38,9 @@ class RunControlListenerTest {
 
     private static final String RUN_ID = "run::github:TEST-acme/app:s:1";
 
+    /** Named once, so the registration and the harness fake cannot disagree about it. */
+    private static final String HARNESS = "codex";
+
     private static final RunCommand.CancelRun CANCEL =
             new RunCommand.CancelRun(RUN_ID, "the operator asked");
 
@@ -158,20 +161,22 @@ class RunControlListenerTest {
     /**
      * Collects the transcript lines an operator would see.
      *
-     * <p>Vetoed: the parent is an application-scoped bean, and a subclass the container also
-     * discovers makes every injection of it ambiguous.
+     * <p>A {@link RunNotes} rather than a transcript subclass: the worker no longer numbers its
+     * own lines. The run's own event stream is the single sequence authority, and the listener
+     * reaches it through the registry, so this stands in for that one instance.
      */
-    @jakarta.enterprise.inject.Vetoed
-    private class NoteCollector extends RunTranscript {
+    private final class NoteCollector implements RunNotes {
 
         @Override
-        public void note(String runId, String kind, String text, boolean error) {
-            notes.add(new RunEventRecord(runId, notes.size() + 1L, java.time.Instant.now(),
+        public void note(String kind, String text, boolean error) {
+            notes.add(new RunEventRecord(RUN_ID, notes.size() + 1L, java.time.Instant.now(),
                     kind, text, error));
         }
     }
 
     private final FakeHarness harness = new FakeHarness();
+
+    private final NoteCollector noteCollector = new NoteCollector();
 
     /** Collects the transcript lines an operator would see. */
     private final List<RunEventRecord> notes = new ArrayList<>();
@@ -180,10 +185,16 @@ class RunControlListenerTest {
         RunControlListener listener = new RunControlListener();
         listener.runtime = runtime;
         listener.registry = registry;
-        listener.transcript = new NoteCollector();
         listener.harnesses = new HarnessRegistry() {
             @Override
             public dev.codespire.harness.HarnessAdapter forName(String name) {
+                // HONOURS ITS ARGUMENT. The fake this replaces returned the harness for any name
+                // at all, null included, which made the real registry's null-rejection
+                // unreachable from this suite -- so the two-read race that produced that null
+                // passed all sixteen cases here while escaping the channel in production.
+                if (!HARNESS.equals(name)) {
+                    throw new IllegalArgumentException("a run must name its harness: " + name);
+                }
                 return harness;
             }
         };
@@ -193,7 +204,7 @@ class RunControlListenerTest {
     @Test
     void aCancelStopsTheRunningSandbox() {
         // The whole defect: the branch logged and returned, so cancel had no error and no effect.
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(CANCEL);
 
@@ -209,7 +220,7 @@ class RunControlListenerTest {
         // streams, or throw away checkpoints the run had already pushed.
         //
         // Asserted by the fake throwing on both: if the listener ever reaches them, this fails.
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(CANCEL);
 
@@ -230,7 +241,7 @@ class RunControlListenerTest {
         // Stopping the containers and saying WHY the run ended are two different facts. Without the
         // record the launcher classifies the killed agent as an ordinary non-zero exit, and an
         // operator who cancelled a run is told it failed.
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(CANCEL);
 
@@ -241,7 +252,7 @@ class RunControlListenerTest {
     void aSecondCancelIsAcceptedAndChangesNothing() {
         // Two cancels record one cancellation. The second is a duplicate delivery or an impatient
         // operator; neither should fail the channel.
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
         RunControlListener listener = listener();
 
         listener.onControl(CANCEL);
@@ -258,7 +269,7 @@ class RunControlListenerTest {
         // Nacking would redeliver the record and try to cancel a run that may by then have ended
         // normally — and the cancellation is already recorded, so the result says so either way.
         runtime.cancelFails = new IllegalStateException("the daemon refused");
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(CANCEL);
 
@@ -277,7 +288,7 @@ class RunControlListenerTest {
     void anExecuteOnTheControlTopicIsRefusedLoudlyRatherThanRun() {
         // Silently ignoring it would be a run that never happens and nobody is told about; running
         // it here would put an hour-long agent on the non-blocking control channel.
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(new RunCommand.ExecuteRun(RUN_ID, new RepoRef("TEST-acme", "app"),
                 "https://example.invalid/TEST-acme/app.git", "main", "abc1234", "spire/x", "do the thing",
@@ -291,7 +302,7 @@ class RunControlListenerTest {
     void aFinishedRunIsForgottenSoALateCancelReachesNothing() {
         // The registry holds live work only. A cancel for a finished run must not resurrect a handle
         // whose containers are already destroyed.
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
         registry.forget(RUN_ID);
 
         listener().onControl(CANCEL);
@@ -306,7 +317,7 @@ class RunControlListenerTest {
     @Test
     void aHarnessDeclaringSteerReceivesTheInstruction() {
         harness.steers = true;
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(STEER);
 
@@ -320,7 +331,7 @@ class RunControlListenerTest {
         // cannot tell "not supported" from "the message was lost", and the second sends them looking
         // for a broker fault that is not there.
         harness.steers = false;
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(STEER);
 
@@ -346,7 +357,7 @@ class RunControlListenerTest {
         // record including the cancels.
         harness.steers = true;
         runtime.steerFails = new UnsupportedOperationException("no open input stream");
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(STEER);
 
@@ -370,7 +381,7 @@ class RunControlListenerTest {
         // would make the change look spontaneous. An operator has to be able to see that a human
         // intervened.
         harness.steers = true;
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(STEER);
 
@@ -384,7 +395,7 @@ class RunControlListenerTest {
         // cannot tell "not supported" from "the message never arrived", and the second sends them
         // looking for a broker fault that is not there.
         harness.steers = false;
-        registry.register(RUN_ID, "codex", new RunHandle(RUN_ID, "container-abc123"));
+        registry.register(RUN_ID, HARNESS, new RunHandle(RUN_ID, "container-abc123"), noteCollector);
 
         listener().onControl(STEER);
 

@@ -1833,10 +1833,19 @@ public class ReviewProjection {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record charges for call " + call.callRef(), e);
         }
-        // Only a review has a live socket keyed by this id. A run's cost surfaces on the factory
-        // read model, which broadcasts for itself.
         if (call.subjectKind() == ChargeSubject.REVIEW) {
+            // Only a review has a live socket keyed by this id, and broadcast() refreshes the panel
+            // on its way past. Nothing reads a RUN-subject charge for a socket yet; when the factory
+            // read model shows a run's cost it will have to push that itself — and note that
+            // RunResultSaga projects BEFORE it charges, so the charge is not in that snapshot.
             broadcast(call.subjectId());
+        } else {
+            // A run has no socket, but its charge still moves panel rows: the spend cap reads this
+            // table with NO subject filter, and RUN_SPEND_UNPRICED reads these very rows. Returning
+            // here left the charges that can trip the cap as the only ones that never pushed it —
+            // silent for the ten seconds until the scheduled sweep, on the panel whose whole contract
+            // is that it reflects what is true right now.
+            attention.refresh();
         }
     }
 

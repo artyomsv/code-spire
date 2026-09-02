@@ -716,7 +716,7 @@ class RunLauncherTest {
         }
 
         @Override
-        public void unitCreated(String unitId) {
+        public void unitCreated(String unitId, RunNotes notes) {
             announced.add(unitId);
             if (announceFails != null) {
                 throw announceFails;
@@ -862,5 +862,11 @@ class RunLauncherTest {
 
         assertTrue(finished.refused());
         assertEquals(List.of("ci.yml"), finished.blockedPaths());
+        // The half that makes this test able to fail. Without it the case passes when the stop is
+        // deleted outright -- cancel is never called, the fake never throws, and both assertions
+        // above hold anyway -- so it asserted the refusal rather than the refusal SURVIVING a
+        // throwing stop, which is the only thing it is here for.
+        assertFalse(runtime.cancelled.isEmpty(),
+                "the stop must have been attempted, or a throwing stop proves nothing");
     }
 }

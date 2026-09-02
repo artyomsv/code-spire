@@ -252,6 +252,85 @@ public class RunResource {
                 Response.status(Response.Status.CONFLICT).entity(message).build());
     }
 
+    /**
+     * Stop a run (FR-F6).
+     *
+     * <p>Without this the worker's control listener had no producer at all, so cancel was reachable
+     * only by hand-producing to the topic — a consumer shipped for an operator control an operator
+     * could not use.
+     *
+     * <p><b>The refusal happens HERE, and that is why it can be honest.</b> Every replica reads every
+     * control record, so a listener cannot tell "not running on me" from "not running anywhere" and
+     * must pass over both quietly. This can see the row: an unknown run is 404 and a finished one is
+     * 409, answered synchronously, instead of an operator watching a timeline that never changes.
+     *
+     * <p>202, not 204: the broker has acknowledged the command, and the run stopping is what happens
+     * afterwards. A 2xx here means the instruction was accepted for delivery, never that the sandbox
+     * is already down.
+     */
+    @POST
+    @Path("/{runId:.+}/cancel")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response cancel(@PathParam("runId") String runId, Map<String, Object> body) {
+        requireLive(runId, "cancelled");
+        String reason = text(body, "reason", "an operator cancelled this run");
+        emitter.control(new RunCommand.CancelRun(runId, reason));
+        LOG.infof("run %s: a cancel was published to the control topic", runId);
+        return Response.accepted().build();
+    }
+
+    /**
+     * Send a running agent a further instruction (FR-F6).
+     *
+     * <p>Accepted here and refused downstream when the harness cannot carry it: the capability is the
+     * HARNESS's fact and this endpoint does not know which harness a run is using without reading the
+     * row, while the worker holds it already. The refusal reaches the operator on the run's
+     * transcript, which is why that line is written even when nothing is delivered.
+     *
+     * <p>No shipped harness declares steering today, so an accepted steer will be refused on the
+     * transcript rather than delivered. That is worth knowing before wondering why nothing happened.
+     */
+    @POST
+    @Path("/{runId:.+}/steer")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response steer(@PathParam("runId") String runId, Map<String, Object> body) {
+        requireLive(runId, "steered");
+        String instruction = text(body, "instruction", "");
+        // Constructed here so a blank or oversized instruction is a 400 the caller can read, rather
+        // than a record the worker's deserializer rejects into silence: the compact constructor's
+        // guards fire on the consumer side otherwise, where nobody can be told.
+        RunCommand.SteerRun command;
+        try {
+            command = new RunCommand.SteerRun(runId, instruction);
+        } catch (IllegalArgumentException e) {
+            throw new jakarta.ws.rs.BadRequestException(e.getMessage());
+        }
+        emitter.control(command);
+        LOG.infof("run %s: a steer was published to the control topic", runId);
+        return Response.accepted().build();
+    }
+
+    /**
+     * The run exists and has not finished, or the caller is told which of those is false.
+     *
+     * @param verb what the caller was trying to do, so the 409 names it
+     */
+    private void requireLive(String runId, String verb) {
+        FactoryRunProjection.RunView run = projection.find(runId)
+                .orElseThrow(() -> new NotFoundException("no such run: " + runId));
+        if (!FactoryRunProjection.QUEUED.equals(run.status())
+                && !FactoryRunProjection.RUNNING.equals(run.status())) {
+            throw conflict("run " + runId + " is " + run.status() + " and cannot be " + verb
+                    + "; only a queued or running run accepts control.");
+        }
+    }
+
+    /** A string field from a small JSON body, defaulted rather than demanded. */
+    private static String text(Map<String, Object> body, String field, String fallback) {
+        Object value = body == null ? null : body.get(field);
+        return value instanceof String s && !s.isBlank() ? s : fallback;
+    }
+
     /** Clears the run's attention row (a gate refusal). Both roles: reading a refusal spends nothing. */
     @POST
     @Path("/{runId:.+}/attention-ack")

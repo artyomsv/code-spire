@@ -439,14 +439,14 @@ One branch, `feat/factory-m1`, one pull request opened at Task 0 with the checkl
 as each task lands. Each task is a commit (or a small series), pushed so the workflows run, then a
 four-lens `/code-review` whose findings are fixed before the next task starts.
 
-- [ ] Task 0 — serialise the two Docker-driving test modules
-- [ ] Task 1 — failure taxonomy as a closed set
-- [ ] Task 2 — run event stream on `cs.run-events`
-- [ ] Task 3 — finalize before destroy; failed salvage blocks teardown
-- [ ] Task 4 — a run writes to the charge ledger
+- [x] Task 0 — serialise the two Docker-driving test modules
+- [x] Task 1 — failure taxonomy as a closed set
+- [x] Task 2 — run event stream on `cs.run-events`
+- [x] Task 3 — finalize before destroy; failed salvage blocks teardown
+- [x] Task 4 — a run writes to the charge ledger
 - [x] Task 5 — `run_lease` with owner, heartbeat, the unit id and a preservation stamp
 - [x] Task 6 — the orphan watchdog
-- [ ] Task 7 — `cs.run-control` and a cancel that cancels
+- [x] Task 7 — `cs.run-control` and a cancel that cancels
 - [x] Task 8 — steer, where the harness declares it
 - [ ] Task 9 — idempotent dispatch, ambiguity failing closed
 - [ ] Task 10 — the credential pool with rotation

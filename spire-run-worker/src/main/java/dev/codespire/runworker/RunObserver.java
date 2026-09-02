@@ -31,8 +31,12 @@ public interface RunObserver {
      *
      * <p>Called once, the instant {@code create} returns and before the run is observed, so a run
      * that then hangs is still findable. Not called at all when no unit was created.
+     *
+     * <p>{@code notes} is handed over at the same moment because it is the same fact: the run's
+     * transcript now has a numbering authority, and anything wanting to add a line to that run must
+     * go through it rather than counting for itself. See {@link RunNotes}.
      */
-    void unitCreated(String unitId);
+    void unitCreated(String unitId, RunNotes notes);
 
     /** The sandbox is gone: a teardown ran and returned. Never called when one was skipped or threw. */
     void unitReleased();
@@ -45,7 +49,7 @@ public interface RunObserver {
         }
 
         @Override
-        public void unitCreated(String unitId) {
+        public void unitCreated(String unitId, RunNotes notes) {
             // nothing
         }
 

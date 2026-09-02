@@ -6,6 +6,7 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -38,5 +39,29 @@ class DockerRunRuntimeTest {
         assertNotEquals(DockerRunRuntime.volumeName(RUN_ID, "work"),
                 DockerRunRuntime.volumeName("run::github:acme/app:finding-1:2", "work"));
         assertNotEquals(DockerRunRuntime.volumeName(RUN_ID, "work"), DockerRunRuntime.volumeName(RUN_ID, "out"));
+    }
+
+    /**
+     * This arm refuses to steer, and the refusal is the implementation.
+     *
+     * <p>Asserted here because nothing else reaches it: the control listener refuses first on the
+     * harness's declared capability, and no shipped harness declares steering, so the whole
+     * delivery path is unreachable on a real deployment. Its own test stubbed a fake runtime that
+     * threw, which proves the listener handles the throw and not that this arm produces one --
+     * giving the method an empty body failed nothing anywhere.
+     *
+     * <p>A quiet no-op here would let an operator's instruction vanish while every layer above
+     * reported success, which is the failure the SPI method was deliberately given no default to
+     * prevent.
+     */
+    @Test
+    void steeringIsRefusedRatherThanSilentlyIgnored() {
+        DockerRunRuntime runtime = new DockerRunRuntime();
+
+        UnsupportedOperationException refused = assertThrows(UnsupportedOperationException.class,
+                () -> runtime.steer(new dev.codespire.runtime.RunHandle(RUN_ID, "unit-1"), "try again"));
+
+        assertTrue(refused.getMessage().contains(RUN_ID),
+                "the run must be named, or an operator cannot tell which instruction went nowhere");
     }
 }

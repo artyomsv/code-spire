@@ -40,6 +40,21 @@ public class FactoryRunProjection {
     static final String PUSH_GATE_REFUSED = "push_gate_refused";
 
     /**
+     * An operator stopped this run, so it is not a failure.
+     *
+     * <p>Reserved in the V43 status set at M0 and written by nothing until now: every cancelled run
+     * was projected {@link #FAILED}, which tells the operator who pressed the button that the thing
+     * they stopped broke. The worker already goes to the trouble of recording the cancellation
+     * separately from acting on it, precisely so the killed agent's non-zero exit is not read as a
+     * fault — and then the projection discarded that distinction one layer up.
+     *
+     * <p>The same argument as {@link #PUSH_GATE_REFUSED}, only stronger: there the run did correct
+     * work that was deliberately not delivered, here the operator IS the cause. The cause is still
+     * stored beside it, so the row says both what happened and who ended it.
+     */
+    static final String CANCELLED = "cancelled";
+
+    /**
      * Finished, and there was nothing to deliver: the agent exited cleanly and committed nothing.
      *
      * <p>A status rather than a failure, for the reason {@link #PUSH_GATE_REFUSED} is one. The run
@@ -238,9 +253,13 @@ public class FactoryRunProjection {
         String detail = cause == RunFailureCause.UNCLASSIFIED
                 ? unrecognised(failed.cause(), failed.detail())
                 : failed.detail();
+        // A cancellation is not a failure, and the status is how an operator reads the row at a
+        // glance. The worker relabels the killed agent's exit to CANCELLED for exactly this reason;
+        // writing FAILED here threw that away and told whoever stopped the run that it broke.
+        String status = cause == RunFailureCause.CANCELLED ? CANCELLED : FAILED;
         update("UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()"
                         + " WHERE run_id = ? AND " + LIVE,
-                failed.runId(), FAILED, cause.name(), detail, failed.runId());
+                failed.runId(), status, cause.name(), detail, failed.runId());
     }
 
     /** Keeps the producer's own spelling readable when this version does not know it. */

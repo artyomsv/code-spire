@@ -112,7 +112,32 @@ mp:
         connector: smallrye-kafka
         topic: cs.run-control
         group:
-          id: spire-run-worker-control
+          # PER INSTANCE, so every replica reads every control record. This is a broadcast, not a
+          # work queue, and the difference is the whole feature: a run's handle lives only in the
+          # process holding its containers, so a cancel is actionable on exactly one replica. Under
+          # a shared group Kafka gives the record to ONE member, and the control topic's partition
+          # assignment is independent of the command topic's -- so the cancel lands on a replica
+          # that is not running the run, finds nothing in its registry, and is dropped as a late
+          # cancel. The sandbox keeps its git token and its model key until the wall clock.
+          # ${quarkus.uuid} is fresh per application instance, which also makes the `latest` reset
+          # below exactly right rather than incidentally so: a brand-new group has no committed
+          # offset, and replaying yesterday's cancels at startup is precisely what must not happen.
+          id: spire-run-worker-control-${quarkus.uuid}
+        # No prefetch, like the work channel and for the same reason: SmallRye stamps a record's age
+        # when it is POLLED, so a queued cancel ages behind the one in hand. RunAckBudget checks
+        # these three rather than trusting this file.
+        max:
+          poll:
+            records: 1
+        max-queue-size-factor: 1
+        throttled:
+          # 15 minutes. The handler's work is a docker call with no timeout of its own, and the
+          # moment an operator most needs to cancel runs is when the daemon is wedged -- which is
+          # exactly when the connector's 60s default would age the record out and fail the channel,
+          # taking out cancellation entirely. That is the outage this topic was created to remove,
+          # arriving through a different door.
+          unprocessed-record-max-age:
+            ms: 900000
         value:
           deserializer: dev.codespire.runworker.RunCommandDeserializer
         # A control record nobody can read must not stop the ones behind it: a stuck control channel
@@ -157,7 +182,6 @@ mp:
           unprocessed-record-max-age:
             ms: 3900000
     outgoing:
-
       run-results-out:
         connector: smallrye-kafka
         topic: cs.run-results
