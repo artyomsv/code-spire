@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.harness.HarnessAdapter;
@@ -27,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /**
  * Creates the run unit and reads its two log streams.
@@ -66,7 +68,21 @@ public class RunLauncher {
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
     }
 
+    /**
+     * For callers with no interest in the transcript; the stream is discarded.
+     *
+     * <p><b>A test double must override the two-argument form below, not this one.</b> Overriding
+     * this one compiles, does not intercept the dispatcher's call, and silently runs the real
+     * launcher — so every assertion about ordering and idempotency measures nothing. That is the
+     * same shape as the convenience constructors which let a new wire component be dropped at every
+     * rebuild site while still compiling, and it cost this module five green-looking tests when the
+     * overload was introduced.
+     */
     public RunResult launch(RunCommand.ExecuteRun command) {
+        return launch(command, event -> { });
+    }
+
+    public RunResult launch(RunCommand.ExecuteRun command, Consumer<RunEventRecord> stream) {
         HarnessAdapter adapter;
         RunUnitSpec unit;
         try {
@@ -87,7 +103,7 @@ public class RunLauncher {
             // place from an eviction mid-run — and that discrimination is the whole point of FR-F9.
             return failure(command, "RUNTIME_UNAVAILABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
-        return observe(command, adapter, handle);
+        return observe(command, adapter, handle, stream);
     }
 
     /**
@@ -97,16 +113,22 @@ public class RunLauncher {
      * result or leave a reader blocked on a log stream for the life of the process: the siblings
      * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
      */
-    private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle) {
+    private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle,
+                              Consumer<RunEventRecord> stream) {
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
         // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
         // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
         // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
         // the process.
+        RunEventStream transcript = new RunEventStream(command.runId(), stream);
         Future<?> agentStream = streams.submit(() ->
-                runtime.attach(handle, LogChannel.AGENT,
-                        line -> adapter.parse(line).ifPresent(seen::accept)));
+                runtime.attach(handle, LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
+                    // One parse, two readers. The fold decides the run's outcome and stays bounded;
+                    // the transcript is the operator-facing tier and is bounded separately.
+                    seen.accept(event);
+                    transcript.accept(event);
+                })));
         Future<?> publisherStream = streams.submit(() ->
                 runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept));
 

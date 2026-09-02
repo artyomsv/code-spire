@@ -65,8 +65,12 @@ class RunDispatcherTest {
             this.order = order;
         }
 
+        // The two-argument form, because that is what the dispatcher calls. Overriding the
+        // convenience overload instead compiles, runs the REAL launcher, and every assertion about
+        // ordering and idempotency then measures nothing.
         @Override
-        public RunResult launch(RunCommand.ExecuteRun command) {
+        public RunResult launch(RunCommand.ExecuteRun command,
+                                java.util.function.Consumer<dev.codespire.contract.event.RunEventRecord> stream) {
             order.add("launch");
             launches++;
             if (failWith != null) {

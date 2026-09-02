@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -58,6 +59,14 @@ public class RunDispatcher {
     @Channel("run-results-out")
     Emitter<Record<String, RunResult>> results;
 
+    /**
+     * The second event tier (ADR-034). Fire-and-forget on purpose: a transcript is a convenience and
+     * the run is the paid work, so this emitter is never awaited and its failures never reach the
+     * run's result. The results channel above is the opposite and awaits its acks.
+     */
+    @Channel("run-events-out")
+    Emitter<Record<String, RunEventRecord>> events;
+
     @Incoming("run-commands-in")
     @Acknowledgment(Acknowledgment.Strategy.MANUAL)
     @Blocking(ordered = true)
@@ -99,7 +108,7 @@ public class RunDispatcher {
         emit(new RunResult.RunStarted(execute.runId(), execute.runId()));
         RunResult result;
         try {
-            result = launcher.launch(execute);
+            result = launcher.launch(execute, event -> events.send(Record.of(event.runId(), event)));
         } catch (RuntimeException e) {
             // Never let an unexpected failure leave a run with no terminal result: a run that
             // reports nothing is indistinguishable from one still working.

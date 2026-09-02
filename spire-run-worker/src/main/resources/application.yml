@@ -128,6 +128,22 @@ mp:
         value:
           serializer: dev.codespire.runworker.RunResultSerializer
         waitForWriteCompletion: true
+      # The second event tier (ADR-034): the run's transcript, for the live tail and for debugging.
+      # Nothing derives state from it and it is not replayable.
+      #
+      # waitForWriteCompletion is FALSE here, unlike the results channel above, and that is the whole
+      # difference between the tiers. A result is the run's outcome and its loss is unacceptable, so
+      # that channel blocks on the broker's ack. A transcript event is a convenience: awaiting each
+      # one would put the broker's latency inside the agent's log-reading loop, once per event, on a
+      # stream that can carry thousands per run.
+      run-events-out:
+        connector: smallrye-kafka
+        topic: cs.run-events
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.RunEventSerializer
+        waitForWriteCompletion: false
 
 # Dev: the single repo-root .env supplies POSTGRES_*; the broker is the compose Redpanda.
 "%dev":
