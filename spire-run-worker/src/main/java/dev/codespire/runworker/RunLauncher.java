@@ -59,6 +59,9 @@ public class RunLauncher {
     @Inject
     HarnessRegistry harnesses;
 
+    @Inject
+    Credentials credentials;
+
     /** Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit. */
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
     }
@@ -72,16 +75,14 @@ public class RunLauncher {
         } catch (RuntimeException e) {
             // Nothing was created, so nothing needs salvaging. Not retryable: the same command
             // would be rejected identically, and retrying a malformed dispatch is a loop.
-            return new RunResult.RunFailed(command.runId(), "BAD_COMMAND",
-                    e.getClass().getSimpleName() + ": " + e.getMessage(), false);
+            return failure(command, "BAD_COMMAND", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
         RunHandle handle;
         try {
             handle = runtime.create(unit);
         } catch (RuntimeException e) {
-            return new RunResult.RunFailed(command.runId(), "SANDBOX_UNREACHABLE",
-                    e.getClass().getSimpleName() + ": " + e.getMessage(), true);
+            return failure(command, "SANDBOX_UNREACHABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         return observe(command, adapter, handle);
     }
@@ -115,8 +116,8 @@ public class RunLauncher {
             // follow stream on a container that is still running would otherwise never end.
             awaitBriefly(agentStream, publisherStream);
             LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
-            return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED",
-                    e.getClass().getSimpleName() + ": " + e.getMessage() + pushedNote(outcome), false);
+            return failure(command, "SALVAGE_FAILED",
+                    e.getClass().getSimpleName() + ": " + e.getMessage() + pushedNote(outcome));
         }
         // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
         // whatever was read still decide the result, and the unit is still destroyed.
@@ -151,9 +152,29 @@ public class RunLauncher {
      * is the expensive half. The producer's own word for the cause is preserved on the wire; only
      * the retry decision is taken from the closed set's answer for it.
      */
-    private static RunResult.RunFailed failure(RunCommand.ExecuteRun command, String cause, String detail) {
-        return new RunResult.RunFailed(command.runId(), cause, detail,
+    private RunResult.RunFailed failure(RunCommand.ExecuteRun command, String cause, String detail) {
+        return new RunResult.RunFailed(command.runId(), cause, scrubFor(command).clean(detail),
                 RunFailureCause.of(cause).isRetryable());
+    }
+
+    /**
+     * This run's credentials, decrypted only to redact them from a failure detail.
+     *
+     * <p>Decrypted on the failure path rather than held for the run's life: failures are rare, so
+     * the plaintext's lifetime stays as short as the string it is cleaning. A run whose credentials
+     * cannot be decrypted scrubs nothing, because there is nothing to match — which is honest, and
+     * is why the injected secrets are still kept out of exception messages at the source. This is
+     * the second line of defence, not the first.
+     */
+    private SecretScrub scrubFor(RunCommand.ExecuteRun command) {
+        try {
+            Credentials.Scm scm = credentials.scm(command.runId(), command.scmCredential());
+            return SecretScrub.of(scm.readUsername(), scm.readSecret(), scm.writeSecret());
+        } catch (RuntimeException undecryptable) {
+            // Deliberately silent: naming what failed to decrypt, or logging the exception, is
+            // itself a way for a credential to reach a log line.
+            return SecretScrub.none();
+        }
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
@@ -162,8 +183,7 @@ public class RunLauncher {
         if (!finalization.salvaged()) {
             // The work pushed before the overrun is on the branch; the detail says so, because a
             // failure that hides an hour of delivered checkpoints sends the operator to the wrong place.
-            return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED",
-                    finalization.detail() + pushedNote(outcome), false);
+            return failure(command, "SALVAGE_FAILED", finalization.detail() + pushedNote(outcome));
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail());

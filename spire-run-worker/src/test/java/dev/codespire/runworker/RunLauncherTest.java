@@ -51,6 +51,12 @@ class RunLauncherTest {
             "https://github.com/acme/app.git", "main", "abc1234", "spire/finding-1",
             "fix the typo", "codex", "gpt-5.6", "img", List.of(), 60, "enc-scm", "enc-harness");
 
+    static final String SCM_USERNAME = "TEST-machine-account";
+
+    static final String READ_SECRET = "TEST-read-secret-0123456789";
+
+    static final String WRITE_SECRET = "TEST-write-secret-abcdefgh";
+
     /** Exit 0 succeeds; anything else is a harness failure. Nothing parsed, usage unknown. */
     static final class FakeAdapter implements HarnessAdapter {
         @Override
@@ -184,6 +190,12 @@ class RunLauncherTest {
                 return new FakeAdapter();
             }
         };
+        launcher.credentials = new Credentials() {
+            @Override
+            public Scm scm(String runId, String packed) {
+                return new Scm(SCM_USERNAME, READ_SECRET, SCM_USERNAME, WRITE_SECRET);
+            }
+        };
         launcher.builder = new RunUnitBuilder() {
             @Override
             public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
@@ -292,6 +304,21 @@ class RunLauncherTest {
 
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
         assertEquals(1, runtime.destroyed.size(), "a salvaged unit is destroyed, reader fault or not");
+    }
+
+    @Test
+    void aFailureDetailCarriesNoCredential() {
+        // factory_run.failure_detail is read by an operator, and a runtime exception can quote the
+        // request it made -- docker-java includes the create request, environment and all, in some
+        // errors. The publisher has scrubbed its own failure lines since M0; the worker's did not.
+        runtime.salvageFails = new IllegalStateException(
+                "create failed: env=[SPIRE_WRITE_TOKEN=" + WRITE_SECRET + ", X=1] read=" + READ_SECRET);
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+
+        assertFalse(failed.detail().contains(WRITE_SECRET), "the write token reached failure_detail");
+        assertFalse(failed.detail().contains(READ_SECRET), "the read token reached failure_detail");
+        assertTrue(failed.detail().contains("create failed"), "the diagnosis itself must survive");
     }
 
     @Test
