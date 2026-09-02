@@ -116,6 +116,8 @@ class RunLauncherTest {
         final java.util.concurrent.CountDownLatch readersInterrupted = new java.util.concurrent.CountDownLatch(2);
         RuntimeException agentReaderFails;
         final List<RunHandle> destroyed = new ArrayList<>();
+        /** Every lifecycle call in order, so "salvage before destroy" is a fact rather than a hope. */
+        final List<String> lifecycle = new ArrayList<>();
         /** What this arm claims salvage may hold the handler for; the ack budget reads it. */
         Duration drainWindow = Duration.ZERO;
 
@@ -159,6 +161,7 @@ class RunLauncherTest {
 
         @Override
         public Finalization salvage(RunHandle handle) {
+            lifecycle.add("salvage");
             if (salvageFails != null) {
                 throw salvageFails;
             }
@@ -167,6 +170,7 @@ class RunLauncherTest {
 
         @Override
         public void destroy(RunHandle handle) {
+            lifecycle.add("destroy");
             destroyed.add(handle);
         }
 
@@ -284,6 +288,17 @@ class RunLauncherTest {
         assertTrue(runtime.destroyed.isEmpty(),
                 "and the unit is still preserved: nothing observed its exit, so there is still "
                         + "something an operator may need to read");
+    }
+
+    @Test
+    void teardownNeverPrecedesSalvage() {
+        // Both are calls on the same object, so a reordering compiles and passes every assertion
+        // about the RESULT — while destroying the unit first throws away the very thing salvage
+        // exists to read. FR-F7 states the order absolutely, so it is asserted absolutely.
+        launcher.launch(COMMAND, e -> { });
+
+        assertEquals(List.of("salvage", "destroy"), runtime.lifecycle,
+                "destroy ran before salvage, discarding the run's outcome");
     }
 
     @Test
