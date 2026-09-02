@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.harness.FailureCause;
@@ -209,8 +210,17 @@ class RunLauncherTest {
         runtime.finalization = Finalization.salvaged(2, "exited");
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+
+        // The harness's own word rides the wire unchanged; the closed set answers what it means.
         assertEquals("HARNESS_EXIT_NONZERO", failed.cause());
-        assertTrue(failed.retryable());
+        assertEquals(RunFailureCause.AGENT_FAILED, RunFailureCause.of(failed.cause()));
+
+        // Was reported retryable. An agent that ran to completion and failed will fail the same
+        // prompt against the same commit again, and the model has already been paid for — so the
+        // retry bought nothing and cost a second full run. A provider outage is the case that
+        // deserves the retry, and it is MODEL_UNAVAILABLE, which is a different value for exactly
+        // this reason.
+        assertFalse(failed.retryable());
     }
 
     @Test
@@ -282,6 +292,25 @@ class RunLauncherTest {
 
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
         assertEquals(1, runtime.destroyed.size(), "a salvaged unit is destroyed, reader fault or not");
+    }
+
+    @Test
+    void aFailureIsRetryableOnlyWhenItsCauseIs() {
+        // Every publisher failure used to be reported retryable. A push the forge rejected refuses
+        // the same way next time, so the retry bought nothing and cost another whole agent run --
+        // the expensive half, since the model has already been paid for by the time we get here.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"rejected\"}");
+        RunResult.RunFailed rejected = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+        assertEquals(RunFailureCause.PUSH_REJECTED, RunFailureCause.of(rejected.cause()));
+        assertFalse(rejected.retryable(), "a rejected push is an answer, not weather");
+
+        // ...while a clone that could not reach the forge genuinely might succeed on a retry.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"failed\",\"cause\":\"CLONE_FAILED\",\"detail\":\"connection reset\"}");
+        RunResult.RunFailed clone = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+        assertEquals(RunFailureCause.CLONE_FAILED, RunFailureCause.of(clone.cause()));
+        assertTrue(clone.retryable(), "a transport failure reaching the forge is worth one retry");
     }
 
     @Test

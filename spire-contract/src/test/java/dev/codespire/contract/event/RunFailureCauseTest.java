@@ -87,6 +87,24 @@ class RunFailureCauseTest {
     }
 
     @Test
+    void aProviderOutageAndAnAgentThatFailedGetOppositeAnswers() {
+        // The reason MODEL_UNAVAILABLE exists as its own value. An earlier draft folded the harness's
+        // PROVIDER_ERROR, NO_MODEL_RESPONSE and HARNESS_EXIT_NONZERO into one non-retryable cause,
+        // which quietly took the retry away from the outage that had earned it. Asserted from the
+        // harness's own words, because that is the form the wire actually carries.
+        assertTrue(RunFailureCause.of("PROVIDER_ERROR").isRetryable(),
+                "a provider outage clears, and the run has not had its answer yet");
+        assertTrue(RunFailureCause.of("NO_MODEL_RESPONSE").isRetryable(),
+                "the model returned nothing at all, which is the same outage in another shape");
+        assertFalse(RunFailureCause.of("HARNESS_EXIT_NONZERO").isRetryable(),
+                "the agent ran to completion and failed; the same prompt fails the same way, "
+                        + "and the model has already been paid for");
+
+        assertNotEquals(RunFailureCause.of("PROVIDER_ERROR"), RunFailureCause.of("HARNESS_EXIT_NONZERO"),
+                "collapsing these two is what made the retry decision wrong");
+    }
+
+    @Test
     void aCauseFitsTheColumnItIsStoredIn() {
         // factory_run.failure_cause is VARCHAR(32). A longer name would be rejected by Postgres at
         // the moment a run failed, turning a classified failure into an unrecorded one.

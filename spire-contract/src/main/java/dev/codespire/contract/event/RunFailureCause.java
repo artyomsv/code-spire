@@ -17,10 +17,11 @@ import java.util.stream.Stream;
  *
  * <p><b>Each value earns its place by being actionable by a different person, or actionable in a
  * different way.</b> That is the test for adding one, and it is why the harness's twelve values do
- * not map one-to-one: {@code PROVIDER_ERROR}, {@code NO_MODEL_RESPONSE} and
- * {@code HARNESS_EXIT_NONZERO} all mean "the agent ran and did not deliver", and all three send the
- * same person to the same transcript. They collapse to {@link #AGENT_FAILED}, with the harness's own
- * word kept in the detail.
+ * not map one-to-one. {@code PROVIDER_ERROR} and {@code NO_MODEL_RESPONSE} become
+ * {@link #MODEL_UNAVAILABLE} while {@code HARNESS_EXIT_NONZERO} becomes {@link #AGENT_FAILED}, and
+ * the split is load-bearing: an outage clears and deserves a retry, an agent that ran and failed the
+ * task will fail it again. An earlier draft collapsed all three and a test caught it, because the
+ * collapse quietly took the retry away from the one of them that had earned it.
  *
  * <p><b>Parsing is lenient although the set is closed, and the two are not in tension.</b> An
  * unrecognised value becomes {@link #UNCLASSIFIED} rather than throwing. The alternative has already
@@ -56,8 +57,20 @@ public enum RunFailureCause {
 
     // --- The agent ran. Read the run. ---
 
-    /** The agent exited non-zero, errored, or returned nothing usable. */
+    /**
+     * The agent ran to completion and did not deliver. Not retryable: the same prompt against the
+     * same commit produces the same result, and the model has already been paid for.
+     */
     AGENT_FAILED(false),
+
+    /**
+     * The model provider errored or returned nothing at all, so the agent never got its answer.
+     *
+     * <p>Separate from {@link #AGENT_FAILED} because the two send different people to different
+     * places and deserve opposite retry answers. An outage clears; an agent that ran and failed the
+     * task will fail it again. Collapsing them cost the retry that a provider blip should get.
+     */
+    MODEL_UNAVAILABLE(true),
 
     /** The agent outlived its wall clock and was stopped. */
     AGENT_TIMEOUT(false),
@@ -128,8 +141,8 @@ public enum RunFailureCause {
      */
     private static final Map<String, RunFailureCause> ALIASES = Map.ofEntries(
             // spire-harness FailureCause: the agent's own words for "ran, did not deliver".
-            Map.entry("PROVIDER_ERROR", AGENT_FAILED),
-            Map.entry("NO_MODEL_RESPONSE", AGENT_FAILED),
+            Map.entry("PROVIDER_ERROR", MODEL_UNAVAILABLE),
+            Map.entry("NO_MODEL_RESPONSE", MODEL_UNAVAILABLE),
             Map.entry("HARNESS_EXIT_NONZERO", AGENT_FAILED),
             Map.entry("TIMED_OUT", AGENT_TIMEOUT),
             Map.entry("OUT_OF_MEMORY", SANDBOX_LOST),

@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.RunEventSummary;
@@ -141,6 +142,20 @@ public class RunLauncher {
         return result;
     }
 
+    /**
+     * A failure whose retryability comes from its cause, never from the call site.
+     *
+     * <p>Both of these paths used to pass a literal {@code true}. A push the forge rejected, a gate
+     * refusal and a timed-out agent all refuse identically next time, so the retry bought nothing
+     * and cost another full agent run — and by this point the model has already been paid for, which
+     * is the expensive half. The producer's own word for the cause is preserved on the wire; only
+     * the retry decision is taken from the closed set's answer for it.
+     */
+    private static RunResult.RunFailed failure(RunCommand.ExecuteRun command, String cause, String detail) {
+        return new RunResult.RunFailed(command.runId(), cause, detail,
+                RunFailureCause.of(cause).isRetryable());
+    }
+
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
         PublisherOutcome outcome = observed.outcome();
         Finalization finalization = observed.finalization();
@@ -151,8 +166,7 @@ public class RunLauncher {
                     finalization.detail() + pushedNote(outcome), false);
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
-            return new RunResult.RunFailed(command.runId(), outcome.failureCause().orElseThrow(),
-                    outcome.failureDetail(), true);
+            return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail());
         }
         if (observed.seen().dropped() > 0) {
             LOG.debugf("run %s: %d agent events folded away", command.runId(), observed.seen().dropped());
@@ -166,8 +180,7 @@ public class RunLauncher {
         if (!terminal.succeeded() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             // The agent failed and nothing reached the remote. A run that DID push before failing
             // is reported as finished, because the work is on the branch either way.
-            return new RunResult.RunFailed(command.runId(),
-                    terminal.cause().orElseThrow().name(), terminal.detail(), true);
+            return failure(command, terminal.cause().orElseThrow().name(), terminal.detail());
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
                 outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary));
