@@ -33,13 +33,28 @@ class RuntimeSpiTest {
     }
 
     @Test
-    void aFailedSalvageCannotAlsoReportAnExitCode() {
-        // Without this the two halves disagree: new Finalization(0, false, ...) is constructible
-        // and reads as a clean exit that was never observed, which is exactly the claim a failed
-        // salvage is unable to make.
+    void anUnobservedRunCannotAlsoReportAnExitCode() {
+        // Without this the two halves disagree: a finalization that observed nothing is
+        // constructible with exit 0 and reads as a clean exit, which is exactly the claim it is
+        // unable to make. True of both kinds of unobserved, not only a fault.
         assertThrows(IllegalArgumentException.class,
-                () -> new Finalization(0, false, "salvage failed but exit 0?"));
+                () -> new Finalization(0, Finalization.Outcome.FAULTED, "salvage failed but exit 0?"));
+        assertThrows(IllegalArgumentException.class,
+                () -> new Finalization(0, Finalization.Outcome.OVERRAN, "overran but exit 0?"));
         assertEquals(Finalization.NOT_OBSERVED, Finalization.salvageFailed("gone").exitCode());
+        assertEquals(Finalization.NOT_OBSERVED, Finalization.overran("still running").exitCode());
+    }
+
+    @Test
+    void anOverrunIsNotAFault() {
+        // Both are "no exit code was observed", and an earlier version had only that one bit — so a
+        // timeout and a broken daemon were the same outcome, and the timeout read as broken
+        // infrastructure. They send different people to different places.
+        assertFalse(Finalization.overran("wall clock").salvaged());
+        assertFalse(Finalization.salvageFailed("daemon gone").salvaged());
+        assertTrue(Finalization.overran("wall clock").overran());
+        assertFalse(Finalization.salvageFailed("daemon gone").overran(),
+                "a runtime that could not look must not be reported as an agent that ran too long");
     }
 
     @Test

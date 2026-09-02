@@ -263,18 +263,44 @@ class RunLauncherTest {
     }
 
     @Test
-    void aFailedSalvageAfterAPushNamesTheRefAndPreservesTheUnit() {
-        // An hour of pushed checkpoints, then a wall-clock overrun: the failure must say where the
-        // work is, or the operator hunts for a lost commit that is sitting on the remote.
-        runtime.finalization = Finalization.salvageFailed("agent did not exit within the run's wall clock");
+    void aRunThatPushedBeforeOverrunningIsFinishedWithItsRef() {
+        // An hour of pushed checkpoints, then a wall-clock overrun. The branch really holds that
+        // work, so a result saying SALVAGE_FAILED with no ref tells the operator nothing was
+        // delivered and sends them hunting for commits that are sitting on the remote.
+        //
+        // It also contradicted the rule interpret() states a few lines further down for the agent's
+        // own failure: a run that pushed before failing is finished, because the work is on the
+        // branch either way. The overrun path did not follow its own rule.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
         runtime.publisherLines = List.of(
-                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"MODIFIED\"}]}");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
 
-        assertEquals("SALVAGE_FAILED", failed.cause());
-        assertTrue(failed.detail().contains("refs/heads/spire/finding-1"), failed.detail());
-        assertTrue(runtime.destroyed.isEmpty(), "a unit whose salvage failed is preserved for inspection");
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef(),
+                "the run record must know about commits that exist on the remote");
+        assertEquals(List.of("a.txt"), finished.changedPaths());
+        assertTrue(runtime.destroyed.isEmpty(),
+                "and the unit is still preserved: nothing observed its exit, so there is still "
+                        + "something an operator may need to read");
+    }
+
+    @Test
+    void anOverrunIsToldApartFromADaemonFault() {
+        // Both used to report SALVAGE_FAILED, so an agent that ran too long looked like broken
+        // infrastructure. They are different people's problems: an overrun is the agent's doing and
+        // the same prompt will overrun again, while a daemon fault may not recur.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        RunResult.RunFailed overran =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+        assertEquals(RunFailureCause.AGENT_TIMEOUT, RunFailureCause.of(overran.cause()));
+        assertFalse(overran.retryable(), "the same prompt against the same commit runs just as long");
+
+        runtime.finalization = Finalization.salvageFailed("daemon hung up mid-wait");
+        RunResult.RunFailed faulted =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+        assertEquals(RunFailureCause.SALVAGE_FAILED, RunFailureCause.of(faulted.cause()));
     }
 
     @Test

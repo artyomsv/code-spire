@@ -163,9 +163,20 @@ public class RunLauncher {
         PublisherOutcome outcome = observed.outcome();
         Finalization finalization = observed.finalization();
         if (!finalization.salvaged()) {
-            // The work pushed before the overrun is on the branch; the detail says so, because a
-            // failure that hides an hour of delivered checkpoints sends the operator to the wrong place.
-            return failure(command, "SALVAGE_FAILED", finalization.detail() + pushedNote(outcome));
+            // A run that PUSHED before it overran is finished, because the work is on the branch
+            // either way — the same rule this method applies to a failed agent a few lines below,
+            // which the overrun path used not to follow. Reported as a bare failure it told the
+            // operator nothing was delivered while an hour of checkpoints sat on the remote, and
+            // left the run record unable to name commits that exist.
+            if (outcome.pushedRef().isPresent() && !outcome.refused()) {
+                return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElseThrow(),
+                        outcome.changedPaths(), outcome.blockedPaths(), null);
+            }
+            // Nothing was delivered, so the two kinds of not-salvaged part company. An overrun is
+            // the agent's doing and will happen again on the same prompt; a fault is the runtime
+            // failing to look, and may not recur. Both used to read as a broken sandbox.
+            String cause = finalization.overran() ? "AGENT_TIMEOUT" : "SALVAGE_FAILED";
+            return failure(command, cause, finalization.detail() + pushedNote(outcome));
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail());

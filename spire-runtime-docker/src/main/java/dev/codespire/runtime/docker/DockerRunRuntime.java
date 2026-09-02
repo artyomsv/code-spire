@@ -408,13 +408,13 @@ public final class DockerRunRuntime implements RunRuntime {
             // drain window it is given next: every overrun lost its last pushed checkpoint's report.
             killAgent(handle);
             drainPublisher(handle);
-            return Finalization.salvageFailed("agent did not exit within the run's wall clock, or its "
+            return Finalization.overran("agent did not exit within the run's wall clock, or its "
                     + "status could not be read (" + e.getClass().getSimpleName() + "); cancelled");
         }
         if (exit == null) {
             killAgent(handle);
             drainPublisher(handle);
-            return Finalization.salvageFailed("agent did not exit within the run's wall clock; cancelled");
+            return Finalization.overran("agent did not exit within the run's wall clock; cancelled");
         }
         drainPublisher(handle);
         return Finalization.salvaged(exit, "agent exited " + exit);
