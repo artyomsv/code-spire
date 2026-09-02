@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.security;
 
+import dev.codespire.orchestrator.operator.OperatorDirectory;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -64,6 +65,23 @@ public class AuthResource {
                 signedIn ? OidcSubjects.of(identity) : "");
     }
 
+
+    /**
+     * The operator's human name when the token carries one.
+     *
+     * <p>Falls back to the principal name rather than to blank: the picker exists so a person can be
+     * recognised, and a row showing only an opaque subject would send an admin back to the database
+     * this whole change removes.
+     */
+    private static String displayName(SecurityIdentity identity) {
+        if (identity.getPrincipal() instanceof org.eclipse.microprofile.jwt.JsonWebToken jwt) {
+            Object name = jwt.getClaim("name");
+            if (name instanceof String text && !text.isBlank()) {
+                return text;
+            }
+        }
+        return identity.getPrincipal().getName();
+    }
 
     /** Only this application's own roles; an operator's other realm roles are not our business. */
     private static List<String> spireRoles(Set<String> roles) {

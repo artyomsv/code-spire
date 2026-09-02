@@ -6,6 +6,11 @@
     "module": "ESNext",
     "skipLibCheck": true,
 
+    // The stylesheet-contract guard reads src/ from disk, because Vite's `?raw` import returns an
+    // EMPTY string for a stylesheet under vitest. Naming `node` here is required: TypeScript
+    // auto-includes every @types package only while this field is absent.
+    "types": ["node"],
+
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,

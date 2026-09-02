@@ -2899,7 +2899,7 @@ git commit -m "Add the stateless run worker: claim before ack, no git, two log s
 ## Task 9: `llm_charge` takes a neutral subject
 
 **Files:**
-- Create: `spire-orchestrator/src/main/resources/db/migration/V40__llm_charge_run_subject.sql`
+- Create: `spire-orchestrator/src/main/resources/db/migration/V42__llm_charge_run_subject.sql`
 - Modify: every read of `llm_charge` (find them with `grep -rn 'llm_charge' spire-orchestrator/src/main`)
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/llm/LlmChargeSubjectTest.java`
 
@@ -3031,8 +3031,8 @@ git commit -m "Give the charge ledger a neutral subject and a capability"
 ## Task 10: `POST /api/runs` and the `factory_run` read model
 
 **Files:**
-- Create: `spire-orchestrator/src/main/resources/db/migration/V41__factory_run.sql`
-- Create: `spire-orchestrator/src/main/resources/db/migration/V42__scm_provider_role.sql`
+- Create: `spire-orchestrator/src/main/resources/db/migration/V43__factory_run.sql`
+- Create: `spire-orchestrator/src/main/resources/db/migration/V44__scm_provider_role.sql`
 - Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/{RunResource,FactoryRunProjection,RunCommandEmitter,RunResultSaga,MachineAccounts}.java`
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/factory/{RunResourceTest,MachineAccountsTest}.java`
 

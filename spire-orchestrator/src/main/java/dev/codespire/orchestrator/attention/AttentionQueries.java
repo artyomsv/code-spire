@@ -149,7 +149,7 @@ public class AttentionQueries {
     }
 
     private void scmProviderRows(Connection c, List<AttentionView> rows) throws SQLException {
-        // role = 'REVIEWER' on both queries: since V42 a workspace may also hold a FACTORY row, which
+        // role = 'REVIEWER' on both queries: since V44 a workspace may also hold a FACTORY row, which
         // reviews nothing. Counting it here said "source control is configured" for a deployment
         // that could review no pull request, and warned about a push identity that holds no
         // conversation.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, RotateCw } from 'lucide-react';
+import { Check, RotateCw } from 'lucide-react';
 import {
   createWebhookRepo,
   deleteWebhookRepo,
@@ -16,6 +16,7 @@ import {
   type WebhookScope,
 } from '../api';
 import { CopyableValue } from '../render';
+import CopyField from './CopyField';
 import IconButton from './IconButton';
 import Select from './Select';
 import Tooltip from './Tooltip';
@@ -453,34 +454,6 @@ function WebhookRepoFormModal({
           </div>
         </form>
       </div>
-    </div>
-  );
-}
-
-/** A read-only value with an always-visible, labelled Copy button that confirms on click. */
-function CopyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  function copy() {
-    void navigator.clipboard?.writeText(value);
-    setCopied(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), 1400);
-  }
-
-  return (
-    <div className="field">
-      <span>{label}</span>
-      <div className="reveal-value">
-        <span className="mono">{value}</span>
-        <button type="button" className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copy}>
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      {hint && <small className="field-hint">{hint}</small>}
     </div>
   );
 }

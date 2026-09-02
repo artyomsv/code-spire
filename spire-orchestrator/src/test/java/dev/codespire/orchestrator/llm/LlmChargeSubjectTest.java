@@ -51,7 +51,7 @@ class LlmChargeSubjectTest {
         // declared it INLINE and unnamed, so Postgres generated a name from the table — a migration
         // dropping "llm_charge_kind_check", which is what it looks like it should be called, would
         // have succeeded having dropped nothing and left the old constraint refusing every factory
-        // row. V40 finds it by definition instead.
+        // row. V42 finds it by definition instead.
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             for (String kind : new String[] {"SPEC", "PLAN", "BUILD", "FIX"}) {
                 s.executeUpdate("""

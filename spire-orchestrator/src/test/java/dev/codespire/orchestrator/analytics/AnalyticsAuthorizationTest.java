@@ -13,6 +13,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.is;
 
 /**
@@ -110,8 +111,30 @@ class AnalyticsAuthorizationTest {
         given().when().get("/api/analytics/me")
                 .then().statusCode(200)
                 .body("linked", is(true))
-                .body("providerType", is("github"))
-                .body("authorId", is("alice-scm-id"));
+                .body("identities.size()", is(1))
+                .body("identities[0].providerType", is("github"))
+                .body("identities[0].authorId", is("alice-scm-id"));
+    }
+
+    /**
+     * One human owns several SCM accounts, so their own numbers must cover all of them.
+     *
+     * <p>The first version answered from the FIRST link alone. That is not a smaller answer, it is a
+     * wrong one: an operator reviewing on GitHub and GitLab would have been shown one platform's
+     * activity labelled as theirs, with nothing on screen saying half was missing — the same shape as
+     * a refused review rendering under "done".
+     */
+    @Test
+    @TestSecurity(user = ALICE, roles = "spire-viewer")
+    void anOperatorsOwnNumbersCoverEveryScmAccountTheyOwn() {
+        link(ALICE, "github", "alice-scm-id");
+        link(ALICE, "gitlab", "alice-gitlab-id");
+
+        given().when().get("/api/analytics/me")
+                .then().statusCode(200)
+                .body("linked", is(true))
+                .body("identities.size()", is(2))
+                .body("identities.providerType", hasItems("github", "gitlab"));
     }
 
     /** The registry is admin-only including its reads: it maps real people to measured activity. */
@@ -119,6 +142,23 @@ class AnalyticsAuthorizationTest {
     @TestSecurity(user = ALICE, roles = "spire-viewer")
     void aViewerCannotEvenListTheIdentityMappings() {
         given().when().get("/api/operator-identities").then().statusCode(403);
+    }
+
+    /**
+     * The picker's choices are a roster of every developer this deployment has reviewed, so they are
+     * admin-only for the same reason the mappings are. Adding a read to an admin-only resource is
+     * where that rule is easiest to lose — the class annotation covers it, and this says so.
+     */
+    @Test
+    @TestSecurity(user = ALICE, roles = "spire-viewer")
+    void aViewerCannotListTheAuthorsAvailableToLink() {
+        given().when().get("/api/operator-identities/candidates").then().statusCode(403);
+    }
+
+    @Test
+    @TestSecurity(user = "TEST-SUBJECT-ADMIN", roles = {"spire-viewer", "spire-admin"})
+    void anAdminCanListTheAuthorsAvailableToLink() {
+        given().when().get("/api/operator-identities/candidates").then().statusCode(200);
     }
 
     /**

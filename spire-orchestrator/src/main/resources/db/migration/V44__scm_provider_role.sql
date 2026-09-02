@@ -11,7 +11,7 @@ ALTER TABLE scm_provider ADD CONSTRAINT scm_provider_role
     CHECK (role IN ('REVIEWER', 'FACTORY'));
 
 -- The old constraint is UNIQUE (type, workspace), declared inline in V3 and therefore named by
--- Postgres. It is dropped by DEFINITION rather than by a guessed name, for the reason V40 records:
+-- Postgres. It is dropped by DEFINITION rather than by a guessed name, for the reason V42 records:
 -- DROP CONSTRAINT IF EXISTS on a name that does not exist succeeds having dropped nothing, and the
 -- widening would then silently not happen — a second account for the same workspace still refused.
 DO $$

@@ -503,7 +503,7 @@ class AttentionQueriesTest {
 
     @Test
     void aFactoryOnlyDeploymentStillReportsThatNoPullRequestCanBeReviewed() {
-        // V42 lets a workspace hold a FACTORY row beside (or instead of) its reviewer. A push
+        // V44 lets a workspace hold a FACTORY row beside (or instead of) its reviewer. A push
         // identity reviews nothing, so counting it as "source control is configured" would hide the
         // one BLOCKING row that says no review can run — a condition true right now with no row.
         catalogueModel("UNMETERED");

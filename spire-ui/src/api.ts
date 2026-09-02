@@ -1150,10 +1150,22 @@ export interface AnalyticsLens {
  */
 export interface MyActivity {
   linked: boolean;
-  providerType: string | null;
-  authorId: string | null;
+  /**
+   * EVERY SCM account the caller owns, not one. A developer is routinely a GitHub id, a
+   * GitLab id and a Bitbucket UUID at once, and reporting the first showed an arbitrary
+   * slice of their work under the heading 'my activity'.
+   */
+  identities: OperatorIdentityLink[];
   totals: AnalyticsTotals | null;
   breakdown: AnalyticsBreakdown[];
+}
+
+/** An SCM account this deployment has actually reviewed — what an admin picks from. */
+export interface ObservedAuthor {
+  providerType: string;
+  authorId: string;
+  displayName: string;
+  reviews: number;
 }
 
 export interface OperatorIdentityLink {
@@ -1168,7 +1180,21 @@ export async function fetchAnalyticsOverview(): Promise<AnalyticsLens> {
   return res.json();
 }
 
-export async function fetchAnalyticsRepos(): Promise<string[]> {
+/**
+ * A repository with findings, and the two counts that make the name read as a repository.
+ *
+ * A bare `owner/name` string was read as a pull-request title on a real deployment — there was
+ * nothing beside it to say otherwise.
+ */
+export interface AnalyticsRepository {
+  repo: string;
+  /** Always sent; the badge is shown only when the list spans more than one platform. */
+  providerType: string;
+  reviews: number;
+  findings: number;
+}
+
+export async function fetchAnalyticsRepos(): Promise<AnalyticsRepository[]> {
   const res = await apiFetch('/api/analytics/repos');
   if (!res.ok) throw new Error(`Analytics repositories failed: ${res.status}`);
   return res.json();
@@ -1185,6 +1211,12 @@ export async function fetchAnalyticsRepo(workspace: string, slug: string): Promi
 export async function fetchMyActivity(): Promise<MyActivity> {
   const res = await apiFetch('/api/analytics/me');
   if (!res.ok) throw new Error(`My activity failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchOperatorCandidates(): Promise<ObservedAuthor[]> {
+  const res = await apiFetch('/api/operator-identities/candidates');
+  if (!res.ok) throw new Error(`Author candidates failed: ${res.status}`);
   return res.json();
 }
 
@@ -1212,6 +1244,90 @@ export async function unlinkOperatorIdentity(
     { method: 'DELETE' },
   );
   if (!res.ok) throw new Error(`Unlink failed: ${res.status}`);
+}
+
+/** Someone who has signed in to this dashboard — what an admin picks instead of typing a subject. */
+export interface SeenOperator {
+  subject: string;
+  username: string;
+  displayName: string;
+}
+
+export async function fetchSeenOperators(): Promise<SeenOperator[]> {
+  const res = await apiFetch('/api/operator-identities/operators');
+  if (!res.ok) throw new Error(`Operators failed: ${res.status}`);
+  return res.json();
+}
+
+// --- Proving an SCM account by signing in (FR-11) ---------------------------
+
+/** One platform an operator may prove an account on, and whether they already have. */
+export interface ConnectablePlatform {
+  providerType: string;
+  configured: boolean;
+  linked: boolean;
+  authorId: string;
+}
+
+/**
+ * The OAuth application an operator signs into.
+ *
+ * `redirectUri` is computed by the server from the request, so it is the address an admin must
+ * register on the platform — there is nothing for them to work out and nothing to keep in step.
+ */
+export interface ScmOAuthApp {
+  providerType: string;
+  webBaseUrl: string | null;
+  apiBaseUrl: string | null;
+  clientId: string;
+  hasSecret: boolean;
+  connectable: boolean;
+  redirectUri: string;
+}
+
+export async function fetchConnectablePlatforms(): Promise<ConnectablePlatform[]> {
+  const res = await apiFetch('/api/operator-connect');
+  if (!res.ok) throw new Error(`Connect options failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Where to send the whole window to start a sign-in.
+ *
+ * Not fetched: the server answers with a redirect to the platform, and a cross-origin redirect is
+ * an opaque failure to `fetch`. The same reason the dashboard's own login is a navigation.
+ */
+export function connectStartUrl(providerType: string): string {
+  return `/api/operator-connect/${encodeURIComponent(providerType)}/start`;
+}
+
+export async function fetchScmOAuthApps(): Promise<ScmOAuthApp[]> {
+  const res = await apiFetch('/api/scm-oauth-apps');
+  if (!res.ok) throw new Error(`OAuth apps failed: ${res.status}`);
+  return res.json();
+}
+
+/** A blank `clientSecret` keeps the stored one — sending '' would wipe a working credential. */
+export async function saveScmOAuthApp(app: {
+  providerType: string;
+  webBaseUrl: string;
+  apiBaseUrl: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<void> {
+  const res = await apiFetch('/api/scm-oauth-apps', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(app),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Save failed: ${res.status}`);
+}
+
+export async function deleteScmOAuthApp(providerType: string): Promise<void> {
+  const res = await apiFetch(`/api/scm-oauth-apps/${encodeURIComponent(providerType)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
 
 // --- Learned memory (P4 / FR-10) --------------------------------------------

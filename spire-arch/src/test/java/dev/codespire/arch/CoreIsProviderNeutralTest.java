@@ -130,6 +130,9 @@ class CoreIsProviderNeutralTest {
                         + "operator configured, which is the point of them.");
         allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/context/ContextKeyValidator.java",
                 "Composition root: maps a context type to the API path its connectivity check pings.");
+        allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/operator/OperatorConnects.java",
+                "Composition root: maps a platform to the adapter that signs an operator in. Every sign-in "
+                        + "URL, scope and token field stays in its own adapter; this only chooses one.");
         // The factory axes. Same rule, same exemption: the roots that CHOOSE an arm may name one.
         allowed.put("spire-run-worker/src/main/java/dev/codespire/runworker/HarnessRegistry.java",
                 "Composition root: maps a harness name to its adapter. Choosing an adapter IS its job.");

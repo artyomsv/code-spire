@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Brain, FileText, GitPullRequest, LogOut, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Brain, FileText, GitPullRequest, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
+import SessionMenu from './components/SessionMenu';
 import ReviewsList from './components/ReviewsList';
 import ReviewDetail from './components/ReviewDetail';
 import RegisterPrDialog from './components/RegisterPrDialog';
@@ -21,7 +22,7 @@ import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
 import { useLiveReviews } from './useLiveReviews';
 import { useMe } from './hooks/useMe';
-import { canAdminister, ensureServiceSessions, goToFullLogin, goToLogout, needsLogin } from './auth';
+import { canAdminister, ensureServiceSessions, goToFullLogin, needsLogin } from './auth';
 
 function toggleTheme() {
   const root = document.documentElement;
@@ -29,6 +30,37 @@ function toggleTheme() {
     root.getAttribute('data-theme') ||
     (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+}
+
+/**
+ * The topbar heading, longest matching prefix first.
+ *
+ * <p>This replaced a nested ternary whose final branch was `'Reviews'`, so a path it did not know
+ * fell into a branch naming a REAL screen: the header said <b>Reviews</b> while Analytics, My
+ * activity, Memory or Operators was on screen. That is the ADR-025 `refused` shape once more — an
+ * unhandled case defaulting into the reassuring answer rather than an honest one.
+ *
+ * <p>Order is significant: `/analytics/me` must precede `/analytics`.
+ */
+const TITLES: ReadonlyArray<readonly [string, string]> = [
+  ['/r/', 'Review detail'],
+  ['/analytics/me', 'My activity'],
+  ['/analytics', 'Analytics'],
+  ['/settings/operators', 'Operators'],
+  ['/settings/memory', 'Memory'],
+  ['/settings/general', 'General'],
+  ['/settings/providers', 'Repositories'],
+  ['/settings/llm', 'LLM'],
+  ['/settings/context', 'Context'],
+  ['/settings/webhooks', 'Webhooks'],
+  ['/settings/prompts', 'Prompts'],
+  ['/settings/dlq', 'Dead-letter'],
+];
+
+/** A path nobody claimed gets a neutral word, never the name of a screen it is not showing. */
+function titleFor(pathname: string): string {
+  if (pathname === '/') return 'Reviews';
+  return TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'Dashboard';
 }
 
 export default function App() {
@@ -48,26 +80,11 @@ export default function App() {
   // entries highlight at once and neither tells the operator where they are.
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
-  const onSettings = onGeneral || onProviders || onLlm || onContext || onWebhooks || onDlq || onPrompts
-    || onOperators || onMemory;
-  const onReviews = location.pathname === '/';
-  const title = location.pathname.startsWith('/r/')
-    ? 'Review detail'
-    : onGeneral
-      ? 'General'
-      : onProviders
-        ? 'Repositories'
-        : onLlm
-          ? 'LLM'
-          : onContext
-            ? 'Context'
-            : onWebhooks
-              ? 'Webhooks'
-              : onDlq
-                ? 'Dead-letter'
-                : onPrompts
-                  ? 'Prompts'
-                  : 'Reviews';
+  // Reviews owns the list and every review detail page -- a POSITIVE test. It used to be styled as
+  // "not settings", which was right while the rail had two sections and silently wrong the moment
+  // Analytics arrived: both entries lit up at once.
+  const onReviews = location.pathname === '/' || location.pathname.startsWith('/r/');
+  const title = titleFor(location.pathname);
   const { me, loading: sessionLoading } = useMe();
   /**
    * Go to a login as soon as `/api/me` says one is needed — the answer the app already has.
@@ -149,7 +166,10 @@ export default function App() {
         </div>
         <nav className="nav">
           <div className="label">Operate</div>
-          <a className={onSettings ? '' : 'active'} href="#/">
+          {/* Highlighted by a POSITIVE test, not by "not settings". The negation was right while
+              the rail had two sections and silently wrong the moment Analytics was added: both
+              entries lit up at once, so the nav no longer told an operator where they were. */}
+          <a className={onReviews ? 'active' : ''} href="#/">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <rect x="1.5" y="2.5" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="1.5" y="7" width="13" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
@@ -302,13 +322,11 @@ export default function App() {
             </Tooltip>
           )}
           <AttentionBell />
-          {me?.authEnabled && me.authenticated && (
-            <Tooltip label={`Sign out ${me.user}`}>
-              <button className="iconbtn" aria-label={`Sign out ${me.user}`} onClick={goToLogout}>
-                <LogOut size={16} />
-              </button>
-            </Tooltip>
-          )}
+          {/* Replaced a bare sign-out icon that rendered only when `authEnabled && authenticated`.
+              It answered neither question an operator actually has: with authentication off it
+              showed nothing at all, so there was no way to tell what mode the dashboard was in, and
+              with it on it never named the account -- the identity lived in a tooltip. */}
+          <SessionMenu me={me} />
           <Tooltip label="Toggle theme">
             <button className="iconbtn" id="themeBtn" aria-label="Toggle theme" onClick={toggleTheme}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

@@ -138,7 +138,7 @@ public class RunResource {
 
     /**
      * The deployment-wide caps (ADR-025) apply to a run as to a review: it is a paid model call, and
-     * V40 makes its spend count toward the same rolling window. Checked BEFORE the row is written —
+     * V42 makes its spend count toward the same rolling window. Checked BEFORE the row is written —
      * a refused run is not a run. A ledger the gate cannot read fails open, as it does for reviews.
      */
     private void refuseOverTheSpendCap() {

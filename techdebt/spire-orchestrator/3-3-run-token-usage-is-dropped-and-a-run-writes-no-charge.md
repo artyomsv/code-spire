@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Medium |
-| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/FactoryRunProjection.java` (`finished` ignores `RunFinished.tokenUsage`), `spire-orchestrator/.../llm/CallRefs.java` (`forRun` exists and is called by nothing), `llm_charge` (`subject_kind = 'RUN'`, `capability`, `credential_ref` from V40, written by nothing) |
+| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/FactoryRunProjection.java` (`finished` ignores `RunFinished.tokenUsage`), `spire-orchestrator/.../llm/CallRefs.java` (`forRun` exists and is called by nothing), `llm_charge` (`subject_kind = 'RUN'`, `capability`, `credential_ref` from V42, written by nothing) |
 | Found during | PR #95 four-lens review, round 1 (rules-compliance, orchestrator side); the ledger side was already an open item on the PR |
 | Date | 2026-09-02 |
 

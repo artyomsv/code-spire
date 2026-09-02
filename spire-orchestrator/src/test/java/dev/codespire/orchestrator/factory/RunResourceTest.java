@@ -172,7 +172,7 @@ class RunResourceTest {
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
     void aRunIsRefusedUnderTheDeploymentsSpendCapAndLeavesNoRow() {
-        // A run is a paid model call and V40 counts its spend in the same rolling window as reviews,
+        // A run is a paid model call and V42 counts its spend in the same rolling window as reviews,
         // so the ADR-025 gate must refuse it too — before the queued row, so a refusal is not a run
         // the operator then has to explain. The cap is set to what the shared ledger already holds
         // plus the one call seeded here, because a stored "0" reads as UNSET by design (it would stop

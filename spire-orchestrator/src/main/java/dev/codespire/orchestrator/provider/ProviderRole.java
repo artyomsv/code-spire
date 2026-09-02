@@ -12,7 +12,7 @@ import java.util.Locale;
  *
  * <p>A role on the existing registry rather than a second table: same Tink encryption, same settings
  * UI, same bot-identity resolution on save. What changes is that the role is part of every lookup's
- * KEY, because since V42 one workspace can hold both.
+ * KEY, because since V44 one workspace can hold both.
  */
 public enum ProviderRole {
     REVIEWER,
