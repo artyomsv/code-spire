@@ -27,7 +27,7 @@ public class AnalyticsResource {
     private static final String ADMIN = "spire-admin";
 
     /** What a caller may see about themselves, and why not, when they may not. */
-    public record MyActivity(boolean linked, String providerType, String authorId,
+    public record MyActivity(boolean linked, List<OperatorIdentities.Link> identities,
                              AnalyticsQueries.Totals totals,
                              List<AnalyticsQueries.Breakdown> breakdown) {
 
@@ -41,7 +41,7 @@ public class AnalyticsResource {
          * reassuring branch.
          */
         static MyActivity unlinked() {
-            return new MyActivity(false, null, null, null, List.of());
+            return new MyActivity(false, List.of(), null, List.of());
         }
     }
 
@@ -60,7 +60,7 @@ public class AnalyticsResource {
 
     @GET
     @Path("/repos")
-    public List<String> repositories() {
+    public List<AnalyticsQueries.RepositoryRow> repositories() {
         return queries.repositories();
     }
 
@@ -96,12 +96,20 @@ public class AnalyticsResource {
         }
     }
 
+    /**
+     * Every SCM account the caller owns, aggregated.
+     *
+     * <p>Not the first one. A developer is routinely a GitHub id, a GitLab id and a Bitbucket UUID
+     * at once, and reporting one of them showed an arbitrary slice of their work under the heading
+     * "my activity" — which is worse than showing nothing, because it looks complete.
+     */
     private MyActivity resolveMyActivity() {
-        return identities.firstFor(callerSubject())
-                .map(owned -> new MyActivity(true, owned.providerType(), owned.authorId(),
-                        queries.totalsForAuthor(owned.providerType(), owned.authorId()),
-                        queries.breakdownForAuthor(owned.providerType(), owned.authorId())))
-                .orElseGet(MyActivity::unlinked);
+        List<OperatorIdentities.Link> owned = identities.forSubject(callerSubject());
+        if (owned.isEmpty()) {
+            return MyActivity.unlinked();
+        }
+        return new MyActivity(true, owned, queries.totalsForIdentities(owned),
+                queries.breakdownForIdentities(owned));
     }
 
     /**

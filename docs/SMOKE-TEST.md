@@ -1510,3 +1510,101 @@ closes that gap:
 Remove the provider added for this pass in Settings → Context (or `DELETE
 /api/context-providers/{id}`). Context blobs vanish with their reviews — no separate cleanup. Flip
 Review-mode back to `observe`.
+
+---
+
+## Mode P — an operator proves their own SCM account by signing in (ADR-028)
+
+Proves the self-service half of the operator mapping end to end: an admin registers an OAuth
+application, an operator clicks one button, the platform confirms who they are, and their own
+activity screen fills in. Nothing here can be exercised by a test suite — the sign-in is a real
+consent screen on a real platform — so this mode is where the flow is verified.
+
+**What it replaces.** Before this, an admin typed an OIDC subject and a stable provider id, and the
+resulting claim could not be checked by anything. This is the platform answering instead.
+
+### Setup
+
+1. Stack up with authentication ON (`docker-compose.idp.yml`, Mode J's prerequisites). The flow is
+   meaningless with auth off: there is no operator identity to link to.
+
+   **No tunnel, unlike a webhook.** The `--profile tunnel` service exists because the SCMs *push* to
+   us and cannot reach a private compose network. A sign-in is the other direction on both legs: the
+   platform redirects the operator's own browser to the callback, and this deployment calls *out* to
+   the platform's token endpoint. Nothing has to reach you from the internet, and GitHub, GitLab and
+   Bitbucket all accept a `localhost` callback URL.
+
+   That tunnel is also the wrong URL to reuse if you tried: it forwards to `gateway:39281`, which
+   serves `/webhooks/*` and has no callback route — the redirect would 404. If you genuinely need a
+   public address (signing in from another device), tunnel the **UI** on `39285` instead, since that
+   is the single origin every service answers behind, and set `SPIRE_PUBLIC_HOST` so the address
+   this page shows matches the one you registered.
+2. Register an OAuth application on the platform you are testing. **One per platform for the whole
+   deployment, not one per person**, and it goes on the account that owns your repositories — not on
+   a repository, and not on the bot account whose token the provider registry already holds. That
+   credential proves the *reviewer's* identity; this one lets a person prove their own.
+
+   **Match the application to whoever owns the repositories.** If they belong to an organization,
+   group or workspace, put it there. If they are one person's own repositories, a personal
+   application is the right answer rather than a compromise — the two share a fate anyway, so there
+   is nothing for a shared account to outlive. The only costly mismatch is the other direction: a
+   personal application in front of an organization's repositories leaves when that person does,
+   and every operator's link goes with it.
+
+   - **GitHub** — the organization (or your own account) → Settings → Developer settings →
+     OAuth Apps → New OAuth App. No permission section to fill in: the profile-only scope is
+     requested per sign-in.
+   - **GitLab** — the top-level group → Settings → Applications, or your own account → Edit profile
+     → Applications. Scope `read_user`, **Confidential** ticked (without it GitLab issues no client
+     secret at all). A self-managed instance can also hold one instance-wide in the Admin area,
+     which is the better choice when several groups are reviewed.
+   - **Bitbucket** — the workspace → Workspace settings → OAuth consumers, permission
+     **Account: Read**, and **This is a private consumer** ticked (a public consumer has no client
+     secret). No decision to make here: every Bitbucket account has a workspace, a solo one named
+     after you, and consumers exist only on a workspace.
+3. In the dashboard, Settings → **Operators** → *Sign-in applications* → **Set up** for that
+   platform. Copy the **redirect address** shown there into the application you just registered —
+   it must match exactly, including scheme, host, port and path. Paste the client id and secret.
+   Leave both base URLs blank for the hosted services; fill them for a self-managed install.
+
+> **The client secret is yours to paste.** Nothing in this runbook asks anyone else to handle it,
+> and the API never returns it once stored — a read reports only whether one is set.
+
+### Steps
+
+| # | Do | Expect |
+|---|---|---|
+| 1 | Sign in as a **viewer** and open **My activity** | The unlinked state, with a **Connect my \<platform\> account** button — not an empty chart |
+| 2 | Click it | The platform's own consent screen, naming your application and asking only for profile access |
+| 3 | Approve | Back on **My activity** with *Your SCM account is linked*, and the linked account shown as a chip |
+| 4 | Compare the chip's id against a review that platform produced | Identical. This is the assertion that matters: a link to any other spelling of your identity matches no rows and looks exactly like having done nothing |
+| 5 | Open Settings → Operators as an **admin** | The link is listed, with your operator name and the author name the reviews recorded — neither shown as a bare opaque id |
+| 6 | Repeat steps 1–3 on a second platform with the same operator | Two chips. One human owns several accounts, and the totals cover both |
+| 7 | Start a sign-in, then **decline** at the consent screen | Back on My activity saying you declined. Nothing linked |
+| 8 | Start a sign-in, wait past 15 minutes, then approve | Refused as expired, with an instruction to start again |
+| 9 | As a viewer, request `/api/scm-oauth-apps` | 403. Setting up applications is configuration, and configuration is admin-only including its reads |
+
+### The one that is worth doing deliberately
+
+Step 4 is the whole feature. Everything else can look right while the stored id is subtly wrong —
+a username instead of a numeric id, a truncated Bitbucket `account_id` — and the only symptom is an
+activity screen that stays empty, which is indistinguishable from a person who has not been
+reviewed yet.
+
+### Symptoms
+
+| Symptom | Cause |
+|---|---|
+| The button is absent and the screen says no platform is set up | No OAuth application saved for any platform — Setup step 3 |
+| The platform refuses with a redirect-URI error | The address registered on the application does not match the one shown on the Operators screen exactly. Behind a proxy, check `SPIRE_PUBLIC_HOST` and the forwarded headers — the address is derived from the request |
+| Back on My activity with *The platform refused the sign-in* | Client id or secret wrong, or the application was deleted on the platform. The platform's own words are deliberately not repeated: its error response echoes back what was sent, and one of those values is the client secret |
+| *That sign-in belonged to a different session* | The callback arrived under a different operator's session — expected if you switched accounts mid-flow, and the refusal an intercepted callback URL would meet |
+| Linked, but the activity screen stays empty | Step 4's failure. Compare the stored id against `review_status.author_id` for a review that platform produced |
+| A self-managed instance links you to the wrong person | The API base URL is blank while the sign-in base is set, on a platform where they differ — the identify call went to the hosted service and matched whoever holds your name there |
+
+### Cleanup
+
+Unlink under Settings → Operators, and remove the application with the trash control beside it (or
+`DELETE /api/scm-oauth-apps/{providerType}`). Revoke the application on the platform too — this
+product never held your access token beyond the one call that read your profile, but the
+application itself is a standing grant on the platform side.

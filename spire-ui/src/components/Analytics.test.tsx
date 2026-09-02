@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { AnalyticsOverview, MyAnalytics } from './Analytics';
 import * as api from '../api';
@@ -33,8 +33,7 @@ describe('MyAnalytics', () => {
   it('says the identity is not linked rather than showing an empty chart', async () => {
     vi.spyOn(api, 'fetchMyActivity').mockResolvedValue({
       linked: false,
-      providerType: null,
-      authorId: null,
+      identities: [],
       totals: null,
       breakdown: [],
     });
@@ -54,8 +53,7 @@ describe('MyAnalytics', () => {
   it('shows which SCM account it is reporting on once linked', async () => {
     vi.spyOn(api, 'fetchMyActivity').mockResolvedValue({
       linked: true,
-      providerType: 'github',
-      authorId: 'TEST-AUTHOR-9',
+      identities: [{ oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: 'TEST-AUTHOR-9' }],
       totals: { ...EMPTY_TOTALS, findings: 4, judged: 2, dismissed: 1, dismissalRate: 0.5 },
       breakdown: [
         { severity: 'NIT', category: 'NAMING', raised: 3, dismissed: 1, resolved: 1, unjudged: 1 },
@@ -131,7 +129,106 @@ describe('AnalyticsOverview', () => {
     );
 
     await waitFor(() => expect(screen.getByText(/No findings recorded yet/i)).toBeTruthy());
-    expect(screen.getByText(/nothing was backfilled/i)).toBeTruthy();
+    // The confusion this caused in practice: a deployment with dozens of reviews, findings COUNTS
+    // visible beside each one, and this reading zero. Saying only "nothing was backfilled" invited
+    // the wrong conclusion — that the data was lost. It is not. Each review still holds a round of
+    // findings; that round is refused because it is a snapshot with no verdicts, not history.
+    expect(screen.getByText(/single overwritten round/i)).toBeTruthy();
+    expect(screen.getByText(/no verdicts/i)).toBeTruthy();
+  });
+
+  /**
+   * The tile counts DISTINCT review ids in the findings table, so it means "reviews that recorded
+   * findings" and not "reviews this author opened". Labelled plain "Reviews" the number was right
+   * and the label was a promise it never made, which reads as data loss rather than an empty corpus.
+   */
+  /**
+   * A bare `owner/name` was read as a pull-request title on a real deployment, because nothing on
+   * the card said otherwise. The counts are what make it read as the repository the reviews belong
+   * to, so their presence — not just the name — is the assertion.
+   */
+  it('lists each repository with the reviews and findings that make it read as one', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
+      totals: EMPTY_TOTALS,
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-REPO', providerType: 'github', reviews: 5, findings: 12 },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    const row = (await screen.findByText('TEST-WS/TEST-REPO')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('5')).toBeTruthy();
+    expect(within(row).getByText('12')).toBeTruthy();
+    expect(screen.getByText('Repository')).toBeTruthy();
+    expect(screen.getByText('Reviews')).toBeTruthy();
+  });
+
+  /**
+   * On a single-platform deployment a platform column is a column of identical badges saying
+   * nothing. It is withheld, and this pins that it IS withheld rather than merely blank.
+   */
+  it('shows no platform column when every repository is on the same platform', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({ totals: EMPTY_TOTALS, breakdown: [] });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-A', providerType: 'github', reviews: 2, findings: 3 },
+      { repo: 'TEST-WS/TEST-B', providerType: 'github', reviews: 1, findings: 1 },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('TEST-WS/TEST-A');
+    expect(screen.queryByText('Platform')).toBeNull();
+    expect(document.querySelector('.prov-badge')).toBeNull();
+  });
+
+  /**
+   * The moment a second platform appears the badge is the one thing that tells two same-named
+   * repositories apart — the collision this project has already met twice.
+   */
+  it('shows a platform badge on every row once the list spans more than one platform', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({ totals: EMPTY_TOTALS, breakdown: [] });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-SAME', providerType: 'github', reviews: 2, findings: 3 },
+      { repo: 'TEST-WS/TEST-SAME', providerType: 'gitlab', reviews: 1, findings: 1 },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    const rows = await screen.findAllByText('TEST-WS/TEST-SAME');
+    expect(rows).toHaveLength(2);
+    expect(screen.getByText('Platform')).toBeTruthy();
+    expect(screen.getByText('github')).toBeTruthy();
+    expect(screen.getByText('gitlab')).toBeTruthy();
+  });
+
+  it('says the review count is of reviews that recorded findings', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
+      totals: EMPTY_TOTALS,
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <AnalyticsOverview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Reviews with findings/i)).toBeTruthy());
   });
 
   /**

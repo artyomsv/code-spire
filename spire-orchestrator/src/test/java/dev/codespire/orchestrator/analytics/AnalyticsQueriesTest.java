@@ -177,6 +177,79 @@ class AnalyticsQueriesTest {
         return new Finding(path, new LineRange(line, line), severity, category, "why", null);
     }
 
+    /**
+     * The choices the Operators screen offers, which are the authors this deployment has reviewed.
+     *
+     * <p>The screen used to ask an admin to TYPE a stable provider id such as {@code 3218389} — a
+     * value the product displays nowhere, so the field could only be filled by someone willing to
+     * query the database, while every one of those ids had already been recorded dozens of times by
+     * the reviews themselves. This is that recording, read back.
+     *
+     * <p>The count matters as much as the name: an admin picking between two accounts with the same
+     * display name needs to see which one this deployment has actually seen work from.
+     */
+    @Test
+    void theReviewedAuthorsAreOfferedWithTheirPlatformAndHowMuchHasBeenSeen() {
+        seedAuthor("#801", "TEST-AUTHOR-A", "TEST-A-ID", "github");
+        seedAuthor("#802", "TEST-AUTHOR-A", "TEST-A-ID", "github");
+        seedAuthor("#803", "TEST-AUTHOR-A", "TEST-A-GITLAB-ID", "gitlab");
+
+        List<AnalyticsQueries.ObservedAuthor> offered = queries.observedAuthors();
+
+        AnalyticsQueries.ObservedAuthor onGithub = only(offered, "github", "TEST-A-ID");
+        assertEquals("TEST-AUTHOR-A", onGithub.displayName());
+        assertEquals(2L, onGithub.reviews());
+        // The same human on a second platform is a SEPARATE choice, never merged: one id on two
+        // platforms is two different people, the collision this project has been bitten by twice.
+        assertEquals(1L, only(offered, "gitlab", "TEST-A-GITLAB-ID").reviews());
+    }
+
+    /**
+     * A review whose author the SCM never gave us cannot be picked, because the resulting mapping
+     * would match no review at all and leave that operator permanently unlinked with nothing on
+     * screen explaining why.
+     */
+    @Test
+    void anAuthorWithNoRecordedIdIsNotOffered() {
+        seedAuthor("#804", "TEST-AUTHOR-NAMELESS", "", "github");
+
+        assertTrue(queries.observedAuthors().stream()
+                .noneMatch(a -> "TEST-AUTHOR-NAMELESS".equals(a.displayName())));
+    }
+
+    /**
+     * The same {@code workspace/slug} on two platforms is two repositories, and the list must say so.
+     * Collapsing them would give one row whose badge could only name one platform — the collision
+     * this project has already been bitten by twice, arriving on the analytics index.
+     */
+    @Test
+    void listsASameNamedRepositoryOnTwoPlatformsAsTwoRows() {
+        seedReview("#901", "TEST-A", SLUG, "github");
+        seedReview("#902", "TEST-A", SLUG, "gitlab");
+        findings.recordGenerated(reviewId("#901"), 1, COMMIT,
+                List.of(finding("src/A.java", 1, Severity.MAJOR, FindingCategory.CORRECTNESS)));
+        findings.recordGenerated(reviewId("#902"), 1, COMMIT,
+                List.of(finding("src/A.java", 1, Severity.MAJOR, FindingCategory.CORRECTNESS)));
+
+        List<AnalyticsQueries.RepositoryRow> rows = queries.repositories().stream()
+                .filter(r -> r.repo().equals(WS + "/" + SLUG))
+                .toList();
+
+        assertEquals(2, rows.size(), "one row per platform, never one row for both");
+        assertTrue(rows.stream().anyMatch(r -> r.providerType().equals("github") && r.findings() == 1));
+        assertTrue(rows.stream().anyMatch(r -> r.providerType().equals("gitlab") && r.findings() == 1));
+    }
+
+    /** Exactly one row per {@code (platform, id)} pair — the grouping the picker's keys rely on. */
+    private static AnalyticsQueries.ObservedAuthor only(List<AnalyticsQueries.ObservedAuthor> authors,
+                                                        String providerType, String authorId) {
+        List<AnalyticsQueries.ObservedAuthor> matches = authors.stream()
+                .filter(a -> a.providerType().equals(providerType) && a.authorId().equals(authorId))
+                .toList();
+        assertEquals(1, matches.size(), "expected one row for " + providerType + "/" + authorId);
+        return matches.getFirst();
+    }
+
     private static FindingVerdict verdict(String path, int line, FindingVerdict.Status status) {
         return new FindingVerdict(null, path, line, status, null);
     }
@@ -214,6 +287,34 @@ class AnalyticsQueriesTest {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("could not seed a review", e);
+        }
+    }
+
+    /**
+     * A review that also records the author's DISPLAY name.
+     *
+     * <p>{@link #seedReview} leaves it at the column default, which is right for the totals — they
+     * key on {@code author_id} alone. The picker shows the name, so this is the only seed that has
+     * to set both.
+     */
+    private void seedAuthor(String pr, String displayName, String authorId, String providerType) {
+        String sql = """
+                INSERT INTO review_status (review_id, workspace, slug, pr_id, author, author_id,
+                                           provider_type, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'completed')
+                ON CONFLICT (review_id) DO NOTHING
+                """;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId(pr));
+            ps.setString(2, WS);
+            ps.setString(3, SLUG);
+            ps.setLong(4, Long.parseLong(pr.substring(1)));
+            ps.setString(5, displayName);
+            ps.setString(6, authorId);
+            ps.setString(7, providerType);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not seed an author", e);
         }
     }
 

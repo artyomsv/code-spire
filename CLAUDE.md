@@ -1333,6 +1333,63 @@ The design is fully specified in `docs/` — **treat those files as the source o
   scenario, the mock's own contract and the harness's self-tests. Verified on a GitHub runner as well
   as locally (run 33341378597): identical counts, 16m41s including a cold GitLab boot, so nothing was
   passing by accident on one machine. `spire-ui` untouched.
+- **Operator SCM sign-in, and the P4 dashboard screens fixed (ADR-028, 2026-08-30):** the P4 screens
+  were checked on a live stack and five defects came back, three of them the same shape as failures
+  this project has already paid for.
+  - **Four screens rendered edge-to-edge and unstyled.** They used `tiles`, `tile-value`,
+    `plain-list`, `pref-card`, `row-actions`, `form-row`, `table` and `error` — an invented
+    vocabulary `index.css` has never defined — so the markup fell back to browser defaults: stat
+    values ran together as `0Findings`, tables had no borders, a form was raw inputs on one line.
+    Page padding lives on the `.content` wrapper every screen supplies for itself, and these four
+    supplied none. Nothing caught it because the UI tests assert text and behaviour, which is
+    normally the right instinct; it left nothing verifying the styles existed at all.
+    `styles.contract.test.ts` closes that: every class a component asks for must be one the
+    stylesheet defines. It reads `src/` with `node:fs`, **not** Vite's `?raw` import, which returns an
+    EMPTY string for a stylesheet under vitest — the first version of the guard passed while reading
+    nothing, so its first assertion is now that it read something. It also found three orphans
+    predating P4, `pill--warn` among them: the "No result" badge added so a degraded review is not
+    shown as a pass had been rendering as a plain grey pill since it shipped.
+  - **The topbar named the wrong screen on all four**, from a nested ternary whose last branch was
+    `'Reviews'` — an unhandled case defaulting into a branch that names a REAL screen, the ADR-025
+    `refused` shape once more. Now a prefix table, and an unclaimed path gets a neutral word.
+  - **The rail lit two entries at once.** Reviews was styled as "not settings", right while the rail
+    had two sections and silently wrong the moment Analytics arrived. It now tests for what it owns.
+  - **The route test that should have caught the padding already existed and was vacuous twice
+    over.** Its `ROUTES` list was never extended to the four new routes; and for the eight admin
+    routes the assertion was satisfied by `RequireRole`'s own `.content` skeleton, because that guard
+    calls `useMe()` a SECOND time and the hook holds no cache — so it passed whatever the screen
+    rendered. Both fixed, mutation-verified on all three files.
+  - **Operators could not be used without a database.** The form asked an admin to TYPE an OIDC
+    subject and a stable provider id — two values the product displays nowhere, while both had
+    already been recorded by ordinary use.
+
+  **The mapping is now proved, not asserted (ADR-028).** ADR-027 refused to INFER the operator↔SCM
+  link because a coincidental username match shows one person another person's performance data with
+  nothing on screen looking wrong. That holds; what it left unexamined is that an admin's assertion
+  cannot be checked either. The bot's API token cannot help — it proves the BOT's identity, and can
+  confirm a handle exists without saying the human at the browser is that handle. So an operator
+  signs into the platform and the platform answers. New credential-free SPI port `OperatorOAuth`
+  implemented by all three SCM adapters; `scm_oauth_app` + `oauth_connect_state` (V40),
+  `operator_seen` (V41); `OperatorConnects` is the composition root and the one new `spire-arch`
+  allowlist entry. The shared exchange lives once in `spire-http` (`FormTokenClient`), refuses
+  redirects rather than following them, refuses plaintext off the local machine, and never repeats a
+  response body — an OAuth error echoes back what was sent, and on that path one of those values is
+  the client secret. Four details worth keeping: **identity comes from each adapter's existing
+  `whoami()`**, so the stored id is the same id the ingress records as a pull request's author (a
+  link to any other spelling matches no rows and looks exactly like having done nothing); **the
+  access token is used once and discarded**, so nothing durable here is a credential; **the state is
+  consumed, not checked**, and carries the subject it was issued to, because the attack is a crafted
+  callback URL that links the sender's account to whoever clicks it; and **a self-hosted API base is
+  derived from the sign-in base, never from the hosted default** — falling back would identify a
+  self-managed operator against whoever holds their name on the public service, with the sign-in
+  itself having succeeded. A 200 carrying `error` instead of `access_token` is the failure that would
+  otherwise sign somebody in as nobody; OAuth providers answer a rejected code exactly that way.
+  The admin form stays as the repair path, both ends now picked from recorded values.
+  Runbook: SMOKE-TEST **Mode P**.
+
+  Measured, not estimated: **1782 Java tests across 225 suites** (`testFast` + `testServices`; the
+  nightly `testE2e` tier is separate); **457 `spire-ui` vitest tests across 59 files**;
+  `tsc --noEmit` silent.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

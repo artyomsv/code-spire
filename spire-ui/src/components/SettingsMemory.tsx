@@ -11,10 +11,9 @@ import {
 /**
  * What the reviewer has learned to stop saying, and whether an operator agrees (P4 / FR-10).
  *
- * Every card shows the evidence AND the threshold it had to clear. That is not decoration:
- * a proposal from eleven data points is the ADR-026 rung-2 gate's failure recurring — a
- * conclusion drawn from a corpus too thin to speak, which nobody could see was thin because
- * the numbers were never on screen.
+ * Every card shows the evidence AND the bar it cleared. That is not decoration: a proposal from
+ * eleven data points is the ADR-026 rung-2 gate's failure recurring — a conclusion drawn from a
+ * corpus too thin to speak, which nobody could see was thin because the numbers were never rendered.
  */
 
 function Card({
@@ -31,40 +30,48 @@ function Card({
     : 0;
 
   return (
-    <li className="pref-card">
-      <p>
-        <strong>
-          {preference.evidenceDismissed} of {preference.evidenceTotal}
-        </strong>{' '}
-        <code>{preference.category}</code> findings at <code>{preference.severity}</code> under{' '}
-        <code>{preference.pathGlob}</code>
-        {preference.scopeType === 'repo' && <> in {preference.scopeValue}</>} were dismissed.
-      </p>
-      <p className="muted">
-        {share}% dismissed across {preference.evidenceReviews}
-        {preference.evidenceReviews === 1 ? ' pull request' : ' pull requests'} · threshold:{' '}
-        {thresholds.minEvidence} findings, {thresholds.minDismissedPercent}% dismissed
-      </p>
-      {preference.state === 'PROPOSED' && (
-        <div className="row-actions">
-          <button onClick={() => onDecide(preference.id, 'approve')}>
-            <Check size={14} /> Approve
-          </button>
-          <button onClick={() => onDecide(preference.id, 'reject')}>
-            <X size={14} /> Reject
-          </button>
+    <tr>
+      <td>
+        <span className="prov-name">
+          {preference.category} · {preference.severity}
+        </span>
+        <div className="prov-sub">
+          {preference.pathGlob}
+          {preference.scopeType === 'repo' && <> in {preference.scopeValue}</>}
         </div>
-      )}
-      {preference.state === 'APPROVED' && (
-        <div className="row-actions">
-          <span className="pill">Hiding these findings</span>
-          <button onClick={() => onDecide(preference.id, 'revoke')}>
-            <RotateCcw size={14} /> Stop hiding
-          </button>
+      </td>
+      <td>
+        <span className="mem-evidence">
+          {preference.evidenceDismissed} of {preference.evidenceTotal} dismissed
+        </span>
+        <div className="prov-sub">
+          {share}% across {preference.evidenceReviews}{' '}
+          {preference.evidenceReviews === 1 ? 'pull request' : 'pull requests'} · bar:{' '}
+          {thresholds.minEvidence} findings, {thresholds.minDismissedPercent}%
         </div>
-      )}
-      {preference.state === 'REJECTED' && <span className="pill pill--muted">Rejected</span>}
-    </li>
+      </td>
+      <td className="cell-r">
+        {preference.state === 'PROPOSED' && (
+          <div className="prov-actions">
+            <button className="btn" onClick={() => onDecide(preference.id, 'approve')}>
+              <Check size={13} /> Approve
+            </button>
+            <button className="btn-ghost" onClick={() => onDecide(preference.id, 'reject')}>
+              <X size={13} /> Reject
+            </button>
+          </div>
+        )}
+        {preference.state === 'APPROVED' && (
+          <div className="prov-actions">
+            <span className="badge mem-active">Hiding these findings</span>
+            <button className="btn-ghost" onClick={() => onDecide(preference.id, 'revoke')}>
+              <RotateCcw size={13} /> Stop hiding
+            </button>
+          </div>
+        )}
+        {preference.state === 'REJECTED' && <span className="badge muted">Rejected</span>}
+      </td>
+    </tr>
   );
 }
 
@@ -109,51 +116,68 @@ export function SettingsMemory() {
   };
 
   return (
-    <section className="card">
-      <h2>
-        <Brain size={16} /> Learned memory
-      </h2>
-      <p className="muted">
-        When a team keeps dismissing the same kind of finding, it is proposed here. An approved
-        preference hides matching findings <em>after</em> the review runs — the count is shown on the
-        pull request and the hidden findings stay on the review, so a preference that turns out wrong
-        is visible and one click from being switched off.
-      </p>
-      <p className="muted">
-        Findings with no category can never be grouped, so a repository using a customized review
-        prompt — and any finding filed with <code>/finding</code> — will never produce a proposal.
-      </p>
+    <section className="content">
+      <div className="card">
+        <div className="prov-head">
+          <h2 className="prov-title">
+            <Brain size={15} className="an-title-icon" /> Learned memory
+          </h2>
+          <button className="btn-ghost" onClick={() => void rescan()} disabled={busy}>
+            {busy ? 'Scanning…' : 'Scan now'}
+          </button>
+        </div>
 
-      <button onClick={() => void rescan()} disabled={busy}>
-        {busy ? 'Scanning…' : 'Scan now'}
-      </button>
-
-      {error && (
-        <p className="error" role="alert">
-          {error}
+        <p className="prov-note">
+          When a team keeps dismissing the same kind of finding, it is proposed here. An approved
+          preference hides matching findings <em>after</em> the review runs — the count is shown on the
+          pull request and the hidden findings stay on the review, so a preference that turns out wrong
+          is visible and one click from being switched off. Security findings and blockers are never
+          proposed, whatever the evidence says.
         </p>
-      )}
 
-      {view !== null && view.preferences.length === 0 && (
-        <p role="status">
-          Nothing proposed yet. Preferences need {view.thresholds.minEvidence} judged findings in one
-          group before anything can be suggested, and the record only started when this shipped —
-          nothing was backfilled.
-        </p>
-      )}
+        {error && (
+          <p className="prov-note an-error" role="alert">
+            {error}
+          </p>
+        )}
 
-      {view !== null && view.preferences.length > 0 && (
-        <ul className="plain-list">
-          {view.preferences.map((preference) => (
-            <Card
-              key={preference.id}
-              preference={preference}
-              thresholds={view.thresholds}
-              onDecide={(id, action) => void decide(id, action)}
-            />
-          ))}
-        </ul>
-      )}
+        {view !== null && view.preferences.length === 0 && (
+          <div className="wh-empty" role="status">
+            <div className="wh-empty-icon">
+              <Brain size={20} />
+            </div>
+            <p className="an-empty-title">Nothing proposed yet</p>
+            <p className="prov-note">
+              A group needs {view.thresholds.minEvidence} judged findings across at least two pull
+              requests before anything can be suggested, and the record only started when this shipped
+              — nothing was backfilled. Findings with no category can never be grouped, so a repository
+              using a customized review prompt will not produce proposals.
+            </p>
+          </div>
+        )}
+
+        {view !== null && view.preferences.length > 0 && (
+          <table className="prov-table">
+            <thead>
+              <tr>
+                <th>Preference</th>
+                <th>Evidence</th>
+                <th className="cell-r">Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {view.preferences.map((preference) => (
+                <Card
+                  key={preference.id}
+                  preference={preference}
+                  thresholds={view.thresholds}
+                  onDecide={(id, action) => void decide(id, action)}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </section>
   );
 }
