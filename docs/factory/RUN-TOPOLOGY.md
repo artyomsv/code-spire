@@ -350,7 +350,14 @@ directories.
 
 ---
 
-## 10. Token usage is telemetry here, not accounting
+## 10. Token usage is telemetry — except where it now gates spend
+
+> **Corrected 2026-09-02 (M1 Task 4).** This section was written when nothing read a run's usage,
+> and its title said so. A run now writes to `llm_charge`, and `SpendWindow` reads that ledger with
+> no subject filter — so the number below IS an input to a refusal decision, for runs and for
+> reviews alike. Everything the section says about *why* usage is worth having still holds; what
+> changed is that it is no longer only telemetry, and the trust question that raises is stated at
+> the end of this section rather than left implied.
 
 An earlier draft called incremental usage reporting an open question that blocked M1, on the grounds
 that a killed run's spend would go unrecorded. **That framing is wrong for the mode this deployment
@@ -446,6 +453,36 @@ binary available for this measurement was **0.146.0**. Every flag the adapter us
 against `codex exec --help` on 0.146.0 and is present. `--ask-for-approval` is absent on both.
 
 ---
+
+
+### Where this number comes from, and why that matters now
+
+**The agent reports its own usage.** The harness adapter parses it from the agent container's
+stdout, and the agent runs shell at full access inside that container by design — so the count is
+self-reported by the least trusted component in the system. That was harmless while it was
+telemetry. It is not harmless now that it moves a cap.
+
+Two directions, both reachable by a prompt-injected or simply buggy agent writing a plausible usage
+line to its own stdout:
+
+- **Over-report.** On a metered model a fabricated multi-billion-token count prices high enough for
+  `SpendGate` to answer `CAP_REACHED` for every paid call until the rolling window drains — which
+  takes out the reviewer as well as the factory. One run, denying service to the whole deployment.
+- **Under-report.** A smaller later figure trips the harness's own shrink detection, degrading the
+  run to an `UNKNOWN` line whose cost is NULL and therefore skipped by `SUM`. The run's real spend
+  leaves the money axis; only the call count still sees it.
+
+**`SPIRE_RUN_MAX_REPORTED_TOKENS` bounds the first of those.** A run reporting more than the
+ceiling has its usage recorded as `UNKNOWN` rather than priced, so a fabricated number cannot buy
+a deployment-wide refusal. Unset means unlimited, matching every other cap in ADR-025 — this is a
+hardening control an operator opts into with a number only they can know, not a correctness
+control with a default the code could invent.
+
+The under-report direction is **not** closed, and cannot be from inside: nothing in the run unit
+can distinguish an honest small report from a dishonest one. Only reconciliation against the
+provider's own billing or usage API can, and that is tracked as debt rather than claimed here. The
+call-count axis is the partial mitigation that already exists — it counts a run whatever the run
+says it spent, which is exactly why ADR-025 insisted on having both axes.
 
 ## 11. Appendix — the verified agent image
 

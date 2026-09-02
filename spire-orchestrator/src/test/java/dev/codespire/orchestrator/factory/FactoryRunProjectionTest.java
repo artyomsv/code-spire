@@ -13,6 +13,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -301,5 +302,25 @@ class FactoryRunProjectionTest {
     @Test
     void anUnknownRunIsAbsentNotAnError() {
         assertTrue(projection.find("run::github:TEST-none/x:y:1").isEmpty());
+    }
+
+    @Test
+    void theModelARunWasDispatchedWithIsReadableForItsCharge() {
+        // The query itself, against a real row. Every other test of the charge path stubs this out,
+        // so the SQL was executed by nothing -- and it is the input that decides whether a run's
+        // spend can be priced at all.
+        String runId = queuedRun();
+
+        assertEquals(Optional.of("gpt-5.6"), projection.modelOf(runId),
+                "the model queuedRun() dispatched with, read back through the production query");
+    }
+
+    @Test
+    void aRunWithNoRowHasNoModelRatherThanAWrongOne() {
+        // The charge path answers UNRECORDED here, which prices as UNKNOWN rather than free. An
+        // empty Optional is what makes that reachable; a blank string would price as a catalogued
+        // model nobody registered.
+        assertEquals(Optional.empty(),
+                projection.modelOf("run::github:TEST-acme/app:never-queued-" + UUID.randomUUID() + ":1"));
     }
 }

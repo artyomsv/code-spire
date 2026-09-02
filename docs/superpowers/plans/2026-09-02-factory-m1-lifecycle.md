@@ -237,14 +237,29 @@ on the floor.
 
 ---
 
-## Task 5: `workspace_lease` — owner and heartbeat
+## Task 5: `run_lease` — owner, heartbeat and the unit's identity
 
 Prerequisite for Task 6, and half of `techdebt/spire-run-worker/2-4-…`. Also closes
 `techdebt/spire-run-worker/4-1-runstarted-carries-the-run-id-as-its-provider-run-id.md`, because the
 lease is where the unit's real identity finally has somewhere to live.
 
-**Files:** new `spire-run-worker/src/main/resources/db/migration/V2__workspace_lease.sql`, new
-`WorkspaceLeases.java`, `RunLauncher`, `RunStarted`.
+> **Corrected 2026-09-02, before any code.** This section called for a NEW table named
+> `workspace_lease` in a new `V2` migration. `runworker.run_lease` already exists, created by
+> `V1__run_claim.sql` with `run_id`, `owner_id` and `heartbeat_at`, under a comment explaining at
+> length why owner plus heartbeat is what *defines* an orphan — it is simply written and read by
+> nothing. Creating a second table under a different name would leave two answers to one question,
+> which is the shape the debt entry already warns about for the claim store. The task is to USE the
+> table that exists, plus the one column it lacks.
+
+**Files:** new `spire-run-worker/src/main/resources/db/migration/V2__run_lease_unit.sql` (adds a
+nullable `unit_id` — nullable because the lease is taken BEFORE the unit exists, and that ordering
+is the point), new `WorkspaceLeases.java`, `RunLauncher`, `RunDispatcher` (emit `RunStarted` after
+`runtime.create` so it can carry `handle.providerRunId()`).
+
+**A preserved unit keeps its lease, deliberately.** Releasing it would make the preservation
+invisible to the watchdog again, and a preserved unit is exactly what Task 6 must find — the
+correction the Task 3 review already forced onto
+`techdebt/spire-run-worker/3-3-a-preserved-workspace-is-invisible-to-the-control-plane.md`.
 
 **Test scenarios**
 
@@ -253,7 +268,9 @@ lease is where the unit's real identity finally has somewhere to live.
 | `aLeaseIsWrittenBeforeTheUnitIsCreated` | ordering: a crash between the two leaves a lease, never an unleased sandbox |
 | `theHeartbeatAdvancesWhileTheRunIsAlive` | `heartbeat_at` moves without the run finishing |
 | `theLeaseIsReleasedOnEveryTerminalPath` | success, failure, refusal and cancel all release; a preserved workspace keeps its lease on purpose |
-| `theOwnerIdIsThisReplica` | two replicas write different owners |
+| `aPreservedUnitKeepsItsLease` | the deliberate exception, and the one the watchdog depends on |
+| `theOwnerIdIsThisReplica` | two replicas write different owners, or a watchdog cannot tell whose run it is looking at |
+| `theLeaseRecordsTheUnitOnceItExists` | `unit_id` is filled by the launcher, not left for the watchdog to rediscover |
 | `runStartedCarriesTheUnitIdNotTheRunId` | `providerRunId` names the sandbox, so an operator can find it |
 
 ---

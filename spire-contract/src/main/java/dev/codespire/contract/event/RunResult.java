@@ -109,23 +109,25 @@ public sealed interface RunResult {
     }
 
     /**
- * A run that did not deliver.
- *
- * <p><b>{@code tokenUsage} is nullable, and null IS unknown</b> — the same contract as
- * {@link RunFinished}, and it is here for a reason that is easy to miss: a failure is not a
- * free outcome. An agent can work for an hour and then have its push rejected, so the tokens
- * were bought whatever the run's verdict. Without this the deployment's rolling spend window
- * was blind to exactly the runs most likely to be run again — under-counted precisely where it
- * is about to be charged a second time.
- *
- * <p>It is genuinely null for a failure raised before anything ran (a command refused at
- * validation), which is why the field cannot be made required: "spent nothing" and "spent an
- * amount nobody measured" are different facts and the ledger prices them differently.
- *
- * <p>Rebuild through {@link #withUsage(java.util.Map)} rather than a shorter constructor —
- * adding a component to a wire record silently drops it at every rebuild site while a
- * convenience constructor stays valid.
- */
+     * A run that did not deliver.
+     *
+     * <p><b>{@code tokenUsage} is nullable, and null IS unknown</b> — the same contract as
+     * {@link RunFinished}, and it is here for a reason that is easy to miss: a failure is not a
+     * free outcome. An agent can work for an hour and then have its push rejected, so the tokens
+     * were bought whatever the run's verdict. Without this the deployment's rolling spend window
+     * was blind to exactly the runs most likely to be run again — under-counted precisely where
+     * it is about to be charged a second time.
+     *
+     * <p>It is genuinely null for a failure raised before anything ran (a command refused at
+     * validation), which is why the field cannot be made required: "spent nothing" and "spent an
+     * amount nobody measured" are different facts and the ledger prices them differently. The
+     * ledger tells them apart by the CAUSE rather than by this field, since a post-agent failure
+     * with unmeasured usage must still be charged — see {@code RunFailureCause.agentMayHaveSpent}.
+     *
+     * <p>Rebuild through {@link #withUsage(java.util.Map)} rather than a shorter constructor —
+     * adding a component to a wire record silently drops it at every rebuild site while a
+     * convenience constructor stays valid.
+     */
     record RunFailed(String runId, String cause, String detail, boolean retryable,
                      Map<String, Long> tokenUsage) implements RunResult {
 

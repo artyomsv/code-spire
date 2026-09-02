@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.orchestrator.llm.CallRefs;
@@ -9,6 +10,7 @@ import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.util.List;
@@ -36,7 +38,9 @@ public class RunCharges {
      *
      * <p>{@code llm_charge.model} is NOT NULL, which made a missing model look like a reason to skip
      * the write. Skipping loses the spend; saying so does not, and a name that reads as a fault is
-     * what makes the row findable afterwards.
+     * what makes the row findable afterwards. It is not a catalogued name, so the line prices as
+     * UNKNOWN rather than free — and because the ledger discards a duplicate key, a transient fault
+     * reading the model is permanent for that run.
      */
     static final String UNRECORDED_MODEL = "UNRECORDED";
 
@@ -61,6 +65,17 @@ public class RunCharges {
     LlmModelPricer pricer;
 
     /**
+     * The largest self-reported usage this deployment will PRICE for one run.
+     *
+     * <p>Any non-positive value means unlimited, the same posture every ADR-025 cap takes. See
+     * {@code RunTokenUsage.of} for what a report above it does, why a default would be a number
+     * this code invented about somebody else's models, and why zero cannot mean "refuse
+     * everything".
+     */
+    @ConfigProperty(name = "spire.run.max-reported-tokens", defaultValue = "-1")
+    long maxReportedTokens;
+
+    /**
      * Record what this result says the run spent.
      *
      * <p>A failure is charged as readily as a success. An agent can work for an hour and then have
@@ -72,11 +87,18 @@ public class RunCharges {
         if (result instanceof RunResult.RunStarted) {
             return; // nothing has been spent yet, and pricing it would invent the usage
         }
+        if (nothingWasBought(result)) {
+            return;
+        }
         String runId = result.runId();
         String model = runs.modelOf(runId).orElse(UNRECORDED_MODEL);
-        ModelUsage usage = RunTokenUsage.of(result, model);
-        List<ChargeLine> lines = pricer.priceCall(model, usage);
         try {
+            // Pricing sits INSIDE the guard, not one line above it. LlmModelPricer defends its own
+            // SQL and arithmetic, but a stored pricing_mode the enum does not recognise throws
+            // IllegalArgumentException out of valueOf — which would reach the messaging layer and
+            // produce exactly the redelivery loop the comment below says this catch prevents.
+            ModelUsage usage = RunTokenUsage.of(result, model, maxReportedTokens);
+            List<ChargeLine> lines = pricer.priceCall(model, usage);
             ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model, lines));
         } catch (RuntimeException e) {
             // The projection has already written this run's terminal status by the time we get here.
@@ -86,5 +108,27 @@ public class RunCharges {
             LOG.errorf(e, "run %s: its charges could not be recorded, so this spend is missing from the "
                     + "deployment's rolling window; the run's own outcome is unaffected", runId);
         }
+    }
+
+    /**
+     * Whether this result names a failure raised before the agent could buy anything.
+     *
+     * <p>Skipping is as dangerous as charging, in the other direction, so the test is narrow. A
+     * zero-token row is not a harmless extra: the deployment-wide cap counts
+     * {@code COUNT(DISTINCT call_ref)} alongside the money, so a daemon outage failing every dispatch
+     * in seconds would spend the whole call budget on runs that bought nothing — and that budget
+     * gates the review pipeline too. On an UNMETERED deployment the call axis is the ONLY axis, so it
+     * would be the entire cap.
+     *
+     * <p><b>The discriminator is the cause, not the usage.</b> "Usage unknown" cannot serve: a
+     * post-agent failure with unmeasured usage MUST still be charged, which is the whole reason
+     * {@code RunFailed} carries usage at all. {@link RunFailureCause#agentMayHaveSpent()} answers the
+     * actual question and defaults to charging, so only a cause that provably precedes the agent is
+     * skipped. A failure that DID report usage is charged whatever its cause says.
+     */
+    private static boolean nothingWasBought(RunResult result) {
+        return result instanceof RunResult.RunFailed failed
+                && !failed.usageIsKnown()
+                && !RunFailureCause.of(failed.cause()).agentMayHaveSpent();
     }
 }

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -77,6 +78,9 @@ class RunChargesTest {
         c.ledger = ledger;
         c.runs = runs;
         c.pricer = pricer;
+        // Stated rather than left at the field default. Outside CDI a long field is 0, and these
+        // tests are about what gets charged -- not about a ceiling nobody set.
+        c.maxReportedTokens = RunTokenUsage.UNBOUNDED;
         return c;
     }
 
@@ -148,14 +152,52 @@ class RunChargesTest {
     }
 
     @Test
-    void aFailureWithNoUsageWritesTheCallAsUnpricedRatherThanNotAtAll() {
-        // A command refused before anything ran genuinely spent nothing, and a run that spent an
-        // unknown amount must still leave a row: a call that vanishes takes the unpriced-call count
-        // down with it, so the deployment reads as cheaper than it is with nothing to notice.
+    void aPostAgentFailureWithNoUsageIsStillCharged() {
+        // The agent ran; only the measurement is missing. A call that vanishes takes the
+        // unpriced-call count down with it, so the deployment reads as cheaper than it is with
+        // nothing on any surface to notice.
         charges.record(new RunResult.RunFailed(RUN_ID, "AGENT_TIMEOUT", "clock", false, null));
 
         assertEquals(1, ledger.calls.size());
         assertTrue(ledger.calls.getFirst().lines().stream().allMatch(l -> l.tokens() == 0));
+    }
+
+    @Test
+    void aFailureRaisedBeforeTheAgentIsNotCharged() {
+        // These are raised before runtime.create returns, so no agent, no container, no tokens.
+        // A zero-token row for them is not a harmless extra: the deployment-wide cap counts
+        // COUNT(DISTINCT call_ref) as well as summing money, so a daemon outage failing every
+        // dispatch in seconds would spend the whole call budget on runs that bought nothing --
+        // and that budget refuses REVIEWS too. A control firing for the wrong reason, which is
+        // the same defect as one that never fires.
+        charges.record(new RunResult.RunFailed(RUN_ID, "RUNTIME_UNAVAILABLE", "daemon down", true, null));
+        charges.record(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "no such harness", false, null));
+        charges.record(new RunResult.RunFailed(RUN_ID, "CLONE_FAILED", "remote refused", true, null));
+
+        assertTrue(ledger.calls.isEmpty(),
+                "a run that never reached its agent has no spend to record and must not consume"
+                        + " the call axis of a cap that also gates the reviewer");
+    }
+
+    @Test
+    void aFailureBeforeTheAgentThatSomehowReportedUsageIsStillCharged() {
+        // The skip is narrow on purpose. Measured tokens outrank the taxonomy's expectation --
+        // if something reported spend, something was bought, and refusing to record it is the
+        // under-count this whole task exists to remove.
+        charges.record(new RunResult.RunFailed(RUN_ID, "RUNTIME_UNAVAILABLE", "daemon down", true,
+                Map.of("INPUT", 40L)));
+
+        assertEquals(1, ledger.calls.size());
+    }
+
+    @Test
+    void anUnrecognisedCauseIsChargedRatherThanSkipped() {
+        // A cause the taxonomy does not know resolves to UNCLASSIFIED, which answers "may have
+        // spent". Defaulting the other way would let a producer silently opt every one of its
+        // runs out of the ledger by spelling its cause differently.
+        charges.record(new RunResult.RunFailed(RUN_ID, "SOMETHING_NEW", "?", false, null));
+
+        assertEquals(1, ledger.calls.size());
     }
 
     @Test
@@ -183,15 +225,21 @@ class RunChargesTest {
         // The projection has already written the run's terminal status by the time this runs.
         // Throwing here dead-letters the result and replays it, which re-applies the projection —
         // so a broken ledger would turn every finished run into a redelivery loop.
+        AtomicBoolean attempted = new AtomicBoolean();
         RunCharges throwing = charges();
         throwing.ledger = new RecordingLedger() {
             @Override
             public void recordCharges(ChargeCall call) {
+                attempted.set(true);
                 throw new IllegalStateException("ledger is down");
             }
         };
 
         throwing.record(finished(RUN_ID, Map.of("INPUT", 10L)));
+
+        assertTrue(attempted.get(),
+                "the swallow must be EXERCISED, not skipped -- without this the test stays green"
+                        + " if record() is later changed to not attempt the write at all");
     }
 
 }

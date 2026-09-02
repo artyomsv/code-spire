@@ -183,10 +183,15 @@ class RunLauncherTest {
             return finalization;
         }
 
+        RuntimeException destroyFails;
+
         @Override
         public void destroy(RunHandle handle) {
             lifecycle.add("destroy");
             destroyed.add(handle);
+            if (destroyFails != null) {
+                throw destroyFails;
+            }
         }
 
         @Override
@@ -441,6 +446,67 @@ class RunLauncherTest {
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
         assertTrue(finished.agentUnobserved(), "nobody read the agent's exit, so the run is not complete");
         assertTrue(runtime.destroyed.isEmpty(), "and the unit is still preserved for inspection");
+    }
+
+    @Test
+    void aPublisherFailureAfterAGoodAgentRunStillReportsItsSpend() {
+        // The agent ran to completion and bought its tokens; only the push failed. This is the
+        // scenario the change headlines -- an agent works for an hour and then has its push
+        // rejected -- and it was the site nothing asserted.
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 5100L));
+        runtime.publisherLines = List.of(
+                "{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"rejected\"}");
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+
+        assertEquals(5100L, failed.tokenUsage().get("INPUT"));
+    }
+
+    @Test
+    void anOverrunThatDeliveredNothingStillReportsItsSpend() {
+        // The unobserved branch's own failure path. A run that spent its entire wall clock is the
+        // most expensive outcome the system produces, so this is the largest single charge
+        // there is to lose.
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 88_000L));
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+
+        assertEquals(RunFailureCause.AGENT_TIMEOUT, RunFailureCause.of(failed.cause()));
+        assertEquals(88_000L, failed.tokenUsage().get("INPUT"));
+    }
+
+    @Test
+    void aForgeRejectionOnTheUnobservedPathStillReportsItsSpend() {
+        // The third uncovered site: the publisher's own cause outranks the clock, and the spend
+        // has to survive that ranking.
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 640L));
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"failed\",\"cause\":\"PUSH_TRANSPORT_FAILED\",\"detail\":\"remote hung up\"}");
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+
+        assertEquals(640L, failed.tokenUsage().get("INPUT"));
+    }
+
+    @Test
+    void aThrowingTeardownDoesNotDiscardAMeasuredRun() {
+        // By the time destroy runs, the run's outcome AND its measured spend are already decided.
+        // An unguarded throw propagated out of launch, was caught by the dispatcher, and rewrote a
+        // successful pushed run as WORKER_FAILED with its usage dropped -- discarding exactly the
+        // charge the ledger exists to keep. A leaked unit is recoverable by its label; a discarded
+        // result is not.
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 3300L));
+        runtime.destroyFails = new IllegalStateException("daemon blipped during teardown");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
+
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
+        assertEquals(3300L, finished.tokenUsage().get("INPUT"));
     }
 
     @Test

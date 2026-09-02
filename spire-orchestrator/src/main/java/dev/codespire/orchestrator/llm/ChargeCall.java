@@ -28,8 +28,21 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
         Objects.requireNonNull(subjectId, "subjectId");
         Objects.requireNonNull(subjectKind, "subjectKind");
         Objects.requireNonNull(capability, "capability");
+        // A record's canonical constructor cannot be narrower than the record, so the factories
+        // below are a convention rather than a gate. This is the gate: the javadoc's whole reason
+        // for carrying both halves is that a mismatch is not detectable afterwards, and a run id
+        // has a recognisable shape, so "this says RUN and does not look like a run" is checkable
+        // at the one moment it can still be refused.
+        if (subjectKind == ChargeSubject.RUN && !subjectId.startsWith(RUN_ID_PREFIX)) {
+            throw new IllegalArgumentException(
+                    "a RUN charge's subject must be a run id, which '" + subjectId + "' is not;"
+                            + " money attributed to the wrong subject cannot be traced back later");
+        }
         lines = lines == null ? List.of() : List.copyOf(lines);
     }
+
+    /** What every run id begins with — see {@code RunIds}, which the ledger tier does not depend on. */
+    private static final String RUN_ID_PREFIX = "run:";
 
     /** A review's spend: the reviewer capability, against a reviewId. */
     public static ChargeCall forReview(String reviewId, String callRef, ChargeKind kind,

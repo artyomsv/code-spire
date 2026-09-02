@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Large |
-| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**1,867** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines) |
+| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/FactoryRunProjection.java` (**316** lines), `.../factory/RunResource.java` (**302** lines) |
 | Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. |
 | Date | 2026-08-07 (updated 2026-08-09) |
 
@@ -68,6 +68,35 @@ Deliberately *not* recommended: splitting by data source (SQL rows vs in-memory 
 `deadLetterRows` take no `Connection` while the rest do, so that split looks natural and is the wrong
 axis — it groups conditions by an implementation detail that a condition is free to change, and would
 put two rows an operator sees side by side in different files.
+
+## Update — 2026-09-02, M1 Task 4 (the run charge ledger)
+
+**Two factory classes crossed the guideline in one commit**, and neither by much:
+
+| File | Before | Now |
+|---|---|---|
+| `factory/RunResource.java` | 274 | **302** |
+| `factory/FactoryRunProjection.java` | 294 | **316** |
+
+Both were already within a few lines of 300, so the growth that crossed it is small: a
+pre-dispatch pricing refusal (~28 lines) and a single read query (~22 lines). Recorded here rather
+than refactored in the same commit, for the reason this entry already gives about `ReviewProjection`:
+a structural move belongs on its own, and doing one inside a money-path change would hand a reviewer
+a pure move mixed with a behaviour change.
+
+Both have an obvious shape when someone does take them:
+
+- `RunResource` has grown a category of member the sibling review resources solved differently —
+  *refusals before dispatch*. There are now three (`machineAccount`'s two conflicts,
+  `refuseAnUnpriceableModel`, `refuseOverTheSpendCap`), and `SpendGate` is the precedent for where
+  they go: one question, one answer type, no resource state.
+- `FactoryRunProjection` is repeating the read/write mixing this entry already diagnoses in
+  `ReviewProjection`, three orders of magnitude earlier. `AttentionQueries` is the package's own
+  precedent for splitting the reads out, and doing it at 316 lines costs almost nothing compared
+  with doing it at 1,900.
+
+The second point is the one worth acting on soon: the factory read model is at the size the review
+read model was when splitting it would still have been cheap.
 
 ## Issue
 

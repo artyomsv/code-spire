@@ -1398,7 +1398,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   the push gate → a branch on the real remote authored by the machine account; a run touching a
   CI file is refused at the gate and raises `RUN_PUSH_GATE_REFUSED`. Seven new modules
   (`spire-harness`, `spire-harness-codex`, `spire-workspace`, `spire-runtime`,
-  `spire-runtime-docker` Apache; `spire-publisher`, `spire-run-worker` FSL), migrations V42–V45
+  `spire-runtime-docker` Apache; `spire-publisher`, `spire-run-worker` FSL), migrations V42–V49
   (`llm_charge` neutral subject, `factory_run`, `scm_provider.role`, the attention acknowledgement),
   the FACTORY/REVIEWER split on every provider lookup, both credentials Tink-wrapped on the bus
   with AAD bound to run and slot, the neutrality scan widened to harness and runtime names, and

@@ -322,9 +322,17 @@ ALTER TABLE llm_charge ADD COLUMN credential_ref TEXT;
 - **`kind` gains four values, and the CHECK stays.** Its own migration comment explains why the CHECK
   exists — a typo'd literal would otherwise dead-letter the result at INSERT — so extending it is
   mandatory, not cosmetic.
-- **`CallRefs` gains a run form:** `run:{runId}:{attempt}:{seq}`, where `seq` is the harness-reported
-  call index, or `total` when the harness reports only an aggregate. `attempt` is what distinguishes a
-  genuine re-run from a redelivery, exactly as `ReviewRuns` does for reviews.
+- **`CallRefs` gains a run form:** `run:{runId}:{seq}`. Two deliberate departures from what this
+  section originally specified, both settled when the first real caller landed in M1:
+  - **No separate `{attempt}` segment.** `RunIds` already ends a run id with its attempt, so a
+    second copy in the key could disagree with the first and pin the disagreement into the ledger.
+    The property that matters is unchanged and still holds: a genuine re-run keys differently while
+    a redelivery reproduces the key exactly, which is what `UNIQUE (call_ref, token_type)` then
+    discards — the same distinction `ReviewRuns` draws for reviews.
+  - **`seq` is the constant `agent`, not a per-call index.** A run IS one charge: the agent makes
+    many model calls inside its sandbox and the worker never sees them, so a finer grain would be
+    invented rather than measured. The `total` spelling this section proposed for the aggregate
+    case is therefore never produced.
 - **The ten existing ledger reads are updated in the same migration**, and the archived-row filter
   rule is unchanged: per-subject reads filter `archived_at`, the spend-window read does not.
 

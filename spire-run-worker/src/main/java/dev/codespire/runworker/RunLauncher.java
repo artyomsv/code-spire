@@ -152,7 +152,18 @@ public class RunLauncher {
         // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
         // can read what the agent was doing — throwing that away is the loss salvage prevents.
         if (finalization.salvaged()) {
-            runtime.destroy(handle);
+            // Guarded for the same reason its sibling below is, and the reason is sharper here:
+            // by this line the run's outcome AND its measured spend are already decided, so a
+            // daemon blip during teardown would propagate out of launch, be caught by the
+            // dispatcher, and rewrite a successful run as WORKER_FAILED with its usage dropped —
+            // discarding exactly the charge the ledger exists to keep. A leaked unit is
+            // recoverable by its label; a discarded result is not.
+            try {
+                runtime.destroy(handle);
+            } catch (RuntimeException e) {
+                LOG.warnf("run %s: the unit could not be destroyed (%s); it is labelled for cleanup",
+                        command.runId(), e.getClass().getSimpleName());
+            }
         } else {
             // Preserved, and STOPPED. That an overrun kills the agent is one arm's private promise,
             // not something the SPI states — and a run now reported finished makes an operator rely

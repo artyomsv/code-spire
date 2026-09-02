@@ -34,26 +34,26 @@ public enum RunFailureCause {
     // --- The request was wrong. The person who asked fixes it. ---
 
     /** Malformed or unacceptable dispatch input. The same command fails the same way. */
-    BAD_COMMAND(false),
+    BAD_COMMAND(false, false),
 
     // --- The deployment is misconfigured. An operator fixes configuration. ---
 
     /** The agent or publisher image could not be pulled. A registry blip is transient. */
-    IMAGE_UNAVAILABLE(true),
+    IMAGE_UNAVAILABLE(true, false),
 
     /** The publisher started without something it needs. Configuration, not weather. */
-    PUBLISHER_MISCONFIGURED(false),
+    PUBLISHER_MISCONFIGURED(false, true),
 
     /** No runtime could place the unit — the daemon is down or unreachable. */
-    RUNTIME_UNAVAILABLE(true),
+    RUNTIME_UNAVAILABLE(true, false),
 
     // --- Credentials. An operator fixes the registry. ---
 
     /** The forge or the model provider refused the credential. An answer, not a blip. */
-    CREDENTIAL_REJECTED(false),
+    CREDENTIAL_REJECTED(false, true),
 
     /** Every member of the harness credential pool is exhausted or rejected (FR-F12). */
-    ALL_CREDENTIALS_EXHAUSTED(false),
+    ALL_CREDENTIALS_EXHAUSTED(false, true),
 
     // --- The agent ran. Read the run. ---
 
@@ -61,7 +61,7 @@ public enum RunFailureCause {
      * The agent ran to completion and did not deliver. Not retryable: the same prompt against the
      * same commit produces the same result, and the model has already been paid for.
      */
-    AGENT_FAILED(false),
+    AGENT_FAILED(false, true),
 
     /**
      * The model provider errored or returned nothing at all, so the agent never got its answer.
@@ -70,29 +70,29 @@ public enum RunFailureCause {
      * places and deserve opposite retry answers. An outage clears; an agent that ran and failed the
      * task will fail it again. Collapsing them cost the retry that a provider blip should get.
      */
-    MODEL_UNAVAILABLE(true),
+    MODEL_UNAVAILABLE(true, true),
 
     /** The agent outlived its wall clock and was stopped. */
-    AGENT_TIMEOUT(false),
+    AGENT_TIMEOUT(false, true),
 
     /** The agent's egress was blocked, so it could not reach the model or a dependency. */
-    BLOCKED_EGRESS(true),
+    BLOCKED_EGRESS(true, true),
 
     // --- The sandbox died under the run. Infrastructure. ---
 
     /** Evicted, unreachable, out of memory, or otherwise gone before it finished. */
-    SANDBOX_LOST(true),
+    SANDBOX_LOST(true, true),
 
     // --- Delivery. The push half. ---
 
     /** The init container could not clone the repository. */
-    CLONE_FAILED(true),
+    CLONE_FAILED(true, false),
 
     /** The push gate refused the change. It refuses the same tree the same way (ADR-037). */
-    GATE_REFUSED(false),
+    GATE_REFUSED(false, true),
 
     /** The forge rejected the push for a reason that is not a stale parent. It will reject it again. */
-    PUSH_REJECTED(false),
+    PUSH_REJECTED(false, true),
 
     /**
      * The push never reached the forge — a network, DNS or TLS fault on the way out.
@@ -102,33 +102,33 @@ public enum RunFailureCause {
      * the opposite of what {@link #CLONE_FAILED} already answers for the identical condition on the
      * way in.
      */
-    PUSH_TRANSPORT_FAILED(true),
+    PUSH_TRANSPORT_FAILED(true, true),
 
     /** The branch moved under the run; a retry pushes the same stale parent again. */
-    NON_FAST_FORWARD(false),
+    NON_FAST_FORWARD(false, true),
 
     /** A bundle reached the handoff and could not be read as one. */
-    BUNDLE_UNREADABLE(false),
+    BUNDLE_UNREADABLE(false, true),
 
     /** A commit the agent made never reached a bundle. */
-    DROPPED_COMMIT(false),
+    DROPPED_COMMIT(false, true),
 
     // --- The control plane itself. Our bug, or our infrastructure. ---
 
     /** Finalization failed, so the workspace is preserved rather than destroyed (FR-F7). */
-    SALVAGE_FAILED(false),
+    SALVAGE_FAILED(false, true),
 
     /** The broker never acknowledged the dispatch. */
-    DISPATCH_FAILED(true),
+    DISPATCH_FAILED(true, false),
 
     /** Dispatch may or may not have landed, and an operator must resolve which (FR-F10). */
-    DISPATCH_UNCERTAIN(false),
+    DISPATCH_UNCERTAIN(false, true),
 
     /** An operator or a policy cancelled the run (FR-F6). */
-    CANCELLED(false),
+    CANCELLED(false, true),
 
     /** The worker failed for a reason of its own that is none of the above. */
-    WORKER_FAILED(true),
+    WORKER_FAILED(true, true),
 
     /**
      * The broker refused the run's result, in full and again compacted.
@@ -137,7 +137,7 @@ public enum RunFailureCause {
      * re-run produces a result refused again for the same reason. An operator raises the record
      * limit; nobody re-runs anything. Different person, different action, so its own value.
      */
-    RESULT_UNPUBLISHABLE(false),
+    RESULT_UNPUBLISHABLE(false, true),
 
     /**
      * A wire value this version does not recognise.
@@ -146,7 +146,7 @@ public enum RunFailureCause {
      * throwing, and a writer that selected it would be recording "we did not look", which is
      * exactly what FR-F9 forbids.
      */
-    UNCLASSIFIED(false);
+    UNCLASSIFIED(false, true);
 
     /**
      * Every alias that maps onto a value, from the vocabularies that reach the wire.
@@ -182,8 +182,11 @@ public enum RunFailureCause {
 
     private final boolean retryable;
 
-    RunFailureCause(boolean retryable) {
+    private final boolean agentMayHaveSpent;
+
+    RunFailureCause(boolean retryable, boolean agentMayHaveSpent) {
         this.retryable = retryable;
+        this.agentMayHaveSpent = agentMayHaveSpent;
     }
 
     /**
@@ -195,6 +198,28 @@ public enum RunFailureCause {
      */
     public boolean isRetryable() {
         return retryable;
+    }
+
+    /**
+     * Whether the agent could have bought tokens before this failure.
+     *
+     * <p>The charge ledger needs it. A failure is normally NOT a free outcome — an agent can
+     * work for an hour and then have its push rejected — so a run that failed is charged like
+     * one that succeeded. But five causes are raised before the agent's first token, and a
+     * zero-token row for those is not a harmless extra: the deployment-wide cap counts
+     * {@code COUNT(DISTINCT call_ref)} as well as summing money, so a daemon outage failing
+     * every dispatch in seconds would spend the whole call budget on runs that bought nothing —
+     * and that budget gates the review pipeline too. A control firing for the wrong reason,
+     * which is the same defect as one that never fires.
+     *
+     * <p><b>The default is true, deliberately.</b> Losing a real charge is the failure this axis
+     * exists beside, so anything ambiguous charges: a rejected credential may be the forge's
+     * rather than the model's, an exhausted pool means earlier members were paid, and an
+     * uncertain dispatch may well have run. Only a cause that provably precedes the agent
+     * answers false.
+     */
+    public boolean agentMayHaveSpent() {
+        return agentMayHaveSpent;
     }
 
     /** Whether a writer may select this cause. False only for {@link #UNCLASSIFIED}. */
