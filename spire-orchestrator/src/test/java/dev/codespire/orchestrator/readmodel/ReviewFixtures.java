@@ -49,7 +49,7 @@ public final class ReviewFixtures {
     public static void seedCompletedReviewWithCharges(ReviewProjection projection, long pr) {
         String reviewId = seedHeader(projection, pr, "completed", ReviewProjection.STAGE_DONE);
         // Two lines, so a cost assertion sums something rather than echoing one row back.
-        projection.recordCharges(new ChargeCall(reviewId, "CANARY-REF-" + pr, ChargeKind.REVIEW, TEST_MODEL,
+        projection.recordCharges(ChargeCall.forReview(reviewId, "CANARY-REF-" + pr, ChargeKind.REVIEW, TEST_MODEL,
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, TEST_RATE_MILLICENTS_PER_MILLION),
                         ChargeLine.metered(TokenType.OUTPUT, 500_000, TEST_RATE_MILLICENTS_PER_MILLION))));
     }

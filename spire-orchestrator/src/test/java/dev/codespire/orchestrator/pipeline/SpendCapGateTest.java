@@ -198,7 +198,7 @@ class SpendCapGateTest {
     private void seedUnmeteredCalls(long pr, int count) {
         String reviewId = ReviewFixtures.reviewIdFor(pr);
         for (int i = 0; i < count; i++) {
-            projection.recordCharges(new ChargeCall(reviewId, "CANARY-UNMETERED-" + pr + "-" + i,
+            projection.recordCharges(ChargeCall.forReview(reviewId, "CANARY-UNMETERED-" + pr + "-" + i,
                     ChargeKind.REVIEW, "TEST-MODEL",
                     List.of(ChargeLine.unmetered(TokenType.INPUT, 1_000))));
         }
@@ -210,7 +210,7 @@ class SpendCapGateTest {
      * raw SQL here could produce a row shape {@code LlmModelPricer} would never emit.
      */
     private void seedMeteredCall(long pr) {
-        projection.recordCharges(new ChargeCall(ReviewFixtures.reviewIdFor(pr),
+        projection.recordCharges(ChargeCall.forReview(ReviewFixtures.reviewIdFor(pr),
                 "CANARY-METERED-" + pr, ChargeKind.REVIEW, "TEST-MODEL",
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, TEST_RATE_MILLICENTS_PER_MILLION))));
     }

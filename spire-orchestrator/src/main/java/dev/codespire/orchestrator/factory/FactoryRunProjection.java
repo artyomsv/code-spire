@@ -65,6 +65,28 @@ public class FactoryRunProjection {
     /** The one failure cause a retried {@link #queued} re-arms — see {@link #dispatchFailed}. */
     static final String DISPATCH_FAILED = "DISPATCH_FAILED";
 
+    /**
+     * The model this run was dispatched with, or empty when the row cannot be read.
+     *
+     * <p>Read from the run's own row rather than carried on the result, because the result is
+     * emitted by the worker and the model is the ORCHESTRATOR's fact: it chose it at dispatch,
+     * and a worker echoing it back would let the two disagree with nothing to say which is right.
+     */
+    public Optional<String> modelOf(String runId) {
+        String sql = "SELECT model FROM factory_run WHERE run_id = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString("model")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            // Empty, not a throw: the caller is recording a charge for money already spent, and
+            // a throw here would dead-letter the result and lose the run's outcome as well.
+            LOG.errorf(e, "run %s: its model could not be read for the charge ledger", runId);
+            return Optional.empty();
+        }
+    }
+
     /** What the read model knows about one run. */
     public record RunView(String runId, String status, String pushedRef, List<String> blockedPaths,
                           String failureCause, String failureDetail) {

@@ -14,6 +14,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeSubject;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -1809,9 +1810,9 @@ public class ReviewProjection {
             return; // nothing to write, so nothing to broadcast either
         }
         String sql = """
-                INSERT INTO llm_charge (id, subject_id, subject_kind, call_ref, kind, model, pricing_mode,
-                        token_type, tokens, rate_millicents_per_million, cost_millicents)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO llm_charge (id, subject_id, subject_kind, capability, call_ref, kind, model,
+                        pricing_mode, token_type, tokens, rate_millicents_per_million, cost_millicents)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (call_ref, token_type) DO NOTHING
                 """;
         try (Connection c = dataSource.getConnection()) {
@@ -1832,26 +1833,40 @@ public class ReviewProjection {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record charges for call " + call.callRef(), e);
         }
-        broadcast(call.reviewId());
+        // Only a review has a live socket keyed by this id. A run's cost surfaces on the factory
+        // read model, which broadcasts for itself.
+        if (call.subjectKind() == ChargeSubject.REVIEW) {
+            broadcast(call.subjectId());
+        }
     }
 
     private static void bindChargeLine(PreparedStatement ps, ChargeCall call, ChargeLine line)
             throws SQLException {
         ps.setObject(1, java.util.UUID.randomUUID());
-        ps.setString(2, call.reviewId());
+        ps.setString(2, call.subjectId());
         // Named rather than left to the column default. A default is a migration artefact for rows
         // that already exist; a WRITER that relies on one mislabels every row it inserts the day
         // the default changes, and a charge with the wrong subject kind is money attributed to the
         // wrong thing.
-        ps.setString(3, "REVIEW");
-        ps.setString(4, call.callRef());
-        ps.setString(5, call.kind().name());
-        ps.setString(6, call.model());
-        ps.setString(7, line.mode().name());
-        ps.setString(8, line.tokenType().name());
-        ps.setInt(9, line.tokens());
-        setNullableLong(ps, 10, line.rateMillicentsPerMillion());
-        setNullableLong(ps, 11, line.costMillicents());
+        // Bound FROM THE CALL, not from a literal. The note above is right, and the literal that
+        // stood here had the same failure one level up: it was correct while a review was the only
+        // subject, and it silently mislabelled every run's spend as a review's the moment a second
+        // subject existed -- money attributed to the wrong thing, landing on some unrelated pull
+        // request's cost card, with the deployment total still adding up.
+        ps.setString(3, call.subjectKind().name());
+        // Likewise named. The column was added NOT NULL DEFAULT 'REVIEW' so existing rows had a
+        // value, and omitting it from the INSERT let every run inherit that default -- the same
+        // mislabelling by a quieter route. V42 records that a row's capability cannot be inferred
+        // afterwards, so the wrong one is permanent.
+        ps.setString(4, call.capability().name());
+        ps.setString(5, call.callRef());
+        ps.setString(6, call.kind().name());
+        ps.setString(7, call.model());
+        ps.setString(8, line.mode().name());
+        ps.setString(9, line.tokenType().name());
+        ps.setInt(10, line.tokens());
+        setNullableLong(ps, 11, line.rateMillicentsPerMillion());
+        setNullableLong(ps, 12, line.costMillicents());
     }
 
     /**

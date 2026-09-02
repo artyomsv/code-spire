@@ -35,12 +35,15 @@ class LlmChargeProjectionIT {
     @Inject
     com.fasterxml.jackson.databind.ObjectMapper mapper;
 
+    @Inject
+    javax.sql.DataSource dataSource;
+
     private static String reviewId(long pr) {
         return "review::TEST-WS/TEST-REPO#" + pr;
     }
 
     private ChargeCall call(String reviewId, String ref, List<ChargeLine> lines) {
-        return new ChargeCall(reviewId, ref, ChargeKind.REVIEW, "TEST-MODEL", lines);
+        return ChargeCall.forReview(reviewId, ref, ChargeKind.REVIEW, "TEST-MODEL", lines);
     }
 
     @Test
@@ -206,5 +209,44 @@ class LlmChargeProjectionIT {
         assertEquals("CANARY-REF-4", lines.get(1).callRef());
         assertEquals(lines.get(0).pricedAt(), lines.get(1).pricedAt(),
                 "one call's lines are one transaction, so they carry one priced_at");
+    }
+
+    /**
+     * What actually lands in the row for a run.
+     *
+     * <p>The writer bound the literal {@code "REVIEW"} for {@code subject_kind} and omitted
+     * {@code capability} from the INSERT entirely, letting it take the column DEFAULT — which is
+     * also {@code 'REVIEW'}. Both were correct while a review was the only thing that could spend
+     * money, and both silently mislabelled every run's spend the moment a second subject existed.
+     *
+     * <p>Nothing above this reads a row back, so a test asserting the {@code ChargeCall} handed to
+     * the writer passes whatever the writer then does with it. This is the assertion that does not.
+     */
+    @Test
+    void aRunsChargeLandsInTheRowAsARunsCharge() {
+        String runId = "run::github:TEST-acme/app:row-" + java.util.UUID.randomUUID() + ":1";
+
+        projection.recordCharges(ChargeCall.forRun(runId, "CANARY-RUN-" + runId, "TEST-MODEL",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L))));
+
+        assertEquals(List.of("RUN", "BUILD", "BUILD"), rowFacts(runId),
+                "subject_kind, capability and kind must all say this was a run -- money attributed"
+                        + " to the wrong thing leaves the deployment total right and puts a run's"
+                        + " spend on some unrelated pull request's cost card");
+    }
+
+    /** subject_kind, capability and kind for a subject's single charge row. */
+    private List<String> rowFacts(String subjectId) {
+        String sql = "SELECT subject_kind, capability, kind FROM llm_charge WHERE subject_id = ?";
+        try (java.sql.Connection c = dataSource.getConnection();
+             java.sql.PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, subjectId);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "the charge must exist before its columns can be judged");
+                return List.of(rs.getString(1), rs.getString(2), rs.getString(3));
+            }
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("could not read back the charge row", e);
+        }
     }
 }

@@ -203,16 +203,20 @@ public class RunLauncher {
                     outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, observed.seen().summary()),
                     true);
         }
+        Map<String, Long> spent = usageOf(adapter, observed.seen().summary());
         if (outcome.failureCause().isPresent()) {
             // A forge that rejected the final checkpoint is the fact worth classifying, not the
             // clock that ran out around it.
             return failure(command, outcome.failureCause().orElseThrow(),
-                    outcome.failureDetail() + "; " + finalization.detail());
+                    outcome.failureDetail() + "; " + finalization.detail()).withUsage(spent);
         }
         RunFailureCause cause = finalization.overran()
                 ? RunFailureCause.AGENT_TIMEOUT
                 : RunFailureCause.SALVAGE_FAILED;
-        return failure(command, cause.name(), finalization.detail());
+        // A run that spent its whole wall clock and then failed is the most expensive outcome
+        // the system produces. Reporting it without its usage leaves the spend cap blind to
+        // exactly the runs most likely to be run again.
+        return failure(command, cause.name(), finalization.detail()).withUsage(spent);
     }
 
     private static void warnOmittedPaths(RunCommand.ExecuteRun command, PublisherOutcome outcome) {
@@ -229,7 +233,9 @@ public class RunLauncher {
             return unobserved(command, adapter, observed);
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
-            return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail());
+            // The publisher failed, but the AGENT ran to completion first and bought its tokens.
+            return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail())
+                    .withUsage(usageOf(adapter, observed.seen().summary()));
         }
         if (observed.seen().dropped() > 0) {
             LOG.debugf("run %s: %d agent events folded away", command.runId(), observed.seen().dropped());
@@ -240,7 +246,12 @@ public class RunLauncher {
         if (!terminal.succeeded() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             // The agent failed and nothing reached the remote. A run that DID push before failing
             // is reported as finished, because the work is on the branch either way.
-            return failure(command, terminal.cause().orElseThrow().name(), terminal.detail());
+            //
+            // Its usage rides along regardless: an agent that ran and then failed spent exactly
+            // as much as one that ran and succeeded, and this failure is the only record of it
+            // the orchestrator will ever see.
+            return failure(command, terminal.cause().orElseThrow().name(), terminal.detail())
+                    .withUsage(usageOf(adapter, summary));
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
                 outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary), false);

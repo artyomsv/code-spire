@@ -156,7 +156,11 @@ public class RunDispatcher {
                     "the broker refused the run's full result (" + finished.changedPaths().size()
                             + " changed paths, " + finished.blockedPaths().size() + " blocked); the branch"
                             + (finished.pushedRef() == null ? " was not pushed" : " is at " + finished.pushedRef()),
-                    RunFailureCause.RESULT_UNPUBLISHABLE.isRetryable());
+                    RunFailureCause.RESULT_UNPUBLISHABLE.isRetryable(),
+                    // The agent's spend survives the result being too large to publish. Dropping
+                    // it here would lose the charge for a run that definitely ran, and this
+                    // failure is the ONLY record of it that reaches the orchestrator.
+                    finished.tokenUsage());
             if (publish(compact)) {
                 return;
             }

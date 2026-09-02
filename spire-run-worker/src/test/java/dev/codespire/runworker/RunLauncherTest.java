@@ -444,6 +444,38 @@ class RunLauncherTest {
     }
 
     @Test
+    void aFailedRunStillReportsWhatItSpent() {
+        // A failure is not a free outcome. The agent ran, the tokens were bought, and this result
+        // is the only record of that spend the orchestrator will ever see -- so dropping it leaves
+        // the deployment's rolling window blind to exactly the runs most likely to be run again.
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 4200L));
+        runtime.finalization = Finalization.salvaged(2, "exited");
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+
+        assertTrue(failed.usageIsKnown(), "the fold measured it; a failure must not answer unknown");
+        assertEquals(4200L, failed.tokenUsage().get("INPUT"));
+    }
+
+    @Test
+    void aRunThatFailedBeforeAnythingRanReportsNoUsageAtAll() {
+        // The other half, and it is a different fact rather than the same one with a zero:
+        // "spent nothing" and "spent an amount nobody measured" are priced differently, so a
+        // builder that defaulted to an empty map would assert every refused command was free.
+        launcher.harnesses = new HarnessRegistry() {
+            @Override
+            public HarnessAdapter forName(String harness) {
+                throw new IllegalArgumentException("unknown harness: " + harness);
+            }
+        };
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
+                launcher.launch(COMMAND, e -> { }));
+
+        assertFalse(failed.usageIsKnown());
+    }
+
+    @Test
     void aThrowingSalvageWithNothingPushedIsStillAFault() {
         // The other half: without a push there is nothing to report but the fault, and it keeps its
         // own cause rather than being softened into an outcome.

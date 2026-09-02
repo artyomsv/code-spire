@@ -5,6 +5,7 @@ import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
+import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.llm.LlmProviderConfig;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.provider.ScmProvider;
@@ -84,6 +85,9 @@ public class RunResource {
     SpendGate spendGate;
 
     @Inject
+    LlmModelPricer pricer;
+
+    @Inject
     RunCredentials runCredentials;
 
     /**
@@ -101,6 +105,7 @@ public class RunResource {
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(req, config);
         ScmProvider account = machineAccount(in);
         LlmProviderConfig llm = harnessCredentialSource(req.llmProviderId(), in.harness());
+        refuseAnUnpriceableModel(in.model());
         refuseOverTheSpendCap();
 
         RepoRef repo = new RepoRef(in.workspace(), in.slug());
@@ -144,6 +149,29 @@ public class RunResource {
                     + "bot username by hand: the login is what the push is authenticated as.");
         }
         return account;
+    }
+
+    /**
+     * A run whose model cannot be priced is refused BEFORE it spends, exactly as a review is.
+     *
+     * <p>This is the half that protects the cap rather than reporting on it. Pricing is
+     * post-hoc — the charge is written when the run is already over — so this is the last point
+     * at which an unpriceable run can still be REFUSED rather than merely noticed afterwards.
+     * Without it a deployment can spend without limit on a model nobody gave rates to, and every
+     * one of those charges lands as UNKNOWN, which SUM() skips: the money cap would be looking at
+     * a total that omits precisely the runs it cannot price.
+     *
+     * <p>A run is refused rather than recorded and skipped, because unlike a review nothing else
+     * has happened yet: there is no diff already fetched and no context already assembled, so a
+     * refusal here costs nothing and leaves no row to explain.
+     */
+    private void refuseAnUnpriceableModel(String model) {
+        if (pricer.isPriceable(model)) {
+            return;
+        }
+        throw conflict("Run not dispatched: model '" + model + "' has no usable pricing. Set input"
+                + " and output rates in Settings -> LLM -> Models, or mark it UNMETERED if it is"
+                + " self-hosted. A run that cannot be priced cannot be counted against the spend cap.");
     }
 
     /**

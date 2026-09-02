@@ -73,13 +73,13 @@ class FactoryRunProjectionTest {
         // column to the wire set. Translating on the way in is what lets both keep their own words
         // without the read model growing a third spelling for one thing.
         String harnessWord = queuedRun();
-        projection.apply(new RunResult.RunFailed(harnessWord, "PUSH_GATE_REFUSED", "protected path", false));
+        projection.apply(new RunResult.RunFailed(harnessWord, "PUSH_GATE_REFUSED", "protected path", false, null));
 
         // PUSH_FAILED is the publisher's OLD ambiguous word, and it aliases to the transport
         // reading rather than to a refusal: told a network fault is the forge answering no, a blip
         // is never retried. "remote hung up" is exactly that case.
         String publisherWord = queuedRun();
-        projection.apply(new RunResult.RunFailed(publisherWord, "PUSH_FAILED", "remote hung up", true));
+        projection.apply(new RunResult.RunFailed(publisherWord, "PUSH_FAILED", "remote hung up", true, null));
 
         assertEquals(List.of("GATE_REFUSED"), column(harnessWord, "failure_cause"));
         assertEquals(List.of("PUSH_TRANSPORT_FAILED"), column(publisherWord, "failure_cause"));
@@ -92,7 +92,7 @@ class FactoryRunProjectionTest {
         // instead, with the producer's spelling carried in the detail so it is still diagnosable.
         String runId = queuedRun();
 
-        projection.apply(new RunResult.RunFailed(runId, "SOMETHING_NEW", "a newer worker said this", false));
+        projection.apply(new RunResult.RunFailed(runId, "SOMETHING_NEW", "a newer worker said this", false, null));
 
         assertEquals(List.of("UNCLASSIFIED"), column(runId, "failure_cause"));
         assertTrue(column(runId, "failure_detail").getFirst().contains("SOMETHING_NEW"),
@@ -145,7 +145,7 @@ class FactoryRunProjectionTest {
     void aFailureNamesItsCause() {
         String runId = queuedRun();
 
-        projection.apply(new RunResult.RunFailed(runId, "SANDBOX_UNREACHABLE", "daemon down", true));
+        projection.apply(new RunResult.RunFailed(runId, "SANDBOX_UNREACHABLE", "daemon down", true, null));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.FAILED, view.status());
@@ -190,7 +190,7 @@ class FactoryRunProjectionTest {
         assertEquals(FactoryRunProjection.SUCCEEDED, projection.find(finished).orElseThrow().status());
 
         String crashed = queuedRun();
-        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true));
+        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null));
         projection.queued(new FactoryRunProjection.QueuedRun(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
         assertEquals("SANDBOX_LOST", projection.find(crashed).orElseThrow().failureCause());
 
@@ -293,7 +293,7 @@ class FactoryRunProjectionTest {
 
         // But a row that failed for any OTHER cause stays failed: that failure is the run's real end.
         String crashed = queuedRun();
-        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true));
+        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null));
         projection.apply(new RunResult.RunStarted(crashed, "container-1"));
         assertEquals(FactoryRunProjection.FAILED, projection.find(crashed).orElseThrow().status());
     }

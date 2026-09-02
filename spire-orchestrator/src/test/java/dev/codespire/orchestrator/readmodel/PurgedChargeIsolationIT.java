@@ -113,7 +113,7 @@ class PurgedChargeIsolationIT {
      * when it has no rates, so this is a real shape rather than a contrived one.
      */
     private void chargeOneCallThatCouldNotBePriced(String reviewId, long pr) {
-        projection.recordCharges(new ChargeCall(reviewId, "CANARY-UNPRICED-" + pr, ChargeKind.REVIEW,
+        projection.recordCharges(ChargeCall.forReview(reviewId, "CANARY-UNPRICED-" + pr, ChargeKind.REVIEW,
                 OWN_MODEL, List.of(ChargeLine.unknown(TokenType.CACHE_WRITE, 500_000))));
     }
 

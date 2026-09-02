@@ -23,6 +23,9 @@ public class RunResultSaga {
     @Inject
     FactoryRunProjection projection;
 
+    @Inject
+    RunCharges charges;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {
@@ -34,6 +37,10 @@ public class RunResultSaga {
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
             projection.apply(result);
+            // AFTER the projection, deliberately. The run's outcome is the fact an operator is
+            // waiting on; the ledger write is best-effort and says so if it fails, so ordering it
+            // first would let a ledger outage delay a terminal status that is already known.
+            charges.record(result);
         } finally {
             MDC.remove(MDC_RUN_ID);
         }

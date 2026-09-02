@@ -11,5 +11,14 @@ public enum ChargeKind {
     /** The ADR-019 reconcile call that verdicts a prior run's findings. */
     RECONCILE,
     /** A conversation follow-up answer. */
-    FOLLOWUP
+    FOLLOWUP,
+    /**
+     * A factory run: one agent, one wall clock, one branch.
+     *
+     * <p>The run is charged as ONE call although the agent made many model calls inside its
+     * sandbox. That is not an approximation glossed over — the harness reports only its own
+     * totals and the worker never sees the individual calls, so a finer grain would be invented
+     * rather than measured.
+     */
+    BUILD
 }

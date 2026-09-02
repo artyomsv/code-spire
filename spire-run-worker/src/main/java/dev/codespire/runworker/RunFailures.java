@@ -42,11 +42,18 @@ public class RunFailures {
     @Inject
     Credentials credentials;
 
-    /** A failure whose retry answer is the cause's and whose detail carries no credential. */
+    /**
+     * A failure whose retry answer is the cause's and whose detail carries no credential.
+     *
+     * <p>Usage is left UNKNOWN here, and a caller that measured it adds it with
+     * {@link RunResult.RunFailed#withUsage(java.util.Map)}. Defaulting it to an empty map would
+     * assert the run was free, and a failure is not a free outcome: an agent can work for an hour
+     * and then have its push rejected.
+     */
     public RunResult.RunFailed of(RunCommand.ExecuteRun command, String cause, String detail) {
         return new RunResult.RunFailed(command.runId(), cause,
                 clip(scrubFor(command).clean(detail)),
-                RunFailureCause.of(cause).isRetryable());
+                RunFailureCause.of(cause).isRetryable(), null);
     }
 
     /**

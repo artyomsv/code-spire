@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.caps;
 
 import dev.codespire.contract.review.TokenType;
+import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
@@ -19,6 +20,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -209,7 +211,7 @@ class SpendWindowIT {
      */
     private void seedUnknownPricedCall(long pr) {
         String reviewId = ReviewFixtures.reviewIdFor(pr);
-        projection.recordCharges(new ChargeCall(reviewId, "CANARY-UNPRICED-" + pr, ChargeKind.REVIEW,
+        projection.recordCharges(ChargeCall.forReview(reviewId, "CANARY-UNPRICED-" + pr, ChargeKind.REVIEW,
                 "TEST-MODEL", List.of(ChargeLine.unknown(TokenType.INPUT, 1_000_000))));
     }
 
@@ -259,5 +261,35 @@ class SpendWindowIT {
         } catch (SQLException e) {
             throw new IllegalStateException("setup failed: " + sql, e);
         }
+    }
+
+    /**
+     * The scenario this whole task exists for: a run's spend reaching the window that gates it.
+     *
+     * <p>Every other assertion about run charges can pass while the cap stays blind, which is
+     * precisely the state the code was in — the worker put a usage report on the wire so it would
+     * not be lost, the ledger was given a neutral subject so a run could be charged, and the
+     * projection then read a finished run, wrote its status and dropped the usage on the floor.
+     * A deployment could run the factory all day, spend real money, and the cap never moved.
+     *
+     * <p>Asserted through the ledger's own writer rather than a raw INSERT, so it also proves the
+     * spend read carries no {@code subject_kind} filter: a copied filter from the review reads
+     * beside it would make runs free as far as the cap is concerned.
+     */
+    @Test
+    void aRunsSpendCountsTowardTheSameWindowThatGatesIt() {
+        long baseline = lastHour().spentMillicents();
+        long baselineCalls = lastHour().calls();
+        String runId = "run::github:TEST-acme/app:cap-" + UUID.randomUUID() + ":1";
+
+        projection.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, "agent"),
+                "TEST-RUN-MODEL", List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 2_000L))));
+
+        assertTrue(lastHour().spentMillicents() > baseline,
+                "a run's money must move the same rolling window a review's does, or the cap that"
+                        + " refuses runs is reading a total those runs never contribute to");
+        assertEquals(baselineCalls + 1, lastHour().calls(),
+                "and its call must be counted, which is the axis that still works on an UNMETERED"
+                        + " deployment where every charge is an asserted zero");
     }
 }

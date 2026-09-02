@@ -81,9 +81,9 @@ class RunResultTest {
         // "read the logs" is not a failure cause (FR-F9): a failure with no named cause reaches an
         // operator as a row saying only that something went wrong.
         assertThrows(IllegalArgumentException.class,
-                () -> new RunResult.RunFailed("run::github:a/b:s:1", " ", "detail", false));
+                () -> new RunResult.RunFailed("run::github:a/b:s:1", " ", "detail", false, null));
         assertEquals("SANDBOX_LOST",
-                new RunResult.RunFailed("run::github:a/b:s:1", "SANDBOX_LOST", "gone", true).cause());
+                new RunResult.RunFailed("run::github:a/b:s:1", "SANDBOX_LOST", "gone", true, null).cause());
     }
 
     @Test
