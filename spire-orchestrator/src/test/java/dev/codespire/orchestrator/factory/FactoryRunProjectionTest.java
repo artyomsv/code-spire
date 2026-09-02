@@ -26,6 +26,37 @@ class FactoryRunProjectionTest {
     @Inject
     FactoryRunProjection projection;
 
+    @Test
+    void aProducersOwnVocabularyIsStoredAsTheClosedSetsValue() {
+        // The harness says PUSH_GATE_REFUSED and the publisher says PUSH_FAILED; V46 constrains the
+        // column to the wire set. Translating on the way in is what lets both keep their own words
+        // without the read model growing a third spelling for one thing.
+        String harnessWord = queuedRun();
+        projection.apply(new RunResult.RunFailed(harnessWord, "PUSH_GATE_REFUSED", "protected path", false));
+
+        String publisherWord = queuedRun();
+        projection.apply(new RunResult.RunFailed(publisherWord, "PUSH_FAILED", "remote hung up", true));
+
+        assertEquals(List.of("GATE_REFUSED"), column(harnessWord, "failure_cause"));
+        assertEquals(List.of("PUSH_REJECTED"), column(publisherWord, "failure_cause"));
+    }
+
+    @Test
+    void anUnrecognisedCauseIsRecordedAsUnclassifiedWithItsOwnWordKept() {
+        // The column's CHECK would reject an unknown string, and that rejection would throw inside
+        // the result handler of a run that has already been paid for. It lands as UNCLASSIFIED
+        // instead, with the producer's spelling carried in the detail so it is still diagnosable.
+        String runId = queuedRun();
+
+        projection.apply(new RunResult.RunFailed(runId, "SOMETHING_NEW", "a newer worker said this", false));
+
+        assertEquals(List.of("UNCLASSIFIED"), column(runId, "failure_cause"));
+        assertTrue(column(runId, "failure_detail").getFirst().contains("SOMETHING_NEW"),
+                "the unrecognised cause must survive in the detail, or it is lost entirely");
+        assertTrue(column(runId, "failure_detail").getFirst().contains("a newer worker said this"),
+                "the producer's own detail must not be discarded by the prefix");
+    }
+
     private String queuedRun() {
         String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
@@ -74,7 +105,8 @@ class FactoryRunProjectionTest {
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.FAILED, view.status());
-        assertEquals("SANDBOX_UNREACHABLE", view.failureCause());
+        // The worker emits the harness's word; V46 stores the closed set's value for it.
+        assertEquals("SANDBOX_LOST", view.failureCause());
     }
 
     @Test
@@ -116,7 +148,7 @@ class FactoryRunProjectionTest {
         String crashed = queuedRun();
         projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true));
         projection.queued(new FactoryRunProjection.QueuedRun(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
-        assertEquals("SANDBOX_UNREACHABLE", projection.find(crashed).orElseThrow().failureCause());
+        assertEquals("SANDBOX_LOST", projection.find(crashed).orElseThrow().failureCause());
 
         String unacked = queuedRun();
         projection.dispatchFailed(unacked, "No broker ack within 10s");

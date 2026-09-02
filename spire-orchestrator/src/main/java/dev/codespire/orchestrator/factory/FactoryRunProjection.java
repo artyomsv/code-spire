@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.event.RunResult;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -156,10 +157,30 @@ public class FactoryRunProjection {
                 finished.runId(), SUCCEEDED, finished.pushedRef(), finished.runId());
     }
 
+    /**
+     * Normalized through {@link RunFailureCause} before it is stored, never written raw.
+     *
+     * <p>The cause arrives as a string from three producers with three vocabularies, and V46
+     * constrains the column to the closed set. Writing {@code failed.cause()} straight through would
+     * make a producer's unrecognised spelling a constraint violation — thrown inside a result
+     * handler, after the run has already been paid for, which is how this project once
+     * dead-lettered a charged review. Mapping to {@code UNCLASSIFIED} records the failure honestly
+     * and keeps the producer's own word in the detail beside it.
+     */
     private void failed(RunResult.RunFailed failed) {
+        RunFailureCause cause = RunFailureCause.of(failed.cause());
+        String detail = cause == RunFailureCause.UNCLASSIFIED
+                ? unrecognised(failed.cause(), failed.detail())
+                : failed.detail();
         update("UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()"
                         + " WHERE run_id = ? AND " + LIVE,
-                failed.runId(), FAILED, failed.cause(), failed.detail(), failed.runId());
+                failed.runId(), FAILED, cause.name(), detail, failed.runId());
+    }
+
+    /** Keeps the producer's own spelling readable when this version does not know it. */
+    private static String unrecognised(String rawCause, String detail) {
+        String prefix = "unrecognised cause '" + rawCause + "'";
+        return detail == null || detail.isBlank() ? prefix : prefix + ": " + detail;
     }
 
     /**
