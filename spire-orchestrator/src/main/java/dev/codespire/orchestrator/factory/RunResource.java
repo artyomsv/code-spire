@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
@@ -15,6 +16,7 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.ServerErrorException;
@@ -55,11 +57,19 @@ public class RunResource {
     /** Stored on the row, which a viewer reads; the broker's own exception text goes to the log. */
     static final String DISPATCH_FAILED_DETAIL = "the broker did not acknowledge the command; retry the same request";
 
+    /** A transcript page, never the whole stream: the per-run cap is ten thousand events. */
+    private static final int DEFAULT_TRANSCRIPT_PAGE = 200;
+
+    private static final int MAX_TRANSCRIPT_PAGE = 2_000;
+
     @Inject
     MachineAccounts machineAccounts;
 
     @Inject
     FactoryRunProjection projection;
+
+    @Inject
+    RunEventProjection transcripts;
 
     @Inject
     RunCommandEmitter emitter;
@@ -223,6 +233,34 @@ public class RunResource {
             throw new NotFoundException("no such run: " + runId);
         }
         return Response.noContent().build();
+    }
+
+    /**
+     * A run's transcript (FR-F5), newest bounded page.
+     *
+     * <p>Declared before the detail route below because that route's {@code .+} is greedy. JAX-RS
+     * ranks candidates by literal character count, so this one should win regardless — but "should"
+     * is not a property to rest a route on, and a test pins it.
+     *
+     * <p>Viewer-readable like the run detail it belongs to. The transcript quotes source, and so
+     * does every finding a viewer already reads; what stays admin-only is configuration.
+     */
+    @GET
+    @Path("/{runId:.+}/transcript")
+    @RolesAllowed({"spire-viewer", "spire-admin"})
+    public List<RunEventRecord> transcript(@PathParam("runId") String runId,
+                                           @QueryParam("limit") Integer limit) {
+        projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
+        return transcripts.transcript(runId, boundedLimit(limit));
+    }
+
+    /**
+     * A page, never the whole stream. The per-run cap is ten thousand events, and a reader that
+     * asked for all of them would hold all of them in one response.
+     */
+    private static int boundedLimit(Integer requested) {
+        int asked = requested == null ? DEFAULT_TRANSCRIPT_PAGE : requested;
+        return Math.max(1, Math.min(asked, MAX_TRANSCRIPT_PAGE));
     }
 
     @GET

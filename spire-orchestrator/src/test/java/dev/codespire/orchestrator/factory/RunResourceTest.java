@@ -89,6 +89,40 @@ class RunResourceTest {
         return workspace;
     }
 
+    /** A run row this suite owns, written straight to the projection rather than dispatched. */
+    private String registeredRun() {
+        String runId = "run::github:TEST-acme/app:transcript-" + UUID.randomUUID() + ":1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/x", "spire-bot"));
+        return runId;
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewersTranscriptRequestIsNotSwallowedByTheRunDetailRoute() {
+        // The detail route's path regex is greedy (.+), so it can match a run id WITH /transcript
+        // still attached and answer "no such run: .../transcript". JAX-RS ranks candidates by
+        // literal character count and should prefer the transcript route — but "should" is not a
+        // property to rest a route on, and the failure is a 404 that reads like a missing run.
+        String runId = registeredRun();
+
+        given().when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(200);
+
+        // ...and the detail route still answers for the id alone.
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aTranscriptOfAnUnknownRunIsNotFound() {
+        // Rather than an empty page, which reads as "this run produced nothing" for a run that does
+        // not exist at all — two different answers an operator acts on differently.
+        given().when().get("/api/runs/run::github:TEST-acme/app:never-registered:1/transcript")
+                .then().statusCode(404);
+    }
+
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
     void theHarnessCredentialComesFromTheLlmRegistryNeverTheRequest() {

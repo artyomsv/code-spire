@@ -153,6 +153,21 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
+      # The transcript (ADR-034). NO failure-strategy, and that absence is the decision rather than
+      # an omission: this tier is not replayable and nothing derives state from it, so routing it to
+      # a dead-letter queue -- which exists for work that must not be lost -- would fill that queue
+      # with lines nobody will ever replay. The deserializer answers null for an unreadable record
+      # and the consumer skips it, so a poison record cannot stall every other run's live tail.
+      run-events-in:
+        connector: smallrye-kafka
+        topic: cs.run-events
+        group:
+          id: spire-orchestrator-run-events
+        value:
+          deserializer: dev.codespire.orchestrator.factory.RunEventDeserializer
+        auto:
+          offset:
+            reset: latest
       events-in:
         connector: smallrye-kafka
         topic: cs.events
