@@ -356,7 +356,9 @@ harness that cannot steer must refuse rather than silently drop the instruction.
 dispatch response cannot be recovered by redelivery. Intent is journalled **before** the request and
 an ambiguous outcome fails closed into `dispatch_uncertain`, which an operator resolves.
 
-**Files:** `V48__dispatch_intent.sql`, `RunResource`, `FactoryRunProjection`, `RunAttentionRows`.
+**Files:** `V51__run_dispatch_uncertain.sql` (the plan said `V48`; that number was taken by the run
+ event table, and the status set had moved on twice more), `BrokerAckFailure` + `KafkaSends`,
+`RunResource`, `FactoryRunProjection`, `RunAttentionRows`.
 
 **Test scenarios**
 
@@ -448,7 +450,7 @@ four-lens `/code-review` whose findings are fixed before the next task starts.
 - [x] Task 6 — the orphan watchdog
 - [x] Task 7 — `cs.run-control` and a cancel that cancels
 - [x] Task 8 — steer, where the harness declares it
-- [ ] Task 9 — idempotent dispatch, ambiguity failing closed
+- [x] Task 9 — idempotent dispatch, ambiguity failing closed
 - [ ] Task 10 — the credential pool with rotation
 - [ ] Task 11 — the enterprise image environment
 - [ ] Task 12 — `spire agent-image verify`

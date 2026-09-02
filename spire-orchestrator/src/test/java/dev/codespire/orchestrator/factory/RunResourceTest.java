@@ -9,6 +9,7 @@ import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.LlmProviderInput;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
+import dev.codespire.orchestrator.pipeline.BrokerAckFailure;
 import dev.codespire.orchestrator.provider.ProviderInput;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -112,6 +113,53 @@ class RunResourceTest {
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
                 "abc1234", "spire/x", "spire-bot"));
         return runId;
+    }
+
+    /**
+     * There is no safe default for this decision, so a body without it is refused (FR-F10).
+     *
+     * <p>The two answers do opposite things — one allows the run to be started again, the other
+     * forbids it — so guessing either way is how a duplicate paid run happens, or how a run that
+     * never started is abandoned. A 400 asking the question is the honest answer.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aDispatchResolutionWithoutAnAnswerIsRefused() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().contentType("application/json").body("{}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(400).body(containsString("neverRan"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunThatIsNotUncertainCannotBeResolved() {
+        // A run whose result arrived resolved itself, and an operator on a stale page must not be
+        // able to overwrite what the run has since said.
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(409).body(containsString("not awaiting a dispatch resolution"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void resolvingAnUnknownRunIsNotFound() {
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/run::github:TEST-acme/app:never-registered:1/dispatch-resolution")
+                .then().statusCode(404);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerMayNotResolveADispatch() {
+        // It decides whether a paid run is started again, so it is admin by ADR-022's first rule.
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/run::github:TEST-acme/app:any:1/dispatch-resolution")
+                .then().statusCode(403);
     }
 
     /**
@@ -377,12 +425,12 @@ class RunResourceTest {
 
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
-    void aDispatchTheBrokerNeverAcknowledgedIsRecordedAsFailedAndARetryReArmsIt() {
-        // An ack timeout proves nothing about whether the record landed. So the row is neither
+    void aDispatchTheBrokerRefusedOutrightIsFailedAndARetryReArmsIt() {
+        // The certain half of FR-F10. A rejection the client calls non-retriable was decided before
+        // anything reached a partition, so the run definitely did not start: the row is neither
         // deleted (a run possibly on the bus with no record — the very thing writing it first
-        // prevents) nor left as a queued run nobody will ever start: it is marked, and the same
-        // request re-arms it. If the first dispatch did land, the worker's claim drops the second
-        // and the first run's results project onto the re-armed row.
+        // prevents) nor left as a queued run nobody will ever start. It is marked re-armable, and
+        // the same request starts it.
         String workspace = workspaceWithFactoryAccount();
         String request = body(workspace).replace("\"harness\"", "\"subject\":\"retry-me\",\"harness\"");
         String runId = "run::github:" + workspace + "/app:retry-me:1";
@@ -390,7 +438,10 @@ class RunResourceTest {
         QuarkusMock.installMockForType(new RunCommandEmitter() {
             @Override
             public void dispatch(RunCommand command) {
-                throw new IllegalStateException("No broker ack within 10s for run command ExecuteRun");
+                // Non-retriable, so the client is telling us the record never left. This is the
+                // ONLY shape that may re-arm: everything else has to fail closed.
+                throw BrokerAckFailure.rejected("run command ExecuteRun",
+                        new org.apache.kafka.common.errors.RecordTooLargeException("too big"));
             }
         }, RunCommandEmitter.class);
 
@@ -420,6 +471,99 @@ class RunResourceTest {
                 .then().statusCode(200)
                 .body("status", equalTo(FactoryRunProjection.QUEUED))
                 .body("failureCause", nullValue());
+    }
+
+    /**
+     * The uncertain half, and the one that decides money (FR-F10).
+     *
+     * <p>An acknowledgement that never arrives says nothing about the record: the producer may
+     * still be retrying and the append may already have happened. Recording that as a definite
+     * failure — which is what this path did — makes the row re-armable, so an operator's identical
+     * retry publishes a second command and, if the first landed after all, a second agent works the
+     * same branch with the model paid twice.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aDispatchTheBrokerNeverAcknowledgedIsUncertainAndIsNotRetried() {
+        String workspace = workspaceWithFactoryAccount();
+        String request = body(workspace).replace("\"harness\"", "\"subject\":\"maybe-sent\",\"harness\"");
+        String runId = "run::github:" + workspace + "/app:maybe-sent:1";
+
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                throw BrokerAckFailure.notAcknowledged("No broker ack within 10s", null);
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(503)
+                .body(containsString("NOT retried automatically"));
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200)
+                .body("status", equalTo(FactoryRunProjection.DISPATCH_UNCERTAIN))
+                .body("failureDetail", equalTo(RunResource.DISPATCH_UNCERTAIN_DETAIL));
+
+        // The broker is back, and the retry is STILL refused -- this is the fail-closed rule. The
+        // certain case above is 201 at exactly this point, which is what makes the two differ.
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                throw new AssertionError("an uncertain run must not be published again");
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(409)
+                .body(containsString("dispatch-resolution"));
+
+        // ...until an operator resolves it, after which the ordinary retry path works again.
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(204);
+
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                // the broker is back
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(201);
+    }
+
+    /**
+     * A publish fault this code cannot classify is treated as ambiguous, not as a definite failure.
+     *
+     * <p>Narrowing the catch to the classified type was a regression found by an existing test: any
+     * other fault escaped as a 500 with the row left {@code queued}, so a run nobody would ever
+     * start sat looking as though it were about to. Failing closed is also the safer reading — a
+     * fault we cannot read tells us nothing about whether the record left.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anUnclassifiedPublishFaultFailsClosedRatherThanEscaping() {
+        String workspace = workspaceWithFactoryAccount();
+        String request = body(workspace).replace("\"harness\"", "\"subject\":\"odd-fault\",\"harness\"");
+        String runId = "run::github:" + workspace + "/app:odd-fault:1";
+
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                throw new IllegalStateException("something the ack helper did not classify");
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(503);
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200)
+                .body("status", equalTo(FactoryRunProjection.DISPATCH_UNCERTAIN));
     }
 
     @Test

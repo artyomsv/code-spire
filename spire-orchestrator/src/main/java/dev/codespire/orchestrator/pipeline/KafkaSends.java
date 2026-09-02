@@ -40,16 +40,26 @@ public final class KafkaSends {
         awaitAck(ack, description);
     }
 
+    /**
+     * Every path throws {@link BrokerAckFailure}, which is an {@link IllegalStateException} — so
+     * existing callers are unaffected — and carries whether the record might have landed anyway.
+     *
+     * <p>Two of these three outcomes say nothing at all about the record: a wait that elapsed and a
+     * thread that was interrupted are facts about us, not about the partition. Only a rejection the
+     * client calls non-retriable proves the record never left. Reporting all three as one failure is
+     * what let the factory's dispatch record every unacknowledged send as a definite miss, which is
+     * the optimistic reading and the expensive one to be wrong about.
+     */
     private static void awaitAck(CompletableFuture<Void> ack, String description) {
         try {
             ack.get(ACK_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted awaiting broker ack for " + description, e);
+            throw BrokerAckFailure.notAcknowledged("Interrupted awaiting broker ack for " + description, e);
         } catch (ExecutionException e) {
-            throw new IllegalStateException("Broker rejected " + description, e.getCause());
+            throw BrokerAckFailure.rejected(description, e.getCause());
         } catch (TimeoutException e) {
-            throw new IllegalStateException(
+            throw BrokerAckFailure.notAcknowledged(
                     "No broker ack within " + ACK_TIMEOUT.toSeconds() + "s for " + description, e);
         }
     }

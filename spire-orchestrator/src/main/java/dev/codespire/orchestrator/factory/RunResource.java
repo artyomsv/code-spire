@@ -8,6 +8,7 @@ import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.llm.LlmProviderConfig;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
+import dev.codespire.orchestrator.pipeline.BrokerAckFailure;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -57,6 +58,14 @@ public class RunResource {
 
     /** Stored on the row, which a viewer reads; the broker's own exception text goes to the log. */
     static final String DISPATCH_FAILED_DETAIL = "the broker did not acknowledge the command; retry the same request";
+
+    /**
+     * Stored on the row for an uncertain dispatch, and deliberately not the phrasing above.
+     *
+     * <p>"Retry the same request" is the wrong instruction here and the expensive one: the record
+     * may already be on the topic, so a retry is how a second agent ends up on the branch.
+     */
+    static final String DISPATCH_UNCERTAIN_DETAIL = "the command was published but never acknowledged; whether it is running is unknown. Do NOT retry: if it started, its result will resolve this row, otherwise resolve it explicitly";
 
     /** A transcript page, never the whole stream: the per-run cap is ten thousand events. */
     private static final int DEFAULT_TRANSCRIPT_PAGE = 200;
@@ -189,19 +198,86 @@ public class RunResource {
         }
     }
 
+    /**
+     * Publish the command, and record honestly which kind of failure a failure was (FR-F10).
+     *
+     * <p>The two branches are not shades of the same thing. A rejection the client calls
+     * non-retriable happened before anything reached a partition, so the run definitely did not start
+     * and re-arming the row is free. An acknowledgement that never came says nothing about the
+     * record: the producer may still be retrying, the append may already have happened, and the
+     * operator's identical retry would then put a second agent on the same branch with the model
+     * paid twice.
+     *
+     * <p>The whole path used to take the first reading for both, which is the optimistic one. It now
+     * fails closed — ambiguity becomes a state an operator resolves, and reality usually resolves it
+     * first, because a record that did land produces a {@code RunStarted} that reopens the row.
+     */
     private void dispatch(String runId, RunCommand.ExecuteRun command) {
         try {
             emitter.dispatch(command);
         } catch (IllegalStateException e) {
-            // The row stays and says why. Deleting it would leave a run the broker may well have
-            // accepted (an ack timeout proves nothing) with no record; the retry re-arms this row.
-            LOG.errorf(e, "run %s was recorded but the broker did not acknowledge its dispatch", runId);
+            // Caught at IllegalStateException, not at BrokerAckFailure, and the difference matters:
+            // narrowing it let any other publish fault escape as a 500 with the row left `queued`,
+            // so a run nobody will start would sit looking as though it were about to. Anything that
+            // is not a classified ack failure counts as AMBIGUOUS, because a fault we cannot read
+            // tells us nothing about whether the record left — which is the whole rule here.
+            if (!(e instanceof BrokerAckFailure ack) || ack.mayHaveLanded()) {
+                LOG.errorf(e, "run %s was recorded and published, but the broker never acknowledged it;"
+                        + " whether it is running is unknown until its result arrives or an operator says", runId);
+                projection.dispatchUncertain(runId, DISPATCH_UNCERTAIN_DETAIL);
+                throw new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                        .entity("Run " + runId + " was published but not acknowledged: " + e.getMessage()
+                                + ". It may or may not be running, so it is NOT retried automatically."
+                                + " If it started, its own result will resolve this; otherwise resolve it"
+                                + " at POST /api/runs/" + runId + "/dispatch-resolution.")
+                        .build(), e);
+            }
+            // The row stays and says why. Deleting it would leave no record of the attempt at all;
+            // this shape is re-armable, so the operator's identical retry starts the run.
+            LOG.errorf(e, "run %s was recorded but the broker refused its dispatch outright", runId);
             projection.dispatchFailed(runId, DISPATCH_FAILED_DETAIL);
             throw new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
                     .entity("Run " + runId + " was recorded but not dispatched: " + e.getMessage()
                             + ". Retry the same request once the broker is reachable; it re-arms this run.")
                     .build(), e);
         }
+    }
+
+    /**
+     * An operator says what became of an unacknowledged dispatch (FR-F10).
+     *
+     * <p>Only for the runs reality did not resolve. A record that landed produces a
+     * {@code RunStarted}, which reopens the row on its own — so this exists for the case where
+     * nothing ever arrives and somebody has to look at the topic, the worker's logs, or the forge.
+     *
+     * <p>{@code neverRan} is the whole decision, and the two answers differ in whether the run may be
+     * started again. Saying it never ran writes the re-armable failed shape, so an identical retry of
+     * the original request starts it through the path that already exists. Saying it ran closes the
+     * row terminally, because publishing again for a run that really happened is the duplicate this
+     * state was created to prevent.
+     */
+    @POST
+    @Path("/{runId:.+}/dispatch-resolution")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response resolveDispatch(@PathParam("runId") String runId, Map<String, Object> body) {
+        FactoryRunProjection.RunView run = projection.find(runId)
+                .orElseThrow(() -> new NotFoundException("no such run: " + runId));
+        Object answer = body == null ? null : body.get("neverRan");
+        if (!(answer instanceof Boolean neverRan)) {
+            throw badRequest(
+                    "Send {\"neverRan\": true} if no run was started, or {\"neverRan\": false} if one was."
+                            + " There is no safe default: one answer allows a retry and the other forbids it.");
+        }
+        String detail = neverRan
+                ? "an operator confirmed no run was started; retry the original request to start one"
+                : "an operator confirmed the run did start, so it is not retried; its result was lost";
+        if (!projection.resolveDispatch(runId, neverRan, detail)) {
+            throw conflict("run " + runId + " is " + run.status() + ", not awaiting a dispatch resolution."
+                    + " A run whose result arrived resolved itself.");
+        }
+        LOG.warnf("run %s: an operator resolved its uncertain dispatch as %s", runId,
+                neverRan ? "never started" : "started");
+        return Response.noContent().build();
     }
 
     /**
@@ -236,6 +312,16 @@ public class RunResource {
      */
     private String alreadyExists(String runId) {
         FactoryRunProjection.RunView existing = projection.find(runId).orElse(null);
+        if (existing != null && FactoryRunProjection.DISPATCH_UNCERTAIN.equals(existing.status())) {
+            // The fail-closed answer. Re-arming here is exactly the duplicate the uncertain state
+            // exists to prevent: the first command may be on the topic, so an identical retry --
+            // which is the RIGHT answer for a dispatch that definitely failed -- would put a second
+            // agent on the same branch and pay for the model twice.
+            return "Run " + runId + " was published but never acknowledged, so whether it is running is "
+                    + "unknown. It is deliberately NOT retried. If it started, its own result will "
+                    + "resolve this row; otherwise resolve it at POST /api/runs/" + runId
+                    + "/dispatch-resolution and then retry.";
+        }
         if (existing != null && FactoryRunProjection.FAILED.equals(existing.status())
                 && FactoryRunProjection.DISPATCH_FAILED.equals(existing.failureCause())) {
             return "Run " + runId + " was recorded but its dispatch was never acknowledged, and this request "
@@ -245,6 +331,17 @@ public class RunResource {
         String status = existing == null ? "unknown" : existing.status();
         return "Run " + runId + " already exists (status " + status + "). M0 runs each subject once; "
                 + "pass a different subject to run again.";
+    }
+
+    /**
+     * A 400 whose reason reaches the caller.
+     *
+     * <p>{@code new BadRequestException(message)} puts the text on the exception, not in the
+     * response, so the client reads an empty body and learns nothing about what to send instead.
+     */
+    private static ClientErrorException badRequest(String message) {
+        return new ClientErrorException(
+                Response.status(Response.Status.BAD_REQUEST).entity(message).build());
     }
 
     private static ClientErrorException conflict(String message) {
@@ -303,7 +400,7 @@ public class RunResource {
         try {
             command = new RunCommand.SteerRun(runId, instruction);
         } catch (IllegalArgumentException e) {
-            throw new jakarta.ws.rs.BadRequestException(e.getMessage());
+            throw badRequest(e.getMessage());
         }
         emitter.control(command);
         LOG.infof("run %s: a steer was published to the control topic", runId);

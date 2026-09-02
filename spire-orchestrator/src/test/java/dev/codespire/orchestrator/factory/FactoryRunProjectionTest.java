@@ -102,6 +102,135 @@ class FactoryRunProjectionTest {
         assertEquals(FactoryRunProjection.FAILED, projection.find(runId).orElseThrow().status());
     }
 
+    /**
+     * An unacknowledged dispatch is unresolved, not failed (FR-F10).
+     *
+     * <p>The distinction decides whether the run may be started again, so it is the whole point. A
+     * failed dispatch is re-armable and a retry is free; an unacknowledged one may already be on the
+     * topic, and re-arming it puts a second agent on the same branch with the model paid twice.
+     */
+    @Test
+    void anUnacknowledgedDispatchIsUncertainRatherThanFailed() {
+        String runId = queuedRun();
+
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.DISPATCH_UNCERTAIN, view.status());
+        assertEquals("DISPATCH_UNCERTAIN", view.failureCause());
+        assertNull(column(runId, "ended_at").getFirst(),
+                "unresolved is not ended: the V51 CHECK pairs the two, and a finish time here would"
+                        + " assert the run is over while it may still be executing");
+    }
+
+    /**
+     * The fail-closed rule, and the one an operator's retry runs into.
+     *
+     * <p>{@code queued} re-arms a row whose dispatch definitely failed. It must NOT re-arm an
+     * uncertain one — that is the duplicate this state exists to prevent — so an identical retry is
+     * refused rather than silently publishing a second command.
+     */
+    @Test
+    void anUncertainDispatchIsNeverReArmedByARetry() {
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        assertFalse(reQueue(runId), "a retry must be refused while the first command may be running");
+        assertEquals(FactoryRunProjection.DISPATCH_UNCERTAIN,
+                projection.find(runId).orElseThrow().status(), "and the row is left as it was");
+    }
+
+    /**
+     * The half that keeps the rule above from being unconditional: a dispatch that definitely failed
+     * IS re-armable, and always was. Without this, making `queued` refuse everything would pass.
+     */
+    @Test
+    void aDispatchThatDefinitelyFailedIsStillReArmable() {
+        String runId = queuedRun();
+        projection.dispatchFailed(runId, "TEST-refused outright");
+
+        assertTrue(reQueue(runId));
+        assertEquals(FactoryRunProjection.QUEUED, projection.find(runId).orElseThrow().status());
+    }
+
+    /**
+     * Reality resolves the uncertainty, and usually first.
+     *
+     * <p>If the record did land, that run's {@code RunStarted} is on its way — so the status has to
+     * stay live. Excluding it would drop the result of a run that really is executing, which is
+     * exactly the case the uncertainty is about, and would leave the row waiting for an operator to
+     * decide something the run had already answered.
+     */
+    @Test
+    void aRunThatStartsAfterAllResolvesItsOwnUncertainty() {
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        projection.apply(new RunResult.RunStarted(runId, "unit-abc"));
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.RUNNING, view.status());
+        assertNull(view.failureCause(), "the uncertainty is gone, not merely overwritten alongside");
+    }
+
+    @Test
+    void anOperatorCanResolveAnUncertainDispatchAsNeverStarted() {
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        assertTrue(projection.resolveDispatch(runId, true, "TEST-operator says it never ran"));
+
+        // The re-armable shape, so the operator's ordinary retry starts the run through the path
+        // that already exists rather than through a second mechanism invented for this.
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.FAILED, view.status());
+        assertEquals(FactoryRunProjection.DISPATCH_FAILED, view.failureCause());
+        assertTrue(reQueue(runId), "and it is now retryable");
+    }
+
+    @Test
+    void anOperatorCanResolveAnUncertainDispatchAsStarted() {
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        assertTrue(projection.resolveDispatch(runId, false, "TEST-operator says it did run"));
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.FAILED, view.status());
+        assertEquals("DISPATCH_UNCERTAIN", view.failureCause());
+        assertFalse(reQueue(runId),
+                "terminal, and deliberately not re-armable: publishing again for a run that really"
+                        + " happened is the duplicate the whole state exists to prevent");
+    }
+
+    @Test
+    void aRunThatResolvedItselfCannotBeResolvedByHand() {
+        // An operator reading a stale page must not overwrite what the run itself has since said.
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+        projection.apply(new RunResult.RunStarted(runId, "unit-abc"));
+
+        assertFalse(projection.resolveDispatch(runId, true, "TEST-too late"));
+        assertEquals(FactoryRunProjection.RUNNING, projection.find(runId).orElseThrow().status());
+    }
+
+    /**
+     * The guard {@code dispatchFailed} already has, for the same reason.
+     *
+     * <p>An acknowledgement can elapse after the record landed and a worker already started the run,
+     * whose {@code RunStarted} has moved this row to running. Marking that row would put a live run
+     * into a state an operator is asked to resolve, about a question reality has already settled.
+     */
+    @Test
+    void aRunThatIsAlreadyRunningIsNeverMarkedUncertain() {
+        String runId = queuedRun();
+        projection.apply(new RunResult.RunStarted(runId, "unit-abc"));
+
+        projection.dispatchUncertain(runId, "TEST-late ack timeout");
+
+        assertEquals(FactoryRunProjection.RUNNING, projection.find(runId).orElseThrow().status());
+    }
+
     @Test
     void aProducersOwnVocabularyIsStoredAsTheClosedSetsValue() {
         // The harness says PUSH_GATE_REFUSED and the publisher says PUSH_FAILED; V46 constrains the
@@ -138,8 +267,20 @@ class FactoryRunProjectionTest {
 
     private String queuedRun() {
         String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
-        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
+        assertTrue(reQueue(runId));
         return runId;
+    }
+
+    /**
+     * The operator's retry: byte-identical parameters, which is what the re-arm requires.
+     *
+     * <p>Returns what {@code queued} answers, so a test can assert whether the row was re-armed
+     * rather than inferring it from the status afterwards -- the two differ for a row the
+     * ON CONFLICT matched and the WHERE declined to touch.
+     */
+    private boolean reQueue(String runId) {
+        return projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/x", "spire-bot"));
     }
 
     @Test
