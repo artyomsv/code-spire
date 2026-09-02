@@ -28,7 +28,7 @@ dependencies {
     // Newest published 7.x as of 2026-09-01, verified resolvable on Maven Central. The plan pinned
     // 7.1.0.202411261347-r, which also resolves — but it is nine months older, and this dependency
     // parses a bundle an agent wrote, so it is the last place to carry an avoidable lag.
-    api("org.eclipse.jgit:org.eclipse.jgit:7.3.0.202506031305-r")
+    api("org.eclipse.jgit:org.eclipse.jgit:7.7.1.202607240634-r")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
