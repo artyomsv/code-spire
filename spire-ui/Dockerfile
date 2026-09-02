@@ -15,7 +15,7 @@ RUN npm run build
 
 # Unprivileged variant: runs as uid 101 and already listens on 8080, where the official image runs
 # its master as root and would need its writable directories re-owned to match.
-FROM nginxinc/nginx-unprivileged:1.30-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 LABEL org.opencontainers.image.title="spire-ui" \
       org.opencontainers.image.description="Code Spire dashboard — source-available, self-hosted AI code reviewer" \
