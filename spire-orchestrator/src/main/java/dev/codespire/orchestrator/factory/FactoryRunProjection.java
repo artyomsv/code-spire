@@ -49,6 +49,19 @@ public class FactoryRunProjection {
      */
     static final String DELIVERED_NOTHING = "delivered_nothing";
 
+    /**
+     * The work is on the branch, and the agent's own outcome was never observed.
+     *
+     * <p>It overran its wall clock, or the runtime could not read its exit — and the publisher had
+     * already pushed. Neither neighbouring status tells the truth: {@link #FAILED} hides a branch
+     * that really is on the remote, and {@link #SUCCEEDED} asserts a clean delivery for a run whose
+     * agent was killed mid-thought, so a half-written change reviews like a finished one.
+     *
+     * <p>Terminal, and not retryable — retrying puts a second agent on the branch the first may
+     * still be holding.
+     */
+    static final String DELIVERED_UNFINISHED = "delivered_unfinished";
+
     /** The one failure cause a retried {@link #queued} re-arms — see {@link #dispatchFailed}. */
     static final String DISPATCH_FAILED = "DISPATCH_FAILED";
 
@@ -162,7 +175,17 @@ public class FactoryRunProjection {
                     finished.runId(), PUSH_GATE_REFUSED, String.join("\n", finished.blockedPaths()), finished.runId());
             return;
         }
-        String status = finished.pushedRef() == null ? DELIVERED_NOTHING : SUCCEEDED;
+        String status;
+        if (finished.pushedRef() == null) {
+            status = DELIVERED_NOTHING;
+        } else if (finished.agentUnobserved()) {
+            // Both facts, because either alone misleads. Ranked ahead of SUCCEEDED rather than
+            // decorating it: an operator reads the status, and a decoration on a green row is not
+            // read at all.
+            status = DELIVERED_UNFINISHED;
+        } else {
+            status = SUCCEEDED;
+        }
         update("UPDATE factory_run SET status = ?, pushed_ref = ?, failure_cause = NULL, failure_detail = NULL,"
                         + " ended_at = now() WHERE run_id = ? AND " + LIVE,
                 finished.runId(), status, finished.pushedRef(), finished.runId());

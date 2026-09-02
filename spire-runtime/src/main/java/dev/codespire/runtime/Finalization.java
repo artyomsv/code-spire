@@ -6,10 +6,16 @@ import java.util.Objects;
  * How a run's sandbox ended, as far as the runtime could observe it.
  *
  * <p>Three outcomes, not two. An earlier version had only "salvaged or not", which collapsed an
- * agent that outlived its wall clock with a daemon that hung up mid-wait. They are different
- * people's problems and deserve opposite retry answers: the same prompt against the same commit will
- * overrun again, while a daemon fault may not recur — and an operator told "salvage failed" for a
- * timeout goes looking for broken infrastructure.
+ * agent that outlived its wall clock with a daemon that hung up mid-wait. They send different people
+ * to different places: an operator told "salvage failed" for a timeout goes looking for broken
+ * infrastructure, and one told "the agent timed out" for a broken daemon goes looking for a slow
+ * prompt.
+ *
+ * <p><b>Neither is retryable, and that is deliberate rather than an oversight.</b> An earlier draft
+ * of this note claimed they "deserve opposite retry answers"; the taxonomy gives both the same
+ * answer, and it is right to. A preserved unit may still hold a live agent, so retrying would put a
+ * second agent on the same branch. The debt entry that asked for a retryable fault is answered here:
+ * considered, and declined for that reason.
  */
 public record Finalization(int exitCode, Outcome outcome, String detail) {
 
@@ -35,6 +41,9 @@ public record Finalization(int exitCode, Outcome outcome, String detail) {
             throw new IllegalArgumentException(
                     "nothing observed an exit code, so it cannot report " + exitCode);
         }
+        // Guarded on BOTH sides, and the second half is not symmetry for its own sake: Docker
+        // reports State.ExitCode as -1 for a container that never started, so without this a unit
+        // that never ran would arrive claiming it was salvaged with a real-looking status.
         if (outcome == Outcome.SALVAGED && exitCode == NOT_OBSERVED) {
             throw new IllegalArgumentException(
                     "a salvaged run observed an exit code, so it cannot report NOT_OBSERVED");
@@ -60,8 +69,14 @@ public record Finalization(int exitCode, Outcome outcome, String detail) {
         return new Finalization(NOT_OBSERVED, Outcome.OVERRAN, detail);
     }
 
-    /** The runtime could not observe the run's outcome. */
-    public static Finalization salvageFailed(String detail) {
+    /**
+     * The runtime could not observe the run's outcome.
+     *
+     * <p>Named for the value it builds. It was {@code salvageFailed}, which no longer matched
+     * {@code FAULTED} once the outcomes split — and reaching for a name like that on a timeout is
+     * precisely the bug this type was reshaped to prevent, so the name mattering is the point.
+     */
+    public static Finalization faulted(String detail) {
         return new Finalization(NOT_OBSERVED, Outcome.FAULTED, detail);
     }
 }

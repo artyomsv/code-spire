@@ -13,6 +13,7 @@ import dev.codespire.harness.PromptDelivery;
 import dev.codespire.harness.RunEvent;
 import dev.codespire.harness.RunEventSummary;
 import dev.codespire.harness.TerminalOutcome;
+import dev.codespire.harness.TokenBucket;
 import dev.codespire.harness.UsageReport;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
@@ -60,8 +61,12 @@ class RunLauncherTest {
     /** The credential the deleted debt entry named as its risk, and the one the first scrub omitted. */
     static final String MODEL_KEY = "TEST-model-key-9876543210";
 
-    /** Exit 0 succeeds; anything else is a harness failure. Nothing parsed, usage unknown. */
+    /** Exit 0 succeeds; anything else is a harness failure. Usage is whatever the test sets. */
     static final class FakeAdapter implements HarnessAdapter {
+
+        /** What this harness reports having spent. Unknown unless a test says otherwise. */
+        UsageReport usage = UsageReport.unknown();
+
         @Override
         public HarnessType type() {
             return HarnessType.CODEX;
@@ -100,7 +105,7 @@ class RunLauncherTest {
 
         @Override
         public UsageReport usage(RunEventSummary seen) {
-            return UsageReport.unknown();
+            return usage;
         }
     }
 
@@ -155,8 +160,18 @@ class RunLauncherTest {
             }
         }
 
+        /** Recorded, so stopping a preserved unit is asserted rather than assumed. */
+        final List<RunHandle> cancelled = new java.util.ArrayList<>();
+
+        RuntimeException cancelFails;
+
         @Override
         public void cancel(RunHandle handle) {
+            lifecycle.add("cancel");
+            cancelled.add(handle);
+            if (cancelFails != null) {
+                throw cancelFails;
+            }
         }
 
         @Override
@@ -186,7 +201,10 @@ class RunLauncherTest {
     }
 
     private final FakeRuntime runtime = new FakeRuntime();
-    private final RunLauncher launcher = launcher(runtime);
+    /** One instance, so a test can say what the harness reported and see whether it survives. */
+    private final FakeAdapter adapter = new FakeAdapter();
+
+    private final RunLauncher launcher = launcher(runtime, adapter);
 
     /** The real collaborator, with only its credential source faked. */
     static RunFailures failuresWith(Credentials credentials) {
@@ -195,13 +213,13 @@ class RunLauncherTest {
         return failures;
     }
 
-    private static RunLauncher launcher(FakeRuntime runtime) {
+    private static RunLauncher launcher(FakeRuntime runtime, FakeAdapter adapter) {
         RunLauncher launcher = new RunLauncher();
         launcher.runtime = runtime;
         launcher.harnesses = new HarnessRegistry() {
             @Override
             public HarnessAdapter forName(String harness) {
-                return new FakeAdapter();
+                return adapter;
             }
         };
         launcher.failures = failuresWith(new Credentials() {
@@ -288,6 +306,94 @@ class RunLauncherTest {
         assertTrue(runtime.destroyed.isEmpty(),
                 "and the unit is still preserved: nothing observed its exit, so there is still "
                         + "something an operator may need to read");
+        assertTrue(finished.agentUnobserved(),
+                "the work is on the branch AND the run did not finish — the result must carry both, "
+                        + "because reporting only the push asserts a clean delivery for an agent "
+                        + "that was killed mid-thought");
+        assertTrue(finished.deliveredUnfinished());
+        assertEquals(1, runtime.cancelled.size(),
+                "a preserved unit is STOPPED: that an overrun kills the agent is one arm's private "
+                        + "promise, and a result now saying the run finished makes an operator rely on it");
+    }
+
+    @Test
+    void aRunThatDeliveredAndDidFinishSaysSo() {
+        // The other half of the flag, without which "unobserved" could be hardcoded true and every
+        // test above would still pass while every clean run was labelled unfinished.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
+
+        assertFalse(finished.agentUnobserved());
+        assertFalse(finished.deliveredUnfinished());
+        assertTrue(runtime.cancelled.isEmpty(), "an observed run is destroyed, not cancelled");
+    }
+
+    @Test
+    void aGateRefusalOutranksTheClockThatRanOutAroundIt() {
+        // The first version of the unobserved branch looked only for a push, so a refusal fell
+        // through to AGENT_TIMEOUT with its blocked paths discarded — and RUN_PUSH_GATE_REFUSED,
+        // which keys on the refused status, could never fire for a long run.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}],"
+                        + "\"changed\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
+
+        assertTrue(finished.refused(), "the gate's refusal is the run's outcome, clock or no clock");
+        assertEquals(List.of(".github/workflows/ci.yml"), finished.blockedPaths());
+    }
+
+    @Test
+    void aForgeRejectionOutranksTheClockThatRanOutAroundIt() {
+        // FR-F7's own example: the forge rejects the final checkpoint. Reported as a timeout, the
+        // publisher's cause and detail were dropped and the operator was sent to the agent.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"failed\",\"cause\":\"PUSH_TRANSPORT_FAILED\",\"detail\":\"remote hung up\"}");
+
+        RunResult.RunFailed failed =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
+
+        assertEquals(RunFailureCause.PUSH_TRANSPORT_FAILED, RunFailureCause.of(failed.cause()));
+        assertTrue(failed.detail().contains("remote hung up"),
+                "the publisher's own detail survives; it names what actually refused");
+    }
+
+    @Test
+    void anOverrunThatPushedStillCarriesWhatTheAgentSpent() {
+        // A run that spent its entire wall clock is the most expensive one the system produces. The
+        // fold measured the usage, so reporting it as unknown here would lose the largest charge
+        // there is — the understatement ADR-023 exists to prevent, arriving through the result.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 1200L, TokenBucket.OUTPUT, 340L));
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
+
+        assertTrue(finished.usageIsKnown(), "the fold measured it; the result must not answer unknown");
+        assertEquals(1200L, finished.tokenUsage().get("INPUT"));
+    }
+
+    @Test
+    void aPreservedUnitThatRefusesToStopStillReportsTheRun() {
+        // The stop is best-effort by design: losing the terminal result would leave the run in
+        // 'running' forever, which is strictly worse than a sandbox the watchdog will reap.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        runtime.cancelFails = new IllegalStateException("daemon refused the kill");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
+
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
     }
 
     @Test
@@ -312,7 +418,7 @@ class RunLauncherTest {
         assertEquals(RunFailureCause.AGENT_TIMEOUT, RunFailureCause.of(overran.cause()));
         assertFalse(overran.retryable(), "the same prompt against the same commit runs just as long");
 
-        runtime.finalization = Finalization.salvageFailed("daemon hung up mid-wait");
+        runtime.finalization = Finalization.faulted("daemon hung up mid-wait");
         RunResult.RunFailed faulted =
                 assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
         assertEquals(RunFailureCause.SALVAGE_FAILED, RunFailureCause.of(faulted.cause()));
@@ -326,11 +432,27 @@ class RunLauncherTest {
         runtime.publisherLines = List.of(
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }));
+
+        // The ref is a COMPONENT, not a sentence. It used to appear only inside a failure detail,
+        // so the run's record carried no pushed_ref and an operator was sent looking for a branch
+        // that is really on the remote — the same wrong answer the overrun path gave.
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
+        assertTrue(finished.agentUnobserved(), "nobody read the agent's exit, so the run is not complete");
+        assertTrue(runtime.destroyed.isEmpty(), "and the unit is still preserved for inspection");
+    }
+
+    @Test
+    void aThrowingSalvageWithNothingPushedIsStillAFault() {
+        // The other half: without a push there is nothing to report but the fault, and it keeps its
+        // own cause rather than being softened into an outcome.
+        runtime.salvageFails = new IllegalStateException("daemon went away");
+
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
 
-        assertEquals("SALVAGE_FAILED", failed.cause());
+        assertEquals(RunFailureCause.SALVAGE_FAILED, RunFailureCause.of(failed.cause()));
         assertTrue(failed.detail().contains("daemon went away"), failed.detail());
-        assertTrue(failed.detail().contains("refs/heads/spire/finding-1"), failed.detail());
     }
 
     @Test
@@ -443,7 +565,7 @@ class RunLauncherTest {
 
     @Test
     void aFailedSalvagePreservesTheUnitAndSaysSo() {
-        runtime.finalization = Finalization.salvageFailed("daemon hung up mid-wait");
+        runtime.finalization = Finalization.faulted("daemon hung up mid-wait");
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }));
         assertEquals("SALVAGE_FAILED", failed.cause());

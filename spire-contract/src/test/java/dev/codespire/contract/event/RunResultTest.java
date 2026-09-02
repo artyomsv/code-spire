@@ -17,7 +17,31 @@ class RunResultTest {
     private static RunResult.RunFinished finished(String pushedRef, List<String> blocked,
                                                   Map<String, Long> usage) {
         return new RunResult.RunFinished("run::github:a/b:s:1", pushedRef,
-                List.of("src/Foo.java"), blocked, usage);
+                List.of("src/Foo.java"), blocked, usage, false);
+    }
+
+    @Test
+    void aRunCanDeliverAndStillNotHaveFinished() {
+        // Two facts that used to fight. Reporting the overrun as a failure hid a branch that is
+        // really on the remote; reporting it as an ordinary finish asserted a clean delivery for an
+        // agent killed mid-thought. The wire carries both, so the read model can too.
+        RunResult.RunFinished delivered = finished("refs/heads/x", List.of(), null);
+        assertFalse(delivered.deliveredUnfinished());
+
+        RunResult.RunFinished unfinished = delivered.withAgentUnobserved(true);
+        assertTrue(unfinished.deliveredUnfinished());
+        assertEquals(delivered.pushedRef(), unfinished.pushedRef(),
+                "the wither rebuilds every component; a dropped one is how this class of bug ships");
+        assertEquals(delivered.changedPaths(), unfinished.changedPaths());
+    }
+
+    @Test
+    void aRunThatDeliveredNothingIsNotDeliveredUnfinished() {
+        // The flag alone is not the condition. A gate refusal and an empty run can BOTH be
+        // unobserved, and neither put work on a branch — so a read model keying on the flag by
+        // itself would give them a status that promises a ref they do not have.
+        assertFalse(finished(null, List.of(), null).withAgentUnobserved(true).deliveredUnfinished());
+        assertFalse(finished(null, List.of("ci.yml"), null).withAgentUnobserved(true).deliveredUnfinished());
     }
 
     @Test

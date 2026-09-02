@@ -5,6 +5,7 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.PullImageCmd;
 import com.github.dockerjava.api.command.PullImageResultCallback;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.exception.NotModifiedException;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
@@ -66,6 +67,16 @@ import java.util.function.Consumer;
  * the boundary, so the default seccomp profile is KEPT and never relaxed here.
  */
 public final class DockerRunRuntime implements RunRuntime {
+
+    /**
+     * The JDK's own logger, not a framework one.
+     *
+     * <p>This module is Apache-2.0 and carries exactly two dependencies — the runtime SPI and the
+     * Docker client. Pulling a logging framework in for one warning would widen that for every
+     * consumer of a reference adapter, and {@code System.Logger} routes into whichever backend the
+     * host service already has.
+     */
+    private static final System.Logger LOG = System.getLogger(DockerRunRuntime.class.getName());
 
     static final String RUN_ID_LABEL = "dev.codespire.runId";
 
@@ -394,27 +405,36 @@ public final class DockerRunRuntime implements RunRuntime {
     public Finalization salvage(RunHandle handle) {
         Optional<String> agent = containerOf(handle.runId(), AGENT);
         if (agent.isEmpty()) {
-            return Finalization.salvageFailed("no agent container for run " + handle.runId());
+            return Finalization.faulted("no agent container for run " + handle.runId());
         }
+        Duration wallClock = wallClockOf(handle);
+        long startedAt = System.nanoTime();
         Integer exit;
         try {
             exit = client.waitContainerCmd(agent.orElseThrow())
                     .exec(new WaitContainerResultCallback())
-                    .awaitStatusCode(wallClockOf(handle).toSeconds(), TimeUnit.SECONDS);
+                    .awaitStatusCode(wallClock.toSeconds(), TimeUnit.SECONDS);
         } catch (RuntimeException e) {
-            // Includes the timeout. Stop the AGENT before reporting, whatever went wrong: an
-            // unreadable exit code does not mean the process is gone. Only the agent — cancel()
-            // kills both roles, and killing the publisher here took away, one line before it, the
-            // drain window it is given next: every overrun lost its last pushed checkpoint's report.
+            // Stop the AGENT before reporting, whatever went wrong: an unreadable exit code does not
+            // mean the process is gone. Only the agent — cancel() kills both roles, and killing the
+            // publisher here would take away, one line before it, the drain window it is given next.
             killAgent(handle);
             drainPublisher(handle);
-            return Finalization.overran("agent did not exit within the run's wall clock, or its "
-                    + "status could not be read (" + e.getClass().getSimpleName() + "); cancelled");
+            // WHICH failure this was is our fact, not the library's. awaitStatusCode reports the
+            // timeout, an interrupt, a response with no status, and any stream fault as the same
+            // exception type — so trusting it to mean "overran" labelled a dropped daemon connection
+            // as the agent's doing, which is the confusion this split exists to remove, running the
+            // other way. Matching on its message would couple us to a string upstream can change.
+            return elapsed(startedAt).compareTo(wallClock) >= 0
+                    ? Finalization.overran("agent did not exit within the run's wall clock; cancelled")
+                    : Finalization.faulted("the agent's exit status could not be read ("
+                            + e.getClass().getSimpleName() + "); the agent was stopped");
         }
         if (exit == null) {
+            // A response arrived carrying no status code. The clock is not what failed here.
             killAgent(handle);
             drainPublisher(handle);
-            return Finalization.overran("agent did not exit within the run's wall clock; cancelled");
+            return Finalization.faulted("the agent exited but the daemon reported no status code");
         }
         drainPublisher(handle);
         return Finalization.salvaged(exit, "agent exited " + exit);
@@ -514,11 +534,31 @@ public final class DockerRunRuntime implements RunRuntime {
         return buffer.indexOf("\n");
     }
 
+    /** How long the wait actually took, so the clock is measured rather than inferred. */
+    private static Duration elapsed(long startedAtNanos) {
+        return Duration.ofNanos(System.nanoTime() - startedAtNanos);
+    }
+
+    /**
+     * Kill a container that may already be gone.
+     *
+     * <p>Quiet about the expected case ONLY. The comment here used to read "already stopped" over a
+     * catch that swallowed everything, so a kill the daemon actually refused left a live agent
+     * running with no log line anywhere — and the caller had just decided the run was over.
+     * {@code NotFoundException} and {@code NotModifiedException} are the two the library raises for
+     * a container that is gone or already stopped; anything else is a real failure and is said out
+     * loud, without changing the outcome, because a best-effort kill that throws would lose the
+     * terminal result and leave the run 'running' forever.
+     */
     private void killQuietly(String containerId) {
         try {
             client.killContainerCmd(containerId).exec();
+        } catch (NotFoundException | NotModifiedException expected) {
+            // Gone, or already stopped. Both are the outcome this call wanted.
         } catch (RuntimeException e) {
-            // already stopped
+            LOG.log(System.Logger.Level.WARNING,
+                    "container " + containerId + " could not be killed (" + e.getClass().getSimpleName()
+                            + "); it may still be running", e);
         }
     }
 

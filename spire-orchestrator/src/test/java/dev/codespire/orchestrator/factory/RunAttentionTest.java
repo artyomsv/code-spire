@@ -39,7 +39,7 @@ class RunAttentionTest {
         String runId = run();
         projection.apply(new RunResult.RunFinished(runId, null,
                 List.of(".github/workflows/ci.yml", "src/App.java"),
-                List.of(".github/workflows/ci.yml"), null));
+                List.of(".github/workflows/ci.yml"), null, false));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)
@@ -60,7 +60,7 @@ class RunAttentionTest {
     void aSucceededRunRaisesNothing() {
         String runId = run();
         projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of("src/App.java"),
-                List.of(), null));
+                List.of(), null, false));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)

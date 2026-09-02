@@ -25,7 +25,7 @@ class RuntimeSpiTest {
 
     @Test
     void aFailedSalvageIsNotASuccessfulRun() {
-        Finalization failed = Finalization.salvageFailed("publisher never reported an outcome");
+        Finalization failed = Finalization.faulted("publisher never reported an outcome");
 
         assertFalse(failed.salvaged(),
                 "destroy must not proceed on a failed salvage — that is the loss salvage prevents");
@@ -41,7 +41,7 @@ class RuntimeSpiTest {
                 () -> new Finalization(0, Finalization.Outcome.FAULTED, "salvage failed but exit 0?"));
         assertThrows(IllegalArgumentException.class,
                 () -> new Finalization(0, Finalization.Outcome.OVERRAN, "overran but exit 0?"));
-        assertEquals(Finalization.NOT_OBSERVED, Finalization.salvageFailed("gone").exitCode());
+        assertEquals(Finalization.NOT_OBSERVED, Finalization.faulted("gone").exitCode());
         assertEquals(Finalization.NOT_OBSERVED, Finalization.overran("still running").exitCode());
     }
 
@@ -51,9 +51,9 @@ class RuntimeSpiTest {
         // timeout and a broken daemon were the same outcome, and the timeout read as broken
         // infrastructure. They send different people to different places.
         assertFalse(Finalization.overran("wall clock").salvaged());
-        assertFalse(Finalization.salvageFailed("daemon gone").salvaged());
+        assertFalse(Finalization.faulted("daemon gone").salvaged());
         assertTrue(Finalization.overran("wall clock").overran());
-        assertFalse(Finalization.salvageFailed("daemon gone").overran(),
+        assertFalse(Finalization.faulted("daemon gone").overran(),
                 "a runtime that could not look must not be reported as an agent that ran too long");
     }
 

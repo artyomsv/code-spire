@@ -41,9 +41,31 @@ public sealed interface RunResult {
      * <p>The map is keyed by the neutral token-bucket NAME rather than the enum, because that enum
      * lives in {@code spire-harness} and the wire contract does not depend on the harness tier.
      * {@code TokenBucketMatchesLedgerDimensionsTest} keeps the two vocabularies from drifting.
+     *
+     * <p><b>{@code agentUnobserved} carries the two facts that used to fight.</b> A run can put its
+     * work on the branch and still not have finished: the agent overran its wall clock, or the
+     * runtime could not read its exit. Reporting that as a failure hid delivered work; reporting it
+     * as an ordinary finish asserted a clean delivery for a run whose agent was killed mid-thought.
+     * Both were wrong in opposite directions, and this project has already made the same call twice
+     * against itself — {@code V47} exists because a run that delivered nothing was written with the
+     * same status as one whose branch reached the remote, and a refused review once rendered as five
+     * green segments under "done", which the record calls worse than silence. So the result carries
+     * both: the work IS on the branch, and the run is NOT complete.
+     *
+     * <p>Appending it is wire-safe, and the gate that stopped this change is the reason to say why
+     * rather than just re-baselining: old JSON omits the field, Jackson defaults a missing boolean
+     * to {@code false}, and {@code false} means "observed" — exactly what every record written
+     * before this change meant. {@code RunResult} is a bus type under ADR-014 short retention, not a
+     * persisted domain event, so nothing replays through it from an event store.
+     *
+     * <p>There is deliberately <b>no shorter constructor</b>. Adding a component to a wire record
+     * silently drops it at every rebuild site while the convenience constructors stay valid — the
+     * trap this repository paid for on {@code ReviewResult}. Rebuild through {@link
+     * #withAgentUnobserved(boolean)}, which enumerates the components once, next to the record.
      */
     record RunFinished(String runId, String pushedRef, List<String> changedPaths,
-                       List<String> blockedPaths, Map<String, Long> tokenUsage) implements RunResult {
+                       List<String> blockedPaths, Map<String, Long> tokenUsage,
+                       boolean agentUnobserved) implements RunResult {
 
         public RunFinished {
             Objects.requireNonNull(runId, "runId");
@@ -73,6 +95,16 @@ public sealed interface RunResult {
         /** Whether the push gate refused this run. */
         public boolean refused() {
             return pushedRef == null && !blockedPaths.isEmpty();
+        }
+
+        /** Whether this run both delivered work and left the agent's own outcome unobserved. */
+        public boolean deliveredUnfinished() {
+            return agentUnobserved && pushedRef != null;
+        }
+
+        /** Rebuild carrying a different observation flag, enumerating the components once. */
+        public RunFinished withAgentUnobserved(boolean unobserved) {
+            return new RunFinished(runId, pushedRef, changedPaths, blockedPaths, tokenUsage, unobserved);
         }
     }
 

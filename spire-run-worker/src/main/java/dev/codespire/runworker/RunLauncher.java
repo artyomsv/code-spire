@@ -127,8 +127,13 @@ public class RunLauncher {
             // follow stream on a container that is still running would otherwise never end.
             awaitBriefly(agentStream, publisherStream);
             LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
-            return failure(command, "SALVAGE_FAILED",
-                    e.getClass().getSimpleName() + ": " + e.getMessage() + pushedNote(outcome));
+            // The SAME rule as an overrun, and for the same reason: nobody observed the agent's
+            // exit, so a push the publisher already reported is still a push. This used to build a
+            // bare failure that carried the ref in its detail TEXT only, so the run's record had no
+            // pushed_ref and an operator was sent hunting for a branch that exists. Ranking it here
+            // also gives a gate refusal and a forge rejection their own outcomes on this path.
+            return unobserved(command, adapter, new Observed(seen, outcome,
+                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage())));
         }
         // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
         // whatever was read still decide the result, and the unit is still destroyed.
@@ -149,6 +154,16 @@ public class RunLauncher {
         if (finalization.salvaged()) {
             runtime.destroy(handle);
         } else {
+            // Preserved, and STOPPED. That an overrun kills the agent is one arm's private promise,
+            // not something the SPI states — and a run now reported finished makes an operator rely
+            // on it. cancel() is an idempotent kill, and the publisher has already had its drain
+            // window inside salvage, so nothing is lost. A throwing cancel must not lose the result.
+            try {
+                runtime.cancel(handle);
+            } catch (RuntimeException e) {
+                LOG.warnf("run %s: the preserved unit could not be stopped (%s)",
+                        command.runId(), e.getClass().getSimpleName());
+            }
             LOG.warnf("run %s preserved for inspection: %s", command.runId(), finalization.detail());
         }
         return result;
@@ -159,24 +174,59 @@ public class RunLauncher {
         return failures.of(command, cause, detail);
     }
 
+    /**
+     * A run whose exit nobody observed — it overran, or the runtime could not look.
+     *
+     * <p>The outcomes are ranked exactly as {@link #interpret} ranks them for a salvaged run, which
+     * the first version of this branch did not do: it looked only for a push, so a gate refusal fell
+     * through to a timeout with its blocked paths discarded and the refusal's attention row never
+     * fired, and a forge rejecting the final checkpoint — the case FR-F7 uses as its example — was
+     * reported as the clock running out around it.
+     */
+    private RunResult unobserved(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
+        PublisherOutcome outcome = observed.outcome();
+        Finalization finalization = observed.finalization();
+        warnOmittedPaths(command, outcome);
+        if (outcome.refused()) {
+            // The gate's refusal is the run's outcome whether or not the agent exited. Buried under
+            // the overrun it hid the one row RUN_PUSH_GATE_REFUSED exists to raise.
+            return new RunResult.RunFinished(command.runId(), null,
+                    outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, observed.seen().summary()),
+                    true);
+        }
+        if (outcome.pushedRef().isPresent()) {
+            // The work is on the branch, so this is finished — but NOT complete, and the result says
+            // both. Usage is carried: the fold measured it, and a run that spent its entire wall
+            // clock is the most expensive one the system produces, so reporting "unknown" here would
+            // lose the largest charge there is.
+            return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElseThrow(),
+                    outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, observed.seen().summary()),
+                    true);
+        }
+        if (outcome.failureCause().isPresent()) {
+            // A forge that rejected the final checkpoint is the fact worth classifying, not the
+            // clock that ran out around it.
+            return failure(command, outcome.failureCause().orElseThrow(),
+                    outcome.failureDetail() + "; " + finalization.detail());
+        }
+        RunFailureCause cause = finalization.overran()
+                ? RunFailureCause.AGENT_TIMEOUT
+                : RunFailureCause.SALVAGE_FAILED;
+        return failure(command, cause.name(), finalization.detail());
+    }
+
+    private static void warnOmittedPaths(RunCommand.ExecuteRun command, PublisherOutcome outcome) {
+        if (outcome.omittedPaths() > 0) {
+            LOG.warnf("run %s: %d changed or blocked paths beyond the result's cap are not listed",
+                    command.runId(), outcome.omittedPaths());
+        }
+    }
+
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
         PublisherOutcome outcome = observed.outcome();
         Finalization finalization = observed.finalization();
         if (!finalization.salvaged()) {
-            // A run that PUSHED before it overran is finished, because the work is on the branch
-            // either way — the same rule this method applies to a failed agent a few lines below,
-            // which the overrun path used not to follow. Reported as a bare failure it told the
-            // operator nothing was delivered while an hour of checkpoints sat on the remote, and
-            // left the run record unable to name commits that exist.
-            if (outcome.pushedRef().isPresent() && !outcome.refused()) {
-                return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElseThrow(),
-                        outcome.changedPaths(), outcome.blockedPaths(), null);
-            }
-            // Nothing was delivered, so the two kinds of not-salvaged part company. An overrun is
-            // the agent's doing and will happen again on the same prompt; a fault is the runtime
-            // failing to look, and may not recur. Both used to read as a broken sandbox.
-            String cause = finalization.overran() ? "AGENT_TIMEOUT" : "SALVAGE_FAILED";
-            return failure(command, cause, finalization.detail() + pushedNote(outcome));
+            return unobserved(command, adapter, observed);
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail());
@@ -184,10 +234,7 @@ public class RunLauncher {
         if (observed.seen().dropped() > 0) {
             LOG.debugf("run %s: %d agent events folded away", command.runId(), observed.seen().dropped());
         }
-        if (outcome.omittedPaths() > 0) {
-            LOG.warnf("run %s: %d changed or blocked paths beyond the result's cap are not listed",
-                    command.runId(), outcome.omittedPaths());
-        }
+        warnOmittedPaths(command, outcome);
         RunEventSummary summary = observed.seen().summary();
         TerminalOutcome terminal = adapter.classify(finalization.exitCode(), summary);
         if (!terminal.succeeded() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
@@ -196,7 +243,7 @@ public class RunLauncher {
             return failure(command, terminal.cause().orElseThrow().name(), terminal.detail());
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
-                outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary));
+                outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary), false);
     }
 
     private static void awaitBriefly(Future<?> agentStream, Future<?> publisherStream) {
@@ -214,9 +261,6 @@ public class RunLauncher {
         publisherStream.cancel(true);
     }
 
-    private static String pushedNote(PublisherOutcome outcome) {
-        return outcome.pushedRef().map(ref -> "; work pushed to " + ref + " before the failure").orElse("");
-    }
 
     /**
      * Token usage as a plain map, or null.

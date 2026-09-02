@@ -38,7 +38,7 @@ class RunDispatcherTest {
             "fix the typo", "codex", "gpt-5.6", "img", List.of(), 60, "enc-scm", "enc-harness");
 
     private static final RunResult.RunFinished FINISHED = new RunResult.RunFinished(
-            EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null);
+            EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null, false);
 
     /** In-memory claims: the first claim of a slot wins, exactly as the unique key does. */
     static final class FakeClaims extends RunClaimStore {

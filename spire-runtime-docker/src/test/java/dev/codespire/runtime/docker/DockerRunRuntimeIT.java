@@ -173,6 +173,13 @@ class DockerRunRuntimeIT {
 
         assertFalse(finalization.salvaged(), finalization.detail());
         assertEquals(Finalization.NOT_OBSERVED, finalization.exitCode());
+        // The arm must say WHICH failure this was, and only a real container can prove it. Nothing
+        // asserted this: reverting both call sites in the runtime left this module fully green while
+        // the feature went inert, because the launcher test sets the outcome on a fake. That is the
+        // seam lesson this repository has already paid for once.
+        assertTrue(finalization.overran(),
+                "the wall clock ran out, which is the agent's doing — reporting it as a daemon fault "
+                        + "sends the operator hunting for broken infrastructure: " + finalization.detail());
     }
 
     @Test
