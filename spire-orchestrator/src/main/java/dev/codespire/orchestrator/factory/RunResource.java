@@ -95,7 +95,7 @@ public class RunResource {
 
         RepoRef repo = new RepoRef(in.workspace(), in.slug());
         String runId = RunIds.of(in.scmType(), in.workspace(), in.slug(), in.subject(), FIRST_ATTEMPT);
-        String branch = "spire/" + in.subject();
+        String branch = DispatchRequestParser.RUN_BRANCH_PREFIX + in.subject();
         // Both credentials ride the bus as Tink ciphertext bound to this run (ADR-015's rule, which
         // the review path already keeps); a dead-lettered command lands in dlq_entry.payload as sent.
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(runId, repo,
@@ -111,9 +111,7 @@ public class RunResource {
         // the worker's claim as a redelivery — a 201 for a run that never runs. So: 409, naming it.
         if (!projection.queued(new FactoryRunProjection.QueuedRun(runId, in.harness(), in.model(),
                 in.baseBranch(), in.baseCommit(), branch, account.botUsername()))) {
-            String status = projection.find(runId).map(FactoryRunProjection.RunView::status).orElse("unknown");
-            throw conflict("Run " + runId + " already exists (status " + status + "). M0 runs each subject "
-                    + "once; pass a different subject to run again.");
+            throw conflict(alreadyExists(runId));
         }
         dispatch(runId, command);
         return Response.status(Response.Status.CREATED).entity(Map.of("runId", runId)).build();
@@ -191,6 +189,24 @@ public class RunResource {
         return found.orElseThrow(() -> conflict("No LLM provider supplies the harness credential: set a "
                 + "default LLM provider under Settings -> LLM, or pass llmProviderId. Its key must be "
                 + "one the '" + harness + "' harness accepts."));
+    }
+
+    /**
+     * Why a queued row was not written. A run whose dispatch was never acknowledged is re-armed
+     * only by the identical request — the first command may be the one that runs — so a retry
+     * with different parameters is told to retry as sent or start a new subject.
+     */
+    private String alreadyExists(String runId) {
+        FactoryRunProjection.RunView existing = projection.find(runId).orElse(null);
+        if (existing != null && FactoryRunProjection.FAILED.equals(existing.status())
+                && FactoryRunProjection.DISPATCH_FAILED.equals(existing.failureCause())) {
+            return "Run " + runId + " was recorded but its dispatch was never acknowledged, and this request "
+                    + "differs from the original. The original may already be running; retry the identical "
+                    + "request to re-arm it, or use a new subject.";
+        }
+        String status = existing == null ? "unknown" : existing.status();
+        return "Run " + runId + " already exists (status " + status + "). M0 runs each subject once; "
+                + "pass a different subject to run again.";
     }
 
     private static ClientErrorException conflict(String message) {

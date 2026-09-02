@@ -18,11 +18,12 @@ import org.jboss.logging.Logger;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -94,24 +95,38 @@ public class RunLauncher {
     private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle) {
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
-        CompletableFuture<Void> agentStream = CompletableFuture.runAsync(() ->
+        // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
+        // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
+        // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
+        // the process.
+        Future<?> agentStream = streams.submit(() ->
                 runtime.attach(handle, LogChannel.AGENT,
-                        line -> adapter.parse(line).ifPresent(seen::accept)), streams);
-        CompletableFuture<Void> publisherStream = CompletableFuture.runAsync(() ->
-                runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept), streams);
+                        line -> adapter.parse(line).ifPresent(seen::accept)));
+        Future<?> publisherStream = streams.submit(() ->
+                runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept));
 
         Finalization finalization;
         try {
             finalization = runtime.salvage(handle);
-            CompletableFuture.allOf(agentStream, publisherStream).join();
         } catch (RuntimeException e) {
             // The readers get a moment to deliver what the publisher already wrote — the pushed
-            // ref is the one fact worth carrying out of here — and are then cancelled, because a
+            // ref is the one fact worth carrying out of here — and are then interrupted, because a
             // follow stream on a container that is still running would otherwise never end.
             awaitBriefly(agentStream, publisherStream);
-            LOG.errorf(e, "run %s: salvage or log read failed; the unit is preserved for inspection", command.runId());
+            LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
             return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED",
                     e.getClass().getSimpleName() + ": " + e.getMessage() + pushedNote(outcome), false);
+        }
+        // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
+        // whatever was read still decide the result, and the unit is still destroyed.
+        for (Future<?> reader : List.of(agentStream, publisherStream)) {
+            try {
+                reader.get();
+            } catch (ExecutionException e) {
+                LOG.errorf(e.getCause(), "run %s: a log reader failed; interpreting what was read", command.runId());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
 
         RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization));
@@ -158,13 +173,16 @@ public class RunLauncher {
                 outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary));
     }
 
-    private static void awaitBriefly(CompletableFuture<Void> agentStream, CompletableFuture<Void> publisherStream) {
-        try {
-            CompletableFuture.allOf(agentStream, publisherStream).get(READER_GRACE.toSeconds(), TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException | TimeoutException e) {
-            // A reader that failed or is still following: cancelled below either way.
+    private static void awaitBriefly(Future<?> agentStream, Future<?> publisherStream) {
+        long deadline = System.nanoTime() + READER_GRACE.toNanos();
+        for (Future<?> reader : List.of(agentStream, publisherStream)) {
+            try {
+                reader.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException | TimeoutException e) {
+                // A reader that failed or is still following: interrupted below either way.
+            }
         }
         agentStream.cancel(true);
         publisherStream.cancel(true);

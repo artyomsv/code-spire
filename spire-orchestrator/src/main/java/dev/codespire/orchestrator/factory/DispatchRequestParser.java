@@ -33,6 +33,9 @@ final class DispatchRequestParser {
 
     private static final String DEFAULT_BASE_BRANCH = "main";
 
+    /** Every branch the factory pushes lives here; the publisher enforces the same namespace. */
+    static final String RUN_BRANCH_PREFIX = "spire/";
+
     /** The branch is {@code spire/<subject>}; git refuses these two shapes, so refuse them here. */
     private static final String REF_DOTDOT = "..";
 
@@ -79,8 +82,15 @@ final class DispatchRequestParser {
         }
         String baseBranch = req.baseBranch() == null || req.baseBranch().isBlank()
                 ? DEFAULT_BASE_BRANCH : refName(req.baseBranch(), "baseBranch");
+        String subject = subject(req.subject(), baseCommit);
+        if (baseBranch.equals(RUN_BRANCH_PREFIX + subject)) {
+            // The publisher refuses a branch equal to its base at startup — after the agent has run
+            // and been paid. Operators iterating on a previous factory branch as the base hit this
+            // without a typo, so it is the parser's refusal, not the container's.
+            throw badRequest("baseBranch must differ from the run's own branch " + RUN_BRANCH_PREFIX + subject);
+        }
         return new Parsed(scmType, workspace, slug, baseCommit, prompt, harness, agentImage, model,
-                baseBranch, subject(req.subject(), baseCommit));
+                baseBranch, subject);
     }
 
     /**

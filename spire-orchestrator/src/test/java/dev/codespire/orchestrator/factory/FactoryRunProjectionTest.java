@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -127,20 +128,33 @@ class FactoryRunProjectionTest {
     }
 
     @Test
-    void reArmingADispatchFailureTakesTheNewRequestsParameters() {
-        // The re-arm used to flip the status and keep the FIRST request's harness, model, commit and
-        // branch — while the command actually dispatched carried the SECOND request's. The row then
-        // described a run that was never sent, and every later read (attention, the operator's
-        // page) lied about what was running.
+    void aRetryWithDifferentParametersDoesNotReArmADispatchFailure() {
+        // "Never acknowledged" is not "never sent": the first command may have landed and be the one
+        // running. A re-arm that took the retry's parameters (an earlier fix did exactly that) would
+        // leave that first run's result on a row describing another commit, model or account. The
+        // differing retry matches no row and the caller refuses it; the row keeps its own facts.
         String runId = queuedRun();
         projection.dispatchFailed(runId, "No broker ack within 10s");
 
-        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.7-mini", "release/2",
-                "fedcba9876543210fedcba9876543210fedcba98", "spire/x", "other-bot"));
+        boolean reArmed = projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.7-mini",
+                "release/2", "fedcba9876543210fedcba9876543210fedcba98", "spire/x", "other-bot"));
 
-        assertEquals(FactoryRunProjection.QUEUED, projection.find(runId).orElseThrow().status());
-        assertEquals(List.of("gpt-5.7-mini", "release/2", "fedcba9876543210fedcba9876543210fedcba98", "other-bot"),
-                column(runId, "model", "base_branch", "base_commit", "pushed_as"));
+        assertFalse(reArmed);
+        assertEquals(List.of(FactoryRunProjection.FAILED, FactoryRunProjection.DISPATCH_FAILED, "gpt-5.6",
+                "main", "abc1234", "spire-bot"),
+                column(runId, "status", "failure_cause", "model", "base_branch", "base_commit", "pushed_as"));
+    }
+
+    @Test
+    void theIdenticalRequestReArmsADispatchFailure() {
+        String runId = queuedRun();
+        projection.dispatchFailed(runId, "No broker ack within 10s");
+
+        boolean reArmed = projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/x", "spire-bot"));
+
+        assertTrue(reArmed);
+        assertEquals(java.util.Arrays.asList(FactoryRunProjection.QUEUED, null), column(runId, "status", "failure_cause"));
     }
 
     @Inject

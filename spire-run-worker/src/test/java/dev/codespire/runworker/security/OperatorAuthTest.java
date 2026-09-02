@@ -19,10 +19,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The run worker's HTTP surface is deny-by-default, with health the one public path.
  *
- * <p>There is no operator endpoint under {@code /rw} yet, and the test is written so that stays
- * irrelevant: the permission policy answers 401 before routing, so an endpoint added tomorrow is
- * refused to an anonymous caller whether or not anyone remembered to annotate it. Plain JDK HTTP,
- * because that is what the module's test classpath has.
+ * <p>The refusals are written so the set of endpoints under {@code /rw} stays irrelevant: the
+ * permission policy answers 401 before routing, so an endpoint added tomorrow is refused to an
+ * anonymous caller whether or not anyone remembered to annotate it. The one endpoint that exists,
+ * the session bootstrap, is then proved reachable to a viewer. Plain JDK HTTP, because that is
+ * what the module's test classpath has.
  */
 @QuarkusTest
 class OperatorAuthTest {
@@ -35,6 +36,9 @@ class OperatorAuthTest {
 
     @TestHTTPResource("/anything")
     URL outsideEveryPrefix;
+
+    @TestHTTPResource("/rw/auth/login")
+    URL login;
 
     private static int status(URL url) throws IOException, InterruptedException {
         HttpResponse<Void> response = HttpClient.newHttpClient().send(
@@ -63,6 +67,15 @@ class OperatorAuthTest {
         // a 200 or the 404 of a route that was reached.
         int status = status(operatorPrefix);
         assertTrue(status == 401 || status == 403, "expected a refusal, got " + status);
+    }
+
+    @Test
+    @io.quarkus.test.security.TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerCanEstablishASessionUnderThePrefix() throws Exception {
+        // The refusal tests pass whether or not /rw/auth/login exists or is reachable to a viewer.
+        // This is the one call that proves the endpoint is routed and open to both roles: the
+        // dashboard probes it once signed in, and without it the run worker's screens 403.
+        assertEquals(303, status(login));
     }
 
     @Test

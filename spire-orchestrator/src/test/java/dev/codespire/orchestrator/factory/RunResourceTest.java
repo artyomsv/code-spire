@@ -308,6 +308,23 @@ class RunResourceTest {
 
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
+    void aBaseBranchEqualToTheRunsOwnBranchIsRefusedBeforeTheAgentIsPaid() {
+        // The publisher refuses branch == base at startup — after the agent has run. Operators
+        // iterating on a previous factory branch as the base reach this without a typo.
+        String workspace = workspaceWithFactoryAccount();
+        String request = body(workspace).replace("\"harness\"",
+                "\"subject\":\"again\",\"baseBranch\":\"spire/again\",\"harness\"");
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(400)
+                .body(containsString("spire/again"));
+        given().when().get("/api/runs/run::github:" + workspace + "/app:again:1")
+                .then().statusCode(404);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
     void aSubjectGitWouldRefuseAsABranchIsRefusedHere() {
         String workspace = workspaceWithFactoryAccount();
         for (String bad : List.of("a..b", "x.lock", "has/slash", "-leading")) {

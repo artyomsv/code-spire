@@ -135,10 +135,16 @@ public class RunDispatcher {
     }
 
     private boolean publish(RunResult result) {
-        CompletionStage<Void> sent = results.send(Record.of(result.runId(), result));
         try {
-            sent.toCompletableFuture().get(RESULT_ACK_SECONDS, TimeUnit.SECONDS);
+            // send() itself can throw synchronously — a channel with no subscriber, or one whose
+            // downstream was cancelled at shutdown — and that throw would be the one escaping after
+            // the ack. Inside the guard with the rest.
+            results.send(Record.of(result.runId(), result)).toCompletableFuture()
+                    .get(RESULT_ACK_SECONDS, TimeUnit.SECONDS);
             return true;
+        } catch (IllegalStateException e) {
+            LOG.errorf(e, "the channel refused %s", describe(result));
+            return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             LOG.errorf(e, "interrupted publishing %s", describe(result));

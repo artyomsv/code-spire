@@ -18,6 +18,19 @@ class RunIdsTest {
     }
 
     @Test
+    void aNonCanonicalAttemptIsRefusedSoOneRunCannotTakeTwoClaims() {
+        // "01" and "+1" parse to 1 but are different strings: two claim keys and two read-model
+        // rows for one logical run, on the id four places call the sole idempotency mechanism.
+        for (String spelling : java.util.List.of("01", "+1", "001")) {
+            IllegalArgumentException refusal = org.junit.jupiter.api.Assertions.assertThrows(
+                    IllegalArgumentException.class,
+                    () -> RunIds.parse("run::github:artyomsv/spire-test:finding-9:" + spelling), spelling);
+            org.junit.jupiter.api.Assertions.assertTrue(refusal.getMessage().contains("canonical"), refusal.getMessage());
+        }
+        assertEquals(1, RunIds.parse("run::github:artyomsv/spire-test:finding-9:1").attempt());
+    }
+
+    @Test
     void parsesBackWithoutAnInMemoryRegistry() {
         RunIds.Parsed parsed = RunIds.parse("run::github:artyomsv/spire-test:finding-9:2");
 

@@ -52,9 +52,13 @@ public class RunAttentionRows {
                 String paths = rs.getString("blocked_paths").replace("\n", ", ");
                 // The action is a UI route by the panel's contract; there is no run page yet, so it
                 // is the dashboard root — the message carries the run id and the paths.
+                // The gate judges the branch's cumulative tree, so a refusal can follow checkpoints
+                // that were already pushed: the refused change was not delivered, but "nothing
+                // reached the remote" would be false for every run that pushed before it tripped.
                 rows.add(new AttentionView(CODE, Severity.WARNING, runId,
                         "The push gate refused run " + runId + ": it changed " + paths
-                                + ". Nothing reached the remote. Read the paths, then acknowledge this.",
+                                + ". That change was not pushed; checkpoints this run pushed earlier may "
+                                + "already be on its branch. Read the paths, then acknowledge this.",
                         "/",
                         "/api/runs/" + runId + "/attention-ack"));
             }

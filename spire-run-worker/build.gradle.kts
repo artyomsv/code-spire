@@ -47,6 +47,7 @@ dependencies {
     implementation("io.quarkus:quarkus-logging-json") // structured JSON logs in prod
 
     testImplementation("io.quarkus:quarkus-junit5")
+    testImplementation("io.quarkus:quarkus-test-security")
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
 }
 

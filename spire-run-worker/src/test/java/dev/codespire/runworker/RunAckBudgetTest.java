@@ -20,7 +20,17 @@ class RunAckBudgetTest {
 
     @Test
     void acceptsAThresholdThatOutlivesARunAndItsAck() {
-        assertDoesNotThrow(() -> RunAckBudget.verify(WALL_CLOCK, Duration.ofMinutes(36), 1, 1));
+        assertDoesNotThrow(() -> RunAckBudget.verify(WALL_CLOCK, Duration.ofMinutes(41), 1, 1));
+    }
+
+    @Test
+    void theDrainWindowIsPartOfTheBudget() {
+        // The handler holds the channel for wall clock + the publisher's drain + the ack. The drain
+        // went 30s to 300s and a guard of wallClock + 5min accepted a threshold it no longer
+        // covered: 36 minutes here was "safe" and now leaves the publisher 4 minutes short.
+        IllegalStateException refusal = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> RunAckBudget.verify(WALL_CLOCK, Duration.ofMinutes(36), 1, 1));
+        org.junit.jupiter.api.Assertions.assertTrue(refusal.getMessage().contains("drain"), refusal.getMessage());
     }
 
     /**

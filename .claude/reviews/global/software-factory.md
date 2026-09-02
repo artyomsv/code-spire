@@ -1,7 +1,7 @@
 # Code Review State: global / software-factory
 
 Last reviewed: 2026-09-02
-Rounds completed: 2
+Rounds completed: 3
 
 ## Resolved (fixed in code; do not re-raise)
 - [code-quality/C1] Docker volume name derived from the raw run id is illegal to the daemon (`::`, `/`) — SHA-256 digest name, id stays on the label; `DockerRunRuntimeTest` — round 1
@@ -49,6 +49,17 @@ Rounds completed: 2
 - [rules-R2 1, 2, 6, 11, 12, 13, 14, 15, 16] `RunResource.dispatch` 96 lines / file 339 lines — `DispatchRequestParser` extracted; `FactoryRunProjection.queued` 7 parameters — `QueuedRun` record; publisher image hardcoded to `latest` — `spire.run.publisher-image`, no default in prod, `SPIRE_PUBLISHER_IMAGE`; agent image and wall clock without env override — `SPIRE_FACTORY_AGENT_IMAGE_CODEX`, `SPIRE_FACTORY_WALL_CLOCK_SECONDS`, `SPIRE_RUN_MAX_WALL_CLOCK_SECONDS`, all in `.env.example`; run id outside the MDC span; CLAUDE.md's stale tier line, wrong module count and empty fence — round 2
 - [rules-R2 17] Three round-1 Open items had no debt file — `techdebt/spire-publisher/3-2-a-non-fast-forward-push-has-no-handling.md`, `techdebt/spire-runtime-docker/4-3-the-agent-container-on-the-default-bridge-…`, and `CredentialsTest` in place of the third — round 2
 - [rules-A 4, 5 / rules-B 5, 6, 8] `OPENAI_API_KEY` named in core — `HarnessInvocation.CREDENTIAL`, translated by the Codex arm; `spire-bot` hardcoded — the login rides in the envelope; `RunResultSaga` `@Blocking` + MDC; an unknown provider role is a 400 — round 2
+
+- [cr-R3 H-1 / sec-R3 2 / qa-R3 1] A throwing salvage "cancelled" readers that kept blocking on the follow stream for the life of the process (`CompletableFuture.cancel` does not interrupt) — readers are `ExecutorService` futures, `cancel(true)` interrupts, and `DockerRunRuntime.attach` closes the callback on interrupt so the daemon connection goes too; a reader fault after a good salvage no longer reports `SALVAGE_FAILED`; `RunLauncherTest` (blocking fake, latch on the interrupt) — round 3
+- [sec-R3 1] A `DISPATCH_FAILED` row was re-armed with the RETRY's parameters while the first command may be the one running — re-arm only on an identical request (`ON CONFLICT … WHERE` on every parameter), a differing retry is a 409 naming the choice; `FactoryRunProjectionTest` — round 3. **This reverses the round-2 resolution of `[security/(sec-B 7, cr-B 6)]`**, which made the re-arm take the new parameters so the row would describe the command actually dispatched. Both rounds saw a real defect; round 2 fixed the row-vs-command mismatch by moving the row, round 3 shows that "never acknowledged" includes "delivered", so moving the row can put a running command's result under a stranger's parameters. Refusing the differing retry closes both: the row describes the only command that can be running, and the operator is told to retry as sent or use a new subject.
+- [cr-R3 H-2] The gate-refusal attention row said "Nothing reached the remote" while earlier checkpoints of the run may be on its branch — reworded — round 3
+- [cr-R3 M-1] `baseBranch` equal to the run's own `spire/<subject>` was refused by the publisher after the agent had run — 400 at the parser; `RunResourceTest` — round 3
+- [sec-R3 LOW / rules-R3 obs] `Emitter.send` could throw synchronously outside `publish`'s guard, after the ack — inside it — round 3
+- [qa-R3 2] `RunAckBudget` omitted the publisher drain the same commit had raised 30s → 300s — `DockerRunRuntime.PUBLISHER_DRAIN` is part of the budget; `RunAckBudgetTest` — round 3
+- [qa-R3 3] The canonical-attempt guard in `RunIds.parse` had no test — `RunIdsTest` — round 3
+- [qa-R3 4] `RunWorkerAuthResource` untested — a viewer's `/rw/auth/login` is a 303; `OperatorAuthTest` — round 3
+- [qa-R3 5] A missing `SPIRE_PUBLISHER_IMAGE` surfaced as a non-retryable `BAD_COMMAND` on the first run — `PublisherImageCheck` refuses at startup; `PublisherImageCheckTest` — round 3
+- [rules-R3 obs] `DockerRunRuntime` past the class-size cap — `techdebt/spire-runtime-docker/4-3-dockerrunruntime-is-past-the-class-size-guideline.md` — round 3
 
 ## Dismissed (acknowledged, will not fix; agents may escalate with explicit justification)
 - (none)

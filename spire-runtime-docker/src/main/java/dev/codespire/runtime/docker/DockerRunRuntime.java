@@ -28,6 +28,8 @@ import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -85,6 +87,9 @@ public final class DockerRunRuntime implements RunRuntime {
      * seconds cut a large last checkpoint off mid-push and reported the previous one as the result.
      */
     private static final int PUBLISHER_DRAIN_SECONDS = 300;
+
+    /** The same window, for the worker's ack budget: a handler holds the channel for the wall clock PLUS this. */
+    public static final Duration PUBLISHER_DRAIN = Duration.ofSeconds(PUBLISHER_DRAIN_SECONDS);
 
     /** A log line longer than this is clipped and its remainder dropped; see {@link #attach}. */
     static final int MAX_LINE_CHARS = 64 * 1024;
@@ -286,10 +291,7 @@ public final class DockerRunRuntime implements RunRuntime {
         String containerId = containerOf(handle.runId(), role)
                 .orElseThrow(() -> new IllegalStateException(
                         "no " + role + " container for run " + handle.runId()));
-        try {
-            client.logContainerCmd(containerId)
-                    .withStdOut(true).withStdErr(true).withFollowStream(true)
-                    .exec(new ResultCallback.Adapter<Frame>() {
+        ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
                         // The daemon does not align frames to lines: one JSON report line can
                         // arrive across two frames. Splitting each frame on its own delivered both
                         // halves as separate, unparseable lines, and PublisherOutcome skips a line it
@@ -341,10 +343,18 @@ public final class DockerRunRuntime implements RunRuntime {
                             }
                             super.onComplete();
                         }
-                    })
-                    .awaitCompletion();
+                    };
+        // try-with-resources on the callback: an interrupt (the launcher ending a reader after a
+        // failed salvage) then CLOSES the follow stream and releases the daemon connection. Before,
+        // only the thread returned; the stream and the connection lived on with the container.
+        try (ResultCallback.Adapter<Frame> stream = client.logContainerCmd(containerId)
+                .withStdOut(true).withStdErr(true).withFollowStream(true)
+                .exec(callback)) {
+            stream.awaitCompletion();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } catch (IOException e) {
+            throw new UncheckedIOException("closing the log stream of " + containerId, e);
         }
     }
 

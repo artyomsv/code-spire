@@ -100,6 +100,10 @@ class RunLauncherTest {
         Finalization finalization = Finalization.salvaged(0, "exited");
         RuntimeException createFails;
         RuntimeException salvageFails;
+        /** A real follow stream: the reader blocks until it is interrupted. */
+        boolean readersBlock;
+        final java.util.concurrent.CountDownLatch readersInterrupted = new java.util.concurrent.CountDownLatch(2);
+        RuntimeException agentReaderFails;
         final List<RunHandle> destroyed = new ArrayList<>();
 
         @Override
@@ -123,6 +127,17 @@ class RunLauncherTest {
         @Override
         public void attach(RunHandle handle, LogChannel channel, Consumer<String> lines) {
             (channel == LogChannel.AGENT ? agentLines : publisherLines).forEach(lines);
+            if (agentReaderFails != null && channel == LogChannel.AGENT) {
+                throw agentReaderFails;
+            }
+            if (readersBlock) {
+                try {
+                    new java.util.concurrent.CountDownLatch(1).await();
+                } catch (InterruptedException e) {
+                    readersInterrupted.countDown();
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
 
         @Override
@@ -230,6 +245,35 @@ class RunLauncherTest {
         assertEquals("SALVAGE_FAILED", failed.cause());
         assertTrue(failed.detail().contains("daemon went away"), failed.detail());
         assertTrue(failed.detail().contains("refs/heads/spire/finding-1"), failed.detail());
+    }
+
+    @Test
+    void aThrowingSalvageInterruptsReadersThatAreStillFollowing() throws Exception {
+        // CompletableFuture.cancel(true) "has no effect": the readers it cancelled kept blocking on
+        // the follow stream of a preserved unit for the life of the process — a virtual thread and
+        // a daemon connection each. An ExecutorService Future's cancel(true) interrupts.
+        runtime.salvageFails = new IllegalStateException("daemon went away");
+        runtime.readersBlock = true;
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+
+        assertEquals("SALVAGE_FAILED", failed.cause());
+        assertTrue(runtime.readersInterrupted.await(15, java.util.concurrent.TimeUnit.SECONDS),
+                "both readers must be interrupted, not left following a stream that never ends");
+    }
+
+    @Test
+    void aReaderFaultAfterAGoodSalvageIsALoggingFaultNotARunFailure() {
+        // The exit code and what was read still decide the result, and the unit is destroyed:
+        // a completed run must not be recorded as an infrastructure failure and leaked.
+        runtime.agentReaderFails = new IllegalStateException("log stream reset");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND));
+
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
+        assertEquals(1, runtime.destroyed.size(), "a salvaged unit is destroyed, reader fault or not");
     }
 
     @Test

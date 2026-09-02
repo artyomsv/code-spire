@@ -1366,9 +1366,17 @@ The design is fully specified in `docs/` — **treat those files as the source o
   publisher one line before the drain window the first round had just given it, and a
   `DISPATCH_FAILED` row could never be corrected by the real result — all closed with
   discriminating tests, and the review-state file `.claude/reviews/global/software-factory.md`
-  records every finding's disposition. Measured, not estimated: **2060 Java tests across 256
-  suites** (`testFast` 856/100 + `testServices` — gateway 73/11, orchestrator 816/105,
-  review-worker 226/27, run-worker 74/11 incl. the M0 walking skeleton, runtime-docker 15/2);
+  records every finding's disposition. A forced third round, under the HIGH-or-concrete-bug rule,
+  found the reader "cancel" after a throwing salvage did not cancel — `CompletableFuture.cancel`
+  documents its flag as having no effect, so each reader kept blocking on a preserved container's
+  follow stream, a virtual thread and a daemon connection each, until process exit (now
+  `ExecutorService` futures whose `cancel(true)` interrupts, and a runtime that closes the log
+  callback on interrupt); a never-acknowledged dispatch re-armed with the RETRY's parameters while
+  the first command may be the one running (identical request only, a differing retry is a 409);
+  and the ack budget missing the publisher drain the previous commit had raised 30s → 300s. All
+  closed in-round. Measured, not estimated: **2069 Java tests across 257
+  suites** (`testFast` 857/100 + `testServices` — gateway 73/11, orchestrator 818/105,
+  review-worker 226/27, run-worker 80/12 incl. the M0 walking skeleton, runtime-docker 15/2);
   `spire-ui` untouched. The two images are not on GHCR and `spire-run-worker` is not in
   `deploy/` yet — packaging follows M1, and the runbook builds both locally.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry

@@ -53,8 +53,12 @@ public class FactoryRunProjection {
      * A queued row, written BEFORE the command is dispatched so a run can never exist unrecorded.
      *
      * <p>Idempotent on the run id, with one deliberate exception: a row whose dispatch the broker
-     * never acknowledged ({@link #DISPATCH_FAILED}) is re-armed to queued. Any other existing row
-     * is left alone — a succeeded or refused run must not be reopened by a repeated request.
+     * never acknowledged ({@link #DISPATCH_FAILED}) is re-armed to queued — and ONLY by the identical
+     * request. "Never acknowledged" means the first command may well have landed and be the one
+     * that runs; the worker's claim then drops the retry. A re-arm that took the retry's parameters
+     * would leave that first run's result on a row describing a different base commit, model or
+     * account. A differing retry therefore matches no row here and is refused by the caller. Any
+     * other existing row is left alone — a succeeded or refused run must not be reopened.
      */
     /**
      * @return whether a row was written or re-armed. {@code false} means the run already exists in
@@ -91,10 +95,12 @@ public class FactoryRunProjection {
                                          harness, model, base_branch, base_commit, branch, pushed_as)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
-                   SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL, ended_at = NULL,
-                       harness = EXCLUDED.harness, model = EXCLUDED.model, base_branch = EXCLUDED.base_branch,
-                       base_commit = EXCLUDED.base_commit, branch = EXCLUDED.branch, pushed_as = EXCLUDED.pushed_as
+                   SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL, ended_at = NULL
                  WHERE factory_run.status = ? AND factory_run.failure_cause = ?
+                   AND factory_run.harness = EXCLUDED.harness AND factory_run.model = EXCLUDED.model
+                   AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit
+                   AND factory_run.branch = EXCLUDED.branch
+                   AND factory_run.pushed_as IS NOT DISTINCT FROM EXCLUDED.pushed_as
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);

@@ -1,5 +1,6 @@
 package dev.codespire.runworker;
 
+import dev.codespire.runtime.docker.DockerRunRuntime;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
@@ -38,6 +39,9 @@ public class RunAckBudget {
     /** Head-room over the wall clock for the ack itself to land under a slow claim store. */
     static final Duration ACK_ALLOWANCE = Duration.ofMinutes(5);
 
+    /** The runtime's own number, so the two cannot drift apart silently. */
+    static final Duration PUBLISHER_DRAIN = DockerRunRuntime.PUBLISHER_DRAIN;
+
     @ConfigProperty(name = "spire.run.max-wall-clock-seconds")
     long maxWallClockSeconds;
 
@@ -65,12 +69,16 @@ public class RunAckBudget {
                     + queueSizeFactor + ". A prefetched record ages behind the running unit for its whole "
                     + "wall clock and fails the channel however promptly the handler acks.");
         }
-        Duration needed = wallClock.plus(ACK_ALLOWANCE);
+        // The handler holds the ordered channel for the wall clock, then the publisher's drain
+        // window, then the allowance for the ack to land. The drain is part of the budget: it went
+        // from 30s to 300s once and the guard did not notice.
+        Duration needed = wallClock.plus(PUBLISHER_DRAIN).plus(ACK_ALLOWANCE);
         if (maxAge.compareTo(needed) < 0) {
             throw new IllegalStateException("run-commands-in throttled.unprocessed-record-max-age.ms is "
-                    + maxAge.toMillis() + " but a run may take " + wallClock.toSeconds() + "s plus "
-                    + ACK_ALLOWANCE.toSeconds() + "s for the ack to land; the consumer would die on the "
-                    + "first run that outlives it and be redelivered to die again on every restart.");
+                    + maxAge.toMillis() + " but a run may take " + wallClock.toSeconds() + "s plus the "
+                    + "publisher's " + PUBLISHER_DRAIN.toSeconds() + "s drain plus " + ACK_ALLOWANCE.toSeconds()
+                    + "s for the ack to land; the consumer would die on the first run that outlives it "
+                    + "and be redelivered to die again on every restart.");
         }
     }
 }
