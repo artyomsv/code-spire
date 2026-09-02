@@ -19,7 +19,7 @@ CREATE TABLE runworker.run_claim (
 --
 -- Without owner + heartbeat, discoverOrphans() cannot tell a dead replica's leak from a live
 -- replica's healthy hour-long run: reap eagerly and the watchdog kills real work, reap lazily and
--- an eviction leaks forever. Note this row holds no filesystem path — since ADR-038 there is
+-- an eviction leaks forever. Note this row holds no filesystem path — since ADR-039 there is
 -- nothing on any worker's disk to point at.
 CREATE TABLE runworker.run_lease (
     run_id       TEXT        PRIMARY KEY,

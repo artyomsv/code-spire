@@ -22,14 +22,14 @@ public sealed interface RunCommand {
     String runId();
 
     /**
-     * Opaque, KEK-encrypted machine-account SCM credential (ADR-037) — never the review bot's.
+     * Opaque, KEK-encrypted machine-account SCM credential (ADR-038) — never the review bot's.
      * Base64 Tink ciphertext, packed by the orchestrator. Never logged.
      */
     default String scmCredential() {
         return null;
     }
 
-    /** Opaque, KEK-encrypted harness credential (ADR-030). Never logged. */
+    /** Opaque, KEK-encrypted harness credential (ADR-031). Never logged. */
     default String harnessCredential() {
         return null;
     }

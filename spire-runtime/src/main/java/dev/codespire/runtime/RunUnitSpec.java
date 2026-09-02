@@ -7,7 +7,7 @@ import java.util.Set;
 
 /**
  * A run is not one container. It is an init clone, the agent, and the publisher sidecar, sharing
- * ephemeral volumes and nothing outside the unit (ADR-038, RUN-TOPOLOGY §3).
+ * ephemeral volumes and nothing outside the unit (ADR-039, RUN-TOPOLOGY §3).
  *
  * <p>The parts run in this order: {@code init} to completion, then {@code agent} and
  * {@code publisher} concurrently. The unit ends when the agent exits and the publisher has drained.
@@ -45,7 +45,7 @@ public record RunUnitSpec(String runId,
     /**
      * The publisher may not write to anything the agent can write to.
      *
-     * <p><b>This is the invariant ADR-038 rests on, and until now nothing could enforce it.</b>
+     * <p><b>This is the invariant ADR-039 rests on, and until now nothing could enforce it.</b>
      * {@link Mount} made the read-only flag typed so it could not be misspelled — but nobody read
      * it, so a unit handing the publisher {@code Mount.writable("handoff", "/handoff")} compiled
      * and ran. The publisher is the one process holding a git write credential; the whole reason it

@@ -64,7 +64,7 @@ class CodexAdapterTest {
         // danger-full-access means "Codex adds no boundary of its own", not "there is no boundary".
         // Its sandbox is bubblewrap-based and cannot initialize under Docker's default seccomp
         // profile — and it does NOT fail fast when it can't, so any other value is a lie about the
-        // security posture. The container is the boundary (ADR-038).
+        // security posture. The container is the boundary (ADR-039).
         assertEquals("danger-full-access", argv.get(argv.indexOf("--sandbox") + 1));
     }
 

@@ -16,7 +16,7 @@ import java.util.Map;
  * One JSON line per outcome, on stdout.
  *
  * <p>The worker reads this from the container's log stream. Nothing is extracted from the pod and
- * nothing is written to a shared volume (ADR-038) — the publisher writes to no volume at all, which
+ * nothing is written to a shared volume (ADR-039) — the publisher writes to no volume at all, which
  * is what lets {@code /handoff} be mounted read-only to it.
  */
 public final class OutcomeWriter {

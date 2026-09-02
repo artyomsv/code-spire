@@ -11,7 +11,7 @@ import java.util.Map;
 /**
  * The init container's entrypoint ({@code spire-clone}): populates {@code /workspace} at the base
  * commit on the run's branch, then exits. It holds the READ credential only — the token that can
- * write never enters the container that touches agent-reachable disk first (ADR-038).
+ * write never enters the container that touches agent-reachable disk first (ADR-039).
  *
  * <p>The commit identity written into the workspace is the clone credential's username; the
  * e-mail is a placeholder under {@value #IDENTITY_DOMAIN} because the machine account's real

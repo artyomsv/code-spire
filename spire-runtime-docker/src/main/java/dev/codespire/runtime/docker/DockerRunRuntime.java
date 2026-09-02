@@ -61,7 +61,7 @@ import java.util.function.Consumer;
  * <p><b>Socket access is root-equivalent on the host.</b> Stated in SECURITY.md rather than
  * mitigated away; the Kubernetes arm removes it.
  *
- * <p><b>Codex's own sandbox is NOT used</b> (ADR-038): it is bubblewrap-based, cannot initialize
+ * <p><b>Codex's own sandbox is NOT used</b> (ADR-039): it is bubblewrap-based, cannot initialize
  * under Docker's default seccomp profile, and does not fail fast when it cannot. The container is
  * the boundary, so the default seccomp profile is KEPT and never relaxed here.
  */
@@ -251,7 +251,7 @@ public final class DockerRunRuntime implements RunRuntime {
             // AccessMode, NOT the boolean overload. Bind(String, Volume, Boolean) is noCopy — an
             // unrelated flag — so passing readOnly there compiled, read correctly at every glance,
             // and produced a WRITABLE mount. The publisher holds the push credential and must not
-            // be able to write to a volume the agent controls (ADR-038), so that made the whole
+            // be able to write to a volume the agent controls (ADR-039), so that made the whole
             // property decorative. Caught only by asking a real daemon: the publisher wrote to
             // /handoff and said so.
             binds.add(new Bind(volumeName(spec.runId(), mount.volume()),

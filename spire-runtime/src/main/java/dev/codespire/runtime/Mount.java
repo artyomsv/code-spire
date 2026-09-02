@@ -8,7 +8,7 @@ import java.util.Objects;
  * <p><b>{@code readOnly} is a typed field rather than a {@code :ro} suffix on a path string</b>,
  * which is how the first draft carried it. That suffix is a security property in a stringly-typed
  * flag: it is the mechanism by which {@code /handoff} reaches the publisher without the publisher
- * being able to write to any shared volume (ADR-038), and a dropped or misspelled suffix silently
+ * being able to write to any shared volume (ADR-039), and a dropped or misspelled suffix silently
  * grants write access with nothing to notice. A boolean cannot be misspelled, and a caller that
  * forgets it has to say {@code false} out loud.
  */

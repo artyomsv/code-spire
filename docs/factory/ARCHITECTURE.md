@@ -95,7 +95,7 @@ public interface RunRuntime {
 Arms: **`docker`** (M0) and **`kubernetes`** (M5). Domain code branches on `capabilities()`, never on
 `type()`.
 
-> **A run is not one container.** ADR-038 makes it a three-part unit — an init clone, the agent as
+> **A run is not one container.** ADR-039 makes it a three-part unit — an init clone, the agent as
 > the main container, and the publisher as a sidecar — sharing one ephemeral volume and no storage
 > outside the pod. The worker holds no workspace and runs no git. **[RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md)
 > is the authority on this**; the bind-mounted sketch that used to be in §7 is superseded.
@@ -160,7 +160,7 @@ the push credential is decided at M2, per forge.
 ### 4.1 The factory's own identity
 
 The factory pushes and opens pull requests as a **dedicated machine account**, registered separately
-from the review bot (ADR-037).
+from the review bot (ADR-038).
 
 The alternative fails on inspection. The only SCM credential a deployment holds today resolves to the
 review bot, so a factory pull request would be bot-authored — and `IntegrationSaga` gates pull-request
@@ -168,7 +168,7 @@ events on the per-provider author allowlist (*"unlisted authors never get touche
 deployment with a non-empty allowlist, which is what this design's own threat model encourages, the
 reviewer would **silently skip every factory pull request**, defeating M2 entirely. Allowlisting the
 bot to fix that grants it allowed-author authority on `/review`, `/finding` and `/fix` — the bot could
-command itself, which is the widening ADR-035 forbids.
+command itself, which is the widening ADR-036 forbids.
 
 `factory_run` records the identity it pushed as, and the review row carries a **factory-authored
 attribute**. Neither is inferred from an account name: an account can be renamed, reassigned or
@@ -349,9 +349,9 @@ Full treatment belongs in `../SECURITY.md`. The four new boundaries:
 1. **The sandbox.** Enforced by the runtime, not by a prompt. Network deny by default; egress
    allowlist for the model endpoint, the git host and package registries.
 2. **The credential.** Injected at start, never in an image layer, redacted from every event.
-3. **The image.** Selected from an operator allowlist. A repository may not name one (ADR-035).
+3. **The image.** Selected from an operator allowlist. A repository may not name one (ADR-036).
 4. **The label.** Untrusted *control*, not untrusted data — fencing does not help. Bounded by an
-   operator ceiling and an actor allowlist (ADR-032).
+   operator ceiling and an actor allowlist (ADR-033).
 
 The Docker arm's socket requirement is root-equivalent on the host and is documented as such rather
 than mitigated away. The Kubernetes arm removes it.

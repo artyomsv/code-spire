@@ -2,7 +2,7 @@
 
 How a run is actually executed: what runs where, what data crosses which boundary, and what
 guarantees each boundary provides. Decided 2026-09-01 after a measured spike against a real Codex
-CLI; the evidence is in §1 and the decision is [ADR-038](../DECISIONS.md).
+CLI; the evidence is in §1 and the decision is [ADR-039](../DECISIONS.md).
 
 This document supersedes the bind-mounted-workspace sketch in the first draft of
 [ARCHITECTURE.md](./ARCHITECTURE.md), which was wrong for the reasons in §2.
@@ -39,7 +39,7 @@ exit     0                                    (5,847 tokens)
 ```
 
 **The commit author is the identity the workspace was configured with**, not one the agent chose.
-Authorship is a property of the environment we build, which is what ADR-037 needs to be true.
+Authorship is a property of the environment we build, which is what ADR-038 needs to be true.
 
 ### 1.2 Codex's own sandbox does NOT work in a container — confirmed
 
@@ -325,8 +325,8 @@ Two tokens, different scopes, different containers. Never the same secret in bot
 | Credential | Container | Scope | Notes |
 |---|---|---|---|
 | clone token | `fetch` init | **read-only** | the pod never holds anything that can write to the repository |
-| model credential | `agent` | model API only | subscription `auth.json` or API key (ADR-030) |
-| push token | `publish` | write, **machine account** (ADR-037) | never the review bot's |
+| model credential | `agent` | model API only | subscription `auth.json` or API key (ADR-031) |
+| push token | `publish` | write, **machine account** (ADR-038) | never the review bot's |
 
 The residual risk, stated rather than hidden: **a write credential lives in the run pod.** For a
 self-hosted deployment on a cluster the operator controls, that is an accepted trade for a topology
@@ -358,7 +358,7 @@ actually runs in.**
 
 Codex is used on a **subscription**. There is no per-token bill, so a run that dies before reporting
 its usage has not lost anyone money — the money was a flat fee already paid. `pricing_mode` is
-`UNMETERED` (ADR-030), and ADR-023's rule still applies for a smaller reason: a missing count is
+`UNMETERED` (ADR-031), and ADR-023's rule still applies for a smaller reason: a missing count is
 recorded as **UNKNOWN**, never as zero, because zero would be a claim nobody measured.
 
 ### What usage is still worth having
@@ -368,7 +368,7 @@ recorded as **UNKNOWN**, never as zero, because zero would be a claim nobody mea
 | **Substitute headline metric** | "Cost per merged pull request" is meaningless when cost is a flat fee. **Tokens — or runs — per merged pull request** is the analogue, and it is the number that tells an operator whether the factory is getting better or just busier. |
 | **Waste detection** | A run that burned 200k tokens and produced nothing is a strong signal even when it "cost nothing". |
 | **Cross-arm comparison** | The moment a metered arm exists (pi on an API key), comparable numbers are needed to choose between them. |
-| **Future API-key mode** | ADR-030 requires every arm to also work on an API key. In that mode this becomes accounting again — for that mode only. |
+| **Future API-key mode** | ADR-031 requires every arm to also work on an API key. In that mode this becomes accounting again — for that mode only. |
 
 **What it is NOT needed for:** credential rotation. The pool rotates on the vendor's own
 rate-limit/quota response, not on a token count, so the operationally important mechanism does not

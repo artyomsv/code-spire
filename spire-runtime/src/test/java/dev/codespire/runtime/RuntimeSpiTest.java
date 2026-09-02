@@ -165,7 +165,7 @@ class RuntimeSpiTest {
 
     @Test
     void thePublisherMayNotWriteToAVolumeTheAgentCanWrite() {
-        // The invariant ADR-038 rests on. Mount made the read-only flag typed so it could not be
+        // The invariant ADR-039 rests on. Mount made the read-only flag typed so it could not be
         // misspelled — but nothing READ it, so this unit compiled and ran, handing the process
         // that holds the git write credential a volume the agent can write to.
         ContainerSpec agent = new ContainerSpec("img", List.of(), Map.of(),

@@ -35,7 +35,7 @@ import java.util.List;
  * <p><b>It never reads the agent's workspace and never checks out a working tree.</b> Agent work
  * arrives only as a git bundle — objects and refs, carrying no config and no hooks — so nothing the
  * agent authored can execute here, and nothing it authored becomes a file on this disk. That is what
- * makes it safe for this process to hold a write credential (ADR-038).
+ * makes it safe for this process to hold a write credential (ADR-039).
  *
  * <p>That claim survived review, and is worth keeping. It is also not the whole risk: the shared
  * {@code /handoff} directory is writable by the running agent, so the bundle is a moving target

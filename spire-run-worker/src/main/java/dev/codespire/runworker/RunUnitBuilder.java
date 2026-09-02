@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns a command into the three-container run unit of ADR-038.
+ * Turns a command into the three-container run unit of ADR-039.
  *
  * <p><b>The security properties of the whole design are decided here, by what each container is
  * handed.</b> Nothing downstream can restore a property this method gives away:

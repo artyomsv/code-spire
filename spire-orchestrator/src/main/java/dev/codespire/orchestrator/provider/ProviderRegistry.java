@@ -193,7 +193,7 @@ public class ProviderRegistry {
      * <p>The role is part of the key, not a filter that is nice to have. Since V42 one workspace may
      * hold a REVIEWER row and a FACTORY row, and an unfiltered {@code SELECT *} returns whichever
      * the planner yields first — which could hand the review path the factory's push token. That
-     * is the identity confusion ADR-037 exists to prevent, arriving through a query that used to
+     * is the identity confusion ADR-038 exists to prevent, arriving through a query that used to
      * be unambiguous.
      */
     public Optional<ScmProvider> resolve(String type, String workspace, ProviderRole role) {

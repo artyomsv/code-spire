@@ -39,4 +39,4 @@ mistaken for dead code or for a guarantee the claim store gives.
 - Minimum viable version: a startup sweep emitting `RunFailed("WORKER_LOST", …)` for every claim with
   no lease and no result, and destroying the unit it finds by label.
 - Until then, a unit that leaked is findable with `docker ps -a --filter label=dev.codespire.runId`
-  (SMOKE-TEST Mode P records the command).
+  (SMOKE-TEST Mode Q records the command).

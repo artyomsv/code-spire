@@ -8,11 +8,11 @@
 
 **Tech Stack:** Java 25 · Quarkus 3.38.3 · Gradle Kotlin DSL · SmallRye Reactive Messaging (Kafka) · Postgres + Flyway · JGit · docker-java · JUnit 5 · Testcontainers (via Quarkus Dev Services)
 
-**Spec:** [`docs/factory/`](../../factory/README.md) — PRD FR-F1..F4, F11, F13, F28, F29; ROADMAP §M0. Decisions ADR-028..ADR-037 in [`docs/DECISIONS.md`](../../DECISIONS.md).
+**Spec:** [`docs/factory/`](../../factory/README.md) — PRD FR-F1..F4, F11, F13, F28, F29; ROADMAP §M0. Decisions ADR-029..ADR-038 in [`docs/DECISIONS.md`](../../DECISIONS.md).
 
 ---
 
-## Revision — 2026-09-01, after the Codex spike (ADR-038)
+## Revision — 2026-09-01, after the Codex spike (ADR-039)
 
 A measured spike against the real CLI, and an operator objection to the storage model, changed this
 plan's shape. **Read [`docs/factory/RUN-TOPOLOGY.md`](../../factory/RUN-TOPOLOGY.md) before starting.**
@@ -292,7 +292,7 @@ import java.time.Instant;
 
 /**
  * The normalized run-event vocabulary. High-volume and deliberately NOT in spire-contract: most of
- * these never reach the durable domain log (ADR-033), and putting them in the contract module would
+ * these never reach the durable domain log (ADR-034), and putting them in the contract module would
  * imply a durability guarantee this tier does not have.
  */
 public sealed interface RunEvent {
@@ -464,7 +464,7 @@ class CodexAdapterTest {
         // danger-full-access means "Codex adds no boundary of its own", not "there is no boundary".
         // Its sandbox is bubblewrap-based and cannot initialize under Docker's default seccomp
         // profile — and it does NOT fail fast when it can't, so any other value is a lie about the
-        // security posture. The container is the boundary (ADR-038).
+        // security posture. The container is the boundary (ADR-039).
         assertEquals("danger-full-access", argv.get(argv.indexOf("--sandbox") + 1));
 
         // The prompt is untrusted text from a tracker: a separate argv element, never interpolated
@@ -572,7 +572,7 @@ import java.util.Optional;
 /**
  * Drives OpenAI Codex CLI (Apache-2.0) non-interactively.
  *
- * <p>Auth is an API key or a subscription credential the operator registered (ADR-030); this adapter
+ * <p>Auth is an API key or a subscription credential the operator registered (ADR-031); this adapter
  * only places what it is given into the child environment. It never logs it.
  */
 public final class CodexAdapter implements HarnessAdapter {
@@ -601,7 +601,7 @@ public final class CodexAdapter implements HarnessAdapter {
         // And Codex does not fail at startup when its sandbox cannot initialize, so leaving
         // workspace-write set would mean believing in two boundaries while having one.
         //
-        // The container is the boundary (ADR-038, RUN-TOPOLOGY §1).
+        // The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
         return List.of(
                 "codex", "exec",
                 "--json",
@@ -743,7 +743,7 @@ git commit -m "Add the Codex harness adapter with NDJSON event parsing"
 
 ## Task 3: `spire-workspace` — the publisher's git library
 
-**Where it runs:** inside the **publisher image**, not the worker (ADR-038). The worker holds no
+**Where it runs:** inside the **publisher image**, not the worker (ADR-039). The worker holds no
 filesystem and runs no git at all. The agent's own clone is made by an init container and its bundles
 are written by shell in the agent image; this library is used only by the publisher, on its **own**
 pristine clone.
@@ -889,7 +889,7 @@ class PublishRepoTest {
         PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main", publish, null);
         repo.fetchBundle(bundle, 10_000_000L);
 
-        // Agent-authored content must never become a file on the publisher's disk (ADR-038).
+        // Agent-authored content must never become a file on the publisher's disk (ADR-039).
         assertTrue(Files.notExists(publish.resolve("NEW.md")));
         assertTrue(Files.notExists(publish.resolve("DOCS.md")));
     }
@@ -1001,7 +1001,7 @@ import java.util.List;
  * <p><b>It never reads the agent's workspace and never checks out a working tree.</b> Agent work
  * arrives only as a git bundle — objects and refs, carrying no config and no hooks — so nothing the
  * agent authored can execute here, and nothing it authored becomes a file on this disk. That is what
- * makes it safe for this process to hold a write credential (ADR-038).
+ * makes it safe for this process to hold a write credential (ADR-039).
  */
 public final class PublishRepo implements AutoCloseable {
 
@@ -1230,7 +1230,7 @@ import java.util.List;
 /**
  * Paths the factory may never push a change to.
  *
- * <p><b>A floor, not a setting (ADR-036).</b> A pushed branch executes its own CI workflow files on
+ * <p><b>A floor, not a setting (ADR-037).</b> A pushed branch executes its own CI workflow files on
  * an unsandboxed runner holding repository secrets, and the prompt that produced the branch contains
  * untrusted tracker text. The input that would authorise the change is the input under suspicion, so
  * no profile may unprotect these — the same shape as the never-suppressed SECURITY floor in ADR-027.
@@ -1456,7 +1456,7 @@ import java.util.Map;
  *
  * <p>{@code mounts} maps a shared volume name to its mount path. A path suffixed {@code :ro} is
  * read-only — which is how {@code /handoff} reaches the publisher, and why the publisher writes
- * nothing to any shared volume (ADR-038).
+ * nothing to any shared volume (ADR-039).
  */
 public record ContainerSpec(String image, List<String> argv, Map<String, String> environment,
                             Map<String, String> mounts) {
@@ -1470,7 +1470,7 @@ import java.time.Duration;
 
 /**
  * A run is not one container. It is an init clone, the agent, and the publisher sidecar, sharing
- * ephemeral volumes and nothing outside the unit (ADR-038, RUN-TOPOLOGY §3).
+ * ephemeral volumes and nothing outside the unit (ADR-039, RUN-TOPOLOGY §3).
  *
  * <p>The parts run in this order: {@code init} to completion, then {@code agent} and
  * {@code publisher} concurrently. The unit ends when the agent exits and the publisher has drained.
@@ -1648,7 +1648,7 @@ class DockerRunRuntimeIT {
         runtime.finalize(handle);
         runtime.destroy(handle);
 
-        // ADR-038: the publisher must never reach agent-controlled git config or hooks.
+        // ADR-039: the publisher must never reach agent-controlled git config or hooks.
         assertTrue(publisher.contains("isolated"));
         assertTrue(!publisher.contains("LEAKED"));
     }
@@ -1756,7 +1756,7 @@ import java.util.function.Consumer;
  * <p><b>Socket access is root-equivalent on the host.</b> Stated in SECURITY.md rather than mitigated
  * away; the Kubernetes arm removes it.
  *
- * <p><b>Codex's own sandbox is NOT used</b> (ADR-038): it is bubblewrap-based and cannot initialize
+ * <p><b>Codex's own sandbox is NOT used</b> (ADR-039): it is bubblewrap-based and cannot initialize
  * under Docker's default seccomp profile, and it does not fail fast when it cannot. The container is
  * the boundary, so the default seccomp profile is KEPT and never relaxed here.
  */
@@ -2136,7 +2136,7 @@ import java.util.Map;
 
 /**
  * One JSON line per outcome, on stdout. The worker reads this from the container's log stream —
- * nothing is extracted from the pod (ADR-038).
+ * nothing is extracted from the pod (ADR-039).
  */
 public final class OutcomeWriter {
 
@@ -2344,14 +2344,14 @@ public sealed interface RunCommand {
     String runId();
 
     /**
-     * Opaque, KEK-encrypted machine-account SCM credential (ADR-037) — never the review bot's.
+     * Opaque, KEK-encrypted machine-account SCM credential (ADR-038) — never the review bot's.
      * Base64 Tink ciphertext, packed by the orchestrator. Never logged.
      */
     default String scmCredential() {
         return null;
     }
 
-    /** Opaque, KEK-encrypted harness credential (ADR-030). Never logged. */
+    /** Opaque, KEK-encrypted harness credential (ADR-031). Never logged. */
     default String harnessCredential() {
         return null;
     }
@@ -2435,7 +2435,7 @@ git commit -m "Add the run wire contract with a derived, platform-carrying run i
   `RunUnitBuilder.build(RunCommand.ExecuteRun, HarnessAdapter) -> RunUnitSpec`;
   `RunLauncher.launch(RunCommand.ExecuteRun) -> RunResult`.
 
-**The worker performs no git and holds no filesystem (ADR-038).** It creates the run unit, streams two
+**The worker performs no git and holds no filesystem (ADR-039).** It creates the run unit, streams two
 log channels, records what it sees, and emits a result. That is what makes it stateless — and
 therefore what makes a run recoverable by any replica rather than only by the one that started it.
 
@@ -2504,7 +2504,7 @@ class RunUnitBuilderTest {
     void theAgentGetsNoWriteCredential() {
         RunUnitSpec unit = builder.build(command(), new CodexAdapter());
 
-        // ADR-038: the agent physically cannot push, gate or no gate.
+        // ADR-039: the agent physically cannot push, gate or no gate.
         assertFalse(unit.agent().environment().containsKey("SPIRE_GIT_SECRET"));
         assertTrue(unit.publisher().environment().containsKey("SPIRE_GIT_SECRET"));
     }
@@ -2589,7 +2589,7 @@ CREATE TABLE runworker.run_claim (
 --
 -- Without owner + heartbeat, discoverOrphans() cannot tell a dead replica's leak from a live
 -- replica's healthy hour-long run: reap eagerly and the watchdog kills real work, reap lazily and an
--- eviction leaks forever. Note this row holds no filesystem path — since ADR-038 there is nothing on
+-- eviction leaks forever. Note this row holds no filesystem path — since ADR-039 there is nothing on
 -- any worker's disk to point at.
 CREATE TABLE runworker.run_lease (
     run_id       TEXT        PRIMARY KEY,
@@ -2696,7 +2696,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns a command into the three-container run unit of ADR-038.
+ * Turns a command into the three-container run unit of ADR-039.
  *
  * <p>The security properties of the whole design are decided HERE, by what each container is handed:
  *
@@ -2792,7 +2792,7 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Creates the run unit and reads its two log streams. Performs no git and holds no filesystem — that
- * is the whole point of ADR-038, and it is what lets any replica salvage any run.
+ * is the whole point of ADR-039, and it is what lets any replica salvage any run.
  */
 @ApplicationScoped
 public class RunLauncher {
@@ -2868,7 +2868,7 @@ Also write, in the same task:
   `gate_refused`, `failed`), keeping the last pushed ref, the union of changed paths, and any blocked
   paths.
 - **`RunEventPublisher`** — an `@Channel("run-events-out")` `Emitter<RunEvent>` keyed by `runId`,
-  onto `cs.run-events` (the short-retention tier, ADR-033).
+  onto `cs.run-events` (the short-retention tier, ADR-034).
 - **`HarnessRegistry`** — composition root, `"codex"` → `CodexAdapter`, throwing on an unknown name;
   never defaulting, because an unknown harness must fail loudly rather than run the wrong one.
 - **`WorkerRuntimes`** — a CDI producer exposing `DockerRunRuntime` as the `RunRuntime` bean, since
@@ -2983,7 +2983,7 @@ ALTER TABLE llm_charge ADD CONSTRAINT llm_charge_subject_kind
     CHECK (subject_kind IN ('REVIEW', 'RUN'));
 
 -- Which capability pack caused the spend. Added NOW because it cannot be backfilled: a row that did
--- not record its capability cannot have one inferred later (ADR-034).
+-- not record its capability cannot have one inferred later (ADR-035).
 ALTER TABLE llm_charge ADD COLUMN capability VARCHAR(16) NOT NULL DEFAULT 'REVIEW';
 ALTER TABLE llm_charge ADD CONSTRAINT llm_charge_capability
     CHECK (capability IN ('REVIEW', 'BUILD', 'AUTONOMY', 'KNOWLEDGE', 'INSIGHT'));
@@ -3091,16 +3091,16 @@ Expected: FAIL — 404, the resource does not exist.
 
 - [ ] **Step 3a: Write the machine-account migration (FR-F29)**
 
-The factory must not push as the review bot (ADR-037), and the existing registry cannot hold a second
+The factory must not push as the review bot (ADR-038), and the existing registry cannot hold a second
 credential for the same place: `scm_provider` is `UNIQUE (type, workspace)` — verified in
 `V3__scm_provider.sql`. So the registry gains a role, and the constraint widens.
 
 ```sql
--- ADR-037: the factory pushes as a DEDICATED machine account, not the review bot.
+-- ADR-038: the factory pushes as a DEDICATED machine account, not the review bot.
 --
 -- Two identities, two authority sets. Allowlisting the factory's account as a PR author must not
 -- give the review bot allowed-author rights on /review, /finding and /fix — which is what sharing
--- one identity would do, and is the widening ADR-035 forbids.
+-- one identity would do, and is the widening ADR-036 forbids.
 --
 -- A role rather than a second table: same registry, same Tink encryption, same settings UI, same
 -- bot-identity resolution on save. One column and a wider unique constraint.
@@ -3163,7 +3163,7 @@ CREATE TABLE factory_run (
     status          VARCHAR(24) NOT NULL,
     harness         VARCHAR(32) NOT NULL,
     model           TEXT        NOT NULL,
-    -- ADR-037: the identity the run pushed as. Recorded, never inferred from an account name,
+    -- ADR-038: the identity the run pushed as. Recorded, never inferred from an account name,
     -- because an account can be renamed or reassigned and an attribute written at authorship cannot.
     pushed_as       TEXT,
     pushed_ref      TEXT,
@@ -3317,7 +3317,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The M0 exit criteria, BOTH halves. The first alone celebrates the ungated path, which is the
- * defect ADR-036 exists to close.
+ * defect ADR-037 exists to close.
  *
  * <p>Uses a local file:// origin and an agent image whose "harness" is a shell script, so the whole
  * chain — workspace, sandbox, event stream, gate, push — is exercised with no network, no model and

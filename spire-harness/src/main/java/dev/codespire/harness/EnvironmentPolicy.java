@@ -14,9 +14,9 @@ import java.util.Set;
  * from and {@code OPENAI_BASE_URL} redirects the model endpoint — the precise outcome
  * {@link PromptDelivery} exists to prevent, reached without touching argv at all. {@code LD_PRELOAD},
  * {@code PATH} and {@code NODE_OPTIONS} go further and hijack the child process itself, which under
- * a container-is-the-boundary design (ADR-038) is running unconfined.
+ * a container-is-the-boundary design (ADR-039) is running unconfined.
  *
- * <p>The credential map is operator-registered today (ADR-030), so none of this is reachable by a
+ * <p>The credential map is operator-registered today (ADR-031), so none of this is reachable by a
  * work item yet. It becomes reachable the moment any repository-influenced value reaches the map,
  * which EXECUTION-LAYER §4.3's per-repo override ladder is heading towards — and the operator typo
  * case is live now: a mistyped key silently breaks a run with no signal.

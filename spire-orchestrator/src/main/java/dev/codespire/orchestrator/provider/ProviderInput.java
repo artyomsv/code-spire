@@ -19,7 +19,7 @@ public record ProviderInput(
         List<String> authors,
         String botUsername,
         String conversationLevel,
-        /** REVIEWER or FACTORY (ADR-037). Null means REVIEWER. */
+        /** REVIEWER or FACTORY (ADR-038). Null means REVIEWER. */
         String role) {
 
     /**

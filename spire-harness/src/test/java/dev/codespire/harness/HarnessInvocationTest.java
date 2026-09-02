@@ -49,7 +49,7 @@ class HarnessInvocationTest {
     @Test
     void aFlagShapedModelOrWorkspaceIsRefused() {
         // Neither is an injection on its own: argv is a list, so "--model <value>" consumes exactly
-        // one element and nothing re-splits it. Both are control, though — ADR-035 says a repository
+        // one element and nothing re-splits it. Both are control, though — ADR-036 says a repository
         // may never select the model endpoint, and workspacePath chooses where an UNCONFINED agent
         // works. A flag-shaped value is a configuration fault that should fail before a container
         // starts rather than as a CLI parse error inside one.

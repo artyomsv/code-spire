@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Refuses a push whose branch touches a protected path (FR-F28, ADR-036).
+ * Refuses a push whose branch touches a protected path (FR-F28, ADR-037).
  *
  * <p>Runs in the publisher, on its own clean clone, immediately before the push — never in the
  * agent's container and never on the agent's workspace, so the thing being judged cannot alter the
@@ -42,7 +42,7 @@ public final class PushGate {
 
     /**
      * @param profileGlobs paths an autonomy profile protects IN ADDITION to the floor. A profile may
-     *                     narrow what the factory can touch; it can never widen it (ADR-035).
+     *                     narrow what the factory can touch; it can never widen it (ADR-036).
      */
     public static PushDecision decide(ChangeSet changes, List<String> profileGlobs) {
         return decideCompiled(changes, PathGlob.compileAll(profileGlobs));

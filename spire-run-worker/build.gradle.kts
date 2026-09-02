@@ -1,7 +1,7 @@
 // spire-run-worker: consumes cs.run-commands, creates the three-container run
 // unit, streams its two log channels, and publishes cs.run-results.
 //
-// It performs NO git and holds NO filesystem (ADR-038). That is what makes it
+// It performs NO git and holds NO filesystem (ADR-039). That is what makes it
 // stateless, and therefore what lets any replica salvage any run rather than
 // only the one that started it.
 plugins {
@@ -33,7 +33,7 @@ dependencies {
     implementation(project(":spire-runtime-docker"))
 
     // NOTE what is absent: spire-workspace. This worker runs no git. If that dependency ever
-    // appears here, the statelessness ADR-038 rests on has been lost — a worker with a clone has a
+    // appears here, the statelessness ADR-039 rests on has been lost — a worker with a clone has a
     // filesystem, and a run then belongs to the replica that started it.
 
     implementation("io.quarkus:quarkus-jackson")

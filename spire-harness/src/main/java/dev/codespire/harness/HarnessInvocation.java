@@ -36,12 +36,12 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         // "--model <value>" consumes exactly one element and nothing re-splits it — but both are
         // control:
         //
-        //   model         ADR-035 says a repository may never select the model endpoint. Nothing
+        //   model         ADR-036 says a repository may never select the model endpoint. Nothing
         //                 enforces that yet; when the per-repo override ladder is built, free text
         //                 lands here. A blank or flag-shaped value is a configuration fault that
         //                 should fail before a container starts, not as a CLI parse error inside it.
         //   workspacePath chooses the directory the agent operates in, and the agent runs
-        //                 unconfined because the container is the boundary (ADR-038). A relative
+        //                 unconfined because the container is the boundary (ADR-039). A relative
         //                 path resolves against whatever the child's working directory happens to
         //                 be; "/" would hand it everything mounted.
         requireArgumentSafe(model, "model");

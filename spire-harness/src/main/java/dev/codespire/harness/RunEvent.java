@@ -4,7 +4,7 @@ import java.time.Instant;
 
 /**
  * The normalized run-event vocabulary. High-volume and deliberately NOT in spire-contract: most of
- * these never reach the durable domain log (ADR-033), and putting them in the contract module would
+ * these never reach the durable domain log (ADR-034), and putting them in the contract module would
  * imply a durability guarantee this tier does not have.
  */
 public sealed interface RunEvent {

@@ -57,14 +57,14 @@ not multi-tenant SaaS.
 1. **Not a merge decision-maker by default.** The guaranteed output is a pushed branch. Merging is a
    policy the operator opts into per profile, never a default.
 2. **Not a second issue tracker.** The customer's tracker is the source of truth. No issues table, no
-   issues UI, no sync (ADR-028).
+   issues UI, no sync (ADR-029).
 3. **Not a multi-repo campaign engine.** Cross-repository policy execution is deferred with a named
    price of admission (see [ROADMAP.md](./ROADMAP.md)).
 4. **Not a learned router.** Dispatch decisions are deterministic code. The corpus that would train a
    router is collected; nothing consumes it as a policy input yet.
 5. **Not a harness.** Code Spire drives existing agent harnesses. It does not implement a tool loop,
    a context compaction strategy, or a permission prompt.
-6. **Not a model reseller.** The operator's credential, the operator's bill (ADR-030).
+6. **Not a model reseller.** The operator's credential, the operator's bill (ADR-031).
 
 ## 4. Functional requirements
 
@@ -86,7 +86,7 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 - **FR-F4 — Guaranteed output [M0].** A successful run's guaranteed artefact is a **pushed workspace
   branch — unless the branch fails the push gate (FR-F28)**. Everything after the push is policy. The
   caveat is load-bearing, not pedantry: an unqualified guarantee is what would make the push
-  unconditional, and an unconditional push is the vulnerability (ADR-036).
+  unconditional, and an unconditional push is the vulnerability (ADR-037).
 - **FR-F5 — Live run events [M1].** A run emits a normalized event stream — reasoning, tool calls,
   tool results, output, state transitions — tailable live and retained for a bounded window.
 - **FR-F6 — Cancel and steer [M1].** A run can be cancelled at any time. Where the harness declares
@@ -183,13 +183,13 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   `.gitlab-ci.yml`, `.gitlab/**`, `bitbucket-pipelines.yml`, `Jenkinsfile`, `.circleci/**`).
   Without this, a pushed branch executes agent-authored workflow files on the repository's own CI —
   unsandboxed, with repository secrets — and every sandbox control in this document is bypassed by
-  the kernel's own guaranteed output (ADR-036).
+  the kernel's own guaranteed output (ADR-037).
 - **FR-F29 — Factory identity [M0].** The factory pushes and opens pull requests as a **dedicated
   machine account**, registered separately from the review bot. `factory_run` records the identity it
   pushed as, and a factory-authored pull request is marked by an **attribute**, never inferred from an
   account name. Without a separate identity, allowlisting the factory would grant the review bot
-  allowed-author rights on every command surface — the widening ADR-035 forbids — and human takeover
-  (FR-F22) would have no reliable way to tell a person from an agent (ADR-037).
+  allowed-author rights on every command surface — the widening ADR-036 forbids — and human takeover
+  (FR-F22) would have no reliable way to tell a person from an agent (ADR-038).
 - **FR-F30 — Policy is re-resolved per phase [M3].** Profile, ceiling and allowlist are re-read at
   **every phase transition**, not once at intake. The profile **version** is pinned at admission, so
   an edited definition does not retroactively change an in-flight item; moving it is an explicit
@@ -241,7 +241,7 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 - **NFR-F5 — Restart safety.** Any component may restart at any point without duplicating paid work,
   losing completed work, or resurrecting a terminated item.
 - **NFR-F6 — Two event tiers.** High-volume run events never enter the aggregate's durable log. The
-  aggregate records milestones only (ADR-033).
+  aggregate records milestones only (ADR-034).
 - **NFR-F7 — Provider neutrality, build-enforced.** Core modules name no harness, runtime or work
   source outside an explicit reasoned allowlist, checked by `spire-arch` on the same terms as SCM
   providers today (ADR-020).
@@ -277,7 +277,7 @@ infrastructure is paid for by a feature that stands alone.
 ## 7. Assumptions & constraints
 
 1. The operator supplies model credentials and is the party bound by the model vendor's terms
-   (ADR-030). Code Spire never resells model access.
+   (ADR-031). Code Spire never resells model access.
 2. Subscription-authenticated harness runs have **no per-token price**. The money cap is inert for
    them by design; the call-count cap and the quota-headroom check are the live controls (ADR-025
    predicted exactly this).
@@ -323,9 +323,9 @@ rate, issue-to-merge lead time, where runs die, and what each capability cost.
 
 | Requirement group | Decisions | Design |
 |---|---|---|
-| Run kernel | ADR-028, ADR-033 | [ARCHITECTURE.md](./ARCHITECTURE.md) |
-| Execution layer | ADR-029, ADR-030, ADR-031 | [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) |
-| Work items, phases, gates | ADR-032, ADR-035 | [AUTONOMY.md](./AUTONOMY.md) |
-| Packaging and entitlement | ADR-034 | [PACKAGING.md](./PACKAGING.md) |
-| Push gate and CI floor | **ADR-036** | [AUTONOMY.md](./AUTONOMY.md) §5 |
-| Factory identity | **ADR-037** | [ARCHITECTURE.md](./ARCHITECTURE.md) §4 |
+| Run kernel | ADR-029, ADR-034 | [ARCHITECTURE.md](./ARCHITECTURE.md) |
+| Execution layer | ADR-030, ADR-031, ADR-032 | [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) |
+| Work items, phases, gates | ADR-033, ADR-036 | [AUTONOMY.md](./AUTONOMY.md) |
+| Packaging and entitlement | ADR-035 | [PACKAGING.md](./PACKAGING.md) |
+| Push gate and CI floor | **ADR-037** | [AUTONOMY.md](./AUTONOMY.md) §5 |
+| Factory identity | **ADR-038** | [ARCHITECTURE.md](./ARCHITECTURE.md) §4 |

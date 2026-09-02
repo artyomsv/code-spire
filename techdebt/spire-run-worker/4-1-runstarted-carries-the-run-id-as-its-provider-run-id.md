@@ -19,7 +19,7 @@ operator.
 ## Risks
 
 - The one field meant to point an operator at a preserved unit points at nothing; the label is the
-  workaround and is documented in SMOKE-TEST Mode P.
+  workaround and is documented in SMOKE-TEST Mode Q.
 
 ## Suggested Solutions
 

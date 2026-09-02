@@ -18,7 +18,7 @@ import java.util.Objects;
  *
  * <p><b>The split between a READ and a WRITE credential is the point, not an optimisation.</b> The
  * init container clones, which needs read; the publisher pushes, which needs write; the agent needs
- * neither and gets neither. Handing one token to all three would make ADR-038's containment
+ * neither and gets neither. Handing one token to all three would make ADR-039's containment
  * theatre — the agent could simply push.
  *
  * <p>Decryption happens here and nowhere else in the worker, with the AAD the orchestrator's

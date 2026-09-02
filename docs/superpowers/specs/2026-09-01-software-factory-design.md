@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-01
 **Status:** approved, not implemented
-**Outcome:** `docs/factory/` (product documentation), ADR-028..ADR-035 (`docs/DECISIONS.md`)
+**Outcome:** `docs/factory/` (product documentation), ADR-029..ADR-036 (`docs/DECISIONS.md`)
 
 This is the record of the session that produced the design: what was asked, what was researched,
 which options were weighed, what was decided and why, and what remains open. The durable product
@@ -50,15 +50,15 @@ beside it".
 
 | Question | Options weighed | Decision | Record |
 |---|---|---|---|
-| First cut | (a) give the reviewer hands within the PR loop; (b) full work-item factory | **(b)** — the owner chose the larger scope | ADR-028 |
-| Topology | (a) extend the kernel; (b) separate control plane over HTTP; (c) extend the review worker | **(a)** | ADR-028 |
-| Agent execution | (a) drive an existing harness CLI; (b) build our own loop on `LlmProvider` | **(a)** | ADR-029 |
-| Work queue | (a) tracker is source of truth, no mirror; (b) own backlog | **(a)** | ADR-028 |
-| Autonomy | (a) stop at the pull request; (b) wire auto-merge in v1 | **neither** — the owner proposed per-ticket autonomy by label, which was adopted | ADR-032 |
-| First harness arm | (a) pi; (b) Codex | **(b) Codex**, pi second | ADR-029 |
-| Auth mode | (a) API key only; (b) allow subscription where the vendor permits | **(b) for Codex**, on the owner's confirmation; API key everywhere else | ADR-030 |
-| Images | (a) base image to inherit from; (b) conformance contract any image satisfies | **(b)**, after the owner raised enterprise policy images | ADR-031 |
-| Harness interop | adopt UHP as the internal contract, or shape the seam so UHP is one arm | **one arm** | ADR-029 |
+| First cut | (a) give the reviewer hands within the PR loop; (b) full work-item factory | **(b)** — the owner chose the larger scope | ADR-029 |
+| Topology | (a) extend the kernel; (b) separate control plane over HTTP; (c) extend the review worker | **(a)** | ADR-029 |
+| Agent execution | (a) drive an existing harness CLI; (b) build our own loop on `LlmProvider` | **(a)** | ADR-030 |
+| Work queue | (a) tracker is source of truth, no mirror; (b) own backlog | **(a)** | ADR-029 |
+| Autonomy | (a) stop at the pull request; (b) wire auto-merge in v1 | **neither** — the owner proposed per-ticket autonomy by label, which was adopted | ADR-033 |
+| First harness arm | (a) pi; (b) Codex | **(b) Codex**, pi second | ADR-030 |
+| Auth mode | (a) API key only; (b) allow subscription where the vendor permits | **(b) for Codex**, on the owner's confirmation; API key everywhere else | ADR-031 |
+| Images | (a) base image to inherit from; (b) conformance contract any image satisfies | **(b)**, after the owner raised enterprise policy images | ADR-032 |
+| Harness interop | adopt UHP as the internal contract, or shape the seam so UHP is one arm | **one arm** | ADR-030 |
 
 ### Rejected with reasons
 
@@ -97,7 +97,7 @@ must build from an approved golden base and mirror into a private registry.
   unless the plan forces otherwise.
 - **A fourth instance of one rule.** `.codespire` target-branch reading, Codex ignoring
   repository-supplied `model_providers`, repo-named images, and autonomy labels are all the same
-  rule. Naming it once (ADR-035) is what stops a fifth rediscovery.
+  rule. Naming it once (ADR-036) is what stops a fifth rediscovery.
 - **`review_finding` is the corpus everyone else wants.** ADR-027 shipped the expensive half of a
   measurement loop the prior art lists as unscheduled.
 
@@ -121,7 +121,7 @@ harness invocations, because they edit no files and their context already arrive
 `ContextProvider` — which also makes them metered on a deployment where `build` is not.
 
 **The last one was closed by asking the vendor.** The operator raised the subscription question with
-**OpenAI support** and was told the use is permitted, recorded 2026-09-01 in ADR-030. The published
+**OpenAI support** and was told the use is permitted, recorded 2026-09-01 in ADR-031. The published
 terms leave it open; a vendor support answer settles it for this deployment. The ticket reference was
 not captured at the time, so the operator's support history is the artifact if it is ever challenged
 — and because a support answer can be superseded as easily as a term, every arm also works on an API
@@ -135,7 +135,7 @@ Vendor terms for automated use changed twice during 2026. **Before each harness 
 are re-read from the primary source and the finding is updated in
 [`../../factory/EXECUTION-LAYER.md`](../../factory/EXECUTION-LAYER.md) §2 with a new retrieval date.**
 The Codex subscription decision in particular rests on a confirmation obtained outside this research;
-its provenance — who, where, when — belongs in `docs/DECISIONS.md` alongside ADR-030.
+its provenance — who, where, when — belongs in `docs/DECISIONS.md` alongside ADR-031.
 
 ## 9. The adversarial review, and what it changed
 
@@ -152,13 +152,13 @@ repository's CI **using the workflow files on that branch**, on an unsandboxed r
 secrets. An injected agent modifies a workflow file; salvage pushes it before anything reviews it; CI
 runs it. Every sandbox control in the design was bypassed by the kernel's own promise, and the only
 defence present was `.github/**` appearing in a `protectedPaths` *example* with no statement of where
-protected paths are enforced. → **ADR-036**: the push is gated, CI configuration is a floor no profile
+protected paths are enforced. → **ADR-037**: the push is gated, CI configuration is a floor no profile
 may lower, and a failed salvage blocks teardown.
 
 *The label-allowlist rule was unimplementable.* `WorkSource.labels()` returned a set of strings, which
 has no author, so a label found by polling could never be attributed — the rule would silently apply
 only to labels a webhook witnessed. And "reuse the existing per-provider author allowlist" compared
-across identity spaces, since a Jira labeller has no SCM provider row. → **ADR-037** for the identity
+across identity spaces, since a Jira labeller has no SCM provider row. → **ADR-038** for the identity
 half, `labelEvents` with actors for the attribution half, and a per-work-source allowlist.
 
 **The most valuable class of finding was factual.** `Forge` — named in three places as "the existing

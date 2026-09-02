@@ -30,8 +30,8 @@ developed through it.
 | The run kernel shape, and that its **guaranteed output is a pushed branch** | [PRD.md](./PRD.md) FR-F4 |
 | **`finalize` separate from `destroy`** — salvage before teardown | [ARCHITECTURE.md](./ARCHITECTURE.md) §3.2 |
 | A **failure-cause discriminator as a column**, not log spelunking | [AUTONOMY.md](./AUTONOMY.md) §8 |
-| Capability flags read by the domain, never provider names | ADR-028, NFR-F7 |
-| The tracker stays the source of truth; only run bookkeeping is stored | ADR-028, FR-F16 |
+| Capability flags read by the domain, never provider names | ADR-029, NFR-F7 |
+| The tracker stays the source of truth; only run bookkeeping is stored | ADR-029, FR-F16 |
 | Per-project image override, for repositories with their own toolchain | [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) §4.3 |
 | Telemetry: cost per merged PR, autonomy rate, issue→merge lead time, where runs die | [AUTONOMY.md](./AUTONOMY.md) §8 |
 | Human takeover pauses automation — do not race a person | FR-F22 |
@@ -46,7 +46,7 @@ and salvage-before-destroy.
 - **Its extension "controller" pattern** (a separate service driving the kernel over HTTP). Warren
   chose it because its kernel is deliberately minimal. Code Spire's is not — it already has auth, an
   event store, a cost ledger and a UI. Adopting the controller shape here means rebuilding all four
-  to gain coupling looseness nobody has asked for. See ADR-028.
+  to gain coupling looseness nobody has asked for. See ADR-029.
 - **Campaign controllers and multi-repository campaigns.** Correct direction, no payer yet.
 - **The corpus-flywheel and learned router.** Its 17KB design record wants precisely the
   `trajectory × outcome × verdict` join — and lists it as *unscheduled*. Code Spire already stores the
@@ -75,7 +75,7 @@ Its accompanying walkthrough contributes the **label-driven pipeline**: a GitHub
 `factory:ready-for-spec` is picked up, refined by a triage workflow into a specification, then
 labelled `factory:ready-to-implement` for the build workflow. That is the direct ancestor of
 [AUTONOMY.md](./AUTONOMY.md), with one addition — machinist's labels are a *trigger*; here they also
-select an autonomy profile, which is why the ceiling and the labeller allowlist (ADR-032) had to be
+select an autonomy profile, which is why the ceiling and the labeller allowlist (ADR-033) had to be
 invented.
 
 It also states the honest limitation this design inherits: *"Scripts are intentionally opaque… A
@@ -100,7 +100,7 @@ Its eight components and where each lands:
 |---|---|
 | Agent package registry | harness registry + autonomy profiles |
 | Harness adapter layer, with **capability descriptors** | `HarnessAdapter` / `HarnessCapabilities` |
-| Role and policy binder — **authority narrows, never widens** | ADR-032, ADR-035 |
+| Role and policy binder — **authority narrows, never widens** | ADR-033, ADR-036 |
 | Workflow engine — versioned blueprints, expressed as code not YAML | the eight phases |
 | Worker lifecycle manager — bounds that do not belong in prompts | `RunSaga`, caps |
 | Execution environment manager | `RunRuntime` |
@@ -145,7 +145,7 @@ The Sber talk reaches the same conclusion from a survey of open-source harnesses
 and bash are present in **all** of them; the rest is domain-specific. It also measures something this
 design relies on — **harness quality alone moves benchmark results by 20–30 percentage points on the
 same model** — which is the argument for driving a mature harness rather than writing a tool loop
-(ADR-029).
+(ADR-030).
 
 pi's runtime modes are what make it the second arm: `-p` for one-shot, `--mode json` for NDJSON
 events, and `--mode rpc` for a bidirectional JSONL session — the only mechanism among the candidates

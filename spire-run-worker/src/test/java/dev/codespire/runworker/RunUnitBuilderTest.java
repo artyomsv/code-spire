@@ -134,7 +134,7 @@ class RunUnitBuilderTest {
     void theAgentGetsNoWriteCredential() {
         RunUnitSpec unit = unit();
 
-        // ADR-038: the agent physically cannot push, gate or no gate. Everything else in the design
+        // ADR-039: the agent physically cannot push, gate or no gate. Everything else in the design
         // is a second line of defence behind this one.
         assertFalse(unit.agent().environment().containsKey("SPIRE_GIT_SECRET"));
         assertFalse(unit.agent().environment().containsValue(SCM_TOKEN));

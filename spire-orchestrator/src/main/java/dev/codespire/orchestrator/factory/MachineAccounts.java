@@ -10,7 +10,7 @@ import jakarta.inject.Inject;
 import java.util.Optional;
 
 /**
- * The dedicated machine account a factory run pushes as (ADR-037, FR-F29).
+ * The dedicated machine account a factory run pushes as (ADR-038, FR-F29).
  *
  * <p><b>Empty means "cannot dispatch", never "use the reviewer".</b> The reviewer's own author
  * allowlist skips pull requests it opened itself — so a run that fell back to the review bot would

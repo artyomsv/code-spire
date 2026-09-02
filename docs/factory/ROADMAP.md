@@ -78,7 +78,7 @@ fail the build on the project's own name.
 (`spire-run-worker`, `testServices` tier) against real containers — the publisher image built from
 this repository, the reference agent entrypoint with a shell script standing in for the model, and a
 self-built smart-HTTP git origin on the Docker network behind basic auth — and by runbook
-**Mode P** (`docs/SMOKE-TEST.md`) against a real forge with Codex. "Preserves its workspace" holds
+**Mode Q** (`docs/SMOKE-TEST.md`) against a real forge with Codex. "Preserves its workspace" holds
 in the sense §5 of RUN-TOPOLOGY gives it: every commit pushed before the gate tripped stays on the
 branch; the refused commit itself is destroyed with the unit, as the design says it will be.
 
@@ -159,7 +159,7 @@ reviewer reviews the result.
   `CommentSink`, and **none can open a pull request**; nothing here ever has. This is real work, not
   wiring, and the "M0–M2 is mostly plumbing" argument was too cheap before it was listed.
 - **Git-push credentials**, also new: the registry token is brokered today for API calls only, and
-  under ADR-037 the push credential belongs to the machine account. Whether one token serves both is
+  under ADR-038 the push credential belongs to the machine account. Whether one token serves both is
   decided here, per forge.
 - The reviewer reviews the result; ADR-019 reconciliation handles round two unchanged. Run cost posted
   on the pull request.
@@ -307,12 +307,12 @@ decided; the sixth needs a fact only the operator holds.
 | # | Question | Answer | Where |
 |---|---|---|---|
 | 1 | Does Codex's sandbox initialize inside a container? | **Measured: NO.** Codex ships **bubblewrap**, and Docker's default seccomp refuses the user namespace it needs. (An earlier probe measured Landlock and said yes — wrong primitive.) Decision: keep default seccomp, run `--sandbox danger-full-access`, **the container is the boundary**. And Codex is confirmed to *work* in a container: it answered a prompt and completed a real agentic edit-and-commit on subscription auth. | [RUN-TOPOLOGY §1](./RUN-TOPOLOGY.md) |
-| 1b | Where does the workspace live, across replicas and nodes? | **In the run pod, nowhere else** (ADR-038). The pod clones itself, checkpoints continuously to the branch, and is destroyed; the forge is the durable state. The bind-mounted-workspace design made the worker stateful and broke run recovery. | [RUN-TOPOLOGY §2–3](./RUN-TOPOLOGY.md) |
+| 1b | Where does the workspace live, across replicas and nodes? | **In the run pod, nowhere else** (ADR-039). The pod clones itself, checkpoints continuously to the branch, and is destroyed; the forge is the durable state. The bind-mounted-workspace design made the worker stateful and broke run recovery. | [RUN-TOPOLOGY §2–3](./RUN-TOPOLOGY.md) |
 | 2 | Does one token serve both forge API and git push? | **Yes on all three forges** — GitHub App installation token, GitHub PAT, GitLab PAT with `write_repository`, Bitbucket API token. One credential per (machine account, provider); `separatePushCredential` is a declared capability, false everywhere today, so a forge that splits them later is an adapter change. Never the review bot's credential; injected per run; never URL-embedded. | [EXECUTION-LAYER §3.4](./EXECUTION-LAYER.md) |
 | 3 | The protected-path matcher and refusal surface | **The JDK's `PathMatcher` with `glob:` syntax** — no new dialect, no dependency. (`PathGlobs` was named in a first draft and is the wrong tool: it maps a path *to* a group glob, it does not match one *against* a glob.) Match the changed-path set against base, **both sides of a rename**, **deletions included**; the CI floor matches **case-insensitively**. Refusal is `push_gate_refused`, naming every blocked path. | [AUTONOMY §5](./AUTONOMY.md) |
 | 4 | The run charge row's shape | `review_id` → **`subject_id` + `subject_kind`** (`REVIEW`\|`RUN`); `kind` CHECK extended with `SPEC`, `PLAN`, `BUILD`, `FIX`; `CallRefs` gains `run:{runId}:{attempt}:{seq}`. Ten existing reads updated in the same migration. A run id in a column named `review_id` was rejected outright. | [ARCHITECTURE §7](./ARCHITECTURE.md) |
 | 5 | The run worker's channel semantics | **Its own topics** — `cs.run-commands` / `cs.run-control` / `cs.run-results` — because `ActionCommand` declares `reviewId()` as mandatory and a run has a `runId`; a run id behind a method named `reviewId()` is a name that lies. The worker **writes `run_claim` then acks** (that order — the reverse loses the command on a crash); concurrency is a bounded executor, not consumer parallelism. | [ARCHITECTURE §5.1](./ARCHITECTURE.md) |
-| 6 | Subscription-decision provenance | **Closed.** The operator raised it with **OpenAI support** and was told the use is permitted; recorded 2026-09-01. The published terms leave it open, the vendor's support answer settles it for this deployment, and the ticket in the operator's support history is the artifact if it is challenged. | [ADR-030](../DECISIONS.md) |
+| 6 | Subscription-decision provenance | **Closed.** The operator raised it with **OpenAI support** and was told the use is permitted; recorded 2026-09-01. The published terms leave it open, the vendor's support answer settles it for this deployment, and the ticket in the operator's support history is the artifact if it is challenged. | [ADR-031](../DECISIONS.md) |
 
 ## Design questions — closed 2026-09-01
 
@@ -321,7 +321,7 @@ reopened question needs new evidence, not a fresh opinion.
 
 **1. The `spec` phase writes to the tracker, and not to the repository.** A comment on the work item,
 plus the structured form on `work_item` for the pipeline's own use. Writing a spec file into the
-repository would create a second source of truth against ADR-028, and — worse — a diff the reviewer
+repository would create a second source of truth against ADR-029, and — worse — a diff the reviewer
 must then review, so every specification would cost a review round before any code existed. The
 tracker is where the work lives and where the humans already are.
 

@@ -181,7 +181,7 @@ all. The same is true here, and the read is cheap.
 
 ### The rule these rules generalise
 
-All three are instances of ADR-035:
+All three are instances of ADR-036:
 
 > Repository-supplied configuration may **narrow** behaviour. It may never redirect where compute or
 > credentials go, and it may never widen authority.

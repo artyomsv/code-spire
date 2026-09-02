@@ -1511,7 +1511,7 @@ Remove the provider added for this pass in Settings → Context (or `DELETE
 /api/context-providers/{id}`). Context blobs vanish with their reviews — no separate cleanup. Flip
 Review-mode back to `observe`.
 
-## Mode P — the software factory's M0 exit criteria against a real forge (ADR-028..038)
+## Mode Q — the software factory's M0 exit criteria against a real forge (ADR-029..039)
 
 Proves both M0 exit criteria (`docs/factory/ROADMAP.md`) with a real model and a real forge. This is
 the manual counterpart to `M0WalkingSkeletonTest` (`spire-run-worker`, `testServices` tier), which
@@ -1536,7 +1536,7 @@ against a forge, authenticated as a machine account.
    three) with a `main` branch. Note its head: `git ls-remote <url> refs/heads/main`.
 
 4. **The machine account.** A *separate* forge account with write access to that repository and a
-   token that can push (ADR-037: the factory never pushes as the review bot). Register it with role
+   token that can push (ADR-038: the factory never pushes as the review bot). Register it with role
    `FACTORY` — the Providers screen does not expose the role yet, so use the API:
 
    ```bash

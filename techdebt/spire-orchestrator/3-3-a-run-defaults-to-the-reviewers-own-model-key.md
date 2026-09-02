@@ -23,7 +23,7 @@ path never gives the model its own key; the factory does by default.
 
 ## Suggested Solutions
 
-- ADR-030's credential pool (M1): a per-run, short-lived key minted for the agent, or at least a
+- ADR-031's credential pool (M1): a per-run, short-lived key minted for the agent, or at least a
   dedicated factory-role LLM provider the way `scm_provider.role` already separates the push
   identity — with `harnessCredentialSource` refusing the reviewer's default rather than falling
   back to it.

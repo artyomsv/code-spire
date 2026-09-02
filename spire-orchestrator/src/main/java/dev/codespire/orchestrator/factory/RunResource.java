@@ -126,7 +126,7 @@ public class RunResource {
         ScmProvider account = machineAccounts.resolve(in.scmType(), in.workspace())
                 .orElseThrow(() -> conflict("No FACTORY-role provider is registered for "
                         + in.scmType().providerType() + "/" + in.workspace() + ". Register the machine "
-                        + "account under Settings -> Providers with role FACTORY (ADR-037). "
+                        + "account under Settings -> Providers with role FACTORY (ADR-038). "
                         + "The factory never pushes as the review bot."));
         if (account.botUsername() == null || account.botUsername().isBlank()) {
             throw conflict("The FACTORY-role provider for " + in.scmType().providerType() + "/" + in.workspace()

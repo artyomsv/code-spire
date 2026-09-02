@@ -1,8 +1,8 @@
--- ADR-037: the factory pushes as a DEDICATED machine account, not the review bot.
+-- ADR-038: the factory pushes as a DEDICATED machine account, not the review bot.
 --
 -- Two identities, two authority sets. Allowlisting the factory's account as a PR author must not
 -- give the review bot allowed-author rights on /review, /finding and /fix — which is exactly what
--- sharing one identity would do, and is the widening ADR-035 forbids.
+-- sharing one identity would do, and is the widening ADR-036 forbids.
 --
 -- A role rather than a second table: same registry, same Tink encryption, same settings UI, same
 -- bot-identity resolution on save. One column and a wider unique constraint.

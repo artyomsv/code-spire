@@ -154,7 +154,7 @@ class PublishRepoTest {
                 publish, null)) {
             repo.fetchBundle(bundle, 10_000_000L);
 
-            // Agent-authored content must never become a file on the publisher's disk (ADR-038).
+            // Agent-authored content must never become a file on the publisher's disk (ADR-039).
             // A bare clone is what makes it safe for this process to hold a write credential.
             assertTrue(Files.notExists(publish.resolve("NEW.md")));
             assertTrue(Files.notExists(publish.resolve("DOCS.md")));

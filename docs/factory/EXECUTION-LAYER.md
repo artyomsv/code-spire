@@ -62,7 +62,7 @@ tokens used outside first-party Claude Code are rejected.
 
 **Reading:** no automation prohibition at all, and explicit permission to power products for one's
 own end users. §D.4's resale clause is the reason bring-your-own-key is a **licence requirement**,
-not merely a cost preference — see ADR-030.
+not merely a cost preference — see ADR-031.
 
 ### OpenAI — Services Agreement, effective 2026-01-01
 
@@ -104,13 +104,13 @@ unattended automation. It is not prohibited in writing, and OpenAI's own documen
 keys.
 
 **The gap was closed by asking the vendor.** The operator raised the question with **OpenAI support**
-and was told the use is permitted (recorded 2026-09-01, ADR-030). So the position is: the published
+and was told the use is permitted (recorded 2026-09-01, ADR-031). So the position is: the published
 terms leave it open, and the vendor's own support answer settles it for this deployment.
 
 Two things follow, and both are ordinary rather than alarming. The confirmation is a **support
 answer, not a term** — the ticket in the operator's OpenAI support history is the artifact if it is
 ever questioned, and its reference was not captured at the time. And a support answer can be
-superseded the way a term can, which is why the harness stays a registry row (ADR-029) and every arm
+superseded the way a term can, which is why the harness stays a registry row (ADR-030) and every arm
 also works on an API key: if the position moves, an operator changes a credential, not a product.
 
 ## 3. Credentials
@@ -188,7 +188,7 @@ path.
 
 ### 3.4 The machine account's credential — one, not two
 
-ADR-037 gives the factory a dedicated machine account. It needs to do two things: call the forge API
+ADR-038 gives the factory a dedicated machine account. It needs to do two things: call the forge API
 (open a pull request, read a branch) and push over HTTPS.
 
 **Decision: one credential per (machine account, provider), with a capability flag for the forge that
@@ -207,7 +207,7 @@ that a forge which splits them later is an adapter change, not a redesign — th
 
 Two rules that are not optional:
 
-- **The push credential is never the review bot's.** That is the whole point of ADR-037; sharing it
+- **The push credential is never the review bot's.** That is the whole point of ADR-038; sharing it
   would restore the authority widening the separate account exists to avoid.
 - **It is injected per run and redacted from every event.** Git writes credentials into `.git/config`
   and into remote URLs if you let it; the workspace layer uses an askpass helper or a credential
@@ -279,7 +279,7 @@ Resolution, and the guard:
 per-run override  >  per-repository setting  >  harness default  >  built-in
 ```
 
-The per-repository level selects from an **operator-defined allowlist**, never free text (ADR-035).
+The per-repository level selects from an **operator-defined allowlist**, never free text (ADR-036).
 A repository-chosen image decides where the operator's credentials are injected; free text there
 means anyone who can open a pull request can name an image and receive the model key, the git token
 and the CA bundle on startup.
@@ -335,7 +335,7 @@ container therefore has to be genuinely restrictive: non-root, only the workspac
 socket, dropped capabilities.
 
 Full evidence, and the run topology this produced, are in
-[RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md) (ADR-038).
+[RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md) (ADR-039).
 
 ### 5.2 Egress: allowlist by observation, and `unverified` is the honest failure
 

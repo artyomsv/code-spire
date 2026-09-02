@@ -10,7 +10,7 @@ ALTER TABLE llm_charge ADD CONSTRAINT llm_charge_subject_kind
     CHECK (subject_kind IN ('REVIEW', 'RUN'));
 
 -- Which capability pack caused the spend. Added NOW because it cannot be backfilled: a row that did
--- not record its capability cannot have one inferred later (ADR-034). The same reasoning as ADR-023
+-- not record its capability cannot have one inferred later (ADR-035). The same reasoning as ADR-023
 -- snapshotting a rate onto the row rather than re-deriving it from a mutable catalog.
 ALTER TABLE llm_charge ADD COLUMN capability VARCHAR(16) NOT NULL DEFAULT 'REVIEW';
 ALTER TABLE llm_charge ADD CONSTRAINT llm_charge_capability

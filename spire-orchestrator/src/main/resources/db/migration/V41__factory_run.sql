@@ -17,7 +17,7 @@ CREATE TABLE factory_run (
     base_branch     TEXT         NOT NULL,
     base_commit     TEXT         NOT NULL,
     branch          TEXT         NOT NULL,
-    -- ADR-037: the identity the run pushed as. Recorded, never inferred from an account name,
+    -- ADR-038: the identity the run pushed as. Recorded, never inferred from an account name,
     -- because an account can be renamed or reassigned and an attribute written at authorship cannot.
     pushed_as       TEXT,
     pushed_ref      TEXT,

@@ -59,8 +59,8 @@ closest prior art (Warren's corpus-flywheel record) describes at length and list
 
 > **Reviewed 2026-09-01.** An adversarial pass over this document set produced 24 findings — 2
 > critical, 6 high, 11 medium, 5 low — and verified 17 load-bearing claims about the existing codebase
-> as correct. All 24 are resolved in the current text; the two critical ones added ADR-036 (the push
-> gate) and ADR-037 (the factory identity). The review record is in the design spec.
+> as correct. All 24 are resolved in the current text; the two critical ones added ADR-037 (the push
+> gate) and ADR-038 (the factory identity). The review record is in the design spec.
 
 ## Reading order
 
@@ -76,7 +76,7 @@ closest prior art (Warren's corpus-flywheel record) describes at length and list
 | [RESEARCH.md](./RESEARCH.md) | The prior art this design is built on, with sources |
 | [ROADMAP.md](./ROADMAP.md) | M0–M6 build order, and what is deliberately not built |
 
-Decisions are recorded as **ADR-028 through ADR-037** in [`../DECISIONS.md`](../DECISIONS.md),
+Decisions are recorded as **ADR-029 through ADR-038** in [`../DECISIONS.md`](../DECISIONS.md),
 alongside every earlier decision. The design record for the session that produced this directory is
 [`../superpowers/specs/2026-09-01-software-factory-design.md`](../superpowers/specs/2026-09-01-software-factory-design.md).
 
@@ -95,4 +95,4 @@ the same rule, and the factory needs it twice more:
 > **Repo-supplied configuration may narrow behaviour. It may never redirect where compute or
 > credentials go, and it may never widen authority.**
 
-This is ADR-035. Every new repo-readable setting is checked against it.
+This is ADR-036. Every new repo-readable setting is checked against it.

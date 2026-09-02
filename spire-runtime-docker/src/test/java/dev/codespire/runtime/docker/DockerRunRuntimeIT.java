@@ -128,7 +128,7 @@ class DockerRunRuntimeIT {
         runtime.attach(handle, LogChannel.PUBLISHER, publisher::add);
         runtime.salvage(handle);
 
-        // ADR-038: the publisher holds the push credential, so it must never reach anything the
+        // ADR-039: the publisher holds the push credential, so it must never reach anything the
         // agent authored — including a .git/config or a hook.
         assertTrue(publisher.contains("isolated"), "publisher said: " + publisher);
         assertFalse(publisher.contains("LEAKED"));

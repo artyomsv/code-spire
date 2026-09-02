@@ -25,7 +25,7 @@ import java.util.Optional;
 /**
  * Drives OpenAI Codex CLI (Apache-2.0) non-interactively.
  *
- * <p>Auth is an API key or a subscription credential the operator registered (ADR-030); this adapter
+ * <p>Auth is an API key or a subscription credential the operator registered (ADR-031); this adapter
  * only places what it is given into the child environment. It never logs it and never puts it in
  * argv, which is world-readable through {@code /proc/<pid>/cmdline} and echoed by
  * {@code docker inspect}.
@@ -92,7 +92,7 @@ public final class CodexAdapter implements HarnessAdapter {
         // And Codex does not fail at startup when its sandbox cannot initialize, so leaving
         // workspace-write set would mean believing in two boundaries while having one.
         //
-        // The container is the boundary (ADR-038, RUN-TOPOLOGY §1).
+        // The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
         //
         // The trailing "-" is the prompt position, explicitly reading stdin. It is not the prompt.
         return List.of(

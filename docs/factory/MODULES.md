@@ -52,7 +52,7 @@ event. Everything else belongs to the runtime or the worker.
 `jackson-annotations` carve-out, and only if these types cross the Kafka wire.
 
 **Why the normalized event type lives here and not in `spire-contract`:** most run events never reach
-the domain log (ADR-033). Putting the high-volume vocabulary in the contract module would imply a
+the domain log (ADR-034). Putting the high-volume vocabulary in the contract module would imply a
 durability guarantee that tier does not have.
 
 ---
@@ -74,7 +74,7 @@ Docker's default seccomp profile — see [RUN-TOPOLOGY.md](./RUN-TOPOLOGY.md) §
 
 **Notable.** Codex reaches any OpenAI-compatible endpoint through `model_providers` with `base_url`
 and `env_key`, so this arm is not model-locked. It also **ignores `model_provider` set in a
-repository's own config**, which is the same defence as ADR-035 and means the adapter must supply
+repository's own config**, which is the same defence as ADR-036 and means the adapter must supply
 provider configuration from the operator side, never from the checkout.
 
 ---
@@ -150,7 +150,7 @@ into infrastructure rather than beside it.
 clone or worktree at an explicit base commit, branch naming, commit detection, push, and the
 "commits ahead" check that distinguishes real work from an empty run.
 
-**Where it runs — not in the worker (ADR-038).** This library is linked into the **publisher image**
+**Where it runs — not in the worker (ADR-039).** This library is linked into the **publisher image**
 and runs inside the run pod. The worker holds no workspace and no git at all; that was the design
 that made it stateful and broke run recovery.
 
@@ -161,7 +161,7 @@ one glob dialect serves the whole product.
 
 **Depends on** a git-push credential handed to the publisher container; it never mints one itself.
 **That brokering does not exist yet** — today the provider registry token is used for API calls only,
-and nothing in Code Spire has ever pushed a commit. Under ADR-037 the credential belongs to the
+and nothing in Code Spire has ever pushed a commit. Under ADR-038 the credential belongs to the
 **dedicated machine account**, never the review bot.
 
 ---
@@ -226,7 +226,7 @@ report an outcome.
 - The **orphan watchdog**.
 - Credential injection and redaction.
 
-**Does NOT own, since ADR-038:** any git operation, any workspace, any filesystem state. It creates
+**Does NOT own, since ADR-039:** any git operation, any workspace, any filesystem state. It creates
 the run pod, streams two log channels (agent events, publisher outcomes), records charges, and emits
 results. The clone, the gate and the push all happen inside the pod. That is what makes it
 **stateless** — and therefore what makes a run recoverable by any replica rather than only by the one

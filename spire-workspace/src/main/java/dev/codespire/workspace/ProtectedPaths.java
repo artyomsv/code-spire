@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * Paths the factory may never push a change to.
  *
- * <p><b>A floor, not a setting (ADR-036).</b> A pushed branch executes its own CI workflow files on
+ * <p><b>A floor, not a setting (ADR-037).</b> A pushed branch executes its own CI workflow files on
  * an unsandboxed runner holding repository secrets, and the prompt that produced the branch contains
  * untrusted tracker text. The input that would authorise the change is the input under suspicion, so
  * no profile may unprotect these — the same shape as the never-suppressed SECURITY floor in ADR-027.

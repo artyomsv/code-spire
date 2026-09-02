@@ -53,7 +53,7 @@ class MachineAccountsTest {
         // V42 lets one workspace hold both. Before the role joined every lookup's KEY, an unfiltered
         // SELECT * returned whichever row the planner yielded first — so the review path could be
         // handed the factory's push token, and the factory the reviewer's. That is the identity
-        // confusion ADR-037 exists to prevent, arriving through a query that used to be unambiguous.
+        // confusion ADR-038 exists to prevent, arriving through a query that used to be unambiguous.
         String workspace = "TEST-both-" + UUID.randomUUID();
         providers.create(input(workspace, "reviewer-bot", "TEST-reviewer-token", null));
         providers.create(input(workspace, "factory-bot", "TEST-factory-token", "FACTORY"));

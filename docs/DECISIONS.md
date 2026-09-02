@@ -4,7 +4,7 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
-## ADR-038 — The run environment clones itself, checkpoints continuously, and the gate runs in a clean clone
+## ADR-039 — The run environment clones itself, checkpoints continuously, and the gate runs in a clean clone
 
 **Context.** The first draft had the run worker clone a repository into its own filesystem and
 bind-mount it into the agent container. Two separate lines of evidence killed that design on the same
@@ -20,7 +20,7 @@ runs. Full evidence in `docs/factory/RUN-TOPOLOGY.md` §1.
 
 *An operator objection that was sharper than the design.* A bind-mounted workspace makes the worker
 **stateful**: only the replica that started a run can finish it, a node reschedule mid-run destroys
-the work, and Kubernetes would need RWX shared storage. The orphan watchdog ADR-028 specifies
+the work, and Kubernetes would need RWX shared storage. The orphan watchdog ADR-029 specifies
 **cannot salvage a run whose workspace lived on a dead node** — the design contained a recovery
 mechanism its own storage model defeated.
 
@@ -78,7 +78,7 @@ from the publisher's stdout. No `exec`, no file extraction, no shared storage be
 which is what keeps the worker stateless in the first place.
 
 **Two credentials, never the same secret in both containers:** a **read-only** clone token in the
-init container, and the **write** machine-account token (ADR-037) in the publisher. The residual risk
+init container, and the **write** machine-account token (ADR-038) in the publisher. The residual risk
 is stated rather than hidden — a write credential lives in the run pod — and it is accepted because
 the realistic path to it, through git, is closed by part 4.
 
@@ -96,7 +96,7 @@ records charges.
 
 ---
 
-## ADR-037 — The factory pushes as a dedicated machine account, and "factory-authored" is an attribute rather than an inference
+## ADR-038 — The factory pushes as a dedicated machine account, and "factory-authored" is an attribute rather than an inference
 
 **Context.** An adversarial review of the factory design found that the reviewer would **silently skip
 the factory's own pull requests**. The only SCM credential a deployment holds is the provider registry
@@ -108,8 +108,8 @@ what the factory built.
 
 The obvious repair is worse than the defect. Allowlisting the review bot grants it allowed-author
 authority **everywhere the allowlist is consulted** — pull-request events, `/review`, `/finding`, the
-new `/fix`, the archived-notice trigger, and under ADR-032 the future labeller check. The bot could
-then command itself. That is the widening ADR-035 forbids, and this project already carries a
+new `/fix`, the archived-notice trigger, and under ADR-033 the future labeller check. The bot could
+then command itself. That is the widening ADR-036 forbids, and this project already carries a
 self-loop guard because the class is real.
 
 **Decision.** The factory pushes and opens pull requests as a **dedicated machine account**,
@@ -140,7 +140,7 @@ can author the code it reviews has no independence to lose.
 
 ---
 
-## ADR-036 — The push is gated; CI configuration is a floor no profile can lower
+## ADR-037 — The push is gated; CI configuration is a floor no profile can lower
 
 **Context.** An adversarial review found that the factory's guaranteed output defeats its own security
 model. The design states that a run's guaranteed artefact is a pushed workspace branch and that the
@@ -192,7 +192,7 @@ production secrets.
 
 ---
 
-## ADR-035 — Repository-supplied configuration may narrow behaviour, never redirect compute or widen authority
+## ADR-036 — Repository-supplied configuration may narrow behaviour, never redirect compute or widen authority
 
 **Context.** Three defences already in this codebase turn out to be the same rule, discovered
 separately each time. `.codespire` is read from the pull request's **target branch, never the
@@ -232,7 +232,7 @@ rules were read from*, not in *how they were quoted*.
 
 ---
 
-## ADR-034 — The platform divides into capability packs; entitlement is one gate and every charge names its capability
+## ADR-035 — The platform divides into capability packs; entitlement is one gate and every charge names its capability
 
 **Context.** The factory makes Code Spire large enough that a customer may reasonably want part of
 it. Today's module structure splits by *technical seam* — contract, diff, llm, scm-\*, context-\* —
@@ -293,7 +293,7 @@ on.
 
 ---
 
-## ADR-033 — Run events are a second tier; the aggregate's log stays milestone-only
+## ADR-034 — Run events are a second tier; the aggregate's log stays milestone-only
 
 **Context.** One agent run in the observed prior art emitted **858 events** — reasoning, tool calls,
 tool results, state transitions. A review, by comparison, produces a handful of domain events. ADR-010
@@ -325,7 +325,7 @@ exposure nobody asked for.
 
 ---
 
-## ADR-032 — Autonomy is a property of the work item, selected by label, bounded by an operator ceiling
+## ADR-033 — Autonomy is a property of the work item, selected by label, bounded by an operator ceiling
 
 **Context.** A single deployment-wide autonomy setting is wrong in both directions: it makes a typo
 fix wait for a human, or it lets a change to an authentication path merge without one. The prior art
@@ -396,7 +396,7 @@ happened twice here; the second time a refused review rendered as five green seg
 
 ---
 
-## ADR-031 — The agent image is a conformance contract, not a base image
+## ADR-032 — The agent image is a conformance contract, not a base image
 
 **Context.** The obvious design ships `spire-agent-codex` and tells customers to write
 `FROM spire-agent-codex`. A regulated enterprise cannot: it builds from an approved golden base,
@@ -442,7 +442,7 @@ way so that adding a proprietary one later is not a special case. The closest pr
 same rule in the same words.
 
 **Image resolution is `per-run > per-repository > harness default > built-in`, and the
-per-repository level selects from an operator allowlist** — ADR-035. A repository-chosen image
+per-repository level selects from an operator allowlist** — ADR-036. A repository-chosen image
 decides where the operator's credentials are injected; free text there means anyone who can open a
 pull request receives the model key, the git token and the CA bundle on startup.
 
@@ -453,7 +453,7 @@ an image that passes the suite.
 
 ---
 
-## ADR-030 — Model credentials belong to the operator; API key is the default and only sanctioned mode, subscription auth is operator-owned
+## ADR-031 — Model credentials belong to the operator; API key is the default and only sanctioned mode, subscription auth is operator-owned
 
 **Context.** A factory spends money on every run, under some vendor's terms. Two questions had to be
 separated, because conflating them is the easiest mistake in this area: the **harness software
@@ -520,7 +520,7 @@ UNMETERED` charging; and quota headroom as a gate axis. A subscription is a *per
 being lent to a *service*, and everything above is the cost of that mismatch.
 
 **The mode remains one server-side policy flip from failing everywhere at once.** That is why the
-harness is a registry row (ADR-029) and why every arm must also work on an API key: an operator
+harness is a registry row (ADR-030) and why every arm must also work on an API key: an operator
 whose subscription mode is revoked changes a credential, not a product.
 
 **Credentials are pooled, not singular.** A subscription has windowed quota and an API key has rate
@@ -546,7 +546,7 @@ finding above carries its retrieval date for exactly that reason.
 
 ---
 
-## ADR-029 — Harnesses are driven, not built, and the harness is a runtime registry row
+## ADR-030 — Harnesses are driven, not built, and the harness is a runtime registry row
 
 **Context.** The factory needs an agentic tool loop: read, search, edit, run a command, observe,
 repeat, with context management and compaction. Code Spire's `LlmProvider` is a single-shot call and
@@ -587,7 +587,7 @@ posture as a remote-tracker bridge.
 
 ---
 
-## ADR-028 — The factory extends the kernel; a run is a workload beside the review, not a second control plane
+## ADR-029 — The factory extends the kernel; a run is a workload beside the review, not a second control plane
 
 **Context.** Extending Code Spire from a reviewer into a software factory admits three shapes. Extend
 the existing kernel with one new deployable and new sagas. Build a separate control plane that drives

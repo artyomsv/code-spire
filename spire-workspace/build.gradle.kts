@@ -1,7 +1,7 @@
 // spire-workspace: the publisher's git library. Clone bare, fetch the agent's
 // bundle, diff it against the base, push the gated sha. It runs in the
 // PUBLISHER image, never in the worker — the worker holds no filesystem and
-// runs no git at all (ADR-038, docs/factory/RUN-TOPOLOGY.md).
+// runs no git at all (ADR-039, docs/factory/RUN-TOPOLOGY.md).
 plugins {
     // java-library, so JGit can be an `api` dependency rather than `implementation`.
     // PublishRepo declares GitAPIException on three methods, so the type is part of this

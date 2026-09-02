@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The M0 exit criteria, BOTH halves (docs/factory/ROADMAP.md). The first alone celebrates the
- * ungated path, which is the defect ADR-036 exists to close.
+ * ungated path, which is the defect ADR-037 exists to close.
  *
  * <p>Real containers, a real smart-HTTP remote on the Docker network, the real publisher image
  * built from this repository, and the real agent entrypoint — with a shell script standing in for

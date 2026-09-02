@@ -30,7 +30,7 @@ import java.util.concurrent.TimeoutException;
 /**
  * Creates the run unit and reads its two log streams.
  *
- * <p>Performs no git and holds no filesystem — that is the whole point of ADR-038, and it is what
+ * <p>Performs no git and holds no filesystem — that is the whole point of ADR-039, and it is what
  * lets any replica salvage any run rather than only the one that started it.
  */
 @ApplicationScoped

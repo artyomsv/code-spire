@@ -3,12 +3,12 @@ package dev.codespire.orchestrator.provider;
 import java.util.Locale;
 
 /**
- * What an SCM registration is FOR (ADR-037).
+ * What an SCM registration is FOR (ADR-038).
  *
  * <p>Two identities, two authority sets. The reviewer posts comments and is the subject of the
  * author allowlist; the factory pushes branches as a dedicated machine account. Sharing one identity
  * would let allowlisting the factory's account as a PR author grant the review bot allowed-author
- * rights on {@code /review}, {@code /finding} and {@code /fix} — the widening ADR-035 forbids.
+ * rights on {@code /review}, {@code /finding} and {@code /fix} — the widening ADR-036 forbids.
  *
  * <p>A role on the existing registry rather than a second table: same Tink encryption, same settings
  * UI, same bot-identity resolution on save. What changes is that the role is part of every lookup's

@@ -35,7 +35,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
-| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-028..ADR-038. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
@@ -1334,7 +1334,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   scenario, the mock's own contract and the harness's self-tests. Verified on a GitHub runner as well
   as locally (run 33341378597): identical counts, 16m41s including a cold GitLab boot, so nothing was
   passing by accident on one machine. `spire-ui` untouched.
-- **Software factory M0 — the walking skeleton — delivered (ADR-028..ADR-038, 2026-09-02, PR #95):**
+- **Software factory M0 — the walking skeleton — delivered (ADR-029..ADR-039, 2026-09-02, PR #95):**
   `POST /api/runs` → `cs.run-commands` → `spire-run-worker` → a three-container run unit on Docker
   (init clones with the read credential, the agent runs the harness with the model key and no git
   token, the publisher holds the write token and never the workspace) → bundles on `/handoff` →
@@ -1348,7 +1348,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   the two images (`deploy/agent/codex`, `spire-publisher/Dockerfile`). **Both exit criteria are
   proven by `M0WalkingSkeletonTest`** against real containers — the publisher image built from
   this repository, the reference agent entrypoint with a shell script standing in for the model,
-  and a self-built smart-HTTP git origin — and by runbook **Mode P** against a real forge with
+  and a self-built smart-HTTP git origin — and by runbook **Mode Q** against a real forge with
   Codex. `docs/factory/ROADMAP.md` records what the build taught that the design had wrong; the
   three most expensive to rediscover: the runtime never fed the prompt on stdin (Codex declares
   stdin delivery and would have started on an empty prompt — a script-harness test can never
@@ -1400,7 +1400,7 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
-**The factory's two images** are not on GHCR yet and are built locally (SMOKE-TEST Mode P):
+**The factory's two images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q):
 
 ```bash
 docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
