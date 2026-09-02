@@ -1,0 +1,175 @@
+quarkus:
+  # Both are separate dev services and BOTH must be off, or either starts a Keycloak container of
+  # its own that then times out (~60s) on every build.
+  keycloak:
+    devservices:
+      enabled: false
+  oidc:
+    devservices:
+      enabled: false
+    # Operator authentication (ADR-022), the same posture as the other three deployables. The run
+    # worker serves only health today; the point is that anything added later is denied by default.
+    auth-server-url: ${SPIRE_OIDC_AUTH_SERVER_URL}
+    client-id: ${SPIRE_OIDC_CLIENT_ID:spire-run-worker}
+    credentials:
+      secret: ${SPIRE_OIDC_CLIENT_SECRET}
+    application-type: hybrid
+    authentication:
+      # This service's own prefix, so the browser never sends its session cookie to another service.
+      cookie-path: /rw
+      cookie-suffix: rw
+      java-script-auto-redirect: false
+      redirect-path: /rw/auth/callback
+      restore-path-after-redirect: true
+    # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
+    roles:
+      source: accesstoken
+    token:
+      audience: ${SPIRE_OIDC_CLIENT_ID:spire-run-worker}
+  application:
+    name: spire-run-worker
+  http:
+    # Deny by default — anything not named here requires authentication.
+    auth:
+      permission:
+        public:
+          paths: /q/health,/q/health/*
+          policy: permit
+        operator:
+          paths: /rw/*
+          policy: authenticated
+        # Quarkus PERMITS a request that matches no entry, so without this an endpoint added outside
+        # /rw tomorrow is anonymous. The two specific paths above still win, being more specific.
+        everything-else:
+          paths: /*
+          policy: deny
+    port: ${SPIRE_RUN_WORKER_HTTP_PORT:34083}
+  datasource:
+    db-kind: postgresql
+    jdbc:
+      additional-jdbc-properties:
+        currentSchema: runworker
+  flyway:
+    migrate-at-start: true
+    # schema-per-service (ADR-011/DATA-MODEL): this worker owns ONLY run_claim and run_lease,
+    # in its own schema.
+    default-schema: runworker
+    create-schemas: true
+  log:
+    console:
+      json:
+        enabled: true
+        # The same two fields the other deployables carry, so one log pipeline can tell the
+        # services apart without parsing the message.
+        additional-field:
+          service:
+            value: spire-run-worker
+          env:
+            value: ${quarkus.profile}
+
+spire:
+  encryption:
+    # The keyset that opens each command's machine-account and harness credentials (ADR-015);
+    # the same one the orchestrator packs with. Fail-fast: EncryptionProducer refuses to start
+    # without it.
+    keyset: ${SPIRE_ENCRYPTION_KEYSET}
+  run:
+    # The longest wall clock a dispatched run may carry. RunAckBudget checks the channel's
+    # unprocessed-record threshold against it at startup; the orchestrator's FactoryConfig is
+    # where the value a command actually carries is set, and the two must agree or the guard is
+    # checking a number nothing uses.
+    max-wall-clock-seconds: ${SPIRE_RUN_MAX_WALL_CLOCK_SECONDS:1800}
+    # The other half of the run unit. Required: a registry prefix and a digest are the deployment's,
+    # and a latest tag cannot say which publisher gated a run. Dev and test use the locally built tag.
+    publisher-image: ${SPIRE_PUBLISHER_IMAGE}
+
+mp:
+  messaging:
+    incoming:
+      run-commands-in:
+        connector: smallrye-kafka
+        topic: cs.run-commands
+        group:
+          id: spire-run-worker
+        value:
+          deserializer: dev.codespire.runworker.RunCommandDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+        # Unlike the review worker, this channel acks on RECEIPT — implemented in RunDispatcher as a
+        # MANUAL ack the moment the claim row is written. An hour-long run would outlive any sane
+        # unprocessed-record threshold, and that exact pairing once stalled a consumer which
+        # re-stalled on every restart and needed a manual offset seek. Idempotency therefore lives
+        # in runworker.run_claim, not in Kafka.
+        #
+        # Three settings hold that together, and RunAckBudget refuses to start if they do not:
+        #  - one record per poll and NO prefetch queue: a record's age is stamped when it is POLLED,
+        #    not when its handler starts, so a prefetched record ages in the queue for the whole
+        #    run in front of it and trips the threshold however fast the handler acks.
+        #  - a threshold with room for one run's wall clock anyway, as the second line: the manual
+        #    ack lands within milliseconds, but a claim-store outage delays it by however long the
+        #    database takes to answer, and that must not become a dead consumer.
+        max:
+          poll:
+            records: 1
+        max-queue-size-factor: 1
+        throttled:
+          unprocessed-record-max-age:
+            ms: 3900000
+    outgoing:
+      run-results-out:
+        connector: smallrye-kafka
+        topic: cs.run-results
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.RunResultSerializer
+        waitForWriteCompletion: true
+
+# Dev: the single repo-root .env supplies POSTGRES_*; the broker is the compose Redpanda.
+"%dev":
+  quarkus:
+    oidc:
+      # No IdP in plain dev; OperatorAuthorization permits an unauthenticated surface in DEVELOPMENT
+      # only and refuses to start that way anywhere else.
+      enabled: false
+    log:
+      console:
+        json: false
+    datasource:
+      username: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      jdbc:
+        url: jdbc:postgresql://localhost:${POSTGRES_PORT:34432}/${POSTGRES_DB:spire}
+  spire:
+    security:
+      auth-enabled: false
+    run:
+      publisher-image: spire-publisher:latest
+
+# Test: Dev Services boot Postgres and a broker automatically, so no URL is set here — supplying
+# one is what stops them starting, which surfaces as a connection refused rather than as config.
+"%test":
+  quarkus:
+    oidc:
+      # Build-time disable. `tenant-enabled: false` is NOT enough — the tenant still demands an
+      # auth-server-url and the app fails to BOOT. Authorization itself stays ON: the suites carry a
+      # @TestSecurity identity where they need one, so the real permission policy is exercised.
+      enabled: false
+    http:
+      port: 0
+      test-port: 0
+    log:
+      console:
+        json: false
+  spire:
+    run:
+      publisher-image: spire-publisher:latest
+    encryption:
+      # Test-only AES-GCM keyset (not a secret) — the same one the orchestrator's and the review
+      # worker's test profiles use, so a worker test can open a credential the orchestrator packed.
+      # Prod/dev read SPIRE_ENCRYPTION_KEYSET (ADR-015).
+      keyset: eyJwcmltYXJ5S2V5SWQiOjM4NjczMjQwMjIsImtleSI6W3sia2V5RGF0YSI6eyJ0eXBlVXJsIjoidHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5IiwidmFsdWUiOiJHaURROXlLT0R1Y25mcFM1b0JyMlpaT3RYSkV0QmRwcmFwZkFzdUtpQUh5R1lBPT0iLCJrZXlNYXRlcmlhbFR5cGUiOiJTWU1NRVRSSUMifSwic3RhdHVzIjoiRU5BQkxFRCIsImtleUlkIjozODY3MzI0MDIyLCJvdXRwdXRQcmVmaXhUeXBlIjoiVElOSyJ9XX0K

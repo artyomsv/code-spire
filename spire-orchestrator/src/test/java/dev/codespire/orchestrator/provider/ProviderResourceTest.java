@@ -71,6 +71,60 @@ class ProviderResourceTest {
         return m;
     }
 
+    @jakarta.inject.Inject
+    ProviderRegistry registry;
+
+    @Test
+    void aFactoryRoleSurvivesTheRestPathOnCreateAndUpdate() {
+        // resolveIdentity rebuilt the input with the 12-argument constructor, so a FACTORY
+        // registration through this endpoint was stored as the workspace's REVIEWER: the review
+        // pipeline held the push token and POST /api/runs answered 409 forever. Only a test that
+        // goes through the resource can see it — every earlier test called the registry directly.
+        var b = body("rest-factory", "bearer", "tok-abc", null);
+        b.put("role", "FACTORY");
+        String id = given().contentType("application/json").body(b)
+                .when().post("/api/providers")
+                .then().statusCode(201)
+                .body("role", equalTo("FACTORY"))
+                .extract().path("id");
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory").isEmpty(),
+                "a FACTORY registration is never the workspace's reviewer");
+
+        // The dashboard's edit form sends NO role. An update without one must keep the stored role —
+        // writing the default there demoted every FACTORY registration edited in Settings to the
+        // workspace's reviewer, which is the round-1 critical back through the UI path.
+        var update = body("rest-factory", "bearer", "", null);
+        update.remove("role");
+        given().contentType("application/json").body(update)
+                .when().put("/api/providers/" + id)
+                .then().statusCode(200)
+                .body("role", equalTo("FACTORY"));
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+
+        // An explicit role on update still changes it: that is a deliberate operator action.
+        update.put("role", "REVIEWER");
+        given().contentType("application/json").body(update)
+                .when().put("/api/providers/" + id)
+                .then().statusCode(200)
+                .body("role", equalTo("REVIEWER"));
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory").isPresent());
+    }
+
+    @Test
+    void aRoleOutsideTheClosedSetIsA400NamingTheSet() {
+        var b = body("rest-role", "bearer", "tok-abc", null);
+        b.put("role", "OVERLORD");
+        given().contentType("application/json").body(b)
+                .when().post("/api/providers")
+                .then().statusCode(400);
+    }
+
     @Test
     void createReturns201AndNeverEchoesTheSecret() {
         given().contentType("application/json").body(body("rest-create", "bearer", "tok-abc", null))

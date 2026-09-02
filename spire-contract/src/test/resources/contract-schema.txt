@@ -39,3 +39,12 @@ NotifyArchived(reviewId: java.lang.String, repo: dev.codespire.contract.scm.Repo
 NotifyTurnCap(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, threadRef: dev.codespire.contract.scm.ThreadRef, turnCap: int, scmCredential: java.lang.String)
 PostComments(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, commit: java.lang.String, findings: dev.codespire.contract.review.ReviewResult, scmCredential: java.lang.String, verdicts: java.util.List<dev.codespire.contract.review.FindingVerdict>, priorSummaryRef: java.lang.String, suppressedCount: int)
 RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, prId: long, threadRef: dev.codespire.contract.scm.ThreadRef, scmCredential: java.lang.String)
+
+# RunCommand
+CancelRun(runId: java.lang.String, reason: java.lang.String)
+ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String)
+
+# RunResult
+RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean)
+RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blockedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
+RunStarted(runId: java.lang.String, providerRunId: java.lang.String)

@@ -5,6 +5,27 @@ sizing, not commitments.
 
 ---
 
+## The software factory — design only, not started (2026-09-01)
+
+The next phase extends Code Spire from a reviewer into an automated software factory: a tracker work
+item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and a pull request that
+**the existing reviewer reviews**. Autonomy is a property of the work item, chosen by label and
+bounded by an operator ceiling.
+
+It has its own document set because it is large enough to need one, and it does not change anything
+above: **[`docs/factory/`](factory/README.md)** — PRD (FR-F1..F32), architecture, module reference,
+execution layer, autonomy model, product packaging, prior art, and the M0–M6 build order. Decisions
+are **ADR-029..ADR-038** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
+produced it is
+[`superpowers/specs/2026-09-01-software-factory-design.md`](superpowers/specs/2026-09-01-software-factory-design.md).
+
+**Nothing is implemented.** The first slice is **M0**, a walking skeleton proving sandbox, harness
+event parsing, credential injection and branch push in one vertical cut. **M0–M2 is a shippable
+product on its own** — *the reviewer now fixes what it finds* — needing no tracker, no plan engine
+and no gates.
+
+---
+
 ## Current status & next-up backlog (updated 2026-08-28)
 
 This is the **live view** — what is actually built and what to pick next. The Phase 0–4 plan further

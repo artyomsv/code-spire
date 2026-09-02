@@ -14,12 +14,13 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * The core must not know which integration it is talking to — the SCM it reviews on, or the context
- * sources it pulls from.
+ * The core must not know which integration it is talking to — the SCM it reviews on, the context
+ * sources it pulls from, or the harness arm and runtime a factory run executes on.
  *
  * <p>Adapters are swappable only while the shared code makes no provider-dependent
  * decision. Once a saga, worker or read model branches on "is this GitLab?", every
@@ -51,8 +52,8 @@ class CoreIsProviderNeutralTest {
      * remains here is the shared resolve-verify-translate-scope-publish edge every provider
      * flows through — exactly the code where a provider assumption is most costly.
      */
-    private static final List<String> CORE_MODULES =
-            List.of("spire-contract", "spire-orchestrator", "spire-review-worker", "spire-gateway");
+    private static final List<String> CORE_MODULES = List.of("spire-contract", "spire-orchestrator",
+            "spire-review-worker", "spire-gateway", "spire-run-worker");
 
     /**
      * Both plugin axes: the SCM the review runs on, and the context sources it pulls from. They pose
@@ -65,6 +66,23 @@ class CoreIsProviderNeutralTest {
      */
     private static final Pattern PROVIDER_NAME =
             Pattern.compile("(?i)(bitbucket|github|gitlab|jira|confluence)");
+
+    /**
+     * The factory's axes: the harness arm that runs the agent and the runtime that places it.
+     *
+     * <p>Not "the same terms" as {@link #PROVIDER_NAME}, and saying so matters: that pattern is
+     * deliberately unanchored so it catches {@code githubConfig}, and an unanchored {@code pi} would
+     * match {@code spire}, {@code api} and {@code pipeline} — failing the build on this project's own
+     * name. The short name therefore matches only in QUALIFIED forms, and those forms are matched
+     * case-SENSITIVELY ({@code (?-i:…)}) because under {@code (?i)} the class {@code [A-Z]} also
+     * matches lower case and {@code \bPi[A-Z]} is {@code pipeline} again. The reduced sensitivity is
+     * a known limit, recorded rather than pretended away. An import-graph scan was rejected: the
+     * leak class that motivated a text scan includes string literals, which no import graph sees.
+     */
+    static final Pattern HARNESS_NAME = Pattern.compile(
+            "(?i)(codex|opencode|claude[-_]?code|kubernetes|docker"        // long, distinctive: substring
+                    + "|harness\\.pi\\b|HarnessType\\.PI\\b|\"pi\""         // short: qualified forms only
+                    + "|(?-i:\\bPi[A-Z]\\w*))");
 
     /**
      * Files permitted to name a provider, each with the reason it is not a leak. Adding
@@ -115,6 +133,16 @@ class CoreIsProviderNeutralTest {
         allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/operator/OperatorConnects.java",
                 "Composition root: maps a platform to the adapter that signs an operator in. Every sign-in "
                         + "URL, scope and token field stays in its own adapter; this only chooses one.");
+        // The factory axes. Same rule, same exemption: the roots that CHOOSE an arm may name one.
+        allowed.put("spire-run-worker/src/main/java/dev/codespire/runworker/HarnessRegistry.java",
+                "Composition root: maps a harness name to its adapter. Choosing an adapter IS its job.");
+        allowed.put("spire-run-worker/src/main/java/dev/codespire/runworker/WorkerRuntimes.java",
+                "Composition root: produces the RunRuntime arm as a CDI bean. spire-runtime-docker is "
+                        + "framework-free, so something in the worker must name it.");
+        allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/FactoryCloneUrls.java",
+                "Composition root: maps a provider's API base URL to its clone host. GitHub's cloud API "
+                        + "answers on api.github.com while clones go to github.com; a GHE server keeps "
+                        + "both on one host. That mapping is provider knowledge and this is its one home.");
         return Collections.unmodifiableMap(allowed);
     }
 
@@ -179,11 +207,32 @@ class CoreIsProviderNeutralTest {
         String[] raw = original.split("\n", -1);
         List<String> found = new ArrayList<>();
         for (int i = 0; i < code.length; i++) {
-            if (PROVIDER_NAME.matcher(code[i]).find()) {
+            if (PROVIDER_NAME.matcher(code[i]).find() || HARNESS_NAME.matcher(code[i]).find()) {
                 found.add(relative + ":" + (i + 1) + "\n      " + raw[i].strip());
             }
         }
         return found;
+    }
+
+    @Test
+    void aShortHarnessNameDoesNotMatchTheProjectsOwnName() {
+        // "pi" unanchored matches spire, api and pipeline. PROVIDER_NAME is deliberately unanchored,
+        // so a naive extension would fail the build on this repository's own module names.
+        assertFalse(HARNESS_NAME.matcher("spire-orchestrator").find());
+        assertFalse(HARNESS_NAME.matcher("String apiHost()").find());
+        assertFalse(HARNESS_NAME.matcher("CommandDispatcher pipeline").find());
+        assertFalse(HARNESS_NAME.matcher("ReviewPipeline pipeline = new ReviewPipeline();").find());
+        assertFalse(HARNESS_NAME.matcher("int pid = process.pid();").find());
+
+        // …while still catching a real leak, in each of its qualified forms.
+        assertTrue(HARNESS_NAME.matcher("new PiHarness()").find());
+        assertTrue(HARNESS_NAME.matcher("import dev.codespire.harness.pi.PiAdapter;").find());
+        assertTrue(HARNESS_NAME.matcher("case \"pi\" ->").find());
+        assertTrue(HARNESS_NAME.matcher("if (type == HarnessType.PI) {").find());
+        assertTrue(HARNESS_NAME.matcher("String image = \"spire-agent-codex:latest\";").find());
+        assertTrue(HARNESS_NAME.matcher("HarnessType.CLAUDE_CODE").find());
+        assertTrue(HARNESS_NAME.matcher("new DockerRunRuntime()").find());
+        assertTrue(HARNESS_NAME.matcher("KubernetesRunRuntime").find());
     }
 
     private static String report(List<String> violations) {
@@ -192,11 +241,11 @@ class CoreIsProviderNeutralTest {
         violations.forEach(violation -> message.append("  ").append(violation).append("\n"));
         message.append("""
 
-                Core modules (spire-contract, spire-orchestrator, spire-review-worker, spire-gateway) must not
-                name an SCM or context provider. A provider-dependent decision in shared code means every
-                later edit to that file risks silently breaking the other providers, on one
-                platform, in production. Comments are exempt — documenting WHY a neutral design
-                exists is encouraged.
+                Core modules (spire-contract, spire-orchestrator, spire-review-worker, spire-gateway,
+                spire-run-worker) must not name an SCM or context provider, a harness arm, or a run
+                runtime. A provider-dependent decision in shared code means every later edit to that
+                file risks silently breaking the other providers, on one platform, in production.
+                Comments are exempt — documenting WHY a neutral design exists is encouraged.
 
                 Resolve one of these ways, in order of preference:
 

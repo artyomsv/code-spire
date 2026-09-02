@@ -1,0 +1,17 @@
+Code Spire — spire-run-worker
+
+Copyright 2026 Artjoms Stukans
+
+Licensed under the Functional Source License, Version 1.1, ALv2 Future License
+(FSL-1.1-ALv2). The full license text is in the LICENSE file at the repository
+root.
+
+FSL permits any use except a Competing Use — self-hosting, internal commercial
+use, forking, non-commercial teaching and research, and use in professional
+services you provide are all explicitly permitted. Offering this software to
+others as a competing commercial product or service is not.
+
+Two years after a version is made available, that version is additionally
+available under the Apache License, Version 2.0.
+
+See LICENSING.md at the repository root for the per-module map and the reasoning.

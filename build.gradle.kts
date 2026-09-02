@@ -131,9 +131,12 @@ tasks.register("cleanDevServices") {
 /**
  * The three CI test tiers, split by what a module's tests OWN.
  *
- * `fastTestModules` run on a bare JVM. The three deployables in `serviceTestModules` boot Postgres
- * and Kafka through Quarkus Dev Services and are the slow half of the suite, so CI runs them as their
- * own job rather than making a typo fix wait behind them.
+ * `fastTestModules` run on a bare JVM. `serviceTestModules` is defined by what its tests OWN, not by
+ * what they are: a module belongs here when its tests BOOT the thing they talk to. For the three
+ * deployables that is Postgres and Kafka through Quarkus Dev Services; for `spire-runtime-docker` it
+ * is the containers it creates on a real daemon, whose behaviour — whether a read-only bind is
+ * actually read-only — is precisely what a fake would get wrong. Either way they need Docker and are
+ * the slow half of the suite, so CI runs them as their own job rather than making a typo fix wait.
  *
  * `e2eTestModules` is not simply "even slower". A service test BOOTS what it talks to, so it is
  * hermetic and belongs on the PR path; an e2e test is HANDED a running stack and a containerised
@@ -147,6 +150,10 @@ tasks.register("cleanDevServices") {
  */
 val fastTestModules = listOf(
     "spire-contract",
+    // Its tests boot nothing: the git library is exercised against a temporary on-disk repository,
+    // which is a bare JVM by the rule this list states. It was in the service tier by proximity to
+    // the run unit it ships inside, which is not the criterion.
+    "spire-publisher",
     "spire-arch",
     "spire-encryption",
     "spire-diff",
@@ -160,9 +167,15 @@ val fastTestModules = listOf(
     "spire-context-github",
     "spire-context-gitlab",
     "spire-context-code",
+    "spire-harness",
+    "spire-harness-codex",
+    "spire-workspace",
+    "spire-runtime",
 )
 
 val serviceTestModules = listOf(
+    "spire-runtime-docker",
+    "spire-run-worker",
     "spire-gateway",
     "spire-orchestrator",
     "spire-review-worker",

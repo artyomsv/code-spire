@@ -35,6 +35,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
+| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
@@ -1390,6 +1391,51 @@ The design is fully specified in `docs/` — **treat those files as the source o
   Measured, not estimated: **1782 Java tests across 225 suites** (`testFast` + `testServices`; the
   nightly `testE2e` tier is separate); **457 `spire-ui` vitest tests across 59 files**;
   `tsc --noEmit` silent.
+- **Software factory M0 — the walking skeleton — delivered (ADR-029..ADR-039, 2026-09-02, PR #95):**
+  `POST /api/runs` → `cs.run-commands` → `spire-run-worker` → a three-container run unit on Docker
+  (init clones with the read credential, the agent runs the harness with the model key and no git
+  token, the publisher holds the write token and never the workspace) → bundles on `/handoff` →
+  the push gate → a branch on the real remote authored by the machine account; a run touching a
+  CI file is refused at the gate and raises `RUN_PUSH_GATE_REFUSED`. Seven new modules
+  (`spire-harness`, `spire-harness-codex`, `spire-workspace`, `spire-runtime`,
+  `spire-runtime-docker` Apache; `spire-publisher`, `spire-run-worker` FSL), migrations V42–V45
+  (`llm_charge` neutral subject, `factory_run`, `scm_provider.role`, the attention acknowledgement),
+  the FACTORY/REVIEWER split on every provider lookup, both credentials Tink-wrapped on the bus
+  with AAD bound to run and slot, the neutrality scan widened to harness and runtime names, and
+  the two images (`deploy/agent/codex`, `spire-publisher/Dockerfile`). **Both exit criteria are
+  proven by `M0WalkingSkeletonTest`** against real containers — the publisher image built from
+  this repository, the reference agent entrypoint with a shell script standing in for the model,
+  and a self-built smart-HTTP git origin — and by runbook **Mode Q** against a real forge with
+  Codex. `docs/factory/ROADMAP.md` records what the build taught that the design had wrong; the
+  three most expensive to rediscover: the runtime never fed the prompt on stdin (Codex declares
+  stdin delivery and would have started on an empty prompt — a script-harness test can never
+  notice, so the entrypoint hands `SPIRE_PROMPT` over from a file outside the tree), the publisher
+  was SIGTERMed the instant the agent exited (`docker stop`'s grace period read as a drain window,
+  so every runtime-driven run reported nothing while the hand-driven unit pushed — exit code 143 on
+  the preserved unit was the tell), and a 12-argument convenience constructor stored every FACTORY
+  registration made through REST as REVIEWER, which handed the review pipeline the push token and
+  made the endpoint answer 409 forever. Each task was four-lens reviewed and mutation-verified;
+  the round-1 findings not closed in-round are filed under `techdebt/spire-run-worker/`,
+  `techdebt/spire-publisher/` and `techdebt/spire-orchestrator/` (watchdog, cancel, refusal
+  stopping the agent, run charges — the M1 items by the plan). A second four-lens round over the
+  fix batch found the round's own regressions — a `PUT` without a `role` demoted a FACTORY provider
+  back to reviewer (the dashboard's edit form sends none), the wall-clock path SIGKILLed the
+  publisher one line before the drain window the first round had just given it, and a
+  `DISPATCH_FAILED` row could never be corrected by the real result — all closed with
+  discriminating tests, and the review-state file `.claude/reviews/global/software-factory.md`
+  records every finding's disposition. A forced third round, under the HIGH-or-concrete-bug rule,
+  found the reader "cancel" after a throwing salvage did not cancel — `CompletableFuture.cancel`
+  documents its flag as having no effect, so each reader kept blocking on a preserved container's
+  follow stream, a virtual thread and a daemon connection each, until process exit (now
+  `ExecutorService` futures whose `cancel(true)` interrupts, and a runtime that closes the log
+  callback on interrupt); a never-acknowledged dispatch re-armed with the RETRY's parameters while
+  the first command may be the one running (identical request only, a differing retry is a 409);
+  and the ack budget missing the publisher drain the previous commit had raised 30s → 300s. All
+  closed in-round. Measured, not estimated: **2069 Java tests across 257
+  suites** (`testFast` 857/100 + `testServices` — gateway 73/11, orchestrator 818/105,
+  review-worker 226/27, run-worker 80/12 incl. the M0 walking skeleton, runtime-docker 15/2);
+  `spire-ui` untouched. The two images are not on GHCR and `spire-run-worker` is not in
+  `deploy/` yet — packaging follows M1, and the runbook builds both locally.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
@@ -1407,14 +1453,28 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 ./gradlew :spire-orchestrator:quarkusDev  # dashboard at http://localhost:34080
 ./gradlew :spire-gateway:quarkusDev       # webhook edge :34081
 ./gradlew :spire-review-worker:quarkusDev # worker :34082
+./gradlew :spire-run-worker:quarkusDev    # factory run worker :34083 (drives the local Docker daemon)
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
+
+**The factory's two images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q):
+
+```bash
+docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
+./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
+```
+
+`M0WalkingSkeletonTest` (`spire-run-worker`, `testServices`) builds the publisher image itself, plus
+a test agent image and a smart-HTTP git origin, so it needs Docker and nothing else; leftover units
+from a crashed run are `docker ps -a --filter label=dev.codespire.runId`.
 
 **Fast local verification** — the same two tiers CI runs, so this is the pre-commit loop:
 
 ```bash
-./gradlew testFast                        # 13 Docker-free modules, ~25s
-./gradlew testServices                    # the 3 deployables (Dev Services: Postgres + Kafka)
+./gradlew testFast                        # 19 Docker-free modules, ~1 min
+./gradlew testServices                    # 5 service modules: the 4 deployables on Dev Services (Postgres +
+                                          # Kafka) plus spire-runtime-docker; it and spire-run-worker
+                                          # also drive a real Docker daemon
 ```
 
 **The packaged stack** (`deploy/`, host ports 347xx — distinct from dev's 34xxx and 392xx):

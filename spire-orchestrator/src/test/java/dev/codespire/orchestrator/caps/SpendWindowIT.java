@@ -93,7 +93,7 @@ class SpendWindowIT {
         assertTrue(withCharges > baseline, "the fixture must record real spend or this proves nothing");
 
         // What the future purge stamps, in the transaction that deletes the review row.
-        update("UPDATE llm_charge SET archived_at = now() WHERE review_id = ?",
+        update("UPDATE llm_charge SET archived_at = now() WHERE subject_id = ?",
                 ReviewFixtures.reviewIdFor(pr));
 
         assertEquals(withCharges, lastHour().spentMillicents(),
@@ -127,7 +127,7 @@ class SpendWindowIT {
         assertTrue(lastHour().spentMillicents() > before.spentMillicents(),
                 "the fixture must land inside the window first, or ageing it out proves nothing");
 
-        update("UPDATE llm_charge SET priced_at = now() - interval '2 days' WHERE review_id = ?",
+        update("UPDATE llm_charge SET priced_at = now() - interval '2 days' WHERE subject_id = ?",
                 ReviewFixtures.reviewIdFor(pr));
 
         SpendWindow.Usage after = lastHour();
@@ -242,7 +242,7 @@ class SpendWindowIT {
 
     /** Every charge line of one review moved to one exact instant — the window anchor. */
     private void backdateChargesTo(String reviewId, Instant priced) {
-        String sql = "UPDATE llm_charge SET priced_at = ? WHERE review_id = ?";
+        String sql = "UPDATE llm_charge SET priced_at = ? WHERE subject_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setTimestamp(1, java.sql.Timestamp.from(priced));
             ps.setString(2, reviewId);

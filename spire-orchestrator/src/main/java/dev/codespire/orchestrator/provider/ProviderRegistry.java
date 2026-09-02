@@ -74,8 +74,9 @@ public class ProviderRegistry {
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind,
-                            auth_username, auth_secret, bot_account_id, bot_username, conversation_level, enabled)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            auth_username, auth_secret, bot_account_id, bot_username, conversation_level, enabled,
+                            role)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """)) {
                 ps.setObject(1, id);
                 ps.setString(2, in.name());
@@ -89,6 +90,7 @@ public class ProviderRegistry {
                 ps.setString(10, blankToNull(in.botUsername()));
                 ps.setString(11, blankToNull(in.conversationLevel()));
                 ps.setBoolean(12, in.enabled() == null || in.enabled());
+                ps.setString(13, ProviderRole.of(in.role()).name());
                 ps.executeUpdate();
             }
             replaceAuthors(c, id, in.authors());
@@ -109,7 +111,8 @@ public class ProviderRegistry {
             // update leaves the stored login intact (mirrors the rotateSecret conditional).
             boolean updateBotUsername = in.botUsername() != null && !in.botUsername().isBlank();
             String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, workspace=?, auth_kind=?, "
-                    + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, updated_at=now()"
+                    + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, "
+                    + "role=COALESCE(?, role), updated_at=now()"
                     + (rotateSecret ? ", auth_secret=?" : "")
                     + (updateBotUsername ? ", bot_username=?" : "")
                     + " WHERE id=?";
@@ -123,7 +126,11 @@ public class ProviderRegistry {
                 ps.setString(7, in.botAccountId() == null ? "" : in.botAccountId());
                 ps.setString(8, blankToNull(in.conversationLevel()));
                 ps.setBoolean(9, in.enabled() == null || in.enabled());
-                int idx = 10;
+                // An absent role keeps the stored one (COALESCE above). The dashboard's edit form
+                // sends none, so writing ProviderRole.of(null) here turned every Settings edit of a
+                // FACTORY registration into a REVIEWER — the round-1 critical, back through the UI.
+                ps.setString(10, in.role() == null || in.role().isBlank() ? null : ProviderRole.of(in.role()).name());
+                int idx = 11;
                 if (rotateSecret) {
                     ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));
                 }
@@ -175,18 +182,32 @@ public class ProviderRegistry {
 
     // ---- resolution (internal — carries the decrypted secret) --------------
 
-    /** The enabled provider for a (type, workspace), with its secret decrypted. */
+    /** The enabled REVIEWER provider for a (type, workspace), with its secret decrypted. */
     public Optional<ScmProvider> resolve(String type, String workspace) {
+        return resolve(type, workspace, ProviderRole.REVIEWER);
+    }
+
+    /**
+     * The enabled provider for a (type, workspace, role), with its secret decrypted.
+     *
+     * <p>The role is part of the key, not a filter that is nice to have. Since V44 one workspace may
+     * hold a REVIEWER row and a FACTORY row, and an unfiltered {@code SELECT *} returns whichever
+     * the planner yields first — which could hand the review path the factory's push token. That
+     * is the identity confusion ADR-038 exists to prevent, arriving through a query that used to
+     * be unambiguous.
+     */
+    public Optional<ScmProvider> resolve(String type, String workspace, ProviderRole role) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM scm_provider WHERE type = ? AND workspace = ? AND enabled = TRUE")) {
+                     "SELECT * FROM scm_provider WHERE type = ? AND workspace = ? AND role = ? AND enabled = TRUE")) {
             ps.setString(1, type);
             ps.setString(2, workspace);
+            ps.setString(3, role.name());
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(decryptedProvider(c, rs)) : Optional.empty();
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to resolve provider for " + type + "/" + workspace, e);
+            throw new IllegalStateException("Failed to resolve " + role + " provider for " + type + "/" + workspace, e);
         }
     }
 
@@ -200,7 +221,8 @@ public class ProviderRegistry {
     public Optional<ScmProvider> resolveByWorkspace(String workspace) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM scm_provider WHERE workspace = ? AND enabled = TRUE ORDER BY created_at")) {
+                     "SELECT * FROM scm_provider WHERE workspace = ? AND role = 'REVIEWER' AND enabled = TRUE"
+                             + " ORDER BY created_at")) {
             ps.setString(1, workspace);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -275,7 +297,8 @@ public class ProviderRegistry {
                 rs.getTimestamp("last_check_at") == null
                         ? null : rs.getTimestamp("last_check_at").toInstant(),
                 rs.getObject("last_check_ok", Boolean.class),
-                rs.getString("last_check_error"));
+                rs.getString("last_check_error"),
+                rs.getString("role"));
     }
 
     private List<String> authorsOf(Connection c, UUID id) throws SQLException {

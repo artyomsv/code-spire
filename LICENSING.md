@@ -26,10 +26,17 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-context-gitlab` | Apache-2.0 | Same. |
 | `spire-context-code` | Apache-2.0 | Repository code context provider (ADR-026). |
 | `spire-llm` | Apache-2.0 | Reference LLM provider. |
+| `spire-harness` | Apache-2.0 | The agent-execution SPI. Every harness arm compiles against it (ADR-030). |
+| `spire-harness-codex` | Apache-2.0 | Reference harness arm — the worked example a second arm copies. |
+| `spire-workspace` | Apache-2.0 | The publisher's git library: bare clone, bundle fetch, diff, gated push. |
+| `spire-runtime` | Apache-2.0 | The run-placement SPI. Every runtime arm implements it (ADR-039). |
+| `spire-runtime-docker` | Apache-2.0 | Reference runtime arm — the three-container unit on a Docker daemon. |
 | `spire-arch` | Apache-2.0 | Build-time architecture check (ADR-020). Tooling, not product. |
 | **`spire-gateway`** | **FSL-1.1-ALv2** | Deployable service. |
 | **`spire-orchestrator`** | **FSL-1.1-ALv2** | Deployable service — the deciders, sagas, event store and dashboard. This is the product. |
 | **`spire-review-worker`** | **FSL-1.1-ALv2** | Deployable service. |
+| **`spire-publisher`** | **FSL-1.1-ALv2** | Deployable: the sidecar that gates and pushes. The only part of a run unit holding a write credential. |
+| **`spire-run-worker`** | **FSL-1.1-ALv2** | Deployable service: dispatches run units and reports results. |
 | **`spire-ui`** | **FSL-1.1-ALv2** | The dashboard front end. |
 | **`spire-e2e`** | **FSL-1.1-ALv2** | Tests only, and they drive the deployables end to end. It ships no reusable surface a plugin author could build against, so the permissive case does not apply. |
 

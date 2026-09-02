@@ -8,6 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DlqTopicsTest {
 
     @Test
+    void aRunRecordReplaysOntoTheFactorysOwnTopics() {
+        // Falling through to cs.commands republished a token-bearing record onto a topic whose
+        // consumer cannot read it — the run was never recovered and the credential was copied.
+        assertEquals("cs.run-commands", DlqTopics.forType("ExecuteRun"));
+        assertEquals("cs.run-commands", DlqTopics.forType("CancelRun"));
+        assertEquals("cs.run-results", DlqTopics.forType("RunStarted"));
+        assertEquals("cs.run-results", DlqTopics.forType("RunFinished"));
+        assertEquals("cs.run-results", DlqTopics.forType("RunFailed"));
+    }
+
+    @Test
     void actionCommandTypeMapsToCommandsTopic() {
         assertEquals("cs.commands", DlqTopics.forType("AnswerFollowUp"));
     }

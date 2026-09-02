@@ -4,6 +4,657 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-039 — The run environment clones itself, checkpoints continuously, and the gate runs in a clean clone
+
+**Context.** The first draft had the run worker clone a repository into its own filesystem and
+bind-mount it into the agent container. Two separate lines of evidence killed that design on the same
+day.
+
+*A measured spike.* Codex was run for real inside a container: it authenticates, answers, edits files
+and commits, verified by inspecting the repository rather than trusting the agent's report. But its
+own sandbox does **not** work there — Codex ships **bubblewrap**, and Docker's default seccomp profile
+refuses the user namespace it needs. An earlier probe had measured **Landlock** and concluded the
+opposite; that probe tested a primitive Codex does not use as its boundary. Worse, Codex does **not
+fail at startup** when its sandbox cannot initialize, so the failure is invisible until a command
+runs. Full evidence in `docs/factory/RUN-TOPOLOGY.md` §1.
+
+*An operator objection that was sharper than the design.* A bind-mounted workspace makes the worker
+**stateful**: only the replica that started a run can finish it, a node reschedule mid-run destroys
+the work, and Kubernetes would need RWX shared storage. The orphan watchdog ADR-029 specifies
+**cannot salvage a run whose workspace lived on a dead node** — the design contained a recovery
+mechanism its own storage model defeated.
+
+**Decision — four parts.**
+
+**1. The container is the only sandbox.** Keep Docker's default seccomp profile; run Codex with
+`--sandbox danger-full-access`. Enabling the inner sandbox costs the outer one, which is a bad trade
+when the container already confines writes by mounting only the workspace. Leaving `workspace-write`
+set where bubblewrap cannot run is the worst option of the three, because the operator would believe
+in two boundaries, have one, and learn otherwise only when a command executed. `danger-full-access`
+means *Codex adds no boundary of its own*, not *there is no boundary* — so the container must be
+genuinely restrictive: non-root, only the workspace writable, no Docker socket, dropped capabilities.
+
+**2. The run environment clones itself and is destroyed.** No shared storage, no workspace on any
+worker's disk. An init container clones the branch, the agent works, the pod ends. The worker becomes
+stateless and **any replica can observe or salvage any run**, because run state lives in the pod until
+it is pushed, and after that on the forge.
+
+**3. The branch on the forge is the durable checkpoint, written continuously.** The agent commits as
+it works — instructed by the prompt, backstopped by an autosave loop in the container that holds no
+token — and every commit is gated and pushed within seconds. A single handoff at the end would mean a
+pod lost at hour three loses everything, which is exactly the second most common failure in the field
+data this design learned from. Continuous pushing also makes the gate **fail-fast**: the first commit
+touching a protected path trips it at minute four rather than minute 180. A gate trip terminates the
+run; the branch keeps the safe prefix.
+
+**4. The gate runs in a clean clone, and that — not the location of the push — is the control.**
+An earlier draft argued at length about which process should push. That argument was wrong. What
+protects the repository is the **gate**: diff the branch against its base, refuse if a changed path is
+protected. It works wherever the push happens. Location matters for exactly one thing, and the
+relevant unit is the **directory**, not the pod:
+
+> Never run git-with-a-token inside a directory the agent could write to.
+
+Git **executes scripts it finds inside a repository** — `.git/hooks/*`, and config keys such as
+`core.fsmonitor`, `diff.external`, `filter.*.clean`, `uploadpack.packObjectsHook`. Anything running
+git with a credential in the agent's directory can be made to run the agent's code. Defending that by
+enumerating dangerous keys is a blocklist, and git has been extending that list for a decade.
+
+So the agent hands work over as a **git bundle** — objects and refs, carrying no config and no hooks —
+and the publisher fetches it into its **own** clone, diffs, and pushes. It never mounts the agent's
+workspace and never checks out a working tree, so agent-controlled data never becomes files on the
+publisher's disk. The escape is not mitigated; it is structurally unavailable.
+
+**Why a git hook cannot be the guard**, since it is the obvious first idea: the agent can delete or
+neuter it (it is a file in the directory the agent writes to), `git push --no-verify` skips it, hooks
+are not cloned so something must install one into the untrusted directory, and a client-side hook
+asks the pusher to check itself. Forge-enforced push rules — GitHub push rulesets, GitLab push rules,
+self-hosted `pre-receive` — are the legitimate server-side version and the right **second** layer,
+but they are the customer's repository settings, differ per forge and are sometimes paywalled, so
+they cannot be the primary control.
+
+**Everything leaves the pod as a log stream.** Run events from the agent's stdout, the push outcome
+from the publisher's stdout. No `exec`, no file extraction, no shared storage between pod and worker —
+which is what keeps the worker stateless in the first place.
+
+**Two credentials, never the same secret in both containers:** a **read-only** clone token in the
+init container, and the **write** machine-account token (ADR-038) in the publisher. The residual risk
+is stated rather than hidden — a write credential lives in the run pod — and it is accepted because
+the realistic path to it, through git, is closed by part 4.
+
+**Consequences.** `spire-workspace` runs inside the publisher image rather than in the worker, and a
+small `spire-publisher` deployable joins the module map. `spire-run-worker` loses all git handling and
+becomes a dispatcher and log reader. The Docker arm must create a multi-container unit sharing a
+volume; the Kubernetes arm needs **≥ 1.29** for native sidecar termination, or an explicit sentinel
+file below that. Bundle size must be capped — an agent can write an object bomb, and an unbounded read
+is a denial-of-service on the publisher.
+
+**One question deliberately left open:** whether Codex reports token usage incrementally or only in
+its final summary. If only at the end, a killed run's spend is never recorded — real money spent, and
+the ledger blind to it, which is the shape ADR-023 exists to prevent. It must be settled before M1
+records charges.
+
+---
+
+## ADR-038 — The factory pushes as a dedicated machine account, and "factory-authored" is an attribute rather than an inference
+
+**Context.** An adversarial review of the factory design found that the reviewer would **silently skip
+the factory's own pull requests**. The only SCM credential a deployment holds is the provider registry
+token, whose resolved identity is the review bot; `IntegrationSaga` gates pull-request events on the
+per-provider author allowlist — *"unlisted authors never get touched"* — so on any deployment with a
+non-empty allowlist, which is the configuration the factory's own threat model encourages, every
+factory pull request is skipped with a timeline note. M2's whole premise is that the reviewer reviews
+what the factory built.
+
+The obvious repair is worse than the defect. Allowlisting the review bot grants it allowed-author
+authority **everywhere the allowlist is consulted** — pull-request events, `/review`, `/finding`, the
+new `/fix`, the archived-notice trigger, and under ADR-033 the future labeller check. The bot could
+then command itself. That is the widening ADR-036 forbids, and this project already carries a
+self-loop guard because the class is real.
+
+**Decision.** The factory pushes and opens pull requests as a **dedicated machine account**,
+registered separately from the review bot, with its own credential in the same encrypted registry.
+
+Consequences that make this the cheap option rather than the expensive one:
+
+- The machine account can be allowlisted as an author **without** the review bot gaining any
+  authority. Two identities, two authority sets, no special case in the allowlist logic.
+- `FR-F22` human takeover becomes a robust identity check. "A person pushed to this branch" is
+  decidable when "not the machine account, not the bot" is a fact rather than an inference from
+  recorded commit SHAs.
+- On GitHub App deployments this is close to free: an installation token already authors as its own
+  bot identity, so the second identity may cost no second account.
+- On Bitbucket and GitLab it costs the operator one additional account and token. That is real
+  friction and is documented as a prerequisite rather than discovered at first run.
+
+**`factory_run` records the identity it pushed as, and the review row records that its pull request is
+factory-authored.** Neither is inferred from an account name. An account can be renamed, reassigned or
+shared; an attribute written at the moment of authorship cannot drift. This is the same reasoning that
+made `pr_state` its own column rather than a value in `status`, and that made `origin` a field on a
+conversation-derived finding rather than something reconstructed later.
+
+**This does not weaken the one-bot-per-workspace story.** ADR-001's claim is that one bot reviews every
+pull request without per-seat licensing, and that is unchanged. The machine account writes; the bot
+reviews. They are different jobs and it is correct that they are different identities — a reviewer that
+can author the code it reviews has no independence to lose.
+
+---
+
+## ADR-037 — The push is gated; CI configuration is a floor no profile can lower
+
+**Context.** An adversarial review found that the factory's guaranteed output defeats its own security
+model. The design states that a run's guaranteed artefact is a pushed workspace branch and that the
+sandbox is the boundary, with network deny by default. But on every forge this project supports, a
+branch push triggers the repository's CI **using the workflow files on the branch being pushed**, on an
+unsandboxed runner, with the repository's secrets.
+
+The attack is short. The agent's prompt contains untrusted tracker text — the design says so itself,
+which is why `command()` returns argv rather than a shell string. An injected agent commits a modified
+`.github/workflows/*`. Salvage pushes it unconditionally, before any review, because `FR-F7` guarantees
+push. CI executes it. Every sandbox control in the design is bypassed by the kernel's own guaranteed
+output.
+
+The design's only defence was `.github/**` appearing in a `protectedPaths` **example**, with no
+statement of where protected paths are enforced and a requirement stating the push is unconditional. A
+guard that exists in an example and not in a mechanism is not a guard.
+
+**Decision.** The push is gated. Between commit and push, the run plane diffs the branch against its
+base and refuses the push when the change touches a protected path. A refused push is a **classified
+failure that preserves the workspace** — not a silent skip, not a teardown — and raises an attention
+row naming the paths.
+
+**CI configuration is a floor, not a profile setting.** `.github/workflows/**`, `.gitlab-ci.yml`,
+`.gitlab/**`, `bitbucket-pipelines.yml`, `Jenkinsfile`, `.circleci/**` and their peers are protected on
+every profile, and **no profile may unprotect them**. An operator who genuinely wants agent-authored CI
+changes turns that on deliberately, per repository, outside the profile mechanism, having read what it
+means.
+
+This mirrors the never-suppressed severity floor already in ADR-027: a learned preference may hide many
+kinds of finding and may never hide a SECURITY one, because the evidence qualifying a group is itself
+manufacturable. The reasoning is identical here — the input that would authorise the change is the
+input under suspicion.
+
+**`FR-F4`'s guarantee gains its caveat.** "The guaranteed output is a pushed branch" becomes "…unless
+the branch fails the push gate." An unqualified guarantee *is* the vulnerability, because it is the
+sentence that made the push unconditional.
+
+**Salvage failure blocks teardown.** The same review found `FR-F7` ordering finalize before destroy
+without ever saying what happens when finalize itself fails — an expired token, branch protection, or
+the forge's own push-protection rejecting a committed secret. As written, destroy proceeded and the
+work was lost, which is precisely the outcome `FR-F7` exists to prevent. A failed salvage preserves the
+workspace, classifies the failure, and raises an attention row; the workspace is reclaimed by an
+operator action or by expiry, never by the failure path itself.
+
+**Cost, stated honestly.** A gated push means a run can do correct work and still deliver nothing, and
+an operator will occasionally see a refusal they consider wrong. That is the right trade: the
+alternative is a mechanism whose failure mode is arbitrary code execution on a runner holding
+production secrets.
+
+---
+
+## ADR-036 — Repository-supplied configuration may narrow behaviour, never redirect compute or widen authority
+
+**Context.** Three defences already in this codebase turn out to be the same rule, discovered
+separately each time. `.codespire` is read from the pull request's **target branch, never the
+reviewed commit**, because the head is written by the change under review and rules taken from it
+would let a pull request rewrite the reviewer's instructions in the same pull request. Codex CLI —
+found during the factory research — ignores `model_provider` and `model_providers` set in a
+repository's own config file, in its own documentation's words *"to prevent repositories from
+secretly changing the machine's model provider."* And the factory adds two more instances: a
+repository-named agent image would decide where the operator's credentials are injected, and an
+autonomy label applied by anyone with tracker write would decide what the factory may merge.
+
+Rediscovering the same rule a fourth time by being bitten is the outcome this record exists to
+prevent.
+
+**Decision.** State it once, cite it thereafter:
+
+> Repository-supplied configuration may **narrow** behaviour. It may never redirect where compute or
+> credentials go, and it may never widen authority.
+
+Concretely, for every setting a repository can influence: a repository may make the reviewer
+stricter, exclude a path, lower an autonomy profile, or add text into an already-fenced untrusted
+slot. A repository may never select the model endpoint, the container image, the credential, the
+runtime, or a profile above the operator's ceiling. Where a repository-facing selection is genuinely
+useful — an image for its own toolchain, a profile for its own risk appetite — it selects **from an
+operator-defined allowlist**, never by free text.
+
+**Why the fencing defence does not cover this.** Prompt fencing works on untrusted *data*: a ticket
+body, a review comment, a rules file. It quotes the input and tells the model not to obey it. None of
+that helps for untrusted *control*, because control is not quoted into a prompt — it is read by code
+and obeyed. A label naming an autonomy profile is not text the model might be tricked by; it is a
+switch. The only defence is a ceiling and an allowlist.
+
+**Consequence.** Every new repository-readable setting is checked against this record before it
+ships, and the check is named in its design. It also explains, retroactively, why the target-branch
+rule for `.codespire` could not be solved by better fencing: the defence had to live in *where the
+rules were read from*, not in *how they were quoted*.
+
+---
+
+## ADR-035 — The platform divides into capability packs; entitlement is one gate and every charge names its capability
+
+**Context.** The factory makes Code Spire large enough that a customer may reasonably want part of
+it. Today's module structure splits by *technical seam* — contract, diff, llm, scm-\*, context-\* —
+and carries the ADR-021 licence split. That axis does not answer "what did this customer buy",
+because one purchasable capability spans several modules, a worker, several UI screens and several
+read-model tables.
+
+**Decision.** Two orthogonal axes, both holding at once. Code modules keep splitting by seam and
+keep carrying the licence. **Product modules** ("capability packs") split by capability: **Core**
+(chassis, not sold alone), **Review**, **Knowledge**, **Build**, **Autonomy**, **Insight**. The
+boundaries and their reasoning are in `docs/factory/PACKAGING.md`.
+
+**Build and Autonomy are separate on purpose.** Build is *"I ask, it builds"*; Autonomy is *"it
+decides when to work"*. That is a genuine value line, and the second half is the one with the blast
+radius, so gating it separately is a safety control that happens also to be a price line.
+
+**Knowledge and Build share connectors and stay separate**, because the difference is rights rather
+than transport: a context provider reads an issue, a work source also claims, comments and
+transitions it. Authority narrows per pack, enforced at the adapter.
+
+**Two enforcement mechanisms, deliberately not conflated.** A review caught the first draft calling
+both of these "one gate", which is a contradiction rather than a summary.
+
+*The entitlement gate* is read at exactly one place — in the saga, beside `SpendGate` and the
+priceability check — so that every reason a dispatch was refused reads in one place. It answers "may
+this deployment do this at all". A blocked capability produces a first-class refusal
+(`entitlement_missing`) with its own status, timeline detail, operator note and attention row,
+reaching the UI's status union in the same change. Not a crash, not a silent skip.
+
+*Credential rights* are enforced per adapter. A Knowledge-tier tracker credential can read an issue
+and cannot transition it, because the adapter it is handed does not implement transition — not because
+a check declined. That is a capability boundary, not a policy check, and it must stay separate: a
+policy check can be bypassed by reaching the code beneath it, and an absent method cannot.
+
+The gateway is a third surface and is honest about it: it accepts tracker webhooks regardless of pack,
+because refusing at ingress would make an entitlement change look like a broken integration. The
+refusal happens at dispatch, where it can be explained.
+
+Scattering the check as `if (hasBuild)` across handlers is refused explicitly. This codebase has
+twice paid to learn why one comparison must have one home: `SpendGate` exists so a money comparison
+cannot drift between the enforcement site and the attention row, and `ProviderCircuits` exists so
+health is decided once per host rather than per call site.
+
+**`llm_charge` gains `capability` and `credential_ref`, now.** Per-module pricing asks exactly one
+question — what did this capability cost this deployment this month — and it is unanswerable without
+the column. It is **impossible to backfill**: a charge row that did not record its capability cannot
+have one inferred later. This is the same lesson as `review_finding` shipping with no backfill, and
+the same failure shape as ADR-023's four places where *unknown* silently became *zero*. An unmetered
+run still records its capability and its credential, because money is null for it and call counts are
+not.
+
+**Placement.** `Entitlements` is a value type in `spire-contract`, because commands carry it across
+the wire. **Enforcement lives in the FSL services**, because no Apache-2.0 module may depend on a
+service module — the same constraint that kept the LLM circuit breaker out of `spire-llm`. Licence
+and entitlement answer different questions and neither substitutes for the other: FSL stops a
+competitor reselling the services; entitlement decides what the operator's own deployment switched
+on.
+
+---
+
+## ADR-034 — Run events are a second tier; the aggregate's log stays milestone-only
+
+**Context.** One agent run in the observed prior art emitted **858 events** — reasoning, tool calls,
+tool results, state transitions. A review, by comparison, produces a handful of domain events. ADR-010
+makes the aggregate the single writer of domain events and ADR-011 encrypts payloads that may quote
+source. Writing an agent's tool-call trace into that log would multiply event-store volume by three
+orders of magnitude, encrypt every line of it, and make replay useless.
+
+**Decision.** Two tiers, with different transports, stores, retention and guarantees.
+
+The **run stream** — reasoning, `tool_use`, `tool_result`, output, state — rides a new topic
+`cs.run-events` into a bounded `run_event` table with a short TTL. It exists for the live tail, for
+debugging, and for a transcript an operator can read. It is not replayable and nothing derives state
+from it.
+
+The **domain tier** is unchanged: `RunStarted`, `RunFinished`, `BranchPushed`, `GateOpened`,
+`GateResolved`, `WorkItemCompleted` and their siblings ride `cs.events` into the event store, durable
+and replayable. Only milestones are promoted.
+
+**Why the normalized run-event types live in `spire-harness` rather than `spire-contract`.** Most run
+events never reach the domain log. Putting the high-volume vocabulary into the contract module would
+imply a durability guarantee the tier does not have, and would invite a later change to persist it
+"since it is already in the contract".
+
+**Consequence.** `run_event` payloads are Tink-encrypted, because a tool result quotes the
+repository — the ADR-011 boundary applies unchanged. The TTL is an operator setting, and a run's
+transcript is therefore explicitly ephemeral. An operator who needs a permanent transcript exports it
+before expiry; the alternative — permanent retention by default — is a storage bill and a data
+exposure nobody asked for.
+
+---
+
+## ADR-033 — Autonomy is a property of the work item, selected by label, bounded by an operator ceiling
+
+**Context.** A single deployment-wide autonomy setting is wrong in both directions: it makes a typo
+fix wait for a human, or it lets a change to an authentication path merge without one. The prior art
+splits on this — one system gates per campaign, another triggers per label — and neither binds the
+two together.
+
+**Decision.** Autonomy is a property of the **work item**. An operator defines named **profiles**;
+each profile is a **vector**, assigning every phase (`intake`, `spec`, `plan`, `build`, `verify`,
+`review`, `deliver`, `land`) a mode of `auto`, `approve` or `off`, plus caps for runs, steps, wall
+clock, spend, call count and protected paths. A work item selects a profile by tracker label.
+
+Three rules make a label safe to obey.
+
+**The ceiling is operator-owned and does not live in the repository.** Profiles, the ceiling and the
+label mapping live in the registry. This follows the distinction this project already drew for
+prompts: a per-repository prompt is an operator-owned change to the reviewer's *instructions*, while
+`.codespire` is contributor-owned *data* that can only add text into a fenced slot. Autonomy is
+instructions with authority attached, so it sits on the operator side.
+
+**A label may only lower.** A label naming a profile above the ceiling is clamped to the ceiling, and
+the clamp is recorded as a timeline entry and an attention row. Visibly, always; never silently, and
+never upward.
+
+**The labeller must be allowed, and an unattributable label selects nothing.** Anyone with tracker
+write can apply a label, so the label is an authorization decision made outside this system's trust
+boundary. Without this rule, a drive-by contributor opens an issue, labels it for full autonomy, and
+the factory writes and merges their code using the operator's credentials.
+
+Two corrections a review forced, both of which the first draft got wrong:
+
+*The allowlist is per work-source registration, not the SCM author allowlist.* Reusing the SCM
+allowlist was wrong on identity: a Jira labeller has a Jira account id and no SCM provider row at all,
+so the check would compare across identity spaces. This project has already been bitten by exactly
+that class — one workspace name registered on two SCMs cross-wired them until `ReviewProviderResolver`
+disambiguated by stored provider type — and reusing SCM identities for tracker actors reintroduces it.
+
+*Attribution must be obtainable, or the rule silently degrades.* A set of label strings carries no
+actor. Only a webhook `labeled` event names a sender; a label discovered by polling — a webhook missed
+during downtime, a backfill, the first scan of an existing backlog — has no actor unless the adapter
+reads the tracker's own audit trail. `WorkSource` therefore exposes label **events with actors**, and a
+label whose applier cannot be attributed **selects no profile at all**. Silently falling back to
+"webhook-observed labels only" would leave the exact attack this rule exists to stop working through
+every label the webhook did not witness.
+
+**Policy is re-resolved at every phase transition, and the profile version is pinned at admission.**
+Reading policy once at intake leaves a work item running for hours under a decision that may no longer
+hold: a lowered ceiling, a removed label, an edited profile, a second conflicting label, or a tracker
+issue transferred to another repository — which changes the identity key the work item is derived from.
+ADR-024 had to enforce retirement at **six** paths precisely because no single choke point saw them
+all; the same is true here, and a registry read per phase is cheap. Where two profile labels are
+present, the **lowest wins**, consistent with "a label may only lower". Editing a profile definition
+does not retroactively change an in-flight item: the item carries the version it was admitted under,
+and moving it is an explicit re-admission.
+
+**Gates are durable state, not blocking calls.** An `approve` phase persists a row that appears in the
+existing attention panel and is answerable from the dashboard, a tracker comment, or a pull-request
+review — three channels, so a human never has to learn a new tool to unblock work. Gates **expire**
+into `WorkItemRefused(gate_expired)`, because a plan awaiting approval for a month is dead work
+holding a budget reservation. A person pushing to the branch or commenting on the pull request sets
+`human_takeover` and suspends automation until an operator resumes: an agent that races a human
+produces conflicting commits and a bot arguing with a maintainer in public.
+
+**Every refusal is a first-class terminal state with its own reason**, in the vocabulary shape ADR-025
+established — and every one of them reaches the UI's status union, label map, pipeline renderer and
+chip filter in the same change. A status the union does not know arrives as runtime JSON and renders
+through the default branch, which is the *success* branch, while `tsc` has nothing to check. That has
+happened twice here; the second time a refused review rendered as five green segments under "done".
+
+---
+
+## ADR-032 — The agent image is a conformance contract, not a base image
+
+**Context.** The obvious design ships `spire-agent-codex` and tells customers to write
+`FROM spire-agent-codex`. A regulated enterprise cannot: it builds from an approved golden base,
+mirrors images into its own registry, scans and signs them, and injects its own CA bundle and proxy
+configuration. Inheriting from a vendor's image is not available to them.
+
+There is also a second dimension that a single image cannot carry. The sandbox needs the
+**repository's own toolchain** — a JDK and Gradle here, a Python environment there — or the agent
+cannot run the repository's tests, and a test it cannot run is back-pressure it does not have.
+
+**Decision.** Publish an **image contract** and a conformance command; ship images as reference
+implementations that satisfy it. An image must place the harness binary on `PATH` under its declared
+name, declare and run as a non-root UID, contain `git` and a POSIX shell, honour `SPIRE_WORKSPACE`,
+write the run event stream to the declared descriptor, honour proxy and CA-bundle variables, exit
+non-zero only on failure, and contain no credential.
+
+**The contract is split into verified and declared clauses, and `verify` prints which is which.** A
+review caught the first draft claiming that `spire agent-image verify <ref>` "boots any image and
+passes or fails it against that contract" when three clauses are not boot-verifiable: writing the
+event stream is *harness* behaviour needing a real invocation and therefore a credential and a paid
+call; "exits non-zero on failure, and only then" is a universal claim a sample cannot establish; and
+"contains no credential" is unfalsifiable by scanning. Left as written, `verify` would pass images
+that violate the contract — converting *unknown* into *verified*, which is the ADR-023 failure shape
+this document set cites everywhere else. Verified clauses are `PATH`, UID, `git` and shell,
+`SPIRE_WORKSPACE`, and the proxy and CA variables, all testable against a stub command; the event
+stream becomes verifiable when a no-network stub-model mode exists, and until then it is declared.
+
+This follows the house rule that a seam is not done until a gate enforces it, and matches how the
+comparable protocols in this space prove an implementation — with a conformance suite, not a grep.
+Honest partial coverage is the point: a suite that reports what it did not check is a gate, and one
+that implies coverage it lacks is worse than none.
+
+**Shipped images are one base with thin per-harness layers**, not four independent images: four
+images means four places to patch a CVE and four entrypoints that drift. This repository already
+carries two tech-debt entries named *duplicated with no drift guard*, and two more of the same class
+(a per-service authorization guard, and the SCM clients' copied redirect loop). Images are
+digest-pinnable, signed and published with an SBOM, because an enterprise mirrors and approves them
+before anything else can happen.
+
+**Harnesses are installed into images, never redistributed.** Claude Code publishes no open-source
+licence; Codex is Apache-2.0 and pi is MIT and could be shipped, but all four are installed the same
+way so that adding a proprietary one later is not a special case. The closest prior art states the
+same rule in the same words.
+
+**Image resolution is `per-run > per-repository > harness default > built-in`, and the
+per-repository level selects from an operator allowlist** — ADR-036. A repository-chosen image
+decides where the operator's credentials are injected; free text there means anyone who can open a
+pull request receives the model key, the git token and the CA bundle on startup.
+
+**Sidecar injection is named and deferred.** Injecting the harness into the customer's own image at
+run time — the pattern major CI runners use — is the better end state and needs a bundled runtime for
+the Node-based harnesses. The contract makes deferring it safe: a customer who needs it today builds
+an image that passes the suite.
+
+---
+
+## ADR-031 — Model credentials belong to the operator; API key is the default and only sanctioned mode, subscription auth is operator-owned
+
+**Context.** A factory spends money on every run, under some vendor's terms. Two questions had to be
+separated, because conflating them is the easiest mistake in this area: the **harness software
+licence** (may we run and ship this program?) and the **model provider terms** (may this credential
+run unattended?). `pi`, `opencode`, OpenHands and Goose have only the first — they are empty
+harnesses pointed at somebody else's API, so there are no terms of their own to check. Codex CLI and
+Claude Code carry both, because each is a vendor's own client for that vendor's own service.
+
+Primary sources, retrieved 2026-09-01 and quoted in full in
+`docs/factory/EXECUTION-LAYER.md` §2:
+
+- **Anthropic Consumer Terms** (effective 2025-10-08) list among prohibited uses: *"Except when you
+  are accessing our Services via an Anthropic API Key or where we otherwise explicitly permit it, to
+  access the Services through automated or non-human means, whether through a bot, script, or
+  otherwise."* Enforced server-side since January 2026.
+- **Anthropic Commercial Terms** (effective 2025-06-17) contain no automation restriction, and §A.1
+  explicitly permits using the Services *"to power products and services Customer makes available to
+  its own customers and end users."* §D.4 forbids building a competing service **or reselling the
+  Services** except as expressly approved.
+- **OpenAI Services Agreement** (effective 2026-01-01) contains no automation clause; the consumer
+  Terms of Use prohibit only *"Automatically or programmatically extracting data or Output."*
+- **OpenAI Codex documentation:** *"Use API key authentication for programmatic Codex CLI workflows,
+  such as CI/CD jobs."*
+- **OpenAI Service Terms:** *"Output generated by code generation features of our Services, including
+  OpenAI Codex, may be subject to third party licenses, including, without limitation, open source
+  licenses."*
+
+No document was found that **affirmatively permits** using a ChatGPT subscription for unattended
+automation. It is not prohibited in writing, and OpenAI's own documentation steers to API keys.
+
+**Decision — three parts.**
+
+**Bring-your-own-key, always.** The operator supplies the credential, it is stored in the existing
+encrypted registry, and the usage bills to the operator's own agreement with the vendor. This is not
+merely a cost preference: Anthropic §D.4 forbids reselling the Services, and any design in which Code
+Spire proxied model access would engage that clause. The provider registry already implements this
+posture; the factory inherits it rather than inventing a second one.
+
+**API key is the default and the only mode sanctioned in writing by both vendors.** It is what the
+`HarnessAdapter` contract assumes, what every arm must support, and the only mode permitted for
+Anthropic-backed harnesses, because Anthropic's Consumer Terms prohibit subscription automation
+outright.
+
+**Subscription auth is a supported, operator-owned mode for harnesses whose vendor does not prohibit
+it** — today that is Codex alone. It is carried because the owner obtained confirmation that this use
+is permitted; that confirmation is the operator's, not this research's, and the design does not
+assert it is sanctioned. What the design asserts is what was found: no OpenAI document affirmatively
+permits it, none prohibits it, and OpenAI's own documentation steers automation to API keys. A
+deployment choosing this mode is choosing a position the written record does not settle.
+
+> **Provenance of the subscription decision.** The operator raised the question with **OpenAI
+> support** and was told the use is permitted; recorded here **2026-09-01**. The support ticket
+> reference and the verbatim wording were not captured at the time, so the operator's own OpenAI
+> support history is the artifact to retrieve if the position is ever challenged. This is a
+> deployment decision resting on a vendor support answer rather than on published terms — which is a
+> normal way to settle a question the terms leave open, and is recorded as such rather than
+> presented as documentation.
+
+**What subscription auth requires the design to carry**, and therefore is not "absent" from the
+contract: an `auth.json`-shaped credential obtained by an interactive operator login and stored in
+the encrypted registry; a refresh path with a named owner, because the token expires and a
+concurrent-run refresh race would otherwise invalidate a member mid-flight; `pricing_mode =
+UNMETERED` charging; and quota headroom as a gate axis. A subscription is a *person's* credential
+being lent to a *service*, and everything above is the cost of that mismatch.
+
+**The mode remains one server-side policy flip from failing everywhere at once.** That is why the
+harness is a registry row (ADR-030) and why every arm must also work on an API key: an operator
+whose subscription mode is revoked changes a credential, not a product.
+
+**Credentials are pooled, not singular.** A subscription has windowed quota and an API key has rate
+limits, so the unit is a pool with per-member state — `available`, `rate_limited(until)`, `rejected`,
+`disabled` — rotating **least-recently-exhausted**, never round-robin, because round-robin burns every
+window together and takes capacity from full to zero with no warning. A rotated retry is the *same*
+logical call and must reuse its charge identity; the ledger already had to distinguish a re-run from
+an auto-retry, and rotation is the second kind. Pool exhaustion is a first-class refusal naming when
+capacity returns, in the shape of `CAP_REACHED`, not a crash and not a retry storm.
+
+**Consequence, foreseen by ADR-025.** A subscription-authenticated run has no per-token price, so it
+charges `pricing_mode = UNMETERED` — an asserted zero, never a coerced one — and the money cap is
+inert for it. ADR-025 wrote this down in advance: *"a money-denominated cap will be inert by design
+on an `UNMETERED` deployment, so the eventual cap needs a token- or call-count axis regardless of
+pricing mode."* The call-count axis becomes the live control, joined by a third: quota headroom.
+
+**Consequence, unforeseen.** OpenAI states in its own terms that generated code may carry third-party
+licences. A factory merges such code at volume, so licence provenance is a real pipeline concern
+(NFR-F10) rather than a footnote.
+
+**Re-check before shipping each arm.** Terms for automated use changed twice during 2026. Every
+finding above carries its retrieval date for exactly that reason.
+
+---
+
+## ADR-030 — Harnesses are driven, not built, and the harness is a runtime registry row
+
+**Context.** The factory needs an agentic tool loop: read, search, edit, run a command, observe,
+repeat, with context management and compaction. Code Spire's `LlmProvider` is a single-shot call and
+is not that. The build-or-drive question had to be answered before anything else, because it decides
+the module structure.
+
+**Decision.** Drive an existing harness behind a `HarnessAdapter` seam. Do not build a tool loop.
+
+**Why.** A survey of open-source harnesses finds the same four tools in all of them — read, search,
+edit, bash — which makes the loop look easy, and the same survey measures **20–30 percentage points
+of benchmark difference on the same model, attributable to harness quality alone.** The difficulty is
+not the loop; it is context management, compaction, tool-result shaping and the thousand small
+decisions that separate a working harness from a demonstration. Building that is a second product.
+
+**The harness is a runtime registry selection, not a build-time dependency.** Anthropic's January 2026
+restriction landed server-side with no warning. A design that welds one harness into the worker is one
+vendor policy change away from a dead product; a registry with several arms survives it. This is the
+same reasoning that made SCM and LLM providers registry rows rather than configuration.
+
+**Order: Codex first, pi second.** Codex is Apache-2.0, has a dedicated non-interactive subcommand
+emitting newline-delimited JSON with an honest exit code, ships OS-level sandbox modes with network
+off by default, reaches any OpenAI-compatible endpoint through `model_providers`, and is the path
+OpenAI's own documentation describes for automation. pi is MIT, provider-agnostic through the existing
+LLM registry, and the only candidate with a bidirectional session mode — which is what makes **steer**
+implementable. Building the second arm is what turns the seam from an assertion into a fact, per the
+existing rule that a capability parity supported only by a grep is not done.
+
+**Two contract rules that are not obvious.** `usage()` returning empty means **UNKNOWN, never zero** —
+ADR-023 exists because four separate places turned unknown into zero, and a harness whose usage shape
+is unrecognised must arrive unpriceable rather than free. And `command()` returns argv, never a shell
+string, because a prompt is untrusted text from a tracker.
+
+**Not adopted: the Unified Harness Protocol.** An Apache-2.0 open standard exists covering the same
+harnesses, with a versioned specification and a conformance suite. It is an HTTP hop and a
+hosted-product-shaped API, where `spire-run-worker` already owns the process directly. `HarnessAdapter`
+is shaped so a `UhpHarnessAdapter` is one more arm, for an operator who already runs one — the same
+posture as a remote-tracker bridge.
+
+---
+
+## ADR-029 — The factory extends the kernel; a run is a workload beside the review, not a second control plane
+
+**Context.** Extending Code Spire from a reviewer into a software factory admits three shapes. Extend
+the existing kernel with one new deployable and new sagas. Build a separate control plane that drives
+Code Spire over HTTP — the pattern the closest prior art chose. Or extend `spire-review-worker` to
+also run agents.
+
+**Decision.** Extend the kernel. One new deployable, `spire-run-worker`; new deciders and sagas in
+the existing orchestrator; factory commands and events on the Kafka bus that already exists, into the
+event store that already exists, surfaced in the UI that already exists, charged to the ledger that
+already exists.
+
+**Why not a separate control plane.** That prior art chose it because its kernel is deliberately
+minimal — its philosophy explicitly restricts core to the run loop and pushes everything reactive
+outside. Code Spire's kernel is not minimal in that sense and was never meant to be: it already owns
+operator auth and RBAC, an encrypted event store, a priced charge ledger with spend caps, an attention
+panel and a dashboard. A separate plane would rebuild all five to gain a decoupling nobody has asked
+for, and would then need its own credential, its own database and its own UI.
+
+**Why not the review worker.** Three independent reasons, each sufficient. A run holds tens of
+gigabytes of disk and an hour of wall clock, while the review worker is a short ordered blocking
+consumer. A run needs a Docker socket or Kubernetes API access, and that privilege must not sit in the
+process that posts review comments. And one stalled run must not stall every review — this project has
+already paid for that exact failure, when a slow model call outran the SmallRye ack threshold and
+stalled a consumer that re-stalled on every restart and needed a manual consumer-group seek to clear.
+(It was never dead-lettered; the manual seek was necessary *because* the record never reached
+`cs.dlq`.)
+
+**A run cannot inherit the review worker's consumption model either, and the separation is where that
+gets designed.** That channel is ordered and blocking with prefetch pinned to 1 and a 900-second
+unacknowledged-record ceiling that `LlmTimeoutBudget` refuses to start below. An hour-long run breaks
+all three assumptions, and worse, a `CancelRun` keyed to the same aggregate lands on the same partition
+and would be consumed only *after* the run it was meant to cancel had finished — a cancel that
+structurally cannot cancel. The run worker therefore acknowledges on receipt, uses its `run_claim` row
+as the sole idempotency mechanism, and takes cancel and steer over a control path that does not queue
+behind execution. Specified in `docs/factory/ARCHITECTURE.md` §5.1.
+
+**The guaranteed output is a pushed workspace branch.** Opening a pull request, updating a tracker,
+merging and closing are policy layered on that boundary, not part of the kernel. Adopted from the
+prior art, and it is what keeps the run plane free of product decisions.
+
+**The tracker stays the source of truth.** No issues table, no issues UI, no sync. Code Spire stores
+only its own run bookkeeping, keyed by `(work source, repository, issue id)`. Every customer already
+has a tracker, and owning a second means owning drift, permissions and reconciliation forever.
+
+**Provider neutrality is build-enforced from the first commit.** `spire-arch` today fails the build
+when a core module names an SCM or context provider outside a reasoned allowlist; it is extended to
+harness, runtime and work-source names **in the same commit as the first seam**, not after the first
+leak. The SCM version of that check found three real leaks, one of which was a live defect returning
+500 where it should have returned 404.
+
+**The extension is not free, and the design says so rather than claiming "the same terms".** The
+existing pattern is a deliberately unanchored substring match, with a comment explaining that anchoring
+would miss a name embedded in an identifier such as `githubConfig`. The new names break that mechanism
+in both directions: `pi` unanchored matches `spire`, `api` and `pipeline`, so the check would fail the
+build on the project's own name, while `docker` and `kubernetes` appear legitimately in
+deployment-adjacent core text. The scan therefore gains **per-name match modes** — substring for long
+distinctive names, qualified forms only (`harness.pi`, `PiHarness`, `"pi"` as a whole quoted literal)
+for short ones — and the reduced sensitivity for short names is recorded as a known limit rather than
+pretended away. Switching to an import-graph scan was considered and rejected: the leak class that
+motivated a text scan includes string literals, which no import graph can see.
+
+**Deliberately out of scope:** campaign controllers, multi-repository policy execution, learned
+routing and replica dispatch. Each is recorded in `docs/factory/ROADMAP.md` with the price of
+admission that would schedule it.
+
+---
+
 ## ADR-028 — An operator's SCM account is proved by signing in, never asserted or inferred
 
 **Context.** ADR-027 shipped per-author analytics with `operator_identity` (V37) as an

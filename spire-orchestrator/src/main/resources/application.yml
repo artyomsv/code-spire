@@ -103,6 +103,14 @@ mp:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
           serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      run-commands-out:
+        connector: smallrye-kafka
+        topic: cs.run-commands
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
+        waitForWriteCompletion: true
     incoming:
       integration-in:
         connector: smallrye-kafka
@@ -126,6 +134,19 @@ mp:
           id: spire-orchestrator-results
         value:
           deserializer: dev.codespire.orchestrator.pipeline.IntegrationEventDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+      run-results-in:
+        connector: smallrye-kafka
+        topic: cs.run-results
+        group:
+          id: spire-orchestrator-run-results
+        value:
+          deserializer: dev.codespire.orchestrator.factory.RunResultDeserializer
         auto:
           offset:
             reset: latest
@@ -175,6 +196,12 @@ mp:
 # is ever used) is "observe" in code — safe first contact. The per-provider author
 # allowlist lives in the provider registry, not here.
 spire:
+  factory:
+    # Agent image per harness NAME. Keyed by name so the orchestrator never spells a harness; a
+    # harness with no image here is refused at dispatch, before a row is written or a token moves.
+    agent-image:
+      codex: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:spire-agent-codex:latest}
+    wall-clock-seconds: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:1800}
   review:
     # Bounded auto-retry (C8/ADR-016): total pipeline runs before a transient
     # failure fails terminally. Tuning knob — a safe default is fine here.

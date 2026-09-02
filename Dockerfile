@@ -30,13 +30,20 @@ COPY spire-diff/build.gradle.kts spire-diff/
 COPY spire-e2e/build.gradle.kts spire-e2e/
 COPY spire-encryption/build.gradle.kts spire-encryption/
 COPY spire-gateway/build.gradle.kts spire-gateway/
+COPY spire-harness/build.gradle.kts spire-harness/
+COPY spire-harness-codex/build.gradle.kts spire-harness-codex/
 COPY spire-http/build.gradle.kts spire-http/
 COPY spire-llm/build.gradle.kts spire-llm/
 COPY spire-orchestrator/build.gradle.kts spire-orchestrator/
+COPY spire-publisher/build.gradle.kts spire-publisher/
 COPY spire-review-worker/build.gradle.kts spire-review-worker/
+COPY spire-run-worker/build.gradle.kts spire-run-worker/
+COPY spire-runtime/build.gradle.kts spire-runtime/
+COPY spire-runtime-docker/build.gradle.kts spire-runtime-docker/
 COPY spire-scm-bitbucket/build.gradle.kts spire-scm-bitbucket/
 COPY spire-scm-github/build.gradle.kts spire-scm-github/
 COPY spire-scm-gitlab/build.gradle.kts spire-scm-gitlab/
+COPY spire-workspace/build.gradle.kts spire-workspace/
 
 # A Windows checkout gives gradlew CRLF and /bin/sh then rejects the shebang with
 # "bad interpreter: /bin/sh^M". CI on Linux never sees this; a local deploy/compose.yml build does.

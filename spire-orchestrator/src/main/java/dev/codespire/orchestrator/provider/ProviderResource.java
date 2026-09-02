@@ -132,9 +132,13 @@ public class ProviderResource {
         String resolvedId = owner.providerUserId();
         String botId = resolvedId != null && !resolvedId.isBlank() ? resolvedId : in.botAccountId();
         String botUsername = owner.username(); // resolved login for @-mention matching ("" for synthetic bots)
+        // Every component, by name. The 12-argument convenience constructor was used here once and
+        // silently set role = null (REVIEWER), so a FACTORY registration through this endpoint was
+        // stored as the workspace's reviewer — the review pipeline held the push token and
+        // POST /api/runs answered 409 forever. The trap CLAUDE.md records for ReviewResult, again.
         return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
                 in.authUsername(), in.secret(), botId, in.enabled(), in.authors(),
-                botUsername, in.conversationLevel());
+                botUsername, in.conversationLevel(), in.role());
     }
 
     /**
@@ -252,6 +256,17 @@ public class ProviderResource {
         requireField(in.type(), "type");
         requireField(in.baseUrl(), "baseUrl");
         requireField(in.workspace(), "workspace");
+        if (in.role() != null && !in.role().isBlank()) {
+            // Checked here as well as in the registry, so a closed-set value the client got wrong is
+            // a 400 naming the set rather than the registry's IllegalArgumentException as a 500 —
+            // the same doubling LlmProviderResource does for the model, for the same reason.
+            try {
+                ProviderRole.of(in.role());
+            } catch (IllegalArgumentException e) {
+                throw new BadRequestException("Unsupported provider role '" + in.role()
+                        + "' (expected one of: FACTORY, REVIEWER)");
+            }
+        }
         if (!TYPES.contains(in.type())) {
             throw new BadRequestException("Unsupported provider type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");

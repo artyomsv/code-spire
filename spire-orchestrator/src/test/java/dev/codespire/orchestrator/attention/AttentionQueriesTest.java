@@ -501,6 +501,40 @@ class AttentionQueriesTest {
                 + "SELECT id, 'OUTPUT', 1 FROM llm_model WHERE name = '" + MODEL + "'");
     }
 
+    @Test
+    void aFactoryOnlyDeploymentStillReportsThatNoPullRequestCanBeReviewed() {
+        // V44 lets a workspace hold a FACTORY row beside (or instead of) its reviewer. A push
+        // identity reviews nothing, so counting it as "source control is configured" would hide the
+        // one BLOCKING row that says no review can run — a condition true right now with no row.
+        catalogueModel("UNMETERED");
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProviderWithRole("TEST-factory", "FACTORY");
+
+        assertTrue(queries.collect().stream().anyMatch(v -> "SCM_PROVIDER_MISSING".equals(v.code())),
+                "a factory account is not a reviewer: " + queries.collect());
+    }
+
+    @Test
+    void aFactoryAccountWithNoResolvedIdentityIsNotNaggedAsAReviewer() {
+        // BOT_IDENTITY_UNRESOLVED is about recognising the bot's own comments in a conversation.
+        // A factory account holds no conversation, so its blank identity is nobody's problem here.
+        catalogueModel("UNMETERED");
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-reviewer", "acct-1", "test-bot");
+        insertScmProviderWithRole("TEST-factory", "FACTORY");
+
+        assertTrue(queries.collect().stream().noneMatch(v -> "BOT_IDENTITY_UNRESOLVED".equals(v.code())),
+                queries.collect().toString());
+    }
+
+    /** A provider row with the given role and NO resolved identity (blank id, null username). */
+    private void insertScmProviderWithRole(String name, String role) {
+        sql("INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind, auth_secret, "
+                + "bot_account_id, bot_username, enabled, role) VALUES ('" + UUID.randomUUID() + "', '" + name
+                + "', 'stub', 'https://scm.example.invalid', 'TEST-WS', 'bearer', 'TEST-SECRET', '', NULL, TRUE, '"
+                + role + "')");
+    }
+
     private void insertScmProvider(String name, String botAccountId, String botUsername) {
         sql("INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind, auth_secret, "
                 + "bot_account_id, bot_username, enabled) VALUES ('" + UUID.randomUUID() + "', '" + name

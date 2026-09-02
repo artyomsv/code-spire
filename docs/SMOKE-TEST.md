@@ -1608,3 +1608,119 @@ Unlink under Settings → Operators, and remove the application with the trash c
 `DELETE /api/scm-oauth-apps/{providerType}`). Revoke the application on the platform too — this
 product never held your access token beyond the one call that read your profile, but the
 application itself is a standing grant on the platform side.
+
+## Mode Q — the software factory's M0 exit criteria against a real forge (ADR-029..039)
+
+Proves both M0 exit criteria (`docs/factory/ROADMAP.md`) with a real model and a real forge. This is
+the manual counterpart to `M0WalkingSkeletonTest` (`spire-run-worker`, `testServices` tier), which
+proves the same chain — clone, sandbox, handoff, gate, push — against a self-built smart-HTTP origin
+with a script harness, no model and no spend. This mode is what that test cannot be: a Codex run,
+against a forge, authenticated as a machine account.
+
+### Setup
+
+1. **Images.** Neither image is published yet; build both locally:
+
+   ```bash
+   docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
+   ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
+   ```
+
+2. **Stack.** `docker compose up -d` (Postgres + Redpanda), then the orchestrator and the run worker
+   in dev mode: `./gradlew :spire-orchestrator:quarkusDev` and `./gradlew :spire-run-worker:quarkusDev`
+   (`:34083`). The worker drives the local Docker daemon itself; nothing else needs to be up.
+
+3. **A scratch repository** on the forge (written against GitHub; the clone URL derivation covers all
+   three) with a `main` branch. Note its head: `git ls-remote <url> refs/heads/main`.
+
+4. **The machine account.** A *separate* forge account with write access to that repository and a
+   token that can push (ADR-038: the factory never pushes as the review bot). Register it with role
+   `FACTORY` — the Providers screen does not expose the role yet, so use the API:
+
+   ```bash
+   curl -sS -X POST http://localhost:34080/api/providers -H 'content-type: application/json' -d '{
+     "name":"factory-bot","type":"github","baseUrl":"https://api.github.com","workspace":"<owner>",
+     "authKind":"bearer","secret":"<machine-account token>","enabled":true,"authors":[],
+     "botUsername":"<machine-account login>","role":"FACTORY"}'
+   ```
+
+   A workspace may hold a `REVIEWER` row and a `FACTORY` row side by side; the role is part of every
+   lookup's key, so neither path can be handed the other's token.
+
+5. **The harness credential.** The run's model key comes from the LLM provider registry — the
+   provider named by `llmProviderId`, else the deployment's default. For the codex arm that key must
+   be an OpenAI API key. Settings → LLM, or `POST /api/llm-providers`.
+
+### Trigger — exit criterion 1
+
+6. Dispatch a run whose prompt asks for an ordinary change:
+
+   ```bash
+   curl -sS -X POST http://localhost:34080/api/runs -H 'content-type: application/json' -d '{
+     "workspace":"<owner>","slug":"<repo>","providerType":"github","baseCommit":"<head sha>",
+     "subject":"m0-ordinary","harness":"codex","model":"gpt-5.6",
+     "prompt":"Add a file NOTES.md containing one line: hello from the factory. Commit it."}'
+   ```
+
+   Expect `201 {"runId":"run::github:<owner>/<repo>:m0-ordinary:1"}`. `GET /api/runs/<runId>` reads
+   `queued`, then `running`, then `succeeded` with `pushedRef: refs/heads/spire/m0-ordinary`.
+
+### Observe — exit criterion 1
+
+7. On the forge: branch `spire/m0-ordinary` exists, its commit contains `NOTES.md`, and the commit's
+   **author is the machine account** (the init container sets the workspace identity from the clone
+   credential's username; the push was authenticated with the same account).
+8. `docker ps -a --filter label=dev.codespire.runId` is empty: the unit was destroyed after salvage.
+9. **No credential anywhere.** Each must print nothing:
+
+   ```bash
+   docker image history spire-agent-codex:latest | grep -i -E 'key|token|secret'
+   docker image history spire-publisher:latest  | grep -i -E 'key|token|secret'
+   ```
+
+   and, on a run that is still alive (dispatch another and be quick, or set a long prompt):
+
+   ```bash
+   docker inspect $(docker ps -q --filter label=dev.codespire.role=agent) | grep -i -E 'OPENAI|TOKEN|SECRET|password'
+   ```
+
+   `OPENAI_API_KEY` **is** expected on the agent container — that is the model credential, injected
+   per run. `SPIRE_GIT_SECRET` / `SPIRE_CLONE_SECRET` must appear **only** on the publisher and init
+   containers, never on the agent. The worker's own log must contain neither value; the redacting
+   `toString`s on `ExecuteRun` and `Credentials.Scm` are what makes that true, and a `grep` for the
+   token's last six characters across the worker log is the check.
+
+### Trigger — exit criterion 2
+
+10. Dispatch a second run whose prompt edits a CI file:
+
+    ```bash
+    ... "subject":"m0-ci","prompt":"Create .github/workflows/factory.yml containing a workflow named factory that runs echo on push. Commit it." ...
+    ```
+
+### Observe — exit criterion 2
+
+11. `GET /api/runs/<runId>` reads `push_gate_refused` with `blockedPaths: [".github/workflows/factory.yml"]`
+    and `pushedRef: null`. The forge has **no** `spire/m0-ci` branch. The attention bell shows
+    `RUN_PUSH_GATE_REFUSED` naming the path; `POST /api/runs/<runId>/attention-ack` clears it.
+12. The refusal is not a failure: `failureCause` is null. The run did what it was asked and the
+    publisher declined to deliver it — the operator's next move is the paths, not a stack trace.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `409` naming `FACTORY` | No FACTORY-role provider for that workspace; a REVIEWER row does not count and is never used as a fallback |
+| `409` naming `LLM provider` | No default LLM provider and no `llmProviderId` — the harness credential has no source |
+| `400` naming `spire.factory.agent-image` | The harness has no image configured in the orchestrator (`spire.factory.agent-image.<harness>`) |
+| `failed` / `SANDBOX_UNREACHABLE`, init exit non-zero | The clone failed: wrong token, wrong base commit (must be reachable from the remote's branches), or `spire-publisher:latest` not built. The unit is left behind on purpose — `docker logs` the init container |
+| `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: branch outside `spire/`, equal to the base, or a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
+| Codex exits immediately, `no output` | `OPENAI_API_KEY` rejected or absent — check the LLM provider's key with its Check button; the key must be OpenAI's for this arm |
+| `succeeded` with `pushedRef: null` | The agent committed nothing — its bundle never existed. Read the agent container's log; the prompt may not have asked for a commit |
+
+### Cleanup
+
+Delete the branches on the forge, the FACTORY provider (`DELETE /api/providers/{id}`), and the
+images if they are not wanted (`docker rmi spire-agent-codex:latest spire-publisher:latest`).
+Volumes and containers are per run and already gone unless a salvage failed, in which case
+`docker ps -a --filter label=dev.codespire.runId` lists what was preserved and why.

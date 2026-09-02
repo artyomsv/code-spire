@@ -104,9 +104,16 @@ class TestTierCoverageTest {
     @Test
     void theDeclarationsWereActuallyFound() throws IOException {
         assertFalse(tierList(FAST_TIER).isEmpty(), FAST_TIER + " parsed to nothing");
-        assertEquals(3, tierList(SERVICE_TIER).size(),
-                SERVICE_TIER + " should name exactly the three deployables");
         assertFalse(tierList(E2E_TIER).isEmpty(), E2E_TIER + " parsed to nothing");
+
+        // Asserted by MEMBERSHIP rather than by size. An exact count of three was a change-detector:
+        // it froze a number that legitimately grows, so a module correctly joining this tier failed
+        // a test about parsing. What actually has to hold is that the three deployables are here —
+        // which also proves the regex read a whole list rather than a truncated one, since a partial
+        // match would drop one of them.
+        assertTrue(tierList(SERVICE_TIER).containsAll(
+                        List.of("spire-gateway", "spire-orchestrator", "spire-review-worker")),
+                SERVICE_TIER + " must contain the three deployables, was " + tierList(SERVICE_TIER));
         assertTrue(includedModules().size() > 10,
                 "settings.gradle.kts parsed to " + includedModules().size() + " modules, which is too few");
     }

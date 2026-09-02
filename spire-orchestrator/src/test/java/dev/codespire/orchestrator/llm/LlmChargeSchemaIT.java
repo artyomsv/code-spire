@@ -33,14 +33,14 @@ class LlmChargeSchemaIT {
     }
 
     private String insert(String mode, String tokenType, String rate, String cost) {
-        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+        return "INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-" + tokenType + mode
                 + "', 'REVIEW', 'TEST-MODEL', '" + mode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")";
     }
 
     private String insertKind(String kind) {
-        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+        return "INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-KIND-" + kind
                 + "', '" + kind + "', 'TEST-MODEL', 'UNKNOWN', 'INPUT', 10, NULL, NULL)";
@@ -104,7 +104,7 @@ class LlmChargeSchemaIT {
 
     /** A metered REASONING line at a fixed rate, with the cost as the only variable. */
     private String costing(String callRef, String cost) {
-        return "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+        return "INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', '" + callRef + "', 'REVIEW', "
                 + "'TEST-MODEL', 'METERED', 'REASONING', 10, 250000, " + cost + ")";
@@ -117,7 +117,7 @@ class LlmChargeSchemaIT {
 
     @Test
     void aTypoedKindIsRejected() {
-        String sql = "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+        String sql = "INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-BADKIND', 'reviewww', "
                 + "'TEST-MODEL', 'UNKNOWN', 'INPUT', 10, NULL, NULL)";
@@ -134,7 +134,7 @@ class LlmChargeSchemaIT {
         for (TokenType type : TokenType.values()) {
             // A distinct call_ref per iteration: other tests already charge (call_ref, token_type)
             // pairs like ('CANARY-INPUTUNKNOWN', 'INPUT'), and this loop must not collide with them.
-            String sql = "INSERT INTO llm_charge (id, review_id, call_ref, kind, model, pricing_mode, "
+            String sql = "INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                     + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                     + "(gen_random_uuid(), 'review::TEST-WS/TEST-REPO#1', 'CANARY-ENUM-" + type.name()
                     + "', 'REVIEW', 'TEST-MODEL', 'UNKNOWN', '" + type.name() + "', 10, NULL, NULL)";
