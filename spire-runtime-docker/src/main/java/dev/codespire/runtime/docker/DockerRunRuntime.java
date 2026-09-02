@@ -401,6 +401,26 @@ public final class DockerRunRuntime implements RunRuntime {
      * <p>Cancelling is not destroying. The unit is preserved either way — {@link #destroy} is a
      * separate call — so an operator can still read what the agent was doing when its time ran out.
      */
+    /**
+     * Not supported by this arm, and saying so is the implementation.
+     *
+     * <p>Reaching a running agent's input needs the container created with an open stdin and an
+     * attach held for the run's life. This arm creates neither, because the prompt is delivered
+     * once at start from a file outside the tree — and opening a stream on EVERY run to serve a
+     * capability no shipped harness declares would change the shape of every run for a path
+     * nothing exercises.
+     *
+     * <p>Throwing rather than returning quietly is the point. The caller is expected to have
+     * refused already on the harness's declared capability; if it did not, an operator must learn
+     * that their instruction went nowhere rather than watch it vanish.
+     */
+    @Override
+    public void steer(RunHandle handle, String instruction) {
+        throw new UnsupportedOperationException("run " + handle.runId() + ": this runtime cannot"
+                + " deliver an instruction to a running agent — its containers are created without"
+                + " an open input stream, and no shipped harness declares the steer capability");
+    }
+
     @Override
     public Finalization salvage(RunHandle handle) {
         Optional<String> agent = containerOf(handle.runId(), AGENT);

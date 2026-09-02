@@ -15,7 +15,8 @@ import java.util.Objects;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
         @JsonSubTypes.Type(value = RunCommand.ExecuteRun.class, name = "ExecuteRun"),
-        @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun")
+        @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
+        @JsonSubTypes.Type(value = RunCommand.SteerRun.class, name = "SteerRun")
 })
 public sealed interface RunCommand {
 
@@ -111,6 +112,36 @@ public sealed interface RunCommand {
 
         public CancelRun {
             Objects.requireNonNull(runId, "runId");
+        }
+    }
+
+    /**
+     * A new instruction for a run that is already going.
+     *
+     * <p>Capability-gated at the worker: a harness that does not declare {@code steer} must REFUSE
+     * this visibly rather than drop it. A silent drop is the shape this project has already been
+     * burned by — an operator who steers a run and sees nothing cannot tell "not supported" from
+     * "the message was lost", and the second sends them looking for a broker fault that is not there.
+     *
+     * <p>The instruction is bounded for the same reason the prompt is: it rides every copy of the
+     * command, the dead-letter row, and the transcript.
+     */
+    record SteerRun(String runId, String instruction) implements RunCommand {
+
+        /** The same ceiling the dispatch prompt has, and for the same reasons. */
+        public static final int MAX_INSTRUCTION_CHARS = 64 * 1024;
+
+        public SteerRun {
+            Objects.requireNonNull(runId, "runId");
+            if (instruction == null || instruction.isBlank()) {
+                throw new IllegalArgumentException("a steer must carry an instruction; an empty one"
+                    + " would reach the agent as a turn that says nothing and cost a model call");
+            }
+            if (instruction.length() > MAX_INSTRUCTION_CHARS) {
+                throw new IllegalArgumentException("a steer instruction of " + instruction.length()
+                    + " characters is over the " + MAX_INSTRUCTION_CHARS + " limit; it rides every copy"
+                    + " of the command, the dead-letter row and the transcript");
+            }
         }
     }
 }

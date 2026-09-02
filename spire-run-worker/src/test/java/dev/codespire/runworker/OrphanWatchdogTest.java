@@ -75,6 +75,11 @@ class OrphanWatchdogTest {
         }
 
         @Override
+        public void steer(RunHandle handle, String instruction) {
+            throw new UnsupportedOperationException("no shipped harness declares steering");
+        }
+
+        @Override
         public Finalization salvage(RunHandle handle) {
             lifecycle.add("salvage:" + handle.runId());
             if (salvageFails != null) {
@@ -216,7 +221,7 @@ class OrphanWatchdogTest {
         // over, because the watchdog never read the owner at all.
         String runId = "run::github:TEST-acme/app:mine:1";
         unitWithLease(runId, MINE, STALE_AFTER.plusHours(1));
-        registry.register(runId, new RunHandle(runId, "container-mine"));
+        registry.register(runId, "codex", new RunHandle(runId, "container-mine"));
 
         watchdog().sweep();
 

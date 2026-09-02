@@ -29,9 +29,26 @@ public class RunRegistry {
 
     private final Map<String, LiveRun> live = new ConcurrentHashMap<>();
 
-    /** Record a run's sandbox, from the moment it exists. */
-    public void register(String runId, RunHandle handle) {
-        live.put(runId, new LiveRun(handle, false));
+    /** Record a run's sandbox and which harness is driving it, from the moment it exists. */
+    public void register(String runId, String harness, RunHandle handle) {
+        live.put(runId, new LiveRun(handle, harness, false));
+    }
+
+    /** This run's sandbox, without marking anything. Empty when this replica is not running it. */
+    public Optional<RunHandle> find(String runId) {
+        return Optional.ofNullable(live.get(runId)).map(LiveRun::handle);
+    }
+
+    /**
+     * Which harness is driving this run, or null.
+     *
+     * <p>Recorded rather than re-read from the command, because a steer arrives on its own topic
+     * carrying only a run id -- and the capability that decides whether it may be delivered is the
+     * HARNESS's fact, not the runtime's.
+     */
+    public String harnessOf(String runId) {
+        LiveRun run = live.get(runId);
+        return run == null ? null : run.harness();
     }
 
     /**
@@ -81,10 +98,10 @@ public class RunRegistry {
         return live.size();
     }
 
-    private record LiveRun(RunHandle handle, boolean cancelled) {
+    private record LiveRun(RunHandle handle, String harness, boolean cancelled) {
 
         LiveRun asCancelled() {
-            return new LiveRun(handle, true);
+            return new LiveRun(handle, harness, true);
         }
     }
 }

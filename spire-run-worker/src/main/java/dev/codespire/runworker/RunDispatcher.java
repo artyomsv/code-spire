@@ -77,14 +77,9 @@ public class RunDispatcher {
     @Channel("run-results-out")
     Emitter<Record<String, RunResult>> results;
 
-    /**
-     * The second event tier (ADR-034). Fire-and-forget on purpose: a transcript is a convenience and
-     * the run is the paid work, so this emitter is never awaited and its failures never reach the
-     * run's result. The results channel above is the opposite and awaits its acks.
-     */
-    @Channel("run-events-out")
-    @OnOverflow(OnOverflow.Strategy.DROP)
-    Emitter<Record<String, RunEventRecord>> events;
+    /** The one writer to the transcript channel; the control listener shares it. */
+    @Inject
+    RunTranscript transcript;
 
     @Incoming("run-commands-in")
     @Acknowledgment(Acknowledgment.Strategy.MANUAL)
@@ -138,7 +133,7 @@ public class RunDispatcher {
             return DONE;
         }
 
-        LeaseKeeper keeper = new LeaseKeeper(execute.runId());
+        LeaseKeeper keeper = new LeaseKeeper(execute.runId(), execute.harness());
         RunResult result;
         try {
             result = launcher.launch(execute, keeper);
@@ -178,26 +173,29 @@ public class RunDispatcher {
 
         private final String runId;
 
+        /** Recorded with the run, because a steer arrives carrying only a run id. */
+        private final String harness;
+
         private boolean unitExists;
 
         private boolean unitGone;
 
-        private LeaseKeeper(String runId) {
+        private LeaseKeeper(String runId, String harness) {
             this.runId = runId;
+            this.harness = harness;
         }
 
         @Override
         public void event(RunEventRecord record) {
-            events.send(Record.of(record.runId(), record))
-                    .whenComplete((sent, refused) -> {
-                        if (refused != null) {
-                            // The channel does not wait for write completion, so a broker refusal
-                            // arrives here and nowhere else. Discarding this stage meant the
-                            // stream's own "gap" warning could not fire for the most likely loss.
-                            LOG.warnf("run %s: transcript event %d was refused by the broker (%s)",
-                                    record.runId(), record.sequence(), refused.getClass().getSimpleName());
-                        }
-                    });
+            transcript.emit(record, (sent, refused) -> {
+                if (refused != null) {
+                    // The channel does not wait for write completion, so a broker refusal arrives
+                    // here and nowhere else. Discarding this stage meant the stream's own "gap"
+                    // warning could not fire for the most likely loss.
+                    LOG.warnf("run %s: transcript event %d was refused by the broker (%s)",
+                            record.runId(), record.sequence(), refused.getClass().getSimpleName());
+                }
+            });
         }
 
         @Override
@@ -205,7 +203,7 @@ public class RunDispatcher {
             unitExists = true;
             // Registered the instant the sandbox exists, so the window in which a cancel cannot
             // reach the run is the container's creation and nothing more.
-            registry.register(runId, new RunHandle(runId, unitId));
+            registry.register(runId, harness, new RunHandle(runId, unitId));
             // The lease is recorded BEFORE the started event is emitted, deliberately: the cheap
             // local write goes first, so a broker that stalls cannot leave the lease unable to name
             // the unit an operator would then be looking for.

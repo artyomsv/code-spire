@@ -176,6 +176,11 @@ class RunLauncherTest {
         }
 
         @Override
+        public void steer(RunHandle handle, String instruction) {
+            throw new UnsupportedOperationException("no shipped harness declares steering");
+        }
+
+        @Override
         public Finalization salvage(RunHandle handle) {
             lifecycle.add("salvage");
             if (salvageFails != null) {

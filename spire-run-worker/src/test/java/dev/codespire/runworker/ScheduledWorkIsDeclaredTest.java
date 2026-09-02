@@ -40,6 +40,9 @@ class ScheduledWorkIsDeclaredTest {
                 "the interval must be the operator's, and it is the value .env.example documents");
         assertEquals(Scheduled.ConcurrentExecution.SKIP, scheduled.concurrentExecution(),
                 "overlapping sweeps would pile onto whatever the first one is stuck on");
+        assertFalse(scheduled.every().contains(":"),
+                "and no inline default: the guard was generalised to catch exactly this two-literals"
+                        + " fault and was left asserting it on only one of its two subjects");
     }
 
     /** The annotation on one method, or null. */

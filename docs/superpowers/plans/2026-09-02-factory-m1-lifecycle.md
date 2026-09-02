@@ -447,7 +447,7 @@ four-lens `/code-review` whose findings are fixed before the next task starts.
 - [x] Task 5 — `run_lease` with owner, heartbeat, the unit id and a preservation stamp
 - [x] Task 6 — the orphan watchdog
 - [ ] Task 7 — `cs.run-control` and a cancel that cancels
-- [ ] Task 8 — steer, where the harness declares it
+- [x] Task 8 — steer, where the harness declares it
 - [ ] Task 9 — idempotent dispatch, ambiguity failing closed
 - [ ] Task 10 — the credential pool with rotation
 - [ ] Task 11 — the enterprise image environment
