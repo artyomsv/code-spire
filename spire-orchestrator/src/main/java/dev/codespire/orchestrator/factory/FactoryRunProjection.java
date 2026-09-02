@@ -41,11 +41,6 @@ public class FactoryRunProjection {
     /** The one failure cause a retried {@link #queued} re-arms — see {@link #dispatchFailed}. */
     static final String DISPATCH_FAILED = "DISPATCH_FAILED";
 
-    private static final String FAIL_SQL = """
-            UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()
-             WHERE run_id = ? AND status IN (?, ?)
-            """;
-
     /** What the read model knows about one run. */
     public record RunView(String runId, String status, String pushedRef, List<String> blockedPaths,
                           String failureCause, String failureDetail) {
@@ -67,8 +62,29 @@ public class FactoryRunProjection {
      *     must refuse rather than dispatch, because the claim store would then drop the command as
      *     a redelivery and the operator would hold a 201 for a run that never runs.
      */
-    public boolean queued(String runId, String harness, String model, String baseBranch, String baseCommit,
-                          String branch, String pushedAs) {
+    /** What a queued row is made of — the dispatch's own inputs, before any result. */
+    public record QueuedRun(String runId, String harness, String model, String baseBranch,
+                            String baseCommit, String branch, String pushedAs) {
+    }
+
+    /**
+     * A row is still "live" — a result may project onto it — while queued or running, and also
+     * while it reads {@code failed / DISPATCH_FAILED}: that cause means the broker's ack timed out,
+     * not that the record was lost, and the worker consumes one command at a time, so the real
+     * {@code RunStarted} routinely arrives AFTER the row was marked. A result correcting such a row
+     * clears the failure it superseded.
+     */
+    private static final String LIVE = "(status IN ('" + QUEUED + "', '" + RUNNING + "') "
+            + "OR (status = '" + FAILED + "' AND failure_cause = '" + DISPATCH_FAILED + "'))";
+
+    public boolean queued(QueuedRun row) {
+        String runId = row.runId();
+        String harness = row.harness();
+        String model = row.model();
+        String baseBranch = row.baseBranch();
+        String baseCommit = row.baseCommit();
+        String branch = row.branch();
+        String pushedAs = row.pushedAs();
         RunIds.Parsed parsed = RunIds.parse(runId);
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
@@ -113,30 +129,31 @@ public class FactoryRunProjection {
     }
 
     private void started(String runId) {
-        // Only a queued run starts. A redelivered RunStarted after RunFinished must not drag a
-        // terminal row back to running — and a terminal row has an ended_at the CHECK would then
-        // refuse anyway.
-        update("UPDATE factory_run SET status = ? WHERE run_id = ? AND status = ?",
-                runId, RUNNING, runId, QUEUED);
+        // A queued run starts — and so does one whose dispatch the broker never acknowledged: the
+        // RunStarted IS the acknowledgement. A redelivered RunStarted after RunFinished must not
+        // drag a terminal row back to running, and a terminal row has an ended_at the CHECK would
+        // refuse anyway; only the DISPATCH_FAILED shape of "terminal" is reopened.
+        update("UPDATE factory_run SET status = ?, failure_cause = NULL, failure_detail = NULL, ended_at = NULL"
+                        + " WHERE run_id = ? AND (status = ? OR (status = ? AND failure_cause = ?))",
+                runId, RUNNING, runId, QUEUED, FAILED, DISPATCH_FAILED);
     }
 
     private void finished(RunResult.RunFinished finished) {
         if (finished.refused()) {
-            update("""
-                    UPDATE factory_run SET status = ?, blocked_paths = ?, ended_at = now()
-                     WHERE run_id = ? AND status IN (?, ?)
-                    """, finished.runId(), PUSH_GATE_REFUSED, String.join("\n", finished.blockedPaths()),
-                    finished.runId(), QUEUED, RUNNING);
+            update("UPDATE factory_run SET status = ?, blocked_paths = ?, failure_cause = NULL, failure_detail = NULL,"
+                            + " ended_at = now() WHERE run_id = ? AND " + LIVE,
+                    finished.runId(), PUSH_GATE_REFUSED, String.join("\n", finished.blockedPaths()), finished.runId());
             return;
         }
-        update("""
-                UPDATE factory_run SET status = ?, pushed_ref = ?, ended_at = now()
-                 WHERE run_id = ? AND status IN (?, ?)
-                """, finished.runId(), SUCCEEDED, finished.pushedRef(), finished.runId(), QUEUED, RUNNING);
+        update("UPDATE factory_run SET status = ?, pushed_ref = ?, failure_cause = NULL, failure_detail = NULL,"
+                        + " ended_at = now() WHERE run_id = ? AND " + LIVE,
+                finished.runId(), SUCCEEDED, finished.pushedRef(), finished.runId());
     }
 
     private void failed(RunResult.RunFailed failed) {
-        update(FAIL_SQL, failed.runId(), FAILED, failed.cause(), failed.detail(), failed.runId(), QUEUED, RUNNING);
+        update("UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()"
+                        + " WHERE run_id = ? AND " + LIVE,
+                failed.runId(), FAILED, failed.cause(), failed.detail(), failed.runId());
     }
 
     /**

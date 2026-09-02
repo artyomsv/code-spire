@@ -78,9 +78,16 @@ class RunDispatcherTest {
 
     static final class FakeEmitter implements Emitter<Record<String, RunResult>> {
         final List<RunResult> sent = new ArrayList<>();
+        /** The broker refusing the full result — a record too large — while accepting a compact one. */
+        boolean refuseFinished;
+        /** The broker refusing everything: the run must still not be dead-lettered. */
+        boolean refuseAll;
 
         @Override
         public CompletionStage<Void> send(Record<String, RunResult> record) {
+            if (refuseAll || refuseFinished && record.value() instanceof RunResult.RunFinished) {
+                return CompletableFuture.failedFuture(new IllegalStateException("record too large"));
+            }
             sent.add(record.value());
             return CompletableFuture.completedFuture(null);
         }
@@ -183,6 +190,39 @@ class RunDispatcherTest {
         assertEquals("WORKER_FAILED", failed.cause());
         assertTrue(failed.detail().contains("daemon vanished"));
         assertTrue(failed.retryable());
+    }
+
+    @Test
+    void aResultTheBrokerRefusesIsReplacedByACompactOneAndNeverDeadLettersTheCommand() {
+        // The command is acked and claimed before the run; a throw after that could only dead-letter
+        // a record that has already run — a phantom the operator is invited to replay into a claim
+        // that drops it. The broker refusing the full result gets a compact RunFailed instead.
+        results.refuseFinished = true;
+        Delivery delivery = new Delivery(order);
+
+        dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(delivery.acked);
+        assertEquals(null, delivery.nacked, "nothing to nack: the record was already settled");
+        RunResult.RunFailed compact = assertInstanceOf(RunResult.RunFailed.class, results.sent.getLast());
+        assertEquals("RESULT_UNPUBLISHABLE", compact.cause());
+        assertFalse(compact.retryable(), "the run happened; re-running it would spend twice");
+    }
+
+    @Test
+    void aBrokerThatRefusesEverythingStillNeverDeadLettersTheCommand() {
+        // Both the full result and the compact one refused: the loss is logged and the handler
+        // returns. A throw here reached SmallRye after the manual ack and dead-lettered a record
+        // that had already run.
+        results.refuseAll = true;
+        Delivery delivery = new Delivery(order);
+
+        dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(delivery.acked);
+        assertEquals(null, delivery.nacked);
+        assertEquals(1, launcher.launches);
+        assertTrue(results.sent.isEmpty(), "nothing was accepted, and nothing was thrown");
     }
 
     @Test

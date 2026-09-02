@@ -19,6 +19,16 @@ class PushGateTest {
     }
 
     @Test
+    void aChangeWithNoPathIsRefusedNotSkipped() {
+        // A gate that skips what it cannot judge is a gate with a hole in it. Whether a blank path
+        // can reach a ChangedPath is the diff's business; this is the gate's answer if one does.
+        PushDecision decision = PushGate.decide(
+                new ChangeSet(List.of(new ChangedPath("", ChangeKind.ADDED))), List.of());
+
+        assertFalse(decision.allowed());
+    }
+
+    @Test
     void allowsAnOrdinaryChange() {
         PushDecision decision = PushGate.decide(changed("src/main/java/Foo.java"), List.of());
 

@@ -50,7 +50,34 @@ class RunUnitBuilderTest {
         credentials.mapper = JSON;
         RunUnitBuilder builder = new RunUnitBuilder();
         builder.credentials = credentials;
+        builder.publisherImage = "spire-publisher:TEST";
+        builder.maxWallClockSeconds = 3600;
         return builder;
+    }
+
+    @Test
+    void aCommandAskingForMoreWallClockThanTheWorkerBudgetsIsRefusedBeforeAnyContainer() {
+        // RunAckBudget sizes the channel's ack threshold to spire.run.max-wall-clock-seconds. A
+        // command that carries more would outlive that budget — the poison-pill shape again — so it
+        // is a BAD_COMMAND at the builder, where nothing has been created or paid for yet.
+        RunCommand.ExecuteRun over = new RunCommand.ExecuteRun(RUN_ID,
+                new RepoRef("acme", "app"), "https://github.com/acme/app.git",
+                "main", "abc1234", "spire/run_1", "fix the typo", "codex", "gpt-5.6", "spire-agent-codex:1",
+                List.of(), 3601, packedScm(SCM_LOGIN, SCM_TOKEN), null);
+
+        IllegalArgumentException refusal = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> builder.build(over, new CodexAdapter()));
+        org.junit.jupiter.api.Assertions.assertTrue(refusal.getMessage().contains("max-wall-clock-seconds"),
+                refusal.getMessage());
+    }
+
+    @Test
+    void thePublisherImageComesFromConfigurationNotACompiledConstant() {
+        // A registry prefix or a digest is the deployment's to choose, and both halves of the run
+        // unit — agent and publisher — are configured the same way.
+        RunUnitSpec unit = builder.build(command(), new CodexAdapter());
+        org.junit.jupiter.api.Assertions.assertEquals("spire-publisher:TEST", unit.init().image());
+        org.junit.jupiter.api.Assertions.assertEquals("spire-publisher:TEST", unit.publisher().image());
     }
 
     /** What the orchestrator's packer produces: the account's login and token in one envelope. */

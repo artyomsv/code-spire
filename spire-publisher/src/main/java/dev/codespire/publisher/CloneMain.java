@@ -38,7 +38,7 @@ public final class CloneMain {
             String username = Env.required(env, "SPIRE_CLONE_USERNAME");
             String secret = Env.required(env, "SPIRE_CLONE_SECRET");
             Path workspace = Path.of(env.getOrDefault("SPIRE_WORKSPACE_DIR", DEFAULT_WORKSPACE_DIR));
-            outcome = new OutcomeWriter(System.out, secret);
+            outcome = new OutcomeWriter(System.out, username, secret);
 
             WorkspaceClone.populate(remote, base, branch, workspace, new GitCredential(username, secret),
                     username, username + "@" + IDENTITY_DOMAIN);

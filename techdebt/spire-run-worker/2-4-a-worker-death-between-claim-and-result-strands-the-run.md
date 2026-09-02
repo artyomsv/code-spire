@@ -25,6 +25,10 @@ mistaken for dead code or for a guarantee the claim store gives.
 
 - A single eviction during a run leaves the orchestrator's `factory_run` row in `running` forever
   with no attention row (the `REVIEW_STUCK` proxy does not cover runs) and a paid container idle.
+- The deliberate preservation paths have the same exposure without an eviction: a unit whose
+  salvage failed, or whose init failed, is kept for inspection by design — and its publisher and
+  init containers keep the machine account's write token in the daemon's container config
+  (`docker inspect`) with no expiry, until an operator destroys it by hand.
 - The same shape produced a poison-pill incident once already in this project: a record redelivered
   on every restart and refused every time.
 

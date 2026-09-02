@@ -45,14 +45,20 @@ public final class PushGate {
      *                     narrow what the factory can touch; it can never widen it (ADR-035).
      */
     public static PushDecision decide(ChangeSet changes, List<String> profileGlobs) {
-        List<PathGlob> profile = PathGlob.compileAll(profileGlobs);
+        return decideCompiled(changes, PathGlob.compileAll(profileGlobs));
+    }
 
+    /** The publisher compiles its profile once at startup and gates every bundle with this overload. */
+    public static PushDecision decideCompiled(ChangeSet changes, List<PathGlob> profile) {
         // Ordered by first appearance and deduplicated by path: a run can touch one file across
         // several commits, and an operator reading a refusal should see each path once.
         Map<String, ChangedPath> blocked = new LinkedHashMap<>();
         for (ChangedPath changed : changes.paths()) {
             String path = changed.path();
             if (path == null || path.isBlank()) {
+                // A change with no path cannot be judged, and a gate that skips what it cannot
+                // judge is a gate with a hole in it. Refused, named as the blank it is.
+                blocked.putIfAbsent("", changed);
                 continue;
             }
             if (matchesAny(FLOOR, path) || matchesAny(profile, path)) {

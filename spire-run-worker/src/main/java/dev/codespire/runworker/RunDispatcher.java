@@ -21,28 +21,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Claim, ack, then run.
+ * Consumes {@code cs.run-commands}: claim, ack, launch, report.
  *
- * <p><b>The order is the design, and this class is where it is implemented rather than described.</b>
- * An hour-long run cannot ride an ordered-blocking channel with the framework acking after the
- * handler returns: that pairing once stalled a consumer which re-stalled on every restart and
- * needed a manual offset seek. So the ack is MANUAL and happens the moment the claim row is
- * written — before the run — and Kafka therefore does not stop a redelivery; {@link RunClaimStore}
- * does. The claim goes first because the reverse loses the command entirely on a crash between
- * them.
- *
- * <p>An earlier version stated all of this in three comments and implemented none of it: no
- * acknowledgment strategy, no {@code @Blocking}, and the connector's default 60-second
- * unprocessed-record threshold — so the first run longer than a minute would have killed the
- * consumer, on a channel whose whole purpose is runs that last up to the wall clock.
- *
- * <p>The handler is {@code @Blocking} because a run IS blocking, for its whole wall clock; on the
- * event loop that would stall every other channel in the process. {@code ordered = true} keeps one
- * run per consumer at a time, which is what the claim's per-run slot assumes.
- *
- * <p>A poison record arrives as null, because a deserializer that throws kills the consumer and the
- * record is then redelivered on every restart. It is nacked so the connector's failure strategy
- * dead-letters it, and dropped with a log.
+ * <p>The claim on {@code run_claim} is the sole idempotency mechanism — Kafka redelivers, the claim
+ * refuses. The record is acked the moment the claim is written and BEFORE the run, so its age never
+ * reaches the connector's threshold while the agent works for an hour; everything after the ack is
+ * idempotent by the claim. That ordering has one consequence this class must respect: nothing after
+ * the ack may throw. The record is settled and the claim is taken, so a throw here would only
+ * dead-letter a command that has already run — a phantom the operator is invited to replay into a
+ * claim that drops it.
  */
 @ApplicationScoped
 public class RunDispatcher {
@@ -51,8 +38,11 @@ public class RunDispatcher {
 
     static final String EXECUTE_SLOT = "execute";
 
-    /** How long to wait for the broker to acknowledge a terminal result before calling it lost. */
+    static final String RUN_ID_MDC = "runId";
+
     private static final long RESULT_ACK_SECONDS = 30;
+
+    private static final CompletionStage<Void> DONE = CompletableFuture.completedFuture(null);
 
     @Inject
     RunClaimStore claims;
@@ -64,13 +54,6 @@ public class RunDispatcher {
     @Channel("run-results-out")
     Emitter<Record<String, RunResult>> results;
 
-    /**
-     * A handler that consumes a {@code Message} must return a {@code CompletionStage<Void>} — the
-     * connector refuses to deploy a void one (SRMSG00051). The stage completes when the method
-     * returns; the ack it is normally used for has already happened inside, by hand.
-     */
-    private static final CompletionStage<Void> DONE = CompletableFuture.completedFuture(null);
-
     @Incoming("run-commands-in")
     @Acknowledgment(Acknowledgment.Strategy.MANUAL)
     @Blocking(ordered = true)
@@ -80,8 +63,19 @@ public class RunDispatcher {
             LOG.warn("nacking an unreadable run command; the failure strategy dead-letters it");
             return message.nack(new IllegalArgumentException("unreadable run command"));
         }
+        // The run id on the MDC for the WHOLE handling, cancel and redelivery included: a cancel
+        // and a redelivery are the two lines an operator most needs to find by run id.
+        MDC.put(RUN_ID_MDC, command.runId());
+        try {
+            return handle(message, command);
+        } finally {
+            MDC.remove(RUN_ID_MDC);
+        }
+    }
+
+    private CompletionStage<Void> handle(Message<RunCommand> message, RunCommand command) {
         if (command instanceof RunCommand.CancelRun cancel) {
-            LOG.infof("cancel requested for %s: %s", cancel.runId(), cancel.reason());
+            LOG.infof("cancel requested: %s", cancel.reason());
             ack(message);
             return DONE;
         }
@@ -92,68 +86,69 @@ public class RunDispatcher {
         if (!claims.claim(execute.runId(), EXECUTE_SLOT)) {
             // A redelivery. Not an error, and NOT a reason to re-run the agent: the first delivery
             // either finished or is finishing, and a second unit would spend money twice.
-            LOG.infof("run %s is already claimed; this is a redelivery", execute.runId());
+            LOG.info("already claimed; this is a redelivery");
             ack(message);
             return DONE;
         }
-        // Claimed. Ack NOW, before the run, so the record's age never reaches the connector's
-        // threshold while the agent works. Everything after this line is idempotent by the claim.
         ack(message);
 
-        // The run id on the MDC rather than in each message, the way the review worker carries its
-        // reviewId (structured JSON logs in prod, one field to filter on).
-        MDC.put(RUN_ID_MDC, execute.runId());
+        emit(new RunResult.RunStarted(execute.runId(), execute.runId()));
+        RunResult result;
         try {
-            emit(new RunResult.RunStarted(execute.runId(), execute.runId()));
-            RunResult result;
-            try {
-                result = launcher.launch(execute);
-            } catch (RuntimeException e) {
-                // Never let an unexpected failure leave a run with no terminal result: a run that
-                // reports nothing is indistinguishable from one still working, and the operator's
-                // only signal would be its eventual absence.
-                LOG.error("run failed unexpectedly", e);
-                result = new RunResult.RunFailed(execute.runId(), "WORKER_FAILED",
-                        e.getClass().getSimpleName() + ": " + e.getMessage(), true);
-            }
-            emit(result);
-            return DONE;
-        } finally {
-            MDC.remove(RUN_ID_MDC);
+            result = launcher.launch(execute);
+        } catch (RuntimeException e) {
+            // Never let an unexpected failure leave a run with no terminal result: a run that
+            // reports nothing is indistinguishable from one still working.
+            LOG.error("run failed unexpectedly", e);
+            result = new RunResult.RunFailed(execute.runId(), "WORKER_FAILED",
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), true);
         }
+        emit(result);
+        return DONE;
     }
-
-    static final String RUN_ID_MDC = "runId";
 
     private static void ack(Message<RunCommand> message) {
         message.ack().toCompletableFuture().join();
     }
 
     /**
-     * Publishes and WAITS for the broker's acknowledgment.
-     *
-     * <p>The earlier version discarded the {@code CompletionStage}, so a publish the broker never
-     * accepted was silent — and because the claim row was already taken, a redelivery did nothing,
-     * leaving the run at {@code running} forever with no signal anywhere. The record is already
-     * acked by the time a terminal result exists, so there is no nack path left to a dead-letter
-     * topic; what remains is to make the loss LOUD, with the result in the log, rather than let the
-     * only trace be the run's eventual absence.
+     * Publishes with a bounded wait for the broker's acknowledgment. A result the broker refuses is
+     * logged at ERROR and replaced, once, by a compact {@code RunFailed} that carries no path lists —
+     * the shape that gets refused is a huge one — so the orchestrator still learns the run ended.
+     * Never rethrown: see the class comment.
      */
     private void emit(RunResult result) {
+        if (publish(result)) {
+            return;
+        }
+        if (result instanceof RunResult.RunFinished finished) {
+            RunResult compact = new RunResult.RunFailed(result.runId(), "RESULT_UNPUBLISHABLE",
+                    "the broker refused the run's full result (" + finished.changedPaths().size()
+                            + " changed paths, " + finished.blockedPaths().size() + " blocked); the branch"
+                            + (finished.pushedRef() == null ? " was not pushed" : " is at " + finished.pushedRef()),
+                    false);
+            if (publish(compact)) {
+                return;
+            }
+        }
+        LOG.errorf("run %s is complete but unreported: the broker refused its result twice", result.runId());
+    }
+
+    private boolean publish(RunResult result) {
         CompletionStage<Void> sent = results.send(Record.of(result.runId(), result));
         try {
             sent.toCompletableFuture().get(RESULT_ACK_SECONDS, TimeUnit.SECONDS);
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted publishing " + describe(result), e);
+            LOG.errorf(e, "interrupted publishing %s", describe(result));
+            return false;
         } catch (ExecutionException e) {
-            LOG.errorf(e.getCause(), "the broker did not accept %s — the run is complete but unreported",
-                    describe(result));
-            throw new IllegalStateException("could not publish " + describe(result), e.getCause());
+            LOG.errorf(e.getCause(), "the broker did not accept %s", describe(result));
+            return false;
         } catch (TimeoutException e) {
-            LOG.errorf("no broker acknowledgment within %ds for %s — the run is complete but unreported",
-                    RESULT_ACK_SECONDS, describe(result));
-            throw new IllegalStateException("timed out publishing " + describe(result), e);
+            LOG.errorf("no broker acknowledgment within %ds for %s", RESULT_ACK_SECONDS, describe(result));
+            return false;
         }
     }
 

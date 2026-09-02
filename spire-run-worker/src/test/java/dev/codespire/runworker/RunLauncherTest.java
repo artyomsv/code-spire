@@ -99,6 +99,7 @@ class RunLauncherTest {
         List<String> publisherLines = List.of();
         Finalization finalization = Finalization.salvaged(0, "exited");
         RuntimeException createFails;
+        RuntimeException salvageFails;
         final List<RunHandle> destroyed = new ArrayList<>();
 
         @Override
@@ -130,6 +131,9 @@ class RunLauncherTest {
 
         @Override
         public Finalization salvage(RunHandle handle) {
+            if (salvageFails != null) {
+                throw salvageFails;
+            }
             return finalization;
         }
 
@@ -193,6 +197,48 @@ class RunLauncherTest {
         runtime.finalization = Finalization.salvaged(2, "exited");
         runtime.publisherLines = List.of(
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND));
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
+    }
+
+    @Test
+    void aFailedSalvageAfterAPushNamesTheRefAndPreservesTheUnit() {
+        // An hour of pushed checkpoints, then a wall-clock overrun: the failure must say where the
+        // work is, or the operator hunts for a lost commit that is sitting on the remote.
+        runtime.finalization = Finalization.salvageFailed("agent did not exit within the run's wall clock");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+
+        assertEquals("SALVAGE_FAILED", failed.cause());
+        assertTrue(failed.detail().contains("refs/heads/spire/finding-1"), failed.detail());
+        assertTrue(runtime.destroyed.isEmpty(), "a unit whose salvage failed is preserved for inspection");
+    }
+
+    @Test
+    void aThrowingSalvageStillReportsTheRunAndWhatWasPushed() {
+        // Before this, a daemon fault inside salvage propagated out of launch: no terminal result,
+        // the sibling log reader blocked for the life of the process, and the unit leaked unnamed.
+        runtime.salvageFails = new IllegalStateException("daemon went away");
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND));
+
+        assertEquals("SALVAGE_FAILED", failed.cause());
+        assertTrue(failed.detail().contains("daemon went away"), failed.detail());
+        assertTrue(failed.detail().contains("refs/heads/spire/finding-1"), failed.detail());
+    }
+
+    @Test
+    void aBundleThePublisherCouldNotReadAfterAGoodPushLeavesThePushStanding() {
+        // BUNDLE_UNREADABLE is not terminal: the publisher skips that bundle and reads on. Four
+        // checkpoints really are on the branch, and the result must say so.
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"ADDED\"}]}",
+                "{\"event\":\"failed\",\"cause\":\"BUNDLE_UNREADABLE\",\"detail\":\"BundleTooLargeException: 300MB\"}");
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND));
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());

@@ -27,7 +27,7 @@ class FactoryRunProjectionTest {
 
     private String queuedRun() {
         String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
-        projection.queued(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
         return runId;
     }
 
@@ -97,7 +97,7 @@ class FactoryRunProjectionTest {
         // The resource records the row before dispatching, so a retried request must not fail on
         // the primary key — it must simply find the row already there.
         String runId = queuedRun();
-        projection.queued(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
 
         assertEquals(FactoryRunProjection.QUEUED, projection.find(runId).orElseThrow().status());
     }
@@ -109,18 +109,18 @@ class FactoryRunProjectionTest {
         // repeated request must not quietly reopen it.
         String finished = queuedRun();
         projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of(), List.of(), null));
-        projection.queued(finished, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(finished, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
         assertEquals(FactoryRunProjection.SUCCEEDED, projection.find(finished).orElseThrow().status());
 
         String crashed = queuedRun();
         projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true));
-        projection.queued(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
         assertEquals("SANDBOX_UNREACHABLE", projection.find(crashed).orElseThrow().failureCause());
 
         String unacked = queuedRun();
         projection.dispatchFailed(unacked, "No broker ack within 10s");
         assertEquals(FactoryRunProjection.FAILED, projection.find(unacked).orElseThrow().status());
-        projection.queued(unacked, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(unacked, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
         FactoryRunProjection.RunView view = projection.find(unacked).orElseThrow();
         assertEquals(FactoryRunProjection.QUEUED, view.status());
         assertNull(view.failureCause());
@@ -135,8 +135,8 @@ class FactoryRunProjectionTest {
         String runId = queuedRun();
         projection.dispatchFailed(runId, "No broker ack within 10s");
 
-        projection.queued(runId, "codex", "gpt-5.7-mini", "release/2", "fedcba9876543210fedcba9876543210fedcba98",
-                "spire/x", "other-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.7-mini", "release/2",
+                "fedcba9876543210fedcba9876543210fedcba98", "spire/x", "other-bot"));
 
         assertEquals(FactoryRunProjection.QUEUED, projection.find(runId).orElseThrow().status());
         assertEquals(List.of("gpt-5.7-mini", "release/2", "fedcba9876543210fedcba9876543210fedcba98", "other-bot"),
@@ -179,6 +179,33 @@ class FactoryRunProjectionTest {
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
         assertNull(view.failureCause());
+    }
+
+    @Test
+    void aRealResultCorrectsARowWhoseDispatchWasNeverAcknowledged() {
+        // DISPATCH_FAILED means the broker's ack timed out, not that the record was lost. The worker
+        // consumes one command at a time, so the real RunStarted routinely arrives after the row was
+        // marked. Refusing it would drop a run that is executing and paid for.
+        String started = queuedRun();
+        projection.dispatchFailed(started, "No broker ack within 10s");
+        projection.apply(new RunResult.RunStarted(started, "container-1"));
+        FactoryRunProjection.RunView view = projection.find(started).orElseThrow();
+        assertEquals(FactoryRunProjection.RUNNING, view.status());
+        assertNull(view.failureCause(), "the superseded failure is cleared, not left beside a live status");
+
+        // And a terminal result straight onto the marked row, when RunStarted itself was lost.
+        String finished = queuedRun();
+        projection.dispatchFailed(finished, "No broker ack within 10s");
+        projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of("a"), List.of(), null));
+        view = projection.find(finished).orElseThrow();
+        assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
+        assertNull(view.failureCause());
+
+        // But a row that failed for any OTHER cause stays failed: that failure is the run's real end.
+        String crashed = queuedRun();
+        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true));
+        projection.apply(new RunResult.RunStarted(crashed, "container-1"));
+        assertEquals(FactoryRunProjection.FAILED, projection.find(crashed).orElseThrow().status());
     }
 
     @Test

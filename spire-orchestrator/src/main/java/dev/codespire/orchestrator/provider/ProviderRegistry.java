@@ -111,7 +111,8 @@ public class ProviderRegistry {
             // update leaves the stored login intact (mirrors the rotateSecret conditional).
             boolean updateBotUsername = in.botUsername() != null && !in.botUsername().isBlank();
             String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, workspace=?, auth_kind=?, "
-                    + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, role=?, updated_at=now()"
+                    + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, "
+                    + "role=COALESCE(?, role), updated_at=now()"
                     + (rotateSecret ? ", auth_secret=?" : "")
                     + (updateBotUsername ? ", bot_username=?" : "")
                     + " WHERE id=?";
@@ -125,7 +126,10 @@ public class ProviderRegistry {
                 ps.setString(7, in.botAccountId() == null ? "" : in.botAccountId());
                 ps.setString(8, blankToNull(in.conversationLevel()));
                 ps.setBoolean(9, in.enabled() == null || in.enabled());
-                ps.setString(10, ProviderRole.of(in.role()).name());
+                // An absent role keeps the stored one (COALESCE above). The dashboard's edit form
+                // sends none, so writing ProviderRole.of(null) here turned every Settings edit of a
+                // FACTORY registration into a REVIEWER — the round-1 critical, back through the UI.
+                ps.setString(10, in.role() == null || in.role().isBlank() ? null : ProviderRole.of(in.role()).name());
                 int idx = 11;
                 if (rotateSecret) {
                     ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));

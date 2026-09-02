@@ -43,6 +43,7 @@ dependencies {
     implementation("io.quarkus:quarkus-config-yaml")
     implementation("io.quarkus:quarkus-smallrye-health")
     implementation("io.quarkus:quarkus-oidc") // operator auth on the HTTP surface, as every deployable (ADR-022)
+    implementation("io.quarkus:quarkus-rest-jackson") // the /rw/auth session endpoints every deployable exposes
     implementation("io.quarkus:quarkus-logging-json") // structured JSON logs in prod
 
     testImplementation("io.quarkus:quarkus-junit5")

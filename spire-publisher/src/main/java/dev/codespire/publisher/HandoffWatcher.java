@@ -55,9 +55,13 @@ public final class HandoffWatcher {
         }
         List<Path> fresh;
         try (Stream<Path> entries = Files.list(handoff)) {
+            // Bounded BEFORE it is materialised: a million zero-byte *.bundle names would otherwise
+            // fill the heap in this very listing, ahead of the cap the loop below enforces. One past
+            // the remaining allowance is enough to know the cap is exceeded.
             fresh = entries
                     .filter(HandoffWatcher::isBundle)
                     .filter(path -> !handled.contains(path.getFileName().toString()))
+                    .limit((long) maxBundles - handled.size() + 1)
                     .sorted(Comparator.comparingLong(HandoffWatcher::sequence)
                             .thenComparing(path -> path.getFileName().toString()))
                     .toList();

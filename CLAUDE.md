@@ -1360,10 +1360,16 @@ The design is fully specified in `docs/` — **treat those files as the source o
   made the endpoint answer 409 forever. Each task was four-lens reviewed and mutation-verified;
   the round-1 findings not closed in-round are filed under `techdebt/spire-run-worker/`,
   `techdebt/spire-publisher/` and `techdebt/spire-orchestrator/` (watchdog, cancel, refusal
-  stopping the agent, run charges — the M1 items by the plan). Measured, not estimated: **2037 Java
-  tests across 254 suites** (`testFast` 855/100 + `testServices` — gateway 73/11, orchestrator
-  810/104, review-worker 226/27, run-worker 60/10 incl. the M0 walking skeleton, runtime-docker
-  13/2); `spire-ui` untouched. The two images are not on GHCR and `spire-run-worker` is not in
+  stopping the agent, run charges — the M1 items by the plan). A second four-lens round over the
+  fix batch found the round's own regressions — a `PUT` without a `role` demoted a FACTORY provider
+  back to reviewer (the dashboard's edit form sends none), the wall-clock path SIGKILLed the
+  publisher one line before the drain window the first round had just given it, and a
+  `DISPATCH_FAILED` row could never be corrected by the real result — all closed with
+  discriminating tests, and the review-state file `.claude/reviews/global/software-factory.md`
+  records every finding's disposition. Measured, not estimated: **2060 Java tests across 256
+  suites** (`testFast` 856/100 + `testServices` — gateway 73/11, orchestrator 816/105,
+  review-worker 226/27, run-worker 74/11 incl. the M0 walking skeleton, runtime-docker 15/2);
+  `spire-ui` untouched. The two images are not on GHCR and `spire-run-worker` is not in
   `deploy/` yet — packaging follows M1, and the runbook builds both locally.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
@@ -1397,14 +1403,13 @@ docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy
 a test agent image and a smart-HTTP git origin, so it needs Docker and nothing else; leftover units
 from a crashed run are `docker ps -a --filter label=dev.codespire.runId`.
 
-```bash
-```
-
 **Fast local verification** — the same two tiers CI runs, so this is the pre-commit loop:
 
 ```bash
-./gradlew testFast                        # 13 Docker-free modules, ~25s
-./gradlew testServices                    # the 3 deployables (Dev Services: Postgres + Kafka)
+./gradlew testFast                        # 19 Docker-free modules, ~1 min
+./gradlew testServices                    # 5 service modules: the 4 deployables on Dev Services (Postgres +
+                                          # Kafka) plus spire-runtime-docker; it and spire-run-worker
+                                          # also drive a real Docker daemon
 ```
 
 **The packaged stack** (`deploy/`, host ports 347xx — distinct from dev's 34xxx and 392xx):

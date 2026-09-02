@@ -29,7 +29,7 @@ class RunAttentionTest {
 
     private String run() {
         String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
-        projection.queued(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot");
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
         projection.apply(new RunResult.RunStarted(runId, "container-1"));
         return runId;
     }

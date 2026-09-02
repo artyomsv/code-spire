@@ -41,9 +41,6 @@ class M0WalkingSkeletonTest {
     @Inject
     RunLauncher launcher;
 
-    @Inject
-    RunClaimStore claims;
-
     @BeforeAll
     static void imagesAndOrigin() throws Exception {
         TestImages.buildAll();
@@ -155,11 +152,4 @@ class M0WalkingSkeletonTest {
         assertFalse(origin.hasBranch("spire/nothing"));
     }
 
-    @Test
-    void aRedeliveredCommandDoesNotRunTheAgentTwice() {
-        // Claim-then-ack means Kafka does not stop a redelivery — run_claim does.
-        String runId = "run::github:" + WORKSPACE + "/app:finding-77:1";
-        assertTrue(claims.claim(runId, "execute"));
-        assertFalse(claims.claim(runId, "execute"));
-    }
 }

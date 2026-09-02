@@ -11,16 +11,20 @@ import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.RunUnitSpec;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import jakarta.annotation.PreDestroy;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Creates the run unit and reads its two log streams.
@@ -33,7 +37,9 @@ public class RunLauncher {
 
     private static final Logger LOG = Logger.getLogger(RunLauncher.class);
 
-    /** One virtual thread per log stream; see {@link #launch} for why not the common pool. */
+    /** How long a failed salvage waits for the log readers to deliver what they already hold. */
+    private static final Duration READER_GRACE = Duration.ofSeconds(5);
+
     private final ExecutorService streams = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("run-stream-", 0).factory());
 
@@ -50,6 +56,10 @@ public class RunLauncher {
 
     @Inject
     HarnessRegistry harnesses;
+
+    /** Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit. */
+    private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
+    }
 
     public RunResult launch(RunCommand.ExecuteRun command) {
         HarnessAdapter adapter;
@@ -71,28 +81,40 @@ public class RunLauncher {
             return new RunResult.RunFailed(command.runId(), "SANDBOX_UNREACHABLE",
                     e.getClass().getSimpleName() + ": " + e.getMessage(), true);
         }
+        return observe(command, adapter, handle);
+    }
 
+    /**
+     * Both streams are read CONCURRENTLY: the publisher reports pushes while the agent is still
+     * working (continuous checkpointing, RUN-TOPOLOGY §5), so reading them in sequence would hold
+     * every push report until the run ended. A throwing salvage or reader must not lose the run's
+     * result or leave a reader blocked on a log stream for the life of the process: the siblings
+     * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
+     */
+    private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle) {
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
-
-        // Both streams are read CONCURRENTLY. The publisher reports pushes while the agent is still
-        // working (continuous checkpointing, RUN-TOPOLOGY §5), so reading them in sequence would
-        // hold every push report until the run ended — and a run that then died would look as
-        // though it had pushed nothing.
-        // On a dedicated executor, never the common pool: each of these blocks for the run's whole
-        // wall clock following a container log, and two per run on ForkJoinPool.commonPool() would
-        // exhaust the JVM-wide pool with a handful of concurrent runs. Virtual threads, because the
-        // work is a blocked socket read and nothing else.
         CompletableFuture<Void> agentStream = CompletableFuture.runAsync(() ->
                 runtime.attach(handle, LogChannel.AGENT,
                         line -> adapter.parse(line).ifPresent(seen::accept)), streams);
         CompletableFuture<Void> publisherStream = CompletableFuture.runAsync(() ->
                 runtime.attach(handle, LogChannel.PUBLISHER, outcome::accept), streams);
 
-        Finalization finalization = runtime.salvage(handle);
-        CompletableFuture.allOf(agentStream, publisherStream).join();
+        Finalization finalization;
+        try {
+            finalization = runtime.salvage(handle);
+            CompletableFuture.allOf(agentStream, publisherStream).join();
+        } catch (RuntimeException e) {
+            // The readers get a moment to deliver what the publisher already wrote — the pushed
+            // ref is the one fact worth carrying out of here — and are then cancelled, because a
+            // follow stream on a container that is still running would otherwise never end.
+            awaitBriefly(agentStream, publisherStream);
+            LOG.errorf(e, "run %s: salvage or log read failed; the unit is preserved for inspection", command.runId());
+            return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED",
+                    e.getClass().getSimpleName() + ": " + e.getMessage() + pushedNote(outcome), false);
+        }
 
-        RunResult result = interpret(command, adapter, seen, outcome, finalization);
+        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization));
 
         // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
         // can read what the agent was doing — throwing that away is the loss salvage prevents.
@@ -104,22 +126,27 @@ public class RunLauncher {
         return result;
     }
 
-    private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter,
-                                RunEventFold seen, PublisherOutcome outcome,
-                                Finalization finalization) {
+    private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
+        PublisherOutcome outcome = observed.outcome();
+        Finalization finalization = observed.finalization();
         if (!finalization.salvaged()) {
+            // The work pushed before the overrun is on the branch; the detail says so, because a
+            // failure that hides an hour of delivered checkpoints sends the operator to the wrong place.
             return new RunResult.RunFailed(command.runId(), "SALVAGE_FAILED",
-                    finalization.detail(), false);
+                    finalization.detail() + pushedNote(outcome), false);
         }
         if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             return new RunResult.RunFailed(command.runId(), outcome.failureCause().orElseThrow(),
                     outcome.failureDetail(), true);
         }
-
-        if (seen.dropped() > 0) {
-            LOG.debugf("run %s: %d agent events folded away", command.runId(), seen.dropped());
+        if (observed.seen().dropped() > 0) {
+            LOG.debugf("run %s: %d agent events folded away", command.runId(), observed.seen().dropped());
         }
-        RunEventSummary summary = seen.summary();
+        if (outcome.omittedPaths() > 0) {
+            LOG.warnf("run %s: %d changed or blocked paths beyond the result's cap are not listed",
+                    command.runId(), outcome.omittedPaths());
+        }
+        RunEventSummary summary = observed.seen().summary();
         TerminalOutcome terminal = adapter.classify(finalization.exitCode(), summary);
         if (!terminal.succeeded() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
             // The agent failed and nothing reached the remote. A run that DID push before failing
@@ -129,6 +156,22 @@ public class RunLauncher {
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
                 outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary));
+    }
+
+    private static void awaitBriefly(CompletableFuture<Void> agentStream, CompletableFuture<Void> publisherStream) {
+        try {
+            CompletableFuture.allOf(agentStream, publisherStream).get(READER_GRACE.toSeconds(), TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException e) {
+            // A reader that failed or is still following: cancelled below either way.
+        }
+        agentStream.cancel(true);
+        publisherStream.cancel(true);
+    }
+
+    private static String pushedNote(PublisherOutcome outcome) {
+        return outcome.pushedRef().map(ref -> "; work pushed to " + ref + " before the failure").orElse("");
     }
 
     /**

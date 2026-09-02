@@ -79,7 +79,15 @@ public final class DockerRunRuntime implements RunRuntime {
     private static final String PUBLISHER = "publisher";
 
     /** How long the publisher is given to drain after the agent exits, before it is stopped. */
-    private static final int PUBLISHER_DRAIN_SECONDS = 30;
+    /**
+     * How long the publisher gets after the agent is gone. This is the window for its FINAL
+     * bundle: fetch (up to the size cap), diff, gate, and a push to a forge that may be slow. Thirty
+     * seconds cut a large last checkpoint off mid-push and reported the previous one as the result.
+     */
+    private static final int PUBLISHER_DRAIN_SECONDS = 300;
+
+    /** A log line longer than this is clipped and its remainder dropped; see {@link #attach}. */
+    static final int MAX_LINE_CHARS = 64 * 1024;
 
     /** Grace between SIGTERM and SIGKILL when the drain window elapses. */
     private static final int STOP_GRACE_SECONDS = 5;
@@ -290,6 +298,12 @@ public final class DockerRunRuntime implements RunRuntime {
                         // flushed when the stream ends.
                         private final StringBuilder carry = new StringBuilder();
 
+                        // The carry is bounded. The agent writes to this stream at
+                        // danger-full-access, so an unterminated line is an allocation it controls
+                        // on the worker every run shares: past MAX_LINE_CHARS the line is delivered
+                        // clipped, with a marker, and the rest is dropped up to the next newline.
+                        private boolean dropping;
+
                         @Override
                         public void onNext(Frame frame) {
                             carry.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
@@ -297,12 +311,25 @@ public final class DockerRunRuntime implements RunRuntime {
                             while ((newline = indexOfLineEnd(carry)) >= 0) {
                                 String line = carry.substring(0, newline);
                                 carry.delete(0, newline + 1);
+                                if (dropping) {
+                                    dropping = false;
+                                    continue;
+                                }
                                 if (line.endsWith("\r")) {
                                     line = line.substring(0, line.length() - 1);
                                 }
                                 if (!line.isEmpty()) {
                                     lines.accept(line);
                                 }
+                            }
+                            if (dropping) {
+                                carry.setLength(0);
+                            } else if (carry.length() > MAX_LINE_CHARS) {
+                                lines.accept(carry.substring(0, MAX_LINE_CHARS));
+                                lines.accept("[spire: a log line exceeded " + MAX_LINE_CHARS
+                                        + " characters; the remainder was dropped]");
+                                carry.setLength(0);
+                                dropping = true;
                             }
                         }
 
@@ -321,11 +348,16 @@ public final class DockerRunRuntime implements RunRuntime {
         }
     }
 
+    /** An operator's cancel ends the whole unit; the salvage path's overrun ends the agent alone. */
     @Override
     public void cancel(RunHandle handle) {
         for (String role : List.of(AGENT, PUBLISHER)) {
             containerOf(handle.runId(), role).ifPresent(this::killQuietly);
         }
+    }
+
+    private void killAgent(RunHandle handle) {
+        containerOf(handle.runId(), AGENT).ifPresent(this::killQuietly);
     }
 
     /**
@@ -355,15 +387,17 @@ public final class DockerRunRuntime implements RunRuntime {
                     .exec(new WaitContainerResultCallback())
                     .awaitStatusCode(wallClockOf(handle).toSeconds(), TimeUnit.SECONDS);
         } catch (RuntimeException e) {
-            // Includes the timeout. Stop the agent BEFORE reporting, whatever went wrong: an
-            // unreadable exit code does not mean the process is gone.
-            cancel(handle);
+            // Includes the timeout. Stop the AGENT before reporting, whatever went wrong: an
+            // unreadable exit code does not mean the process is gone. Only the agent — cancel()
+            // kills both roles, and killing the publisher here took away, one line before it, the
+            // drain window it is given next: every overrun lost its last pushed checkpoint's report.
+            killAgent(handle);
             drainPublisher(handle);
             return Finalization.salvageFailed("agent did not exit within the run's wall clock, or its "
                     + "status could not be read (" + e.getClass().getSimpleName() + "); cancelled");
         }
         if (exit == null) {
-            cancel(handle);
+            killAgent(handle);
             drainPublisher(handle);
             return Finalization.salvageFailed("agent did not exit within the run's wall clock; cancelled");
         }

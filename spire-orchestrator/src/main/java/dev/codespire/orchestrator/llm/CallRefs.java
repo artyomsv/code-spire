@@ -99,17 +99,16 @@ public final class CallRefs {
      * <p>The runId already carries its platform, so unlike the review ledger this key cannot
      * confuse two repositories that share a workspace name on different SCMs.
      */
-    public static String forRun(String runId, int attempt, String seq) {
+    public static String forRun(String runId, String seq) {
         if (runId == null || runId.isBlank()) {
             throw new IllegalArgumentException("a run charge needs its run id; a blank one would let "
                     + "every unattributed call share one key and collide");
         }
         if (seq == null || seq.isBlank()) {
-            throw new IllegalArgumentException("a run charge needs its call sequence within the attempt");
+            throw new IllegalArgumentException("a run charge needs its call sequence within the run");
         }
-        if (attempt < 1) {
-            throw new IllegalArgumentException("attempt starts at 1: " + attempt);
-        }
-        return "run:" + runId + ":" + attempt + ":" + seq;
+        // The run id already ends in its attempt (RunIds), so the key carries it once: a second
+        // copy here could disagree with the first and pin the disagreement into the ledger.
+        return "run:" + runId + ":" + seq;
     }
 }

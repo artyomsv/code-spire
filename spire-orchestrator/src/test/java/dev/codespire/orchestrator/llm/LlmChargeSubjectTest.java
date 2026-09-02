@@ -127,9 +127,11 @@ class LlmChargeSubjectTest {
         // Re-run and auto-retry need OPPOSITE treatment of the same key, which is why the attempt
         // is in it: a re-run reusing the first run's key has its charges discarded by
         // ON CONFLICT DO NOTHING, and an auto-retry taking a new one charges one paid call twice.
-        assertEquals("run:run::github:a/b:s:1:1:total", CallRefs.forRun("run::github:a/b:s:1", 1, "total"));
-        assertEquals("run:run::github:a/b:s:1:2:total", CallRefs.forRun("run::github:a/b:s:1", 2, "total"));
-        assertThrows(IllegalArgumentException.class,
-                () -> CallRefs.forRun("run::github:a/b:s:1", 0, "total"));
+        // The attempt is the run id's last field, so two attempts are two run ids and two keys
+        // without the key carrying the attempt a second time.
+        assertEquals("run:run::github:a/b:s:1:total", CallRefs.forRun("run::github:a/b:s:1", "total"));
+        assertEquals("run:run::github:a/b:s:2:total", CallRefs.forRun("run::github:a/b:s:2", "total"));
+        assertThrows(IllegalArgumentException.class, () -> CallRefs.forRun(" ", "total"));
+        assertThrows(IllegalArgumentException.class, () -> CallRefs.forRun("run::github:a/b:s:1", ""));
     }
 }

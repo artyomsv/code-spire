@@ -95,7 +95,10 @@ class RunResourceTest {
         // No default provider: refused, naming what to configure. A named provider: accepted. The
         // key itself is never in the body — the registry is where operator keys live, encrypted.
         String workspace = workspaceWithFactoryAccount();
-        sql("DELETE FROM llm_provider");
+        // Scoped to this suite's own fixtures: the database is shared with every other suite, and
+        // an unqualified DELETE here decided their outcomes by test ordering.
+        sql("DELETE FROM llm_provider WHERE name LIKE 'TEST-run-%'");
+        sql("UPDATE llm_provider SET is_default = FALSE WHERE name LIKE 'TEST-%'");
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
                 .then().statusCode(409)
@@ -339,6 +342,25 @@ class RunResourceTest {
         given().contentType("application/json")
                 .body(ok.replace("\"harness\"", "\"subject\":\"nested-base\",\"baseBranch\":\"release/1.2\",\"harness\""))
                 .when().post("/api/runs").then().statusCode(201);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aFactoryAccountWithNoResolvedLoginIsRefusedBeforeAnyRowExists() {
+        // The registry stores a blank login as null. Packing a null login threw AFTER the queued
+        // row was written: a 500, and a subject the 409-on-existing-row guard then refused for ever.
+        defaultLlmProvider();
+        String workspace = "TEST-nologin-" + UUID.randomUUID().toString().substring(0, 8);
+        providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
+                "bearer", null, "TEST-factory-token", "", true, List.of(), "", null, "FACTORY"));
+        String request = body(workspace).replace("\"harness\"", "\"subject\":\"no-login\",\"harness\"");
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(409)
+                .body(containsString("login"));
+        given().when().get("/api/runs/run::github:" + workspace + "/app:no-login:1")
+                .then().statusCode(404);
     }
 
     @Test

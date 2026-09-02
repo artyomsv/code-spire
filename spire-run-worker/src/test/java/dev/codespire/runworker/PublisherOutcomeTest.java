@@ -65,6 +65,31 @@ class PublisherOutcomeTest {
 
     /** The reverse order is a real success: the failure was a transient one the next push cured. */
     @Test
+    void aNonTerminalFailureAfterAPushLeavesThePushStanding() {
+        // The publisher skips an unreadable bundle and keeps reading; the earlier checkpoints are on
+        // the branch. Treating that cause like a forge refusal discarded four real pushes.
+        outcome.accept("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/x\",\"changed\":[{\"path\":\"a\",\"kind\":\"ADDED\"}]}");
+        outcome.accept("{\"event\":\"failed\",\"cause\":\"BUNDLE_UNREADABLE\",\"detail\":\"too large\"}");
+
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.Optional.of("refs/heads/spire/x"), outcome.pushedRef());
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.Optional.of("BUNDLE_UNREADABLE"), outcome.failureCause());
+    }
+
+    @Test
+    void pathsBeyondTheCapAreCountedNotListed() {
+        // A run touching sixty thousand files produced a result larger than a Kafka record; the
+        // lists are bounded and the remainder is counted so nothing is lost silently.
+        StringBuilder changed = new StringBuilder();
+        for (int i = 0; i < PublisherOutcome.MAX_PATHS + 7; i++) {
+            changed.append(i == 0 ? "" : ",").append("{\"path\":\"f").append(i).append("\",\"kind\":\"ADDED\"}");
+        }
+        outcome.accept("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/x\",\"changed\":[" + changed + "]}");
+
+        org.junit.jupiter.api.Assertions.assertEquals(PublisherOutcome.MAX_PATHS, outcome.changedPaths().size());
+        org.junit.jupiter.api.Assertions.assertEquals(7, outcome.omittedPaths());
+    }
+
+    @Test
     void aPushAfterAFailureIsStillAPush() {
         outcome.accept("""
                 {"event":"failed","cause":"BUNDLE_UNREADABLE","detail":"short read"}""");

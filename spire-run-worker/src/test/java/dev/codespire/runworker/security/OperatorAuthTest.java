@@ -33,6 +33,9 @@ class OperatorAuthTest {
     @TestHTTPResource("/rw/anything")
     URL operatorPrefix;
 
+    @TestHTTPResource("/anything")
+    URL outsideEveryPrefix;
+
     private static int status(URL url) throws IOException, InterruptedException {
         HttpResponse<Void> response = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create(url.toString())).GET().build(),
@@ -43,6 +46,14 @@ class OperatorAuthTest {
     @Test
     void healthStaysPublic() throws Exception {
         assertEquals(200, status(health));
+    }
+
+    @Test
+    void aPathOutsideEveryPrefixIsDeniedNotPermitted() throws Exception {
+        // Quarkus permits what matches no permission entry. "Deny by default" was asserted by a
+        // javadoc and probed under /rw only; the catch-all deny is what makes it true everywhere.
+        int status = status(outsideEveryPrefix);
+        assertTrue(status == 401 || status == 403, "expected a refusal outside the prefix, got " + status);
     }
 
     @Test

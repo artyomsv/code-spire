@@ -90,6 +90,11 @@ public final class RunIds {
         if (attempt < 1) {
             throw new IllegalArgumentException("not a run id (the attempt starts at 1): " + runId);
         }
+        if (!Integer.toString(attempt).equals(parts[3])) {
+            // "01" and "+1" parse to 1 but are different strings: two claim keys and two read-model
+            // rows for one logical run, on the id four places call the sole idempotency mechanism.
+            throw new IllegalArgumentException("not a run id (the attempt is not canonical): " + runId);
+        }
         return new Parsed(scmType, workspace, slug, parts[2], attempt);
     }
 

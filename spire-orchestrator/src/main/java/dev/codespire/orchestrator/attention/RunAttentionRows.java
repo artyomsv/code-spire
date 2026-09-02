@@ -30,12 +30,13 @@ public class RunAttentionRows {
 
     private static final int MAX_ROWS = 5;
 
+    /** One past the cap is fetched, so the summary row knows there is more without counting it all. */
     private static final String REFUSED_SQL = """
             SELECT run_id, blocked_paths FROM factory_run
              WHERE status = 'push_gate_refused'
                AND (attention_ack_at IS NULL OR ended_at > attention_ack_at)
              ORDER BY ended_at DESC
-            """;
+            """ + " LIMIT " + (MAX_ROWS + 1);
 
     void collect(Connection c, List<AttentionView> rows) throws SQLException {
         int total = 0;
@@ -49,17 +50,18 @@ public class RunAttentionRows {
                 listed++;
                 String runId = rs.getString("run_id");
                 String paths = rs.getString("blocked_paths").replace("\n", ", ");
+                // The action is a UI route by the panel's contract; there is no run page yet, so it
+                // is the dashboard root — the message carries the run id and the paths.
                 rows.add(new AttentionView(CODE, Severity.WARNING, runId,
-                        "The push gate refused this run: it changed " + paths
+                        "The push gate refused run " + runId + ": it changed " + paths
                                 + ". Nothing reached the remote. Read the paths, then acknowledge this.",
-                        "/api/runs/" + runId,
+                        "/",
                         "/api/runs/" + runId + "/attention-ack"));
             }
         }
         if (total > listed) {
             rows.add(new AttentionView(CODE, Severity.WARNING, null,
-                    (total - listed) + " further run(s) refused at the push gate, not listed individually.",
-                    "/"));
+                    "Further run(s) refused at the push gate, not listed individually.", "/"));
         }
     }
 }

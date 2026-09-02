@@ -5,6 +5,7 @@ import dev.codespire.workspace.BundleTooLargeException;
 import dev.codespire.workspace.ChangeSet;
 import dev.codespire.workspace.EmptyBundleException;
 import dev.codespire.workspace.GitCredential;
+import dev.codespire.workspace.PathGlob;
 import dev.codespire.workspace.PublishRepo;
 import dev.codespire.workspace.PushDecision;
 import dev.codespire.workspace.PushGate;
@@ -32,7 +33,8 @@ public final class PublishCycle {
 
     private final String branch;
 
-    private final List<String> profileGlobs;
+    /** Compiled once here; PublisherConfig already refused a glob the gate cannot apply. */
+    private final List<PathGlob> profile;
 
     private final long bundleMaxBytes;
 
@@ -45,7 +47,7 @@ public final class PublishCycle {
         this.repo = repo;
         this.baseCommit = baseCommit;
         this.branch = branch;
-        this.profileGlobs = List.copyOf(profileGlobs);
+        this.profile = PathGlob.compileAll(profileGlobs);
         this.bundleMaxBytes = bundleMaxBytes;
         this.credential = credential;
         this.outcome = outcome;
@@ -73,7 +75,7 @@ public final class PublishCycle {
 
         // The gate runs BEFORE the push, always. There is no ordering in which a refusal that
         // arrives after a push means anything.
-        PushDecision decision = PushGate.decide(changes, profileGlobs);
+        PushDecision decision = PushGate.decideCompiled(changes, profile);
         if (!decision.allowed()) {
             outcome.refused(decision.blocked(), changes.paths());
             return false;

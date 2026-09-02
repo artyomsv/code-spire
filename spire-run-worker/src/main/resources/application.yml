@@ -38,6 +38,11 @@ quarkus:
         operator:
           paths: /rw/*
           policy: authenticated
+        # Quarkus PERMITS a request that matches no entry, so without this an endpoint added outside
+        # /rw tomorrow is anonymous. The two specific paths above still win, being more specific.
+        everything-else:
+          paths: /*
+          policy: deny
     port: ${SPIRE_RUN_WORKER_HTTP_PORT:34083}
   datasource:
     db-kind: postgresql
@@ -73,7 +78,10 @@ spire:
     # unprocessed-record threshold against it at startup; the orchestrator's FactoryConfig is
     # where the value a command actually carries is set, and the two must agree or the guard is
     # checking a number nothing uses.
-    max-wall-clock-seconds: 1800
+    max-wall-clock-seconds: ${SPIRE_RUN_MAX_WALL_CLOCK_SECONDS:1800}
+    # The other half of the run unit. Required: a registry prefix and a digest are the deployment's,
+    # and a latest tag cannot say which publisher gated a run. Dev and test use the locally built tag.
+    publisher-image: ${SPIRE_PUBLISHER_IMAGE}
 
 mp:
   messaging:
@@ -139,6 +147,8 @@ mp:
   spire:
     security:
       auth-enabled: false
+    run:
+      publisher-image: spire-publisher:latest
 
 # Test: Dev Services boot Postgres and a broker automatically, so no URL is set here — supplying
 # one is what stops them starting, which surfaces as a connection refused rather than as config.
@@ -156,6 +166,8 @@ mp:
       console:
         json: false
   spire:
+    run:
+      publisher-image: spire-publisher:latest
     encryption:
       # Test-only AES-GCM keyset (not a secret) — the same one the orchestrator's and the review
       # worker's test profiles use, so a worker test can open a credential the orchestrator packed.

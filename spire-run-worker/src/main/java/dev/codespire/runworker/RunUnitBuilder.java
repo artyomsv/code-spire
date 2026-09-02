@@ -8,6 +8,7 @@ import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.inject.Inject;
 
 import java.time.Duration;
@@ -43,7 +44,21 @@ public class RunUnitBuilder {
 
     static final String HANDOFF = "handoff";
 
-    private static final String PUBLISHER_IMAGE = "spire-publisher:latest";
+    /**
+     * Not a constant: a registry prefix and a digest are the deployment's to choose, and a
+     * {@code latest} tag cannot say which publisher gated a run. The agent image is configured the
+     * same way on the orchestrator (FactoryConfig); these are the two halves of one run unit.
+     */
+    @ConfigProperty(name = "spire.run.publisher-image")
+    String publisherImage;
+
+    /**
+     * The longest wall clock a command may carry. RunAckBudget sizes the channel's ack threshold
+     * to this number; a command asking for more would outlive the budget the guard promised, so it
+     * is refused as BAD_COMMAND before a container exists rather than honoured.
+     */
+    @ConfigProperty(name = "spire.run.max-wall-clock-seconds")
+    long maxWallClockSeconds;
 
     /** An agent can write an object bomb; the publisher refuses one larger than this. */
     private static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
@@ -56,11 +71,16 @@ public class RunUnitBuilder {
     Credentials credentials;
 
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
+        if (command.maxWallClockSeconds() > maxWallClockSeconds) {
+            throw new IllegalArgumentException("the command asks for a wall clock of " + command.maxWallClockSeconds()
+                    + "s, over this worker's spire.run.max-wall-clock-seconds (" + maxWallClockSeconds
+                    + "); the channel's ack budget is sized to the latter");
+        }
         Credentials.Scm scm = credentials.scm(command.runId(), command.scmCredential());
         Map<String, String> harnessEnv = credentials.harnessEnv(command.runId(), command.harnessCredential());
 
         ContainerSpec init = new ContainerSpec(
-                PUBLISHER_IMAGE,
+                publisherImage,
                 List.of("spire-clone"),
                 Map.of("SPIRE_REMOTE_URI", command.remoteUri(),
                         "SPIRE_BRANCH", command.branch(),
@@ -93,7 +113,7 @@ public class RunUnitBuilder {
                         Mount.writable(HANDOFF, "/handoff")));
 
         ContainerSpec publisher = new ContainerSpec(
-                PUBLISHER_IMAGE,
+                publisherImage,
                 List.of("spire-publish"),
                 Map.of("SPIRE_REMOTE_URI", command.remoteUri(),
                         "SPIRE_BRANCH", command.branch(),

@@ -94,15 +94,26 @@ class ProviderResourceTest {
                 registry.resolve("bitbucket-cloud", "rest-factory").isEmpty(),
                 "a FACTORY registration is never the workspace's reviewer");
 
-        // An update that carries no secret takes the other rebuild path; the role must survive it too.
+        // The dashboard's edit form sends NO role. An update without one must keep the stored role —
+        // writing the default there demoted every FACTORY registration edited in Settings to the
+        // workspace's reviewer, which is the round-1 critical back through the UI path.
         var update = body("rest-factory", "bearer", "", null);
-        update.put("role", "FACTORY");
+        update.remove("role");
         given().contentType("application/json").body(update)
                 .when().put("/api/providers/" + id)
                 .then().statusCode(200)
                 .body("role", equalTo("FACTORY"));
         org.junit.jupiter.api.Assertions.assertTrue(
                 registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+
+        // An explicit role on update still changes it: that is a deliberate operator action.
+        update.put("role", "REVIEWER");
+        given().contentType("application/json").body(update)
+                .when().put("/api/providers/" + id)
+                .then().statusCode(200)
+                .body("role", equalTo("REVIEWER"));
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory").isPresent());
     }
 
     @Test

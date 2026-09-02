@@ -198,6 +198,41 @@ class DockerRunRuntimeIT {
     }
 
     @Test
+    void anAgentOverrunStillGivesThePublisherItsDrainWindow() throws Exception {
+        // The wall-clock path used to call cancel(), which SIGKILLs BOTH roles, one line before the
+        // drain window it then waited on — so every overrun lost its last checkpoint's report. The
+        // agent overruns a 4s clock; the publisher is still working for 8s and must finish.
+        RunHandle handle = start(unit("run_unit10", "sleep 60",
+                "trap 'exit 143' TERM; sleep 8 & wait $!; echo drained; exit 0", Duration.ofSeconds(4)));
+        List<String> publisher = new CopyOnWriteArrayList<>();
+        Thread reader = Thread.ofVirtual().start(
+                () -> runtime.attach(handle, LogChannel.PUBLISHER, publisher::add));
+
+        Finalization finalization = runtime.salvage(handle);
+        reader.join(Duration.ofSeconds(60).toMillis());
+
+        assertFalse(finalization.salvaged(), "the agent overran its clock");
+        assertTrue(publisher.contains("drained"), "the publisher was killed with the agent: " + publisher);
+    }
+
+    @Test
+    void aLogLineWithNoNewlineIsClippedNotBufferedWithoutBound() throws Exception {
+        // The agent writes to this stream unconfined, so an unterminated line was an allocation it
+        // controlled on the shared worker. Past the cap the line is delivered clipped with a marker,
+        // the remainder dropped up to the next newline, and lines after it still arrive.
+        RunHandle handle = start(unit("run_unit11",
+                "head -c 200000 /dev/zero | tr '\\0' a; echo; echo tail-line", "true"));
+        List<String> agent = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, agent::add);
+        runtime.salvage(handle);
+
+        int longest = agent.stream().mapToInt(String::length).max().orElse(0);
+        assertEquals(DockerRunRuntime.MAX_LINE_CHARS, longest, "the clipped line is exactly the cap");
+        assertTrue(agent.stream().anyMatch(l -> l.startsWith("[spire: a log line exceeded")), agent.toString());
+        assertTrue(agent.contains("tail-line"), "dropping ends at the newline: " + agent.size() + " lines");
+    }
+
+    @Test
     void thePublisherGetsItsDrainWindowNotASigtermTheInstantTheAgentExits() throws Exception {
         // The agent exits at once; the publisher still has five seconds of work. salvage() used to
         // issue `docker stop` with the drain window as its TIMEOUT — and stop sends SIGTERM first,
