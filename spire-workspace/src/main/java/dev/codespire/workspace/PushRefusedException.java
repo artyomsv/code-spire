@@ -17,9 +17,30 @@ public class PushRefusedException extends RuntimeException {
 
     private final List<String> refusals;
 
+    private final boolean nonFastForward;
+
     public PushRefusedException(List<String> refusals) {
+        this(refusals, false);
+    }
+
+    public PushRefusedException(List<String> refusals, boolean nonFastForward) {
         super("the forge refused the push: " + String.join("; ", refusals));
         this.refusals = List.copyOf(refusals);
+        this.nonFastForward = nonFastForward;
+    }
+
+    /**
+     * Whether the remote's branch moved under this run, rather than the forge refusing for its own
+     * reasons.
+     *
+     * <p>A resumed run, a human commit on the run's branch, or two replicas of one run all produce
+     * it. Reported as a plain push failure it points an operator at the forge and is retried, which
+     * pushes the same stale parent again; told apart it names the divergence and stops. Never
+     * resolved by force-pushing from the publisher — the fix is to clone the branch rather than the
+     * base commit, which is what the resume work will do.
+     */
+    public boolean isNonFastForward() {
+        return nonFastForward;
     }
 
     /** One entry per refused ref update, each naming the ref, the status and the forge's message. */

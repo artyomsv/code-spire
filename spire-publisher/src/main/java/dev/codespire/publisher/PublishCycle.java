@@ -87,7 +87,16 @@ public final class PublishCycle {
         } catch (GitAPIException | PushRefusedException e) {
             // PushRefusedException is the forge's own ruleset saying no, which JGit reports as a
             // status rather than throwing on its own. Never reported as a success.
-            outcome.failed("PUSH_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
+            //
+            // A branch that moved under the run is its own cause. Reported as PUSH_FAILED it points
+            // an operator at the forge, and it is classified retryable — so the retry pushes the
+            // same stale parent again and is refused identically. The remedy is to clone the branch
+            // rather than the base commit, which is the resume work's job; never a force-push from
+            // here, which would discard whatever moved the branch.
+            String cause = e instanceof PushRefusedException refusal && refusal.isNonFastForward()
+                    ? "NON_FAST_FORWARD"
+                    : "PUSH_FAILED";
+            outcome.failed(cause, e.getClass().getSimpleName() + ": " + e.getMessage());
             return false;
         }
     }

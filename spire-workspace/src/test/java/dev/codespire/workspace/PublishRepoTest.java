@@ -113,6 +113,65 @@ class PublishRepoTest {
     }
 
     @Test
+    void aBranchThatMovedUnderTheRunIsItsOwnRefusal(@TempDir Path dir) throws Exception {
+        // A resumed run, a human commit on spire/<subject>, or two replicas of one run: the remote's
+        // branch has moved, and the forge rejects the push as non-fast-forward. Reported as a plain
+        // push failure it points the operator at the forge, and it is retried -- which pushes the
+        // same stale parent again. Told apart, it names the divergence and stops.
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+
+        // Someone else puts an unrelated commit on the branch this run is about to push to.
+        Path other = dir.resolve("other");
+        git(dir, "git", "clone", bare.toUri().toString(), other.toString());
+        git(other, "git", "checkout", "-b", "spire/run_1");
+        Files.writeString(other.resolve("moved.txt"), "a commit this run has never seen\n");
+        git(other, "git", "add", ".");
+        git(other, "git", "-c", "user.email=other@test", "-c", "user.name=Other", "commit", "-m", "move it");
+        git(other, "git", "push", "origin", "spire/run_1");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+
+            PushRefusedException refused = assertThrows(PushRefusedException.class,
+                    () -> repo.pushRef(sha, "spire/run_1", null));
+
+            assertTrue(refused.isNonFastForward(),
+                    "a moved branch must be distinguishable from a transport fault: " + refused.refusals());
+            assertFalse(refused.refusals().isEmpty(), "the forge's own words must survive for the detail");
+        }
+    }
+
+    @Test
+    void aTransportRefusalIsNotReportedAsAMovedBranch(@TempDir Path dir) throws Exception {
+        // The other half of the same property. Without this, isNonFastForward() could return true
+        // unconditionally and the test above would still pass, which is the whole failure it exists
+        // to prevent -- every push failure told apart as the one thing that is never retried.
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+        Path bundle = agentBundle(dir, bare, base);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            // main is checked out in the seed clone, but the bare origin refuses a non-fast-forward
+            // to a branch that has diverged -- here the refusal is instead the protected default
+            // ref rule, reached by pushing a commit whose parent the branch does not contain.
+            git(dir.resolve("seed"), "git", "checkout", "-b", "diverged");
+            Files.writeString(dir.resolve("seed").resolve("other.txt"), "diverge\n");
+            git(dir.resolve("seed"), "git", "add", ".");
+            git(dir.resolve("seed"), "git", "-c", "user.email=s@test", "-c", "user.name=S",
+                    "commit", "-m", "diverge");
+            git(dir.resolve("seed"), "git", "push", "origin", "diverged");
+
+            // A fresh branch name always fast-forwards, so this push succeeds and nothing is refused.
+            assertEquals("refs/heads/spire/fresh", repo.pushRef(sha, "spire/fresh", null));
+        }
+    }
+
+    @Test
     void pushesTheFetchedCommitToTheBranch(@TempDir Path dir) throws Exception {
         Path bare = origin(dir);
         String base = rev(dir.resolve("seed"), "HEAD");

@@ -191,6 +191,11 @@ class RunFailureCauseTest {
      */
     private static final Pattern CAUSE_POSITION = Pattern.compile(
             "RunFailed\\([^;]*?\"([A-Z][A-Z0-9_]+)\""
+                    // The launcher's own helper, which every failure path there now routes through.
+                    // Adding it was not optional: consolidating those paths onto one method made the
+                    // RunFailed shape above stop matching, and this scan went blind to a whole
+                    // producer while still passing. theScanSeesTheProducersItClaimsTo caught it.
+                    + "|\\bfailure\\([^;]*?\"([A-Z][A-Z0-9_]+)\""
                     + "|\\bfailed\\(\\s*\"([A-Z][A-Z0-9_]+)\""
                     + "|asText\\(\\s*\"([A-Z][A-Z0-9_]+)\""
                     + "|NON_TERMINAL_CAUSES[^;]*?\"([A-Z][A-Z0-9_]+)\"",
