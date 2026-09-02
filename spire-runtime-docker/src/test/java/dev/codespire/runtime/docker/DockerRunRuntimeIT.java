@@ -195,12 +195,12 @@ class DockerRunRuntimeIT {
         assertThrows(IllegalStateException.class, () -> runtime.create(spec));
         started.add(new RunHandle("run_unit7", "unknown"));
 
-        // Asserted through discoverOrphans, not by hand-building a handle. The version this
-        // replaces did the latter and was therefore vacuous: discoverOrphans filtered on
+        // Asserted through discoverUnits, not by hand-building a handle. The version this
+        // replaces did the latter and was therefore vacuous: discoverUnits filtered on
         // role=agent, and on the init-failure path NO agent container is ever created — so the
         // unit was undiscoverable, and the init container kept the clone token in its environment
         // forever. The test asserted the comment rather than the behaviour.
-        assertTrue(runtime.discoverOrphans().stream().anyMatch(h -> h.runId().equals("run_unit7")),
+        assertTrue(runtime.discoverUnits().stream().anyMatch(h -> h.runId().equals("run_unit7")),
                 "the watchdog must be able to reach a unit whose init failed");
     }
 
@@ -293,17 +293,17 @@ class DockerRunRuntimeIT {
         start(unit("run_unit5", "sleep 30", "sleep 30"));
 
         DockerRunRuntime afterRestart = new DockerRunRuntime();
-        assertTrue(afterRestart.discoverOrphans().stream()
+        assertTrue(afterRestart.discoverUnits().stream()
                         .anyMatch(h -> h.runId().equals("run_unit5")),
                 "a fresh instance must find the unit by label alone");
 
-        RunHandle discovered = afterRestart.discoverOrphans().stream()
+        RunHandle discovered = afterRestart.discoverUnits().stream()
                 .filter(h -> h.runId().equals("run_unit5"))
                 .findFirst()
                 .orElseThrow();
         afterRestart.destroy(discovered);
 
-        assertTrue(afterRestart.discoverOrphans().stream()
+        assertTrue(afterRestart.discoverUnits().stream()
                         .noneMatch(h -> h.runId().equals("run_unit5")),
                 "and destroying it must actually remove it");
         assertTrue(afterRestart.client().listVolumesCmd()

@@ -215,7 +215,7 @@ public final class DockerRunRuntime implements RunRuntime {
      * only {@code [a-zA-Z0-9][a-zA-Z0-9_.-]}. Naming the volume after the id verbatim failed at
      * {@code create} for every real run — reported as {@code SANDBOX_UNREACHABLE}, retryable, and
      * invisible to the integration tests, whose ids are synthetic and slash-free. The id itself
-     * stays on {@link #RUN_ID_LABEL}, which is what {@link #destroy} and {@link #discoverOrphans}
+     * stays on {@link #RUN_ID_LABEL}, which is what {@link #destroy} and {@link #discoverUnits}
      * already look volumes up by; the name only has to be unique and legal.
      */
     static String volumeName(String runId, String volume) {
@@ -514,7 +514,7 @@ public final class DockerRunRuntime implements RunRuntime {
      * about.
      */
     @Override
-    public List<RunHandle> discoverOrphans() {
+    public List<RunHandle> discoverUnits() {
         List<RunHandle> handles = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (Container container : client.listContainersCmd()

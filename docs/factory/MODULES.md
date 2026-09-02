@@ -116,7 +116,7 @@ push, usage extraction, artefact collection — happens in `finalize`; only then
 Merging them is how completed work gets thrown away, and it was the second most common failure cause
 in the observed prior art.
 
-`discoverOrphans()` exists because a control plane restart must be able to find sandboxes it no
+`discoverUnits()` exists because a control plane restart must be able to find sandboxes it no
 longer remembers. Both arms can implement it; it simply has to be somebody's job.
 
 ---

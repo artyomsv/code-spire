@@ -88,7 +88,7 @@ public interface RunRuntime {
     void cancel(RunHandle h);
     Finalization finalize(RunHandle h);   // salvage BEFORE teardown — never merged with destroy
     void destroy(RunHandle h);
-    List<RunHandle> discoverOrphans();    // for the watchdog
+    List<RunHandle> discoverUnits();    // for the watchdog
     Duration drainWindow();               // how long salvage may hold its caller after the agent
                                          // exits; the worker's ack budget adds it to the wall clock
 }
@@ -285,7 +285,7 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 | `harness_credential_state` | pool member health: available / rate-limited-until / rejected / disabled |
 
 **The orphan definition, because "somebody's job" is not a design.** With more than one run-worker
-replica on one Docker daemon or in one namespace, `discoverOrphans()` enumerates *every* sandbox,
+replica on one Docker daemon or in one namespace, `discoverUnits()` enumerates *every* sandbox,
 including a sibling's healthy hour-long run. Reap eagerly and the watchdog kills live work — worse
 than the leak it prevents; reap lazily and an eviction leaks forever. So:
 

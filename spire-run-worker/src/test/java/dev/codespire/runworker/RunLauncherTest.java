@@ -196,7 +196,7 @@ class RunLauncherTest {
         }
 
         @Override
-        public List<RunHandle> discoverOrphans() {
+        public List<RunHandle> discoverUnits() {
             return List.of();
         }
 

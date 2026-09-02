@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The lease that defines an orphan.
  *
  * <p>V1 created this table with a comment explaining why owner plus heartbeat is the pair that
- * matters, and then nothing wrote or read it: {@code discoverOrphans} exists and is called from no
+ * matters, and then nothing wrote or read it: {@code discoverUnits} exists and is called from no
  * production code, and a replica evicted mid-run leaves its containers behind holding a live model
  * credential with no terminal result ever emitted. These assert the half that finally exists.
  */

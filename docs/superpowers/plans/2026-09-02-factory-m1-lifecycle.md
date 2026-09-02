@@ -283,7 +283,15 @@ replicas on one daemon, enumerating every sandbox reaps a sibling's live hour-lo
 > An **orphan** is a sandbox whose `run_lease` row is absent or PRESERVED, or whose lease heartbeat is
 > older than N missed intervals. Reaping an orphan always runs `finalize` before `destroy`.
 
-**Files:** new `OrphanWatchdog.java`, `RunRuntime.discoverOrphans` already exists on the SPI.
+**Files:** new `OrphanWatchdog.java`, new `RunResultReporter.java` (the watchdog runs on a timer,
+outside any command handling, so there is no dispatcher call in progress whose publish path it
+could borrow), and `RunRuntime.discoverOrphans` **renamed** `discoverUnits`.
+
+> **Corrected during the task.** The SPI method did not discover orphans: it listed every container
+> carrying the run-id label, dead or alive, with no reference to any lease — which a runtime cannot
+> read. A name asserting a safety property the code does not check is how a future caller skips the
+> check, and here the check is the only thing between the watchdog and a sibling replica's live
+> hour-long run.
 
 **Test scenarios**
 
@@ -437,7 +445,7 @@ four-lens `/code-review` whose findings are fixed before the next task starts.
 - [ ] Task 3 — finalize before destroy; failed salvage blocks teardown
 - [ ] Task 4 — a run writes to the charge ledger
 - [x] Task 5 — `run_lease` with owner, heartbeat, the unit id and a preservation stamp
-- [ ] Task 6 — the orphan watchdog
+- [x] Task 6 — the orphan watchdog
 - [ ] Task 7 — `cs.run-control` and a cancel that cancels
 - [ ] Task 8 — steer, where the harness declares it
 - [ ] Task 9 — idempotent dispatch, ambiguity failing closed
