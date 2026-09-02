@@ -54,6 +54,9 @@ public class RunDispatcher {
     RunLauncher launcher;
 
     @Inject
+    WorkspaceLeases leases;
+
+    @Inject
     RunFailures failures;
 
     @Inject
@@ -107,7 +110,10 @@ public class RunDispatcher {
         }
         ack(message);
 
-        emit(new RunResult.RunStarted(execute.runId(), execute.runId()));
+        // The lease BEFORE the unit. A crash between the two leaves a lease with no unit, which
+        // the watchdog can reconcile against the daemon; the reverse leaves a sandbox holding a
+        // credential that nothing knows exists.
+        leases.take(execute.runId());
         RunResult result;
         try {
             result = launcher.launch(execute, event -> events.send(Record.of(event.runId(), event))
@@ -119,7 +125,15 @@ public class RunDispatcher {
                             LOG.warnf("run %s: transcript event %d was refused by the broker (%s)",
                                     event.runId(), event.sequence(), refused.getClass().getSimpleName());
                         }
-                    }));
+                    }),
+                    unitId -> {
+                        // RunStarted is emitted HERE rather than before the launch, because only
+                        // here does a unit id exist. It used to carry the run id twice, so the one
+                        // field meant to point an operator at a preserved sandbox pointed at
+                        // nothing and the label was the documented workaround.
+                        leases.recordUnit(execute.runId(), unitId);
+                        emit(new RunResult.RunStarted(execute.runId(), unitId));
+                    });
         } catch (RuntimeException e) {
             // Never let an unexpected failure leave a run with no terminal result: a run that
             // reports nothing is indistinguishable from one still working.
@@ -130,7 +144,34 @@ public class RunDispatcher {
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         emit(result);
+        releaseUnlessPreserved(execute.runId(), result);
         return DONE;
+    }
+
+    /**
+     * Give up the lease, unless the unit was deliberately kept.
+     *
+     * <p>A preserved unit KEEPS its lease, and that is the point rather than an oversight: it is
+     * exactly what the orphan watchdog exists to find, and releasing it would make the
+     * preservation invisible to the control plane all over again. The launcher preserves a unit
+     * whenever nobody observed the agent's exit, which is the same condition the result reports.
+     */
+    private void releaseUnlessPreserved(String runId, RunResult result) {
+        if (result instanceof RunResult.RunFinished finished && finished.agentUnobserved()) {
+            LOG.infof("run %s: its unit is preserved, so the lease is kept for the watchdog", runId);
+            return;
+        }
+        if (result instanceof RunResult.RunFailed failed && preservesTheUnit(failed.cause())) {
+            LOG.infof("run %s: its unit is preserved, so the lease is kept for the watchdog", runId);
+            return;
+        }
+        leases.release(runId);
+    }
+
+    /** The two causes on which the launcher keeps the unit rather than destroying it. */
+    private static boolean preservesTheUnit(String cause) {
+        RunFailureCause classified = RunFailureCause.of(cause);
+        return classified == RunFailureCause.AGENT_TIMEOUT || classified == RunFailureCause.SALVAGE_FAILED;
     }
 
     private static void ack(Message<RunCommand> message) {

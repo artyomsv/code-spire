@@ -8,6 +8,27 @@
 | Found during | PR #95 four-lens review, round 1 (code-reviewer and security-officer, worker side) |
 | Date | 2026-09-02 |
 
+## Update — 2026-09-02, M1 Task 5 (the lease)
+
+**Half of this is now closed.** `runworker.run_lease` is written and read: the lease is taken
+BEFORE the unit is created, its heartbeat advances on a timer while the run is alive, it records
+the sandbox id as soon as one exists, and it is released on every terminal path EXCEPT a preserved
+unit — which keeps its lease on purpose, because a preserved unit is exactly what a watchdog must
+find.
+
+So the definition of an orphan that V1's comment describes at length — owner plus heartbeat —
+finally has data behind it. `WorkspaceLeases.staleLeases` answers the question, deliberately
+without filtering by owner: a lease THIS replica holds and has stopped heartbeating is exactly as
+stale as a dead replica's, and filtering would make a hung replica invisible to its own watchdog.
+
+`RunStarted` also carries the real unit id now rather than the run id twice, which closes
+`techdebt/spire-run-worker/4-1-…` — the lease is where that identity finally had somewhere to live,
+so the two were one change.
+
+**What remains is acting on it**, which is Task 6. Nothing yet reads `staleLeases`, nothing calls
+`discoverOrphans`, and a replica evicted mid-run still leaves a claim with no result. The lease now
+says which runs those are; the watchdog is what does something about them.
+
 ## Issue
 
 The claim on `run_claim` is taken, `RunStarted` is emitted, and the launcher then blocks for the

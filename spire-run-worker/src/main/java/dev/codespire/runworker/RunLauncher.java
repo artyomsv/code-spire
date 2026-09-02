@@ -68,7 +68,16 @@ public class RunLauncher {
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
     }
 
-    public RunResult launch(RunCommand.ExecuteRun command, Consumer<RunEventRecord> stream) {
+    /**
+     * Run a command to a terminal result.
+     *
+     * <p>{@code unitCreated} is called exactly once, with the sandbox's own id, the instant the
+     * unit exists and before anything runs in it. Two callers need that moment and neither could
+     * see it before: {@code RunStarted} was emitted ahead of creation and so passed the run id in
+     * place of a unit id that did not exist yet, and the lease had nothing to record.
+     */
+    public RunResult launch(RunCommand.ExecuteRun command, Consumer<RunEventRecord> stream,
+                            Consumer<String> unitCreated) {
         HarnessAdapter adapter;
         RunUnitSpec unit;
         try {
@@ -88,6 +97,15 @@ public class RunLauncher {
             // The daemon is down or refusing, which is a different person looking in a different
             // place from an eviction mid-run — and that discrimination is the whole point of FR-F9.
             return failure(command, "RUNTIME_UNAVAILABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        // Announced BEFORE observing, so a run that then hangs is still findable by its unit.
+        // Guarded: this is bookkeeping about the run, and a caller that throws here must not cost
+        // the run its outcome — the unit exists whether or not anybody recorded that it does.
+        try {
+            unitCreated.accept(handle.providerRunId());
+        } catch (RuntimeException e) {
+            LOG.warnf("run %s: its unit could not be announced (%s); the sandbox is labelled either way",
+                    command.runId(), e.getClass().getSimpleName());
         }
         return observe(command, adapter, handle, stream);
     }

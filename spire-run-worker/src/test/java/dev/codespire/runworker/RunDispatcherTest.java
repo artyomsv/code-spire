@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -65,18 +66,27 @@ class RunDispatcherTest {
             this.order = order;
         }
 
-        // The two-argument form, because that is what the dispatcher calls. Overriding the
-        // convenience overload instead compiles, runs the REAL launcher, and every assertion about
-        // ordering and idempotency then measures nothing.
+        /** What the unit id would be, announced the way the real launcher announces it. */
+        String unitId = "container-abc123";
+
+        RunResult result = FINISHED;
+
+        // The form the dispatcher actually calls. Overriding a different arity compiles, runs
+        // the REAL launcher, and every assertion about ordering and idempotency then measures
+        // nothing -- which is exactly what happened once on this class.
         @Override
         public RunResult launch(RunCommand.ExecuteRun command,
-                                java.util.function.Consumer<dev.codespire.contract.event.RunEventRecord> stream) {
+                                java.util.function.Consumer<dev.codespire.contract.event.RunEventRecord> stream,
+                                java.util.function.Consumer<String> unitCreated) {
             order.add("launch");
             launches++;
             if (failWith != null) {
                 throw failWith;
             }
-            return FINISHED;
+            if (unitId != null) {
+                unitCreated.accept(unitId);
+            }
+            return result;
         }
     }
 
@@ -149,13 +159,51 @@ class RunDispatcherTest {
     private final FakeClaims claims = new FakeClaims(order);
     private final FakeLauncher launcher = new FakeLauncher(order);
     private final FakeEmitter results = new FakeEmitter();
+    private final FakeLeases leases = new FakeLeases(order);
     private final RunDispatcher dispatcher = dispatcher();
+
+    /**
+     * Records the lease calls in the same order list as the claim and the launch, so the
+     * take-before-create ordering is a fact about the sequence rather than about two separate
+     * assertions that could both hold in the wrong order.
+     *
+     * <p>Every method the dispatcher reaches is overridden deliberately. An un-overridden one
+     * opens a real database connection from a plain unit test -- a trap this repository has hit
+     * four times in one milestone.
+     */
+    static final class FakeLeases extends WorkspaceLeases {
+        final List<String> order;
+        String unitId;
+        boolean released;
+
+        FakeLeases(List<String> order) {
+            this.order = order;
+        }
+
+        @Override
+        public void take(String runId) {
+            order.add("lease");
+        }
+
+        @Override
+        public void recordUnit(String runId, String unit) {
+            order.add("unit");
+            unitId = unit;
+        }
+
+        @Override
+        public void release(String runId) {
+            order.add("release");
+            released = true;
+        }
+    }
 
     private RunDispatcher dispatcher() {
         RunDispatcher d = new RunDispatcher();
         d.claims = claims;
         d.launcher = launcher;
         d.results = results;
+        d.leases = leases;
         // The real collaborator with a faked credential source, so the dispatcher's own failures
         // get the same scrub and the same retry answer the launcher's do. Leaving it unwired is
         // what the review found: this class built details the launcher's rules never touched.
@@ -179,9 +227,11 @@ class RunDispatcherTest {
         Delivery delivery = new Delivery(order);
         dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
 
-        assertEquals(List.of("claim", "ack", "launch"), order,
+        assertEquals(List.of("claim", "ack", "lease", "launch", "unit", "release"), order,
                 "the claim goes first (a crash between them must not lose the command), the ack "
-                        + "before the run (an hour-long run must not age the record), the run last");
+                        + "before the run (an hour-long run must not age the record), then the LEASE "
+                        + "before the unit can exist -- a crash there leaves a row the watchdog can "
+                        + "reconcile, where the reverse leaves a sandbox nothing knows about");
         assertTrue(delivery.acked);
         assertEquals(List.of("RunStarted", "RunFinished"),
                 results.sent.stream().map(r -> r.getClass().getSimpleName()).toList());
@@ -269,5 +319,61 @@ class RunDispatcherTest {
         assertNull(delivery.nacked);
         assertEquals(0, launcher.launches);
         assertTrue(claims.taken.isEmpty(), "a cancel must not take the execute slot from a later ExecuteRun");
+    }
+
+    @Test
+    void theStartedEventNamesTheSandboxNotTheRun() {
+        // RunStarted used to be emitted BEFORE the unit was created, so no handle existed and the
+        // run id was passed in its place. The one field meant to point an operator at a preserved
+        // unit pointed at nothing, and the container label was the documented workaround.
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        RunResult.RunStarted started = (RunResult.RunStarted) results.sent.getFirst();
+        assertEquals("container-abc123", started.providerRunId());
+        assertNotEquals(started.runId(), started.providerRunId(),
+                "the two fields answer different questions; filling one with the other says nothing");
+    }
+
+    @Test
+    void theLeaseRecordsTheUnitTheLauncherAnnounced() {
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals("container-abc123", leases.unitId);
+    }
+
+    @Test
+    void aPreservedUnitKeepsItsLease() {
+        // The deliberate exception, and the one the watchdog depends on. Releasing here would make
+        // the preservation invisible to the control plane all over again -- which is precisely the
+        // gap the preserved-workspace debt entry describes.
+        launcher.result = new RunResult.RunFinished(EXECUTE.runId(), "refs/heads/spire/x",
+                List.of(), List.of(), null, true);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertFalse(leases.released,
+                "a unit kept for inspection must stay leased, or nothing can find it afterwards");
+    }
+
+    @Test
+    void anOrdinaryFailureReleasesItsLease() {
+        // The other half. A lease nobody releases becomes an orphan the watchdog will act on, so
+        // keeping every failure's lease would make the watchdog chase units that are already gone.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 2", false, null);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(leases.released);
+    }
+
+    @Test
+    void anUnobservedFailureKeepsItsLeaseToo() {
+        // The launcher preserves the unit on a timeout and on a failed salvage, so those two
+        // causes have to keep their leases for the same reason a preserved finish does.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_TIMEOUT", "clock", false, null);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertFalse(leases.released);
     }
 }
