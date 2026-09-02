@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunEventRecord;
+import dev.codespire.orchestrator.ws.RunTranscriptSocket;
 import io.quarkus.scheduler.Scheduled;
 import io.smallrye.common.annotation.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -28,6 +29,9 @@ public class RunEventConsumer {
     @Inject
     RunEventProjection transcript;
 
+    @Inject
+    RunTranscriptSocket.Tail tail;
+
     /**
      * How long a run's transcript is kept.
      *
@@ -48,6 +52,10 @@ public class RunEventConsumer {
             return;
         }
         transcript.record(event);
+        // Recorded first, then pushed. A tail that received an event the transcript does not hold
+        // would show a line that vanishes on the next page load, which is worse than a tail that
+        // lags by one write.
+        tail.push(event);
     }
 
     @Scheduled(every = "1h", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)

@@ -13,7 +13,7 @@ quarkus:
     client-id: ${SPIRE_OIDC_CLIENT_ID:spire-orchestrator}
     credentials:
       secret: ${SPIRE_OIDC_CLIENT_SECRET}
-    # Cookie session for the browser AND the three WebSockets (a browser cannot set a header on a
+    # Cookie session for the browser AND every WebSocket (a browser cannot set a header on a
     # handshake); bearer for curl, CI and the SMOKE-TEST runbook.
     application-type: hybrid
     authentication:
@@ -51,7 +51,8 @@ quarkus:
           paths: /q/health,/q/health/*,/api/me
           policy: permit
         operator:
-          # Covers the three sockets too — they moved under /api/ws/* so one policy governs them.
+          # Covers every socket too — they all sit under /api/ws/* so one policy governs them,
+          # including the per-run transcript tail, whose path carries the run id.
           paths: /api/*,/dev/*
           policy: authenticated
     port: ${ORCHESTRATOR_HTTP_PORT:34080}   # host-exposed port lives in the 34xxx project range
