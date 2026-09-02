@@ -15,7 +15,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -161,5 +163,74 @@ class WorkspaceLeasesIT {
         } catch (SQLException e) {
             throw new IllegalStateException("could not backdate the lease for " + runId, e);
         }
+    }
+
+    @Test
+    void aPreservedLeaseStopsBeingHeartbeated() {
+        // The defect a review caught, and the reason preservation needed its own column rather than
+        // just skipping the DELETE. The sweep matches every lease its owner holds, so a preserved
+        // row was refreshed every thirty seconds for the life of the replica and could NEVER go
+        // stale -- a watchdog defined on staleness would have found it only after a restart, which
+        // is the one case where it was reapable anyway. The preservation was invisible exactly as it
+        // had been before the lease existed at all.
+        String runId = runId();
+        leases.take(runId);
+        leases.preserve(runId);
+        backdateHeartbeat(runId, Duration.ofMinutes(10));
+        var before = leases.find(runId).orElseThrow().heartbeatAt();
+
+        leases.heartbeat();
+
+        assertEquals(before, leases.find(runId).orElseThrow().heartbeatAt(),
+                "a preserved unit's lease must age, or nothing will ever look at it");
+    }
+
+    @Test
+    void aPreservedLeaseIsActionableAtOnce() {
+        // Not merely "eventually stale". There is nothing left to wait for: the run is over and the
+        // sandbox was deliberately kept, so a watchdog should see it on its very next tick.
+        String runId = runId();
+        leases.take(runId);
+        leases.preserve(runId);
+
+        assertTrue(leases.staleLeases(Duration.ofHours(1)).stream()
+                        .anyMatch(lease -> lease.runId().equals(runId) && lease.preserved()),
+                "a fresh heartbeat must not hide a unit that was kept on purpose");
+    }
+
+    @Test
+    void aNonPositiveWindowIsRefusedRatherThanReapingEverything() {
+        // A zero or negative window puts the threshold at or after now, so every lease matches --
+        // the fail-closed posture flipping to reap-everything, silently.
+        assertThrows(IllegalArgumentException.class, () -> leases.staleLeases(Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () -> leases.staleLeases(Duration.ofSeconds(-1)));
+    }
+
+    @Test
+    void aSubSecondWindowIsNotTruncatedToZero() {
+        // Composing "N seconds" from Duration.toSeconds() turned 500ms into "0 seconds", which
+        // matches every row. Binding the number keeps a small window small.
+        String fresh = runId();
+        leases.take(fresh);
+
+        assertTrue(leases.staleLeases(Duration.ofMillis(500)).stream()
+                        .noneMatch(lease -> lease.runId().equals(fresh)),
+                "a lease taken a moment ago is not half a second stale");
+    }
+
+    @Test
+    void reTakingALeaseForgetsThePreviousAttemptsUnit() {
+        // A re-taken lease names a unit the previous attempt created. Keeping it would point an
+        // operator at the wrong sandbox, which is worse than pointing at none.
+        String runId = runId();
+        leases.take(runId);
+        leases.recordUnit(runId, "container-from-the-first-attempt");
+        leases.preserve(runId);
+
+        leases.take(runId);
+
+        WorkspaceLeases.Lease lease = leases.find(runId).orElseThrow();
+        assertNull(lease.unitId());
+        assertFalse(lease.preserved(), "and it is live again, so it must be heartbeated again");
     }
 }

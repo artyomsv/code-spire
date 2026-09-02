@@ -323,4 +323,23 @@ class FactoryRunProjectionTest {
         assertEquals(Optional.empty(),
                 projection.modelOf("run::github:TEST-acme/app:never-queued-" + UUID.randomUUID() + ":1"));
     }
+
+    @Test
+    void aStartedRunRecordsTheSandboxAnOperatorHasToFind() {
+        // The other half of the RunStarted fix. The wire carried a corrected unit id and the
+        // projection discarded it, so the container label remained the only route to a preserved
+        // sandbox -- exactly the workaround the debt entry was closed for removing.
+        String runId = queuedRun();
+
+        projection.apply(new RunResult.RunStarted(runId, "container-abc123"));
+
+        assertEquals("container-abc123", projection.find(runId).orElseThrow().unitId());
+    }
+
+    @Test
+    void aRunThatNeverStartedNamesNoSandbox() {
+        // Null is the honest answer for a queued run: the worker has not created anything yet, so
+        // there is nothing to point at.
+        assertNull(projection.find(queuedRun()).orElseThrow().unitId());
+    }
 }

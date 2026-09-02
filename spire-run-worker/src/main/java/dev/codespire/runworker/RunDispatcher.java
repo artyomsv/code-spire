@@ -113,27 +113,21 @@ public class RunDispatcher {
         // The lease BEFORE the unit. A crash between the two leaves a lease with no unit, which
         // the watchdog can reconcile against the daemon; the reverse leaves a sandbox holding a
         // credential that nothing knows exists.
-        leases.take(execute.runId());
+        //
+        // Refused rather than swallowed, uniquely among the lease writes: every other one happens
+        // AFTER the money is spent, where throwing would discard a terminal result to protect
+        // bookkeeping. Here there is no result yet, so continuing without a lease would produce
+        // exactly the forbidden state for the whole life of the run. One un-run command is cheaper.
+        if (!leases.take(execute.runId())) {
+            emit(failures.of(execute, RunFailureCause.WORKER_FAILED.name(),
+                    "the run's lease could not be taken, so no unit was created"));
+            return DONE;
+        }
+
+        LeaseKeeper keeper = new LeaseKeeper(execute.runId());
         RunResult result;
         try {
-            result = launcher.launch(execute, event -> events.send(Record.of(event.runId(), event))
-                    .whenComplete((sent, refused) -> {
-                        if (refused != null) {
-                            // The channel does not wait for write completion, so a broker refusal
-                            // arrives here and nowhere else. Discarding this stage meant the
-                            // stream's own "gap" warning could not fire for the most likely loss.
-                            LOG.warnf("run %s: transcript event %d was refused by the broker (%s)",
-                                    event.runId(), event.sequence(), refused.getClass().getSimpleName());
-                        }
-                    }),
-                    unitId -> {
-                        // RunStarted is emitted HERE rather than before the launch, because only
-                        // here does a unit id exist. It used to carry the run id twice, so the one
-                        // field meant to point an operator at a preserved sandbox pointed at
-                        // nothing and the label was the documented workaround.
-                        leases.recordUnit(execute.runId(), unitId);
-                        emit(new RunResult.RunStarted(execute.runId(), unitId));
-                    });
+            result = launcher.launch(execute, keeper);
         } catch (RuntimeException e) {
             // Never let an unexpected failure leave a run with no terminal result: a run that
             // reports nothing is indistinguishable from one still working.
@@ -144,34 +138,83 @@ public class RunDispatcher {
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         emit(result);
-        releaseUnlessPreserved(execute.runId(), result);
+        keeper.settle();
         return DONE;
     }
 
     /**
-     * Give up the lease, unless the unit was deliberately kept.
+     * Keeps the run's lease in step with what the launcher reports about its sandbox.
      *
-     * <p>A preserved unit KEEPS its lease, and that is the point rather than an oversight: it is
-     * exactly what the orphan watchdog exists to find, and releasing it would make the
-     * preservation invisible to the control plane all over again. The launcher preserves a unit
-     * whenever nobody observed the agent's exit, which is the same condition the result reports.
+     * <p>The lease used to be released by re-deriving "was the unit destroyed" from the run's wire
+     * result, and a review found four paths where that inference was wrong in the leaking
+     * direction: an init-container failure the Docker arm deliberately leaves behind, a salvage
+     * that throws after the publisher reported a push failure, a {@code destroy} that itself
+     * throws, and anything escaping the observation loop. On each, a sandbox holding a live model
+     * credential survived with no lease naming it.
+     *
+     * <p>So this acts on knowledge instead. <b>Silence means the unit is still there</b>, and the
+     * default therefore leaks a row rather than a container — a stale row costs one reconcile
+     * against the daemon, a missing row costs a credential nobody can find.
      */
-    private void releaseUnlessPreserved(String runId, RunResult result) {
-        if (result instanceof RunResult.RunFinished finished && finished.agentUnobserved()) {
-            LOG.infof("run %s: its unit is preserved, so the lease is kept for the watchdog", runId);
-            return;
-        }
-        if (result instanceof RunResult.RunFailed failed && preservesTheUnit(failed.cause())) {
-            LOG.infof("run %s: its unit is preserved, so the lease is kept for the watchdog", runId);
-            return;
-        }
-        leases.release(runId);
-    }
+    private final class LeaseKeeper implements RunObserver {
 
-    /** The two causes on which the launcher keeps the unit rather than destroying it. */
-    private static boolean preservesTheUnit(String cause) {
-        RunFailureCause classified = RunFailureCause.of(cause);
-        return classified == RunFailureCause.AGENT_TIMEOUT || classified == RunFailureCause.SALVAGE_FAILED;
+        private final String runId;
+
+        private boolean unitExists;
+
+        private boolean unitGone;
+
+        private LeaseKeeper(String runId) {
+            this.runId = runId;
+        }
+
+        @Override
+        public void event(RunEventRecord record) {
+            events.send(Record.of(record.runId(), record))
+                    .whenComplete((sent, refused) -> {
+                        if (refused != null) {
+                            // The channel does not wait for write completion, so a broker refusal
+                            // arrives here and nowhere else. Discarding this stage meant the
+                            // stream's own "gap" warning could not fire for the most likely loss.
+                            LOG.warnf("run %s: transcript event %d was refused by the broker (%s)",
+                                    record.runId(), record.sequence(), refused.getClass().getSimpleName());
+                        }
+                    });
+        }
+
+        @Override
+        public void unitCreated(String unitId) {
+            unitExists = true;
+            // The lease is recorded BEFORE the started event is emitted, deliberately: the cheap
+            // local write goes first, so a broker that stalls cannot leave the lease unable to name
+            // the unit an operator would then be looking for.
+            leases.recordUnit(runId, unitId);
+            // RunStarted is emitted HERE rather than before the launch, because only here does a
+            // unit id exist. It used to carry the run id twice, so the one field meant to point an
+            // operator at a preserved sandbox pointed at nothing.
+            emit(new RunResult.RunStarted(runId, unitId));
+        }
+
+        @Override
+        public void unitReleased() {
+            unitGone = true;
+        }
+
+        /**
+         * Release the lease if the sandbox is gone, stamp it preserved if one is still there.
+         *
+         * <p>A preserved unit KEEPS its lease — it is exactly what the orphan watchdog exists to
+         * find — but it is STAMPED rather than merely left alone, which stops the heartbeat from
+         * refreshing it forever and so lets it become findable at all.
+         */
+        private void settle() {
+            if (!unitExists || unitGone) {
+                leases.release(runId);
+                return;
+            }
+            LOG.infof("run %s: its unit was not destroyed, so the lease is kept for the watchdog", runId);
+            leases.preserve(runId);
+        }
     }
 
     private static void ack(Message<RunCommand> message) {

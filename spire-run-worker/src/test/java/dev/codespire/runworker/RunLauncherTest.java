@@ -35,6 +35,7 @@ import java.util.function.Consumer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -252,7 +253,7 @@ class RunLauncherTest {
         runtime.publisherLines = List.of(
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"MODIFIED\"}]}");
 
-        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
         assertEquals(List.of("a.txt"), finished.changedPaths());
         assertNull(finished.tokenUsage(), "unknown usage is null, never an empty map");
@@ -263,7 +264,7 @@ class RunLauncherTest {
     void aFailedAgentThatPushedNothingIsFailedNotFinished() {
         runtime.finalization = Finalization.salvaged(2, "exited");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         // The harness's own word rides the wire unchanged; the closed set answers what it means.
         assertEquals("HARNESS_EXIT_NONZERO", failed.cause());
@@ -285,7 +286,7 @@ class RunLauncherTest {
         runtime.publisherLines = List.of(
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
-        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
     }
 
@@ -303,7 +304,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"MODIFIED\"}]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef(),
                 "the run record must know about commits that exist on the remote");
@@ -329,7 +330,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertFalse(finished.agentUnobserved());
         assertFalse(finished.deliveredUnfinished());
@@ -347,7 +348,7 @@ class RunLauncherTest {
                         + "\"changed\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertTrue(finished.refused(), "the gate's refusal is the run's outcome, clock or no clock");
         assertEquals(List.of(".github/workflows/ci.yml"), finished.blockedPaths());
@@ -362,7 +363,7 @@ class RunLauncherTest {
                 "{\"event\":\"failed\",\"cause\":\"PUSH_TRANSPORT_FAILED\",\"detail\":\"remote hung up\"}");
 
         RunResult.RunFailed failed =
-                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals(RunFailureCause.PUSH_TRANSPORT_FAILED, RunFailureCause.of(failed.cause()));
         assertTrue(failed.detail().contains("remote hung up"),
@@ -380,7 +381,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertTrue(finished.usageIsKnown(), "the fold measured it; the result must not answer unknown");
         assertEquals(1200L, finished.tokenUsage().get("INPUT"));
@@ -396,7 +397,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
     }
@@ -406,7 +407,7 @@ class RunLauncherTest {
         // Both are calls on the same object, so a reordering compiles and passes every assertion
         // about the RESULT — while destroying the unit first throws away the very thing salvage
         // exists to read. FR-F7 states the order absolutely, so it is asserted absolutely.
-        launcher.launch(COMMAND, e -> { }, unitId -> { });
+        launcher.launch(COMMAND, RunObserver.IGNORING);
 
         assertEquals(List.of("salvage", "destroy"), runtime.lifecycle,
                 "destroy ran before salvage, discarding the run's outcome");
@@ -419,13 +420,13 @@ class RunLauncherTest {
         // the same prompt will overrun again, while a daemon fault may not recur.
         runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
         RunResult.RunFailed overran =
-                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals(RunFailureCause.AGENT_TIMEOUT, RunFailureCause.of(overran.cause()));
         assertFalse(overran.retryable(), "the same prompt against the same commit runs just as long");
 
         runtime.finalization = Finalization.faulted("daemon hung up mid-wait");
         RunResult.RunFailed faulted =
-                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals(RunFailureCause.SALVAGE_FAILED, RunFailureCause.of(faulted.cause()));
     }
 
@@ -438,7 +439,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         // The ref is a COMPONENT, not a sentence. It used to appear only inside a failure detail,
         // so the run's record carried no pushed_ref and an operator was sent looking for a branch
@@ -457,7 +458,7 @@ class RunLauncherTest {
         runtime.publisherLines = List.of(
                 "{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"rejected\"}");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals(5100L, failed.tokenUsage().get("INPUT"));
     }
@@ -470,7 +471,7 @@ class RunLauncherTest {
         adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 88_000L));
         runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals(RunFailureCause.AGENT_TIMEOUT, RunFailureCause.of(failed.cause()));
         assertEquals(88_000L, failed.tokenUsage().get("INPUT"));
@@ -485,7 +486,7 @@ class RunLauncherTest {
         runtime.publisherLines = List.of(
                 "{\"event\":\"failed\",\"cause\":\"PUSH_TRANSPORT_FAILED\",\"detail\":\"remote hung up\"}");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals(640L, failed.tokenUsage().get("INPUT"));
     }
@@ -503,7 +504,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
         RunResult.RunFinished finished =
-                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
         assertEquals(3300L, finished.tokenUsage().get("INPUT"));
@@ -517,7 +518,7 @@ class RunLauncherTest {
         adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 4200L));
         runtime.finalization = Finalization.salvaged(2, "exited");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertTrue(failed.usageIsKnown(), "the fold measured it; a failure must not answer unknown");
         assertEquals(4200L, failed.tokenUsage().get("INPUT"));
@@ -536,7 +537,7 @@ class RunLauncherTest {
         };
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
-                launcher.launch(COMMAND, e -> { }, unitId -> { }));
+                launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertFalse(failed.usageIsKnown());
     }
@@ -547,7 +548,7 @@ class RunLauncherTest {
         // own cause rather than being softened into an outcome.
         runtime.salvageFails = new IllegalStateException("daemon went away");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals(RunFailureCause.SALVAGE_FAILED, RunFailureCause.of(failed.cause()));
         assertTrue(failed.detail().contains("daemon went away"), failed.detail());
@@ -561,7 +562,7 @@ class RunLauncherTest {
         runtime.salvageFails = new IllegalStateException("daemon went away");
         runtime.readersBlock = true;
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals("SALVAGE_FAILED", failed.cause());
         assertTrue(runtime.readersInterrupted.await(15, java.util.concurrent.TimeUnit.SECONDS),
@@ -576,7 +577,7 @@ class RunLauncherTest {
         runtime.publisherLines = List.of(
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[]}");
 
-        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
         assertEquals(1, runtime.destroyed.size(), "a salvaged unit is destroyed, reader fault or not");
@@ -591,7 +592,7 @@ class RunLauncherTest {
                 "create failed: env=[SPIRE_WRITE_TOKEN=" + WRITE_SECRET + ", OPENAI_API_KEY=" + MODEL_KEY
                         + "] read=" + READ_SECRET);
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         assertFalse(failed.detail().contains(WRITE_SECRET), "the write token reached failure_detail");
         assertFalse(failed.detail().contains(READ_SECRET), "the read token reached failure_detail");
@@ -608,7 +609,7 @@ class RunLauncherTest {
         // the expensive half, since the model has already been paid for by the time we get here.
         runtime.publisherLines = List.of(
                 "{\"event\":\"failed\",\"cause\":\"PUSH_REJECTED\",\"detail\":\"blocked by policy\"}");
-        RunResult.RunFailed rejected = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed rejected = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals(RunFailureCause.PUSH_REJECTED, RunFailureCause.of(rejected.cause()));
         assertFalse(rejected.retryable(), "the forge answered no, and will answer no again");
 
@@ -617,14 +618,14 @@ class RunLauncherTest {
         // money to get wrong: told it is a refusal, a network blip is never retried.
         runtime.publisherLines = List.of(
                 "{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"connection reset\"}");
-        RunResult.RunFailed transport = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed transport = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals(RunFailureCause.PUSH_TRANSPORT_FAILED, RunFailureCause.of(transport.cause()));
         assertTrue(transport.retryable(), "the push never reached the forge, so it may yet succeed");
 
         // ...while a clone that could not reach the forge genuinely might succeed on a retry.
         runtime.publisherLines = List.of(
                 "{\"event\":\"failed\",\"cause\":\"CLONE_FAILED\",\"detail\":\"connection reset\"}");
-        RunResult.RunFailed clone = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed clone = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals(RunFailureCause.CLONE_FAILED, RunFailureCause.of(clone.cause()));
         assertTrue(clone.retryable(), "a transport failure reaching the forge is worth one retry");
     }
@@ -637,7 +638,7 @@ class RunLauncherTest {
                 "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"ADDED\"}]}",
                 "{\"event\":\"failed\",\"cause\":\"BUNDLE_UNREADABLE\",\"detail\":\"BundleTooLargeException: 300MB\"}");
 
-        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
     }
 
@@ -645,7 +646,7 @@ class RunLauncherTest {
     void aPublisherFailureOutranksACleanAgentExit() {
         runtime.publisherLines = List.of("{\"event\":\"failed\",\"cause\":\"PUSH_FAILED\",\"detail\":\"rejected\"}");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals("PUSH_FAILED", failed.cause());
     }
 
@@ -655,7 +656,7 @@ class RunLauncherTest {
                 "{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}],"
                         + "\"changed\":[{\"path\":\".github/workflows/ci.yml\",\"kind\":\"MODIFIED\"}]}");
 
-        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertTrue(finished.refused());
         assertEquals(List.of(".github/workflows/ci.yml"), finished.blockedPaths());
         assertNull(finished.pushedRef());
@@ -665,7 +666,7 @@ class RunLauncherTest {
     void aFailedSalvagePreservesTheUnitAndSaysSo() {
         runtime.finalization = Finalization.faulted("daemon hung up mid-wait");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals("SALVAGE_FAILED", failed.cause());
         assertFalse(failed.retryable());
         assertTrue(runtime.destroyed.isEmpty(), "an unsalvaged unit is kept for inspection, never destroyed");
@@ -675,7 +676,7 @@ class RunLauncherTest {
     void aRuntimeThatCannotPlaceTheUnitIsRetryable() {
         runtime.createFails = new IllegalStateException("no daemon");
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
 
         // RUNTIME_UNAVAILABLE rather than SANDBOX_LOST: create() failed, so nothing started and
         // nothing was lost. An operator checking a daemon and an operator reading an eviction are
@@ -693,9 +694,103 @@ class RunLauncherTest {
             }
         };
 
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, e -> { }, unitId -> { }));
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
         assertEquals("BAD_COMMAND", failed.cause());
         assertFalse(failed.retryable());
         assertTrue(runtime.destroyed.isEmpty());
+    }
+
+    /** Records what the launcher reported about the sandbox, in order. */
+    private static final class RecordingObserver implements RunObserver {
+        final List<String> announced = new java.util.ArrayList<>();
+        boolean released;
+        RuntimeException announceFails;
+
+        @Override
+        public void event(dev.codespire.contract.event.RunEventRecord record) {
+        }
+
+        @Override
+        public void unitCreated(String unitId) {
+            announced.add(unitId);
+            if (announceFails != null) {
+                throw announceFails;
+            }
+        }
+
+        @Override
+        public void unitReleased() {
+            released = true;
+        }
+    }
+
+    @Test
+    void theAnnouncedUnitIsTheSandboxsOwnId() {
+        // The whole point of the fix: the field is documented as the pod or container id, and it
+        // used to receive the run id because the event was emitted before a handle existed.
+        RecordingObserver observer = new RecordingObserver();
+
+        launcher.launch(COMMAND, observer);
+
+        assertEquals(List.of("unit-1"), observer.announced,
+                "the fake runtime names its sandbox unit-1; the launcher must pass that, not the run id");
+        assertNotEquals(COMMAND.runId(), observer.announced.getFirst(),
+                "the two fields answer different questions; filling one with the other says nothing");
+    }
+
+    @Test
+    void aRuntimeThatCannotPlaceTheUnitAnnouncesNothing() {
+        // Otherwise the caller records a lease against a sandbox that does not exist, and a
+        // watchdog goes looking for it.
+        runtime.createFails = new IllegalStateException("daemon down");
+        RecordingObserver observer = new RecordingObserver();
+
+        launcher.launch(COMMAND, observer);
+
+        assertTrue(observer.announced.isEmpty());
+        assertFalse(observer.released, "nothing was created, so nothing was destroyed");
+    }
+
+    @Test
+    void aThrowingAnnouncementDoesNotCostTheRunItsResult() {
+        // Bookkeeping about the run, not part of it. The unit exists whether or not anybody
+        // recorded that it does, and it carries the label either way.
+        RecordingObserver observer = new RecordingObserver();
+        observer.announceFails = new IllegalStateException("the database is down");
+
+        assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, observer));
+    }
+
+    @Test
+    void aDestroyedUnitIsReportedGone() {
+        RecordingObserver observer = new RecordingObserver();
+
+        launcher.launch(COMMAND, observer);
+
+        assertTrue(observer.released);
+    }
+
+    @Test
+    void aUnitThatCouldNotBeDestroyedIsNotReportedGone() {
+        // Silence means "still there", and that default is the fix: the caller keeps the lease, so
+        // the leak is a row rather than a credential-bearing container nobody can find.
+        runtime.destroyFails = new IllegalStateException("daemon blipped during teardown");
+        RecordingObserver observer = new RecordingObserver();
+
+        launcher.launch(COMMAND, observer);
+
+        assertFalse(observer.released);
+    }
+
+    @Test
+    void aPreservedUnitIsNotReportedGone() {
+        // The launcher never reaches destroy on this path, so the caller must hear nothing.
+        runtime.finalization = Finalization.overran("agent did not exit within the run's wall clock");
+        RecordingObserver observer = new RecordingObserver();
+
+        launcher.launch(COMMAND, observer);
+
+        assertFalse(observer.released);
+        assertEquals(1, observer.announced.size(), "it did exist, and the caller needs to know which");
     }
 }

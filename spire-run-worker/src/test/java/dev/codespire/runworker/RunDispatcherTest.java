@@ -74,17 +74,21 @@ class RunDispatcherTest {
         // The form the dispatcher actually calls. Overriding a different arity compiles, runs
         // the REAL launcher, and every assertion about ordering and idempotency then measures
         // nothing -- which is exactly what happened once on this class.
+        /** Whether the fake reports the sandbox destroyed. Silence means it is still there. */
+        boolean releasesTheUnit = true;
+
         @Override
-        public RunResult launch(RunCommand.ExecuteRun command,
-                                java.util.function.Consumer<dev.codespire.contract.event.RunEventRecord> stream,
-                                java.util.function.Consumer<String> unitCreated) {
+        public RunResult launch(RunCommand.ExecuteRun command, RunObserver observer) {
             order.add("launch");
             launches++;
             if (failWith != null) {
                 throw failWith;
             }
             if (unitId != null) {
-                unitCreated.accept(unitId);
+                observer.unitCreated(unitId);
+            }
+            if (releasesTheUnit) {
+                observer.unitReleased();
             }
             return result;
         }
@@ -180,9 +184,21 @@ class RunDispatcherTest {
             this.order = order;
         }
 
+        /** false makes the dispatcher refuse, which is the one lease write that reports. */
+        boolean takeSucceeds = true;
+
+        boolean preserved;
+
         @Override
-        public void take(String runId) {
+        public boolean take(String runId) {
             order.add("lease");
+            return takeSucceeds;
+        }
+
+        @Override
+        public void preserve(String runId) {
+            order.add("preserve");
+            preserved = true;
         }
 
         @Override
@@ -342,17 +358,65 @@ class RunDispatcherTest {
     }
 
     @Test
-    void aPreservedUnitKeepsItsLease() {
+    void aUnitTheLauncherDidNotDestroyKeepsItsLeaseAndIsStamped() {
         // The deliberate exception, and the one the watchdog depends on. Releasing here would make
-        // the preservation invisible to the control plane all over again -- which is precisely the
-        // gap the preserved-workspace debt entry describes.
-        launcher.result = new RunResult.RunFinished(EXECUTE.runId(), "refs/heads/spire/x",
-                List.of(), List.of(), null, true);
+        // the preservation invisible to the control plane all over again.
+        //
+        // Keyed on what the launcher REPORTS, not on the result's cause. Re-deriving it was wrong
+        // on four paths -- an init failure the arm keeps on purpose, a throwing salvage after a
+        // publisher failure, a throwing destroy, and anything escaping the loop -- each leaving a
+        // sandbox with a live credential and no lease naming it.
+        launcher.releasesTheUnit = false;
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         assertFalse(leases.released,
                 "a unit kept for inspection must stay leased, or nothing can find it afterwards");
+        assertTrue(leases.preserved,
+                "and STAMPED, or the heartbeat refreshes it forever and it never goes stale --"
+                        + " which is the preservation being invisible all over again");
+    }
+
+    @Test
+    void aSuccessfulRunWhoseCauseSaysNothingAboutTheUnitStillReleases() {
+        // The other half of the inversion. A wire result cannot carry a worker-internal fact, so
+        // the observer is the only thing that can say the sandbox is gone.
+        launcher.result = new RunResult.RunFinished(EXECUTE.runId(), "refs/heads/spire/x",
+                List.of(), List.of(), null, true);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(leases.released,
+                "an unobserved AGENT is not an unobserved UNIT; the launcher destroyed this one");
+    }
+
+    @Test
+    void aRunThatNeverCreatedAUnitReleasesItsLease() {
+        // A lease with no unit is the deliberate window the take-before-create ordering opens.
+        // Once the run is over with nothing created, it is just a row nobody will ever reconcile.
+        launcher.unitId = null;
+        launcher.releasesTheUnit = false;
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "RUNTIME_UNAVAILABLE", "daemon down",
+                true, null);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(leases.released);
+    }
+
+    @Test
+    void aLeaseThatCouldNotBeTakenRefusesTheRun() {
+        // The one lease write that reports rather than swallows. Every other one happens after the
+        // money is spent; this one happens before the unit exists, so continuing without it would
+        // produce a sandbox with no lease for the whole life of the run.
+        leases.takeSucceeds = false;
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(0, launcher.launches, "nothing may be created without a lease naming it");
+        assertEquals(List.of("RunFailed"),
+                results.sent.stream().map(r -> r.getClass().getSimpleName()).toList(),
+                "and the refusal is reported, so the run does not simply vanish");
     }
 
     @Test
@@ -367,13 +431,17 @@ class RunDispatcherTest {
     }
 
     @Test
-    void anUnobservedFailureKeepsItsLeaseToo() {
-        // The launcher preserves the unit on a timeout and on a failed salvage, so those two
-        // causes have to keep their leases for the same reason a preserved finish does.
-        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_TIMEOUT", "clock", false, null);
+    void aFailureWhoseUnitSurvivedKeepsItsLeaseWhateverItsCause() {
+        // A publisher-reported cause -- PUSH_REJECTED and its siblings -- was NOT in the cause
+        // list this used to derive preservation from, so those runs released their lease while
+        // their containers were still running. The cause is now irrelevant; only the report counts.
+        launcher.releasesTheUnit = false;
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "PUSH_REJECTED", "forge said no",
+                false, null);
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         assertFalse(leases.released);
+        assertTrue(leases.preserved);
     }
 }

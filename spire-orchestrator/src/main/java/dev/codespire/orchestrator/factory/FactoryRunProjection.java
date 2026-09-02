@@ -87,9 +87,15 @@ public class FactoryRunProjection {
         }
     }
 
-    /** What the read model knows about one run. */
+    /**
+     * What the read model knows about one run.
+     *
+     * @param unitId the sandbox's own id, null until the worker creates one. The route to a unit
+     *               kept for inspection — the container label was the documented workaround
+     *               precisely because this used to be discarded.
+     */
     public record RunView(String runId, String status, String pushedRef, List<String> blockedPaths,
-                          String failureCause, String failureDetail) {
+                          String failureCause, String failureDetail, String unitId) {
     }
 
     @Inject
@@ -174,13 +180,17 @@ public class FactoryRunProjection {
 
     public void apply(RunResult result) {
         switch (result) {
-            case RunResult.RunStarted started -> started(started.runId());
+            case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
     }
 
-    private void started(String runId) {
+    private void started(String runId, String unitId) {
+        // Recorded unconditionally, and BEFORE the status transition below, because the two
+        // answer different questions: the unit id says where to look, and it is worth having
+        // even for a row the status guard declines to reopen. A redelivery writes the same value.
+        update("UPDATE factory_run SET unit_id = ? WHERE run_id = ?", runId, unitId, runId);
         // A queued run starts — and so does one whose dispatch the broker never acknowledged: the
         // RunStarted IS the acknowledgement. A redelivered RunStarted after RunFinished must not
         // drag a terminal row back to running, and a terminal row has an ended_at the CHECK would
@@ -295,7 +305,7 @@ public class FactoryRunProjection {
 
     public Optional<RunView> find(String runId) {
         String sql = """
-                SELECT status, pushed_ref, blocked_paths, failure_cause, failure_detail
+                SELECT status, pushed_ref, blocked_paths, failure_cause, failure_detail, unit_id
                   FROM factory_run WHERE run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -307,7 +317,8 @@ public class FactoryRunProjection {
                 String blocked = rs.getString("blocked_paths");
                 return Optional.of(new RunView(runId, rs.getString("status"), rs.getString("pushed_ref"),
                         blocked == null ? List.of() : List.of(blocked.split("\n")),
-                        rs.getString("failure_cause"), rs.getString("failure_detail")));
+                        rs.getString("failure_cause"), rs.getString("failure_detail"),
+                        rs.getString("unit_id")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read run " + runId, e);

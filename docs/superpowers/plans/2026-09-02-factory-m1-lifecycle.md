@@ -280,7 +280,7 @@ correction the Task 3 review already forced onto
 **FR-F8.** The architecture is explicit that a naive watchdog is worse than the leak: with two
 replicas on one daemon, enumerating every sandbox reaps a sibling's live hour-long run.
 
-> An **orphan** is a sandbox whose `workspace_lease` row is absent, or whose lease heartbeat is
+> An **orphan** is a sandbox whose `run_lease` row is absent or PRESERVED, or whose lease heartbeat is
 > older than N missed intervals. Reaping an orphan always runs `finalize` before `destroy`.
 
 **Files:** new `OrphanWatchdog.java`, `RunRuntime.discoverOrphans` already exists on the SPI.
@@ -436,7 +436,7 @@ four-lens `/code-review` whose findings are fixed before the next task starts.
 - [ ] Task 2 — run event stream on `cs.run-events`
 - [ ] Task 3 — finalize before destroy; failed salvage blocks teardown
 - [ ] Task 4 — a run writes to the charge ledger
-- [ ] Task 5 — `workspace_lease` with owner and heartbeat
+- [x] Task 5 — `run_lease` with owner, heartbeat, the unit id and a preservation stamp
 - [ ] Task 6 — the orphan watchdog
 - [ ] Task 7 — `cs.run-control` and a cancel that cancels
 - [ ] Task 8 — steer, where the harness declares it

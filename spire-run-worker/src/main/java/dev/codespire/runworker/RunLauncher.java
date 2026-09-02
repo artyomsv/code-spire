@@ -28,7 +28,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Consumer;
 
 /**
  * Creates the run unit and reads its two log streams.
@@ -71,13 +70,16 @@ public class RunLauncher {
     /**
      * Run a command to a terminal result.
      *
-     * <p>{@code unitCreated} is called exactly once, with the sandbox's own id, the instant the
-     * unit exists and before anything runs in it. Two callers need that moment and neither could
-     * see it before: {@code RunStarted} was emitted ahead of creation and so passed the run id in
-     * place of a unit id that did not exist yet, and the lease had nothing to record.
+     * <p>{@code observer} is told the instant the unit EXISTS — not before anything runs in it,
+     * since the arm starts the containers inside {@code create}. Two callers need that moment and
+     * neither could see it before: {@code RunStarted} was emitted ahead of creation and so passed
+     * the run id in place of a unit id that did not exist yet, and the lease had nothing to record.
+     *
+     * <p>The observer is also told when the unit is GONE, and only then. The caller used to infer
+     * that from the wire result, and a review found four paths where the inference was wrong in
+     * the leaking direction. Silence therefore means "still there", which is the safe default.
      */
-    public RunResult launch(RunCommand.ExecuteRun command, Consumer<RunEventRecord> stream,
-                            Consumer<String> unitCreated) {
+    public RunResult launch(RunCommand.ExecuteRun command, RunObserver observer) {
         HarnessAdapter adapter;
         RunUnitSpec unit;
         try {
@@ -101,13 +103,8 @@ public class RunLauncher {
         // Announced BEFORE observing, so a run that then hangs is still findable by its unit.
         // Guarded: this is bookkeeping about the run, and a caller that throws here must not cost
         // the run its outcome — the unit exists whether or not anybody recorded that it does.
-        try {
-            unitCreated.accept(handle.providerRunId());
-        } catch (RuntimeException e) {
-            LOG.warnf("run %s: its unit could not be announced (%s); the sandbox is labelled either way",
-                    command.runId(), e.getClass().getSimpleName());
-        }
-        return observe(command, adapter, handle, stream);
+        announce(command, handle, observer);
+        return observe(command, adapter, handle, observer);
     }
 
     /**
@@ -117,15 +114,29 @@ public class RunLauncher {
      * result or leave a reader blocked on a log stream for the life of the process: the siblings
      * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
      */
+    /**
+     * Tell the caller the unit exists. Guarded: this is bookkeeping about the run, and a caller
+     * that throws here must not cost the run its outcome — the unit exists whether or not anybody
+     * recorded that it does, and it carries the label either way.
+     */
+    private static void announce(RunCommand.ExecuteRun command, RunHandle handle, RunObserver observer) {
+        try {
+            observer.unitCreated(handle.providerRunId());
+        } catch (RuntimeException e) {
+            LOG.warnf("run %s: its unit could not be announced (%s); the sandbox is labelled either way",
+                    command.runId(), e.getClass().getSimpleName());
+        }
+    }
+
     private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle,
-                              Consumer<RunEventRecord> stream) {
+                              RunObserver observer) {
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
         // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
         // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
         // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
         // the process.
-        RunEventStream transcript = new RunEventStream(command.runId(), failures.scrubFor(command), stream);
+        RunEventStream transcript = new RunEventStream(command.runId(), failures.scrubFor(command), observer::event);
         Future<?> agentStream = streams.submit(() ->
                 runtime.attach(handle, LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
                     // One parse, two readers. The fold decides the run's outcome and stays bounded;
@@ -178,8 +189,14 @@ public class RunLauncher {
             // recoverable by its label; a discarded result is not.
             try {
                 runtime.destroy(handle);
+                // The ONE place a unit is known gone. Reporting it here rather than letting the
+                // caller infer it from the result is what closed four leaking paths: an init
+                // failure the arm deliberately leaves behind, a throwing salvage after a publisher
+                // failure, this catch, and anything escaping the loop above.
+                observer.unitReleased();
             } catch (RuntimeException e) {
-                LOG.warnf("run %s: the unit could not be destroyed (%s); it is labelled for cleanup",
+                LOG.warnf("run %s: the unit could not be destroyed (%s); it is labelled for cleanup"
+                        + " and keeps its lease, because it is still there",
                         command.runId(), e.getClass().getSimpleName());
             }
         } else {

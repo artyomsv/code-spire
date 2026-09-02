@@ -175,6 +175,11 @@ mp:
       # auth-server-url and the app fails to BOOT. Authorization itself stays ON: the suites carry a
       # @TestSecurity identity where they need one, so the real permission policy is exercised.
       enabled: false
+    scheduler:
+      # The lease heartbeat must not fire on its own timer here. A sweep the test did not call
+      # makes "the heartbeat advanced" true for the wrong reason, so the assertion that matters
+      # most in this module would pass with the production line deleted.
+      enabled: false
     http:
       port: 0
       test-port: 0

@@ -240,7 +240,7 @@ And the semantics are specified rather than inherited:
 |---|---|---|
 | ack | after processing | **on receipt**, once `run_claim` is written |
 | idempotency unit | the unacked record | **the `run_claim` row**, sole mechanism |
-| liveness | the blocking consumer | `factory_run` state + `workspace_lease` heartbeat |
+| liveness | the blocking consumer | `factory_run` state + `run_lease` heartbeat |
 | cancel / steer | n/a | **`cs.run-control`**, consumed by a non-blocking listener beside the executor |
 
 Acking on receipt moves the redelivery guarantee from Kafka to the claim row, which is why FR-F10's
@@ -281,7 +281,7 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 | Table | Holds |
 |---|---|
 | `run_claim` | idempotency claim per `(run_id, slot)` — same shape as `comment_idempotency` |
-| `workspace_lease` | sandbox ↔ workspace, **plus owner id and heartbeat** — see below |
+| `run_lease` | sandbox ↔ workspace, **plus owner id and heartbeat** — see below |
 | `harness_credential_state` | pool member health: available / rate-limited-until / rejected / disabled |
 
 **The orphan definition, because "somebody's job" is not a design.** With more than one run-worker
@@ -289,7 +289,7 @@ replica on one Docker daemon or in one namespace, `discoverOrphans()` enumerates
 including a sibling's healthy hour-long run. Reap eagerly and the watchdog kills live work — worse
 than the leak it prevents; reap lazily and an eviction leaks forever. So:
 
-> An **orphan** is a sandbox whose `workspace_lease` row is absent, or whose lease heartbeat is older
+> An **orphan** is a sandbox whose `run_lease` row is absent, or whose lease heartbeat is older
 > than N missed intervals. Reaping an orphan always runs `finalize` (salvage) before `destroy`.
 
 Leases carry `owner_id` and `heartbeat_at`; a live replica renews, a dead one stops. ADR-024 needed
