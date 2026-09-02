@@ -1,5 +1,6 @@
 package dev.codespire.runtime;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -35,4 +36,13 @@ public interface RunRuntime {
 
     /** Units this runtime holds that no live lease claims. See ARCHITECTURE §7. */
     List<RunHandle> discoverOrphans();
+
+    /**
+     * The longest {@link #salvage} may hold its caller after the agent is gone: the window the
+     * publisher is given to finish its final bundle on its own before it is stopped. The worker's
+     * ack budget adds it to the run's wall clock, and reads it from the arm rather than from a
+     * constant of its own, so an arm that raises its window cannot silently outlive the channel —
+     * the Docker arm's went 30s to 300s once and a guard that did not read it kept passing.
+     */
+    Duration drainWindow();
 }

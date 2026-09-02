@@ -89,6 +89,8 @@ public interface RunRuntime {
     Finalization finalize(RunHandle h);   // salvage BEFORE teardown — never merged with destroy
     void destroy(RunHandle h);
     List<RunHandle> discoverOrphans();    // for the watchdog
+    Duration drainWindow();               // how long salvage may hold its caller after the agent
+                                         // exits; the worker's ack budget adds it to the wall clock
 }
 ```
 

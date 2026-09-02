@@ -22,6 +22,7 @@ import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -105,6 +106,8 @@ class RunLauncherTest {
         final java.util.concurrent.CountDownLatch readersInterrupted = new java.util.concurrent.CountDownLatch(2);
         RuntimeException agentReaderFails;
         final List<RunHandle> destroyed = new ArrayList<>();
+        /** What this arm claims salvage may hold the handler for; the ack budget reads it. */
+        Duration drainWindow = Duration.ZERO;
 
         @Override
         public RuntimeType type() {
@@ -160,6 +163,11 @@ class RunLauncherTest {
         @Override
         public List<RunHandle> discoverOrphans() {
             return List.of();
+        }
+
+        @Override
+        public Duration drainWindow() {
+            return drainWindow;
         }
     }
 

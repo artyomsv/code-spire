@@ -1,9 +1,10 @@
 package dev.codespire.runworker;
 
-import dev.codespire.runtime.docker.DockerRunRuntime;
+import dev.codespire.runtime.RunRuntime;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
+import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.time.Duration;
@@ -39,8 +40,13 @@ public class RunAckBudget {
     /** Head-room over the wall clock for the ack itself to land under a slow claim store. */
     static final Duration ACK_ALLOWANCE = Duration.ofMinutes(5);
 
-    /** The runtime's own number, so the two cannot drift apart silently. */
-    static final Duration PUBLISHER_DRAIN = DockerRunRuntime.PUBLISHER_DRAIN;
+    /**
+     * The arm in use, asked for its own drain window so the two numbers cannot drift apart
+     * silently. Read through the SPI rather than off the Docker class: a core module must not name
+     * an arm (the neutrality scan refuses it), and the Kubernetes arm will have a window of its own.
+     */
+    @Inject
+    RunRuntime runtime;
 
     @ConfigProperty(name = "spire.run.max-wall-clock-seconds")
     long maxWallClockSeconds;
@@ -58,11 +64,17 @@ public class RunAckBudget {
     int queueSizeFactor;
 
     void check(@Observes StartupEvent event) {
-        verify(Duration.ofSeconds(maxWallClockSeconds), Duration.ofMillis(maxAgeMs), pollRecords, queueSizeFactor);
+        verify(Duration.ofSeconds(maxWallClockSeconds), runtime.drainWindow(), Duration.ofMillis(maxAgeMs),
+                pollRecords, queueSizeFactor);
     }
 
-    /** The rule, separable from CDI so a test can drive it with values that match nothing shipped. */
-    static void verify(Duration wallClock, Duration maxAge, int pollRecords, int queueSizeFactor) {
+    /**
+     * The rule, separable from CDI so a test can drive it with values that match nothing shipped.
+     *
+     * @param drain the arm's {@link RunRuntime#drainWindow()}: how long salvage may hold the handler
+     *              after the wall clock, which is part of the budget rather than head-room
+     */
+    static void verify(Duration wallClock, Duration drain, Duration maxAge, int pollRecords, int queueSizeFactor) {
         if (pollRecords != 1 || queueSizeFactor != 1) {
             throw new IllegalStateException("run-commands-in must poll one record with no prefetch "
                     + "(max.poll.records=1, max-queue-size-factor=1); found " + pollRecords + " and "
@@ -72,11 +84,11 @@ public class RunAckBudget {
         // The handler holds the ordered channel for the wall clock, then the publisher's drain
         // window, then the allowance for the ack to land. The drain is part of the budget: it went
         // from 30s to 300s once and the guard did not notice.
-        Duration needed = wallClock.plus(PUBLISHER_DRAIN).plus(ACK_ALLOWANCE);
+        Duration needed = wallClock.plus(drain).plus(ACK_ALLOWANCE);
         if (maxAge.compareTo(needed) < 0) {
             throw new IllegalStateException("run-commands-in throttled.unprocessed-record-max-age.ms is "
                     + maxAge.toMillis() + " but a run may take " + wallClock.toSeconds() + "s plus the "
-                    + "publisher's " + PUBLISHER_DRAIN.toSeconds() + "s drain plus " + ACK_ALLOWANCE.toSeconds()
+                    + "publisher's " + drain.toSeconds() + "s drain plus " + ACK_ALLOWANCE.toSeconds()
                     + "s for the ack to land; the consumer would die on the first run that outlives it "
                     + "and be redelivered to die again on every restart.");
         }

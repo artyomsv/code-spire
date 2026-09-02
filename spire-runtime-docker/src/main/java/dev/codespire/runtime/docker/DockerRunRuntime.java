@@ -88,8 +88,8 @@ public final class DockerRunRuntime implements RunRuntime {
      */
     private static final int PUBLISHER_DRAIN_SECONDS = 300;
 
-    /** The same window, for the worker's ack budget: a handler holds the channel for the wall clock PLUS this. */
-    public static final Duration PUBLISHER_DRAIN = Duration.ofSeconds(PUBLISHER_DRAIN_SECONDS);
+    /** The same window as a {@link Duration}, answered through {@link #drainWindow()}. */
+    private static final Duration PUBLISHER_DRAIN = Duration.ofSeconds(PUBLISHER_DRAIN_SECONDS);
 
     /** A log line longer than this is clipped and its remainder dropped; see {@link #attach}. */
     static final int MAX_LINE_CHARS = 64 * 1024;
@@ -124,6 +124,11 @@ public final class DockerRunRuntime implements RunRuntime {
     @Override
     public RuntimeType type() {
         return RuntimeType.DOCKER;
+    }
+
+    @Override
+    public Duration drainWindow() {
+        return PUBLISHER_DRAIN;
     }
 
     @Override
