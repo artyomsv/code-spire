@@ -52,6 +52,9 @@ public class RunControlListener {
     RunRegistry registry;
 
     @Inject
+    RunClaimStore claims;
+
+    @Inject
     RunRuntime runtime;
 
     @Inject
@@ -158,8 +161,17 @@ public class RunControlListener {
     private void cancel(RunCommand.CancelRun request) {
         Optional<RunRegistry.LiveRun> live = registry.cancel(request.runId());
         if (live.isEmpty()) {
-            // Late, duplicate, or another replica's — and under a per-instance group id, most of
-            // these are simply the other replicas. Nothing is wrong, so nothing is warned about.
+            // Late, duplicate, another replica's — or NOT STARTED YET, which is the one this
+            // used to lose. The registry is populated only once create() returns, and create
+            // blocks on the init clone for up to fifteen minutes, so a cancel for a queued or
+            // cloning run found nothing here and did nothing at all while the endpoint had
+            // already answered 202. The claim is durable precisely because the four cases are
+            // indistinguishable from one replica: recording it is cheap and harmless for the
+            // three that are over, and it is the whole mechanism for the fourth.
+            //
+            // Every replica reads every control record, so several will race to write this. The
+            // claim is ON CONFLICT DO NOTHING, so one wins and the rest are no-ops.
+            recordForARunNotYetStarted(request);
             LOG.debugf("cancel for %s: not executing here (%s)", request.runId(), request.reason());
             return;
         }
@@ -183,6 +195,24 @@ public class RunControlListener {
      * for the same streams, and one that destroyed would throw away the checkpoints the run had
      * already pushed. Cancel is not delete.
      */
+    /**
+     * Leaves a cancel where a dispatcher that has not started yet will find it.
+     *
+     * <p>Guarded rather than allowed to escape: this listener's channel ignores failures, so an
+     * exception here would drop the record with no trace — the silence this class exists to
+     * remove. A database fault means the cancel is not durable, and saying so at WARN is more
+     * use than a stack trace nobody sees.
+     */
+    private void recordForARunNotYetStarted(RunCommand.CancelRun request) {
+        try {
+            claims.claim(request.runId(), RunDispatcher.CANCEL_SLOT);
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "run %s: its cancel could not be recorded (%s), so a run that has not "
+                    + "started yet will NOT be stopped by it", request.runId(),
+                    e.getClass().getSimpleName());
+        }
+    }
+
     private void stop(RunRegistry.LiveRun run, String runId) {
         try {
             runtime.cancel(run.handle());

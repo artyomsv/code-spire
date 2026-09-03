@@ -42,6 +42,25 @@ public class RunDispatcher {
 
     static final String EXECUTE_SLOT = "execute";
 
+    /**
+     * Recorded by {@link RunControlListener} when a cancel arrives for a run no replica is
+     * executing yet, and read here before anything is created.
+     *
+     * <p><b>It is durable because the window it covers is.</b> The registry a cancel normally
+     * reaches is in memory and is only populated once {@code create} RETURNS — and create blocks
+     * on the init clone for up to fifteen minutes. Before that point a run may be queued on the
+     * topic, cloning, or dispatch-uncertain with its record unconsumed, and in every one of those
+     * the listener found nothing live, wrote a debug line, and the run then started anyway and
+     * spent its whole wall clock. The endpoint had already answered 202.
+     *
+     * <p>Two prior reviews each closed the half they could see — one the executing case, one the
+     * uncertain one — and the gap was before either.
+     *
+     * <p>READ, never claimed, by the dispatcher. Consuming it would let a redelivery of the same
+     * command start the run the operator cancelled.
+     */
+    static final String CANCEL_SLOT = "cancel";
+
     static final String RUN_ID_MDC = "runId";
 
     private static final CompletionStage<Void> DONE = CompletableFuture.completedFuture(null);
@@ -123,6 +142,16 @@ public class RunDispatcher {
             return DONE;
         }
         ack(message);
+
+        // Before ANY of it: the unit, the lease, the credentials, the money. A cancel that
+        // arrived while this record was still on the topic is recorded in the claim table and
+        // nowhere else, because no replica had the run in memory to stop.
+        if (claims.taken(execute.runId(), CANCEL_SLOT)) {
+            LOG.info("cancelled before it started; no unit is created");
+            emit(failures.of(execute, RunFailureCause.CANCELLED.name(),
+                    "cancelled before the run started, so no sandbox was created"));
+            return DONE;
+        }
 
         // The lease BEFORE the unit. A crash between the two leaves a lease with no unit, which
         // the watchdog can reconcile against the daemon; the reverse leaves a sandbox holding a

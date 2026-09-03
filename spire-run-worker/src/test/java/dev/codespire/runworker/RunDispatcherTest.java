@@ -43,6 +43,15 @@ class RunDispatcherTest {
             EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null, false);
 
     /** In-memory claims: the first claim of a slot wins, exactly as the unique key does. */
+    /**
+     * Every method the dispatcher reaches, and nothing else.
+     *
+     * <p>{@code taken} was NOT overridden when the dispatcher started calling it, and the
+     * inherited one opens a real {@code DataSource} — the seventh instance of this trap in this
+     * milestone, and the first silent one sat under a catch. So {@code release} throws rather
+     * than quietly doing nothing: a future path that calls it must come here and decide, instead
+     * of getting a no-op that looks like coverage.
+     */
     static final class FakeClaims extends RunClaimStore {
         final Set<String> taken = new HashSet<>();
         final List<String> order;
@@ -55,6 +64,19 @@ class RunDispatcherTest {
         public boolean claim(String runId, String slot) {
             order.add("claim");
             return taken.add(runId + "/" + slot);
+        }
+
+        @Override
+        public boolean taken(String runId, String slot) {
+            order.add("read-" + slot);
+            return taken.contains(runId + "/" + slot);
+        }
+
+        @Override
+        public void release(String runId, String slot) {
+            throw new UnsupportedOperationException(
+                    "the dispatcher does not release claims; if that changed, decide what this "
+                            + "fake should record rather than inheriting a database call");
         }
     }
 
@@ -255,11 +277,14 @@ class RunDispatcherTest {
         Delivery delivery = new Delivery(order);
         dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
 
-        assertEquals(List.of("claim", "ack", "lease", "launch", "unit", "release"), order,
+        assertEquals(List.of("claim", "ack", "read-cancel", "lease", "launch", "unit", "release"), order,
                 "the claim goes first (a crash between them must not lose the command), the ack "
-                        + "before the run (an hour-long run must not age the record), then the LEASE "
-                        + "before the unit can exist -- a crash there leaves a row the watchdog can "
-                        + "reconcile, where the reverse leaves a sandbox nothing knows about");
+                        + "before the run (an hour-long run must not age the record), the CANCEL "
+                        + "check before anything is created -- a run stopped while its record was "
+                        + "still on the topic must not get a sandbox, a lease or a credential -- "
+                        + "and then the LEASE before the unit can exist: a crash there leaves a row "
+                        + "the watchdog can reconcile, where the reverse leaves a sandbox nothing "
+                        + "knows about");
         assertTrue(delivery.acked);
         assertEquals(List.of("RunStarted", "RunFinished"),
                 results.sent.stream().map(r -> r.getClass().getSimpleName()).toList());
@@ -515,5 +540,56 @@ class RunDispatcherTest {
 
         RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
         assertEquals(1200L, reported.tokenUsage().get("INPUT"));
+    }
+
+    /**
+     * A run cancelled before it started never gets a sandbox.
+     *
+     * <p>The window this closes is the one no memory can cover. {@code RunRegistry} is populated
+     * only once {@code create} RETURNS, and create blocks on the init clone for up to fifteen
+     * minutes, so a cancel for a run that is queued on the topic, cloning, or dispatch-uncertain
+     * with its record unconsumed found nothing live and did nothing at all — while the endpoint had
+     * already answered 202. Two prior reviews each closed the half they could see, one the executing
+     * case and one the uncertain one, and the gap was before either.
+     *
+     * <p>Asserted on the LAUNCHER, not on the reported result: a run that reports CANCELLED while
+     * still having created a unit, taken a lease and been handed a model credential has done the
+     * expensive part of exactly what the operator stopped.
+     */
+    @Test
+    void aRunCancelledBeforeItStartedIsNeverLaunched() {
+        claims.taken.add(EXECUTE.runId() + "/" + RunDispatcher.CANCEL_SLOT);
+
+        Delivery delivery = new Delivery(order);
+        dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(0, launcher.launches, "no agent may run for a cancelled dispatch");
+        assertFalse(order.contains("lease"),
+                "and no lease either — a lease with no unit is a row the watchdog has to reconcile "
+                        + "for a run that is never going to exist: " + order);
+        assertTrue(delivery.acked, "the record is settled: redelivering it would only be refused again");
+
+        RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
+        assertEquals(RunFailureCause.CANCELLED.name(), reported.cause(),
+                "an operator who stopped a run must not be told it broke");
+    }
+
+    /**
+     * The cancel claim is READ, never consumed.
+     *
+     * <p>Claiming it would let a redelivery of the same command start the run the operator
+     * cancelled: the first delivery would take the slot, the second would find it free. The command
+     * channel redelivers on exactly the shapes this worker is built to survive, so "it worked once"
+     * is not enough.
+     */
+    @Test
+    void aRedeliveredCommandIsStillRefusedByTheSameCancel() {
+        claims.taken.add(EXECUTE.runId() + "/" + RunDispatcher.CANCEL_SLOT);
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(0, launcher.launches,
+                "the second delivery must find the cancel still recorded, not consumed by the first");
     }
 }

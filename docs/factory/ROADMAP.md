@@ -174,10 +174,12 @@ argued around:
   `withPidsLimit`, `withMemory` and `withNetworkMode` across every test source returned
   nothing. A daemon-driving integration test asserts BEHAVIOURS and never inspects a
   `HostConfig`, so it is blind to these by construction.
-- **Two prior reviews can each close half of one hole and leave it open.** Cancel is the worked
-  example: one round owned the executing case, another the dispatch-uncertain one, and the gap is
-  BEFORE either — `register` runs after `create` returns and `create` blocks on the clone
-  for up to fifteen minutes, so a queued or cloning run takes a 202 and runs anyway.
+- **Two prior reviews can each close half of one hole and leave it open.** Cancel was the worked
+  example: one round owned the executing case, another the dispatch-uncertain one, and the gap was
+  BEFORE either — `register` runs after `create` returns and `create` blocks on the clone for up
+  to fifteen minutes, so a queued or cloning run took a 202 and ran anyway. Closed in PR #106 with
+  a durable cancel claim the dispatcher reads before it creates anything; the lesson is why the
+  whole-PR round belongs in a plan rather than being optional.
 - **The timeout ladder must be derived, not chosen.** A slow LLM call is permitted by one setting
   and killed by another with the same default; `LlmTimeoutBudget` now refuses to start when the
   ack threshold does not exceed what one command may spend, and ADR-019 makes that TWO model calls
