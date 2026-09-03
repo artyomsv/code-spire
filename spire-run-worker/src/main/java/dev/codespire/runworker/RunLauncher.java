@@ -287,7 +287,7 @@ public class RunLauncher {
             // The gate's refusal is the run's outcome whether or not the agent exited. Buried under
             // the overrun it hid the one row RUN_PUSH_GATE_REFUSED exists to raise.
             return new RunResult.RunFinished(command.runId(), null,
-                    outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, observed.seen().summary()),
+                    outcome.changedPaths(), outcome.blocked(), usageOf(adapter, observed.seen().summary()),
                     true);
         }
         if (outcome.pushedRef().isPresent()) {
@@ -296,7 +296,7 @@ public class RunLauncher {
             // clock is the most expensive one the system produces, so reporting "unknown" here would
             // lose the largest charge there is.
             return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElseThrow(),
-                    outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, observed.seen().summary()),
+                    outcome.changedPaths(), outcome.blocked(), usageOf(adapter, observed.seen().summary()),
                     true);
         }
         Map<String, Long> spent = usageOf(adapter, observed.seen().summary());
@@ -350,7 +350,7 @@ public class RunLauncher {
                     .withUsage(usageOf(adapter, summary));
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
-                outcome.changedPaths(), outcome.blockedPaths(), usageOf(adapter, summary), false);
+                outcome.changedPaths(), outcome.blocked(), usageOf(adapter, summary), false);
     }
 
     private static void awaitBriefly(Future<?> agentStream, Future<?> publisherStream) {

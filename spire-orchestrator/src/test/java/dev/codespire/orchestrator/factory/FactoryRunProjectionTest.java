@@ -412,13 +412,37 @@ class FactoryRunProjectionTest {
         projection.apply(new RunResult.RunStarted(runId, "container-1"));
 
         projection.apply(new RunResult.RunFinished(runId, null, List.of(".github/workflows/ci.yml"),
-                List.of(".github/workflows/ci.yml"), null, false));
+                List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "DELETED")),
+                null, false));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.PUSH_GATE_REFUSED, view.status());
-        assertEquals(List.of(".github/workflows/ci.yml"), view.blockedPaths());
+        // The KIND, not only the path. "ci.yml was blocked" does not say whether the factory
+        // edited that workflow or deleted it, and a column that stores one and not the other
+        // is the state this replaces — the publisher reported it and the worker dropped it.
+        assertEquals(List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "DELETED")),
+                view.blocked());
         assertNull(view.pushedRef());
         assertNull(view.failureCause());
+    }
+
+    /**
+     * A row written before the kind was carried reads back as a path with no kind.
+     *
+     * <p>V53 converts the old newline-joined text into the new shape with a null kind, which is
+     * exactly what is known about those rows. This asserts the READ half of that: a null kind is
+     * a value the model carries, not a parse failure that empties the list — and an emptied list
+     * would tell an operator that a refused run refused nothing.
+     */
+    @Test
+    void aRefusalWhoseKindWasNeverRecordedStillNamesItsPaths() {
+        String runId = queuedRun();
+        projection.apply(new RunResult.RunStarted(runId, "container-1"));
+        projection.apply(new RunResult.RunFinished(runId, null, List.of("Jenkinsfile"),
+                List.of(new RunResult.BlockedChange("Jenkinsfile", null)), null, false));
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(List.of(new RunResult.BlockedChange("Jenkinsfile", null)), view.blocked());
     }
 
     @Test

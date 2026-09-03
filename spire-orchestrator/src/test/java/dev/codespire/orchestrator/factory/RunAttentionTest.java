@@ -39,12 +39,17 @@ class RunAttentionTest {
         String runId = run();
         projection.apply(new RunResult.RunFinished(runId, null,
                 List.of(".github/workflows/ci.yml", "src/App.java"),
-                List.of(".github/workflows/ci.yml"), null, false));
+                List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "DELETED")),
+                null, false));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)
                 .body("code", hasItem(CODE))
                 .body("find { it.subject == '" + runId + "' }.message", containsString(".github/workflows/ci.yml"))
+                // The sentence an operator actually reads has to carry the kind. Deleting a
+                // workflow and editing one call for different responses, and this row is the
+                // only place either is reported today.
+                .body("find { it.subject == '" + runId + "' }.message", containsString("(deleted)"))
                 .body("find { it.subject == '" + runId + "' }.message", not(containsString("src/App.java")));
 
         // The panel's contract: fixing the cause removes the row. Nothing un-refuses a run, so the

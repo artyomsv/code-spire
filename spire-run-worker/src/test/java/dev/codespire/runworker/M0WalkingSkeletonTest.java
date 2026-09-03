@@ -93,7 +93,7 @@ class M0WalkingSkeletonTest {
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
         assertTrue(finished.pushedRef().endsWith("spire/ordinary"), "the guaranteed output is a pushed branch");
         assertTrue(finished.changedPaths().contains("NEW.md"), finished.changedPaths().toString());
-        assertEquals(List.of(), finished.blockedPaths());
+        assertEquals(List.of(), finished.blocked().stream().map(RunResult.BlockedChange::path).toList());
         assertNull(finished.tokenUsage(), "a harness that reports nothing is UNKNOWN, never zero");
 
         assertTrue(origin.hasBranch("spire/ordinary"), "the branch must exist on the real remote");
@@ -125,7 +125,7 @@ class M0WalkingSkeletonTest {
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
         assertNull(finished.pushedRef(), "a refused push must not deliver anything");
-        assertEquals(List.of(".github/workflows/x.yml"), finished.blockedPaths());
+        assertEquals(List.of(".github/workflows/x.yml"), finished.blocked().stream().map(RunResult.BlockedChange::path).toList());
         assertTrue(finished.refused());
         assertFalse(origin.hasBranch("spire/ci"), "nothing reached the remote");
     }
@@ -137,7 +137,7 @@ class M0WalkingSkeletonTest {
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(command, RunObserver.IGNORING));
 
-        assertEquals(List.of(".github/workflows/ci.yml"), finished.blockedPaths());
+        assertEquals(List.of(".github/workflows/ci.yml"), finished.blocked().stream().map(RunResult.BlockedChange::path).toList());
         assertFalse(origin.hasBranch("spire/ci-edit"));
     }
 

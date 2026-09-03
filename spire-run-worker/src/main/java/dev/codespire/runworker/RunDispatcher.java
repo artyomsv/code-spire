@@ -293,7 +293,7 @@ public class RunDispatcher {
             // limit; nobody re-runs anything. Different person, different action, different value.
             RunResult compact = new RunResult.RunFailed(result.runId(), "RESULT_UNPUBLISHABLE",
                     "the broker refused the run's full result (" + finished.changedPaths().size()
-                            + " changed paths, " + finished.blockedPaths().size() + " blocked); the branch"
+                            + " changed paths, " + finished.blocked().size() + " blocked); the branch"
                             + (finished.pushedRef() == null ? " was not pushed" : " is at " + finished.pushedRef()),
                     RunFailureCause.RESULT_UNPUBLISHABLE.isRetryable(),
                     // The agent's spend survives the result being too large to publish. Dropping
