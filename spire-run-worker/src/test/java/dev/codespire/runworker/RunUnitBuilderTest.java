@@ -61,21 +61,16 @@ class RunUnitBuilderTest {
     /**
      * A worker with no corporate configuration, which is the ordinary deployment.
      *
-     * <p>Set explicitly rather than left null. The trap this repository has now recorded five
-     * times is a test double that does not answer a newly-added collaborator: unset, every
-     * assertion in this file would fail on an NPE inside build() rather than on what it asserts.
+     * <p>The SHARED fake, which answers every accessor the bean has. A double that answers only
+     * the method used today is the trap this repository has now hit six times; the shared one is
+     * where that lesson lives so it does not have to be relearned per test file.
      */
     private static EnterpriseEnvironmentConfig unconfigured() {
-        return corporate(EnterpriseEnvironment.NONE);
+        return RunLauncherTest.noCorporateEnvironment();
     }
 
     private static EnterpriseEnvironmentConfig corporate(EnterpriseEnvironment environment) {
-        return new EnterpriseEnvironmentConfig() {
-            @Override
-            public EnterpriseEnvironment environment() {
-                return environment;
-            }
-        };
+        return RunLauncherTest.corporate(environment);
     }
 
     @Test

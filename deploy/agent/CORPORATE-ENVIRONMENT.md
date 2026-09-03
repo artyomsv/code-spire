@@ -25,9 +25,19 @@ A path on the **worker host**. It is mounted **read-only** into all three contai
 
 | Variable | Read by | Behaviour |
 |---|---|---|
-| `SSL_CERT_FILE` | OpenSSL, so curl and most CLI tooling | **Replaces** the trust store |
-| `GIT_SSL_CAINFO` | git — the init clone and the publisher's push | **Replaces** the trust store |
+| `SSL_CERT_FILE` | OpenSSL, so curl and most CLI tooling in your agent image | **Replaces** the trust store |
+| `GIT_SSL_CAINFO` | the `git` binary, if your agent image uses one | **Replaces** the trust store |
 | `NODE_EXTRA_CA_CERTS` | Node, which is what the Codex arm runs on | **Appends** |
+
+**The init clone and the publisher read none of those, and are handled separately.** They are not a
+shell with `git` in it — they are a JVM running JGit, which uses the JDK's own trust store and knows
+none of those variable names. So the publisher reads `SSL_CERT_FILE` itself at startup, builds a
+trust store from the PEM, and installs a `ProxySelector` from the proxy variables. You configure one
+path and one proxy; the difference is handled for you.
+
+This is worth stating because it was wrong once: the first version of this feature set the three
+variables and stopped, so the bundle was mounted into all three containers and honoured by one. The
+clone failed at the forge and the push failed at the forge, while this page said otherwise.
 
 Two consequences worth knowing before you set it.
 
@@ -50,11 +60,20 @@ problem if you set them yourself in the image — which is what the build check 
 image's own store would make your file the container's entire trust set, which is the failure above
 with no way to opt out of it.
 
-**A wrong path is a startup refusal, not a failed run.** If `SPIRE_RUN_CA_BUNDLE_PATH` does not name
-a readable file the worker will not start, and says which setting to fix. This is not defensive
-tidiness: a missing bind source is not an error in every container runtime — it can be created as an
-empty *directory* — so without the check a typo produces three variables pointing at a directory and
-a TLS failure that names neither the mount nor the setting.
+**A wrong path is a startup refusal, not a failed run.** The worker will not start if
+`SPIRE_RUN_CA_BUNDLE_PATH` does not name a readable file, if the path is **relative**, or if the file
+contains a **private key**. Each is a real trap. A missing bind source is not an error in every
+container runtime — it can be created as an empty *directory* — so a typo would otherwise produce
+three variables pointing at a directory and a TLS failure naming neither. A relative path is worse:
+it resolves against the worker and passes the file check, then reaches the runtime as a **volume**
+**name**, silently mounting an empty volume at the bundle path. And a combined `server.pem` — the
+private key followed by its chain, which is what many corporate tools export — would be mounted into
+the container that runs untrusted model output.
+
+**The path is resolved by the container runtime, not by the worker.** Those are the same filesystem
+while the worker runs directly on the host, which is how it runs today. If you later run the worker
+in a container, the bundle must exist at this same path on the machine the runtime runs on *and* be
+mounted into the worker, so its startup check asks about the file the runtime will actually bind.
 
 ## The proxy
 
@@ -90,7 +109,10 @@ than the password. The worker refuses to start on a partial credential instead.
 
 The host must match the image reference. A credential for `registry.acme.example` is offered to
 `registry.acme.example/team/agent:1` and to nothing else — your corporate password is never presented
-to Docker Hub because someone referenced `alpine:3.20`.
+to Docker Hub because someone referenced `alpine:3.20`. A **port is part of the host**, so a registry
+at `registry.acme.example:5000` must be configured with the port. Docker Hub may be written
+`docker.io`, `index.docker.io` or `registry-1.docker.io`; all three are recognised as one registry, so
+a fully qualified Hub reference matches a Hub credential.
 
 **This credential never reaches a container.** It is handed to the runtime and used on the image pull
 alone, so `docker inspect` on a run unit does not print it and the agent — which runs untrusted model
@@ -99,6 +121,20 @@ output at full shell access — cannot read it from its own environment. You can
 ```bash
 docker inspect --format '{{json .Config.Env}}' <a run container>
 ```
+
+## What the agent can read
+
+The registry credential is invisible to a container. **The proxy credential is not, and cannot be.**
+Every container must route through the proxy, so the proxy URL — basic auth included — is in every
+container's environment, and the agent runs untrusted model output at full shell access and can read
+its own environment.
+
+That is a deliberate trade, not an oversight. Give the proxy a service account scoped to proxying and
+not reused elsewhere. What Code Spire *can* do, and does, is keep that password out of anything it
+stores: the run transcript and `factory_run.failure_detail` are scrubbed of it in every form it takes
+— literal, URL-encoded, and the `Proxy-Authorization: Basic` header a verbose `curl` prints. A
+password too short for that scrub to act on safely is refused at startup rather than silently left in
+the clear.
 
 ## What a working corporate deployment looks like
 

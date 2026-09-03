@@ -1827,12 +1827,35 @@ clone failure reads like a bad credential.
 With `SPIRE_RUN_REGISTRY_*` set, dispatch a run and inspect every container:
 
 ```bash
-docker inspect --format '{{json .Config.Env}}{{json .Config.Labels}}' <id> | grep -i "$SPIRE_RUN_REGISTRY_SECRET"
+# The secret goes in a file, never on the command line: an argument lands in shell history and is
+# readable from `ps` by every user on the box, which is a worse leak than the one being checked for.
+printf '%s\n' "$SPIRE_RUN_REGISTRY_SECRET" > /tmp/spire-probe && chmod 600 /tmp/spire-probe
+docker inspect --format '{{json .Config.Env}}{{json .Config.Labels}}' <id> | grep -F -f /tmp/spire-probe
+rm -f /tmp/spire-probe
 ```
 
 Must match nothing, on all three. The credential reaches the image pull and nothing else — the agent
 runs untrusted model output at full shell access and can read its own environment, so a credential
 placed on a container is a credential the model output can read.
+
+### 4b. Prove the clone and the push actually TRUST the bundle
+
+This is the step a review had to add, because the first version of this feature passed every check
+above and still did not work. The init clone and the publisher are a JVM running JGit — not a shell
+with `git` in it — so mounting the bundle and setting three variables reached the agent only.
+
+The container test proves it now, but on a live stack the discriminating check is a **real forge
+behind your own CA**. If your internal forge is already served by a certificate your corporate root
+signs, that is the test: dispatch a run against a repository on it.
+
+```bash
+# the clone reached the forge — no certificate error in the init container
+docker logs $(docker ps -a --filter label=dev.codespire.role=init -q | head -1)
+```
+
+A `PKIX path building failed` or `unable to find valid certification path` there means the JVM half
+is not honouring the bundle. Reading the file from the container proves nothing about this — the old
+test did exactly that and passed.
 
 ### 5. The two mistakes worth making on purpose
 

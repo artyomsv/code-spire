@@ -32,6 +32,12 @@ public final class CloneMain {
         Map<String, String> env = System.getenv();
         OutcomeWriter outcome = new OutcomeWriter();
         try {
+            // BEFORE the clone, and before anything reads a credential. This is a JVM running
+            // JGit, so it honours none of the CA or proxy variables the runtime injects until
+            // something turns them into a trust store and a ProxySelector. Without it the clone
+            // fails at the forge on every TLS-inspecting network -- the failure FR-F14 exists to
+            // remove, and the one the mount test cannot see.
+            CorporateTransport.apply(env);
             String remote = RemoteUri.validated(Env.required(env, "SPIRE_REMOTE_URI"));
             String branch = Env.required(env, "SPIRE_BRANCH");
             String base = Env.required(env, "SPIRE_BASE_COMMIT");

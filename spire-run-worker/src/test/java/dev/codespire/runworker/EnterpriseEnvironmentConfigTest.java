@@ -30,6 +30,15 @@ class EnterpriseEnvironmentConfigTest {
 
     private static final String PROXY = "http://proxy.acme.example:3128";
 
+    /**
+     * PEM-shaped and unmistakably not a certificate.
+     *
+     * <p>The config only looks for the block markers, so nothing here needs to parse — and a
+     * real certificate in a fixture would expire and would tempt reuse.
+     */
+    private static final String BUNDLE_CONTENT =
+            "-----BEGIN CERTIFICATE-----\nTEST-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n";
+
     private static EnterpriseEnvironmentConfig config() {
         EnterpriseEnvironmentConfig config = new EnterpriseEnvironmentConfig();
         // Every Optional is set, deliberately. An unset @ConfigProperty field is null rather than
@@ -70,7 +79,7 @@ class EnterpriseEnvironmentConfigTest {
     @Test
     void aCaBundleBecomesAReadOnlyHostMountAndTheThreeVariablesThatReadIt(@TempDir Path dir)
             throws IOException {
-        Path bundle = Files.writeString(dir.resolve("ca.crt"), "-----BEGIN CERTIFICATE-----\n");
+        Path bundle = Files.writeString(dir.resolve("ca.crt"), BUNDLE_CONTENT);
 
         EnterpriseEnvironmentConfig config = config();
         config.caBundlePath = Optional.of(bundle.toString());
@@ -95,7 +104,7 @@ class EnterpriseEnvironmentConfigTest {
      */
     @Test
     void theBundleIsNotMountedOverTheImagesOwnCertificateStore(@TempDir Path dir) throws IOException {
-        Path bundle = Files.writeString(dir.resolve("ca.crt"), "x");
+        Path bundle = Files.writeString(dir.resolve("ca.crt"), BUNDLE_CONTENT);
 
         EnterpriseEnvironmentConfig config = config();
         config.caBundlePath = Optional.of(bundle.toString());
@@ -217,5 +226,82 @@ class EnterpriseEnvironmentConfigTest {
         assertTrue(check.getParameters()[0].isAnnotationPresent(jakarta.enterprise.event.Observes.class),
                 "without @Observes StartupEvent the bean is created lazily and a bad path is found "
                         + "by the first dispatch instead of by the operator starting the worker");
+    }
+    /**
+     * A combined {@code server.pem} — a private key followed by its chain — is refused.
+     *
+     * <p>That is the shape many corporate tools export, and this file is mounted into the container
+     * that runs untrusted model output at full shell access. Pointing the setting at one hands the
+     * agent a private key, with nothing about the mount looking wrong.
+     */
+    @Test
+    void aBundleContainingAPrivateKeyIsRefused(@TempDir Path dir) throws IOException {
+        Path combined = Files.writeString(dir.resolve("server.pem"),
+                "-----BEGIN PRIVATE KEY-----\nTEST-NOT-A-REAL-KEY\n-----END PRIVATE KEY-----\n"
+                        + BUNDLE_CONTENT);
+
+        EnterpriseEnvironmentConfig config = config();
+        config.caBundlePath = Optional.of(combined.toString());
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, config::resolve);
+        assertTrue(refused.getMessage().contains("PRIVATE KEY"), refused.getMessage());
+    }
+
+    /** An RSA or EC spelling of the same block is the same hazard. */
+    @Test
+    void everyPrivateKeySpellingIsRefused(@TempDir Path dir) throws IOException {
+        for (String label : java.util.List.of("RSA PRIVATE KEY", "EC PRIVATE KEY", "OPENSSH PRIVATE KEY")) {
+            Path file = Files.writeString(dir.resolve(label.replace(" ", "-") + ".pem"),
+                    "-----BEGIN " + label + "-----\nTEST\n-----END " + label + "-----\n"
+                            + BUNDLE_CONTENT);
+            EnterpriseEnvironmentConfig config = config();
+            config.caBundlePath = Optional.of(file.toString());
+
+            assertThrows(IllegalStateException.class, config::resolve, label);
+        }
+    }
+
+    /** A keystore given by mistake holds no PEM block, and would fail every handshake silently. */
+    @Test
+    void aFileWithNoCertificateBlockIsRefused(@TempDir Path dir) throws IOException {
+        Path keystore = Files.writeString(dir.resolve("truststore.p12"), "not a PEM at all");
+
+        EnterpriseEnvironmentConfig config = config();
+        config.caBundlePath = Optional.of(keystore.toString());
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, config::resolve);
+        assertTrue(refused.getMessage().contains("no PEM certificate"), refused.getMessage());
+    }
+
+    /**
+     * The mounted source is ABSOLUTE, whatever the operator typed.
+     *
+     * <p>A relative path resolves against the worker process, so the file check passes — and then
+     * reaches the container runtime as a VOLUME NAME, which mounts an empty volume at the bundle
+     * path. Storing the resolved form is what makes the checked file and the bound file the same.
+     */
+    @Test
+    void theMountedSourceIsAbsoluteEvenWhenTheOperatorTypedARelativePath(@TempDir Path dir)
+            throws IOException {
+        Path bundle = Files.writeString(dir.resolve("ca.crt"), BUNDLE_CONTENT);
+
+        EnterpriseEnvironmentConfig config = config();
+        config.caBundlePath = Optional.of(bundle.toString());
+        config.resolve();
+
+        String source = config.environment().mounts().getFirst().hostPath();
+        assertTrue(Path.of(source).isAbsolute(), source);
+    }
+
+    /** Every missing part is named, or one mistake costs one worker restart per omission. */
+    @Test
+    void aPartialRegistryCredentialNamesEveryMissingPart() {
+        EnterpriseEnvironmentConfig config = config();
+        config.registryHost = Optional.of("registry.acme.example");
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, config::resolve);
+
+        assertTrue(refused.getMessage().contains("registry-username"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("registry-secret"), refused.getMessage());
     }
 }

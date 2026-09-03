@@ -7,6 +7,7 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -109,5 +110,49 @@ class DockerRunRuntimeTest {
     @Test
     void anUnconfiguredRuntimePullsAnonymously() {
         assertTrue(new DockerRunRuntime().authFor("registry.acme.example/team/agent:1").isEmpty());
+    }
+    /**
+     * Docker Hub has three spellings and they are one registry.
+     *
+     * <p>Without normalising, {@code acme/private} and {@code docker.io/acme/private} -- the same
+     * image -- matched different registries, so an operator writing the fully qualified form (what
+     * registry-agnostic tooling emits, and what a digest pin looks like) got a silent ANONYMOUS
+     * pull and a not-found. Configuring {@code docker.io}, which is what {@code docker login}
+     * accepts, broke the bare form instead.
+     */
+    @Test
+    void everySpellingOfDockerHubIsTheSameRegistry() {
+        assertEquals(DockerRunRuntime.DOCKER_HUB, DockerRunRuntime.registryHostOf("docker.io/acme/app:1"));
+        assertEquals(DockerRunRuntime.DOCKER_HUB,
+                DockerRunRuntime.registryHostOf("index.docker.io/acme/app:1"));
+        assertEquals(DockerRunRuntime.DOCKER_HUB,
+                DockerRunRuntime.registryHostOf("registry-1.docker.io/acme/app:1"));
+
+        DockerRunRuntime hub = new DockerRunRuntime(
+                new RegistryCredential("docker.io", "spire", "TEST-registry-secret"));
+        assertTrue(hub.authFor("acme/private:1").isPresent(),
+                "a credential configured the way docker login accepts must match the bare form");
+        assertTrue(hub.authFor("index.docker.io/acme/private:1").isPresent());
+        assertTrue(hub.authFor("registry.acme.example/team/app:1").isEmpty());
+    }
+
+    /**
+     * The credential must actually be ATTACHED to the pull, not merely computed.
+     *
+     * <p>{@code authFor} could answer correctly for ever while nothing carried its answer to the
+     * command, and the only thing that would notice is a live private-registry pull nobody
+     * performs. Building a command opens no socket, so the attachment is assertable here.
+     */
+    @Test
+    void thePullOfAPrivateImageCarriesTheCredentialAndAPublicPullDoesNot() {
+        DockerRunRuntime runtime = new DockerRunRuntime(
+                new RegistryCredential("registry.acme.example", "spire", "TEST-registry-secret"));
+
+        var privatePull = runtime.pullCommandFor("registry.acme.example/team/agent:1");
+        assertEquals("spire", privatePull.getAuthConfig().getUsername());
+        assertEquals("TEST-registry-secret", privatePull.getAuthConfig().getPassword());
+
+        assertNull(runtime.pullCommandFor("alpine:3.20").getAuthConfig(),
+                "a corporate password must never be attached to a Docker Hub pull");
     }
 }

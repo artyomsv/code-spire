@@ -1461,7 +1461,33 @@ The design is fully specified in `docs/` — **treat those files as the source o
     both build failures through, which is also what makes the credential scrub unbypassable.
   - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
     than `succeeded` with no ref — the same call already made for `push_gate_refused`.
-  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V51.
+  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V52.
+  - **The corporate run-unit environment (FR-F14).** A CA bundle and proxy variables injected into
+    every container at run time, and a private-registry credential for the image pull, none of it
+    baked into an image. The bundle and proxy live on `RunUnitSpec` rather than on each
+    `ContainerSpec`, so "every container of the unit" is structural and no arm can apply them to two
+    parts of three; the registry credential goes the other way, onto the RUNTIME, because everything
+    on a spec reaches a container where `docker inspect` prints it and the agent reads its own
+    environment. `HostMount` has no `readOnly` component at all — a host bind reaches the machine the
+    worker runs on, so a writable one is not expressible rather than merely defaulted.
+    **What the first version got wrong is the part worth keeping.** It set `SSL_CERT_FILE`,
+    `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` and stopped — three names covering OpenSSL, the git
+    binary and Node, which is the AGENT's world. The init clone and the publisher are neither: they
+    are a JVM running JGit, which reads the JDK trust store and `ProxySelector` and contains zero
+    references to any of those names (measured against the jar). So behind a TLS-inspecting proxy the
+    clone failed at the forge and the push failed at the forge while three documents said the
+    opposite, and the integration test could not see it because it `cat`s the mounted file — proving
+    the bind and saying nothing about trust. `CorporateTransport` now builds an `SSLContext` from the
+    PEM and a `ProxySelector`/`Authenticator` from the proxy, called by both entry points, and the
+    test stands up a real TLS server behind a private CA and asserts the handshake FAILS before and
+    SUCCEEDS after. Four more of the same shape: a relative bundle path passed the startup refusal
+    and then reached the daemon as a VOLUME NAME (an empty volume where the certificate should be);
+    only the FIRST proxy password was scrubbed; the Basic form was built as
+    `base64(scmUser:proxyPassword)`, a string on no wire; and a bundle holding a PRIVATE KEY — the
+    shape a combined `server.pem` takes — was mounted into the container running untrusted output.
+    Two guards were also proven for one container out of three, which mutation found and the
+    per-role fixtures now close. Operator guidance in `deploy/agent/CORPORATE-ENVIRONMENT.md`,
+    runbook Mode R, and the no-baking half is build-enforced over both run-unit Dockerfiles.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

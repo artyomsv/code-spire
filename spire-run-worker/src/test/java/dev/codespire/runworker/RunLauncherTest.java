@@ -19,6 +19,8 @@ import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
+import dev.codespire.runtime.EnterpriseEnvironment;
+import dev.codespire.runtime.RegistryCredential;
 import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
@@ -242,14 +244,44 @@ class RunLauncherTest {
     }
 
     static EnterpriseEnvironmentConfig noCorporateEnvironment() {
-        return proxiedWith(java.util.Optional.empty());
+        return corporateFake(EnterpriseEnvironment.NONE, List.of(), java.util.Optional.empty());
     }
 
-    static EnterpriseEnvironmentConfig proxiedWith(java.util.Optional<String> proxySecret) {
+    static EnterpriseEnvironmentConfig proxiedWith(List<SecretScrub.Credential> proxyCredentials) {
+        return corporateFake(EnterpriseEnvironment.NONE, proxyCredentials, java.util.Optional.empty());
+    }
+
+    static EnterpriseEnvironmentConfig corporate(EnterpriseEnvironment environment) {
+        return corporateFake(environment, List.of(), java.util.Optional.empty());
+    }
+
+    /**
+     * ONE fake, answering EVERY accessor this bean has.
+     *
+     * <p>Two narrower fakes came first — one overriding {@code environment()}, one overriding
+     * {@code proxySecret()} — and each left the other returning null. Measured: adding a single
+     * plausible line to {@code RunFailures.scrubFor} that also read {@code environment()} produced
+     * 44 NPE failures across three suites, every one presenting as an unrelated launcher or
+     * dispatcher fault. That is the fake-coverage trap this repository has now hit six times, and
+     * a fake that answers only what is called today re-arms it for whoever adds the next line.
+     */
+    static EnterpriseEnvironmentConfig corporateFake(EnterpriseEnvironment environment,
+                                                     List<SecretScrub.Credential> proxyCredentials,
+                                                     java.util.Optional<RegistryCredential> registry) {
         return new EnterpriseEnvironmentConfig() {
             @Override
-            public java.util.Optional<String> proxySecret() {
-                return proxySecret;
+            public EnterpriseEnvironment environment() {
+                return environment;
+            }
+
+            @Override
+            public List<SecretScrub.Credential> proxyCredentials() {
+                return proxyCredentials;
+            }
+
+            @Override
+            public java.util.Optional<RegistryCredential> registryCredential() {
+                return registry;
             }
         };
     }

@@ -104,9 +104,15 @@ public class RunFailures {
         // it is set in every container, and git and curl quote the URL they tried. Added here
         // rather than at each call site so the transcript and the failure detail are covered by
         // the one scrub that already covers both.
-        enterprise.proxySecret().ifPresent(secrets::add);
-        return secrets.isEmpty() ? SecretScrub.none()
-                : SecretScrub.of(username, secrets.toArray(String[]::new));
+        //
+        // Each carries its OWN username, because the base64 form is base64(user:secret) and the
+        // proxy credential paired with the SCM username produced a string that appears on no wire.
+        List<SecretScrub.Credential> credentials = new ArrayList<>();
+        for (String secret : secrets) {
+            credentials.add(new SecretScrub.Credential(username, secret));
+        }
+        credentials.addAll(enterprise.proxyCredentials());
+        return credentials.isEmpty() ? SecretScrub.none() : SecretScrub.of(credentials);
     }
 
     /**

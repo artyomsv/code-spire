@@ -61,6 +61,17 @@ class NoCorporateEnvironmentIsBakedIntoAnImageTest {
     private static final Pattern ENV_ASSIGNMENT =
             Pattern.compile("(?m)^\\s*(?:ENV|ARG)?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*[=\\s]");
 
+    /**
+     * A credential-shaped name anywhere on an instruction line.
+     *
+     * <p>Line-anchored rather than anchored on {@code ARG|ENV} + name, which inspected only the
+     * FIRST name after the keyword -- so a second name on a continued {@code ENV FOO=1 \\} line
+     * escaped it entirely. The proxy scan above never had that hole precisely because it is
+     * line-anchored, and the continuation case in the positive control proves it.
+     */
+    private static final Pattern SECRETISH = Pattern.compile(
+            "(?im)^[^#\\n]*\\b[A-Za-z0-9_]*(?:PASSWORD|SECRET|TOKEN|APIKEY|API_KEY|CREDENTIAL)\\s*[=\\s]");
+
     @Test
     void noRunUnitImageBakesInAProxyOrATrustStore() throws IOException {
         List<String> baked = new ArrayList<>();
@@ -89,12 +100,9 @@ class NoCorporateEnvironmentIsBakedIntoAnImageTest {
      */
     @Test
     void noRunUnitImageBakesInACredential() throws IOException {
-        Pattern secretish = Pattern.compile(
-                "(?i)\\b(?:ARG|ENV)\\s+[A-Za-z0-9_]*(?:PASSWORD|SECRET|TOKEN|APIKEY|API_KEY|CREDENTIAL)");
-
         List<String> baked = new ArrayList<>();
         for (String image : RUN_UNIT_IMAGES) {
-            Matcher found = secretish.matcher(instructions(image));
+            Matcher found = SECRETISH.matcher(instructions(image));
             while (found.find()) {
                 baked.add(image + ": " + found.group().trim());
             }
@@ -129,8 +137,20 @@ class NoCorporateEnvironmentIsBakedIntoAnImageTest {
                 "the detector must see the form it exists to catch");
         assertTrue(assignsEnvironment("ENV HOME=/home/agent \\\n    SSL_CERT_FILE=/x", "SSL_CERT_FILE"),
                 "a continued ENV block sets every name in it, not only the first");
+        assertTrue(assignsEnvironment("ENV HTTPS_PROXY http://proxy:3128", "HTTPS_PROXY"),
+                "the legacy space-separated ENV form is valid Dockerfile syntax and bakes in "
+                        + "just as hard");
+        assertTrue(assignsEnvironment("ARG SSL_CERT_FILE /etc/corp.crt", "SSL_CERT_FILE"),
+                "and so does the ARG spelling of it");
         assertFalse(assignsEnvironment("# HTTPS_PROXY is injected per run, never baked in", "HTTPS_PROXY"),
                 "a comment saying why must not fail the check that says the same thing");
+
+        // The credential scan has its own positive control, or a typo in its alternation would
+        // make an empty-list assertion pass while matching nothing at all.
+        assertTrue(SECRETISH.matcher("ARG REGISTRY_PASSWORD=x").find());
+        assertTrue(SECRETISH.matcher("ENV FOO=1 \\\n    REGISTRY_SECRET=x").find(),
+                "a name on a CONTINUED line is the form a keyword-anchored pattern misses");
+        assertFalse(SECRETISH.matcher("# this image holds NO credential").find());
     }
 
     /**
@@ -141,10 +161,15 @@ class NoCorporateEnvironmentIsBakedIntoAnImageTest {
      * explanation teaches people to delete the explanation.
      */
     private static boolean assignsEnvironment(String text, String name) {
-        Matcher assignment = Pattern
-                .compile("(?m)^[^#\\n]*?\\b" + Pattern.quote(name) + "\\s*=")
-                .matcher(text);
-        return assignment.find();
+        String quoted = Pattern.quote(name);
+        // TWO forms, because Dockerfile has two. The equals form can appear anywhere on an
+        // instruction line, including a continued one; the LEGACY space form is only valid
+        // directly after ENV or ARG. Requiring the equals sign left `ENV HTTPS_PROXY http://...`
+        // -- still valid syntax, and baked in just as hard -- passing a guard whose own javadoc
+        // claimed to cover it.
+        return Pattern.compile("(?m)^[^#\\n]*?\\b" + quoted + "\\s*=").matcher(text).find()
+                || Pattern.compile("(?m)^\\s*(?:ENV|ARG)\\s+" + quoted + "\\s+\\S")
+                        .matcher(text).find();
     }
 
     /** The Dockerfile with comment lines removed; a trailing comment cannot follow an instruction. */

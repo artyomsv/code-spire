@@ -36,6 +36,10 @@ public final class PublisherMain {
     }
 
     public static void main(String[] args) throws Exception {
+        // Before the config, so a corporate deployment gets the same transport the init clone
+        // got. The push is the other git call that meets the proxy, and it is the one whose
+        // failure costs an entire agent run.
+        CorporateTransport.apply(System.getenv());
         PublisherConfig config;
         try {
             config = PublisherConfig.fromEnv(System.getenv());

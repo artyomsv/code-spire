@@ -29,7 +29,19 @@ final class SecretScrub {
     static final String REDACTED = "[redacted]";
 
     /** Below this a "secret" is more likely to be a common substring than a credential. */
-    private static final int MIN_SECRET_LENGTH = 8;
+    static final int MIN_SECRET_LENGTH = 8;
+
+    /**
+     * One secret and the username it authenticates with.
+     *
+     * <p>The pair exists because the base64 form is {@code base64(user + ":" + secret)}, so a
+     * secret paired with the WRONG username produces a string that appears on no wire. That was
+     * live: the deployment proxy password was handed to {@link #of(String, String...)} alongside
+     * the SCM username, so the {@code Proxy-Authorization: Basic} header a verbose curl prints
+     * matched nothing, while the javadoc above named that header as one of the three forms.
+     */
+    record Credential(String username, String secret) {
+    }
 
     private final List<String> forms;
 
@@ -49,8 +61,19 @@ final class SecretScrub {
      * shorter one first leaves the tail of the longer in place.
      */
     static SecretScrub of(String username, String... secrets) {
-        List<String> forms = new ArrayList<>();
+        List<Credential> credentials = new ArrayList<>();
         for (String secret : secrets) {
+            credentials.add(new Credential(username, secret));
+        }
+        return of(credentials);
+    }
+
+    /** Every form of every secret, each paired with the username it is actually sent with. */
+    static SecretScrub of(List<Credential> credentials) {
+        List<String> forms = new ArrayList<>();
+        for (Credential credential : credentials) {
+            String username = credential.username();
+            String secret = credential.secret();
             if (secret == null || secret.length() < MIN_SECRET_LENGTH) {
                 continue;
             }

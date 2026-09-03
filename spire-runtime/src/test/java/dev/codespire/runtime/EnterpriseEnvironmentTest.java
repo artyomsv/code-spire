@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -34,7 +35,11 @@ class EnterpriseEnvironmentTest {
                         List.of(Mount.writable("workspace", "/workspace"),
                                 Mount.writable("handoff", "/handoff"))),
                 container(Map.of("SPIRE_GIT_SECRET", "push-token"),
-                        List.of(Mount.readOnly("handoff", "/handoff"))),
+                        // A mount no other role has, so the shadow check can be proven for the
+                        // publisher specifically rather than for whichever role happens to share
+                        // a path with another.
+                        List.of(Mount.readOnly("handoff", "/handoff"),
+                                Mount.readOnly("gate", "/gate"))),
                 enterprise, 1024, 1024, Duration.ofMinutes(1));
     }
 
@@ -95,33 +100,89 @@ class EnterpriseEnvironmentTest {
     }
 
     /**
-     * Refused rather than resolved by a precedence rule, because the names that collide in practice
-     * are the credentials each role is handed: letting the deployment win blanks the publisher's
-     * push token, and letting the container win lets the agent bypass a mandatory proxy. Both are
-     * silent.
+     * Refused rather than resolved by a precedence rule, because the names that would collide are
+     * the credentials each role is handed: letting the deployment win blanks the publisher's push
+     * token, and letting the container win lets the agent bypass a mandatory proxy. Both silent.
+     *
+     * <p><b>One name per ROLE, and that is the whole point of the loop.</b> The first version
+     * collided only on {@code SPIRE_GIT_SECRET}, which only the publisher sets — so narrowing the
+     * check to {@code (enterprise, publisher)} left it green. A mutation proved exactly that. The
+     * claim being made is "every container of the unit"; the test has to make it three times.
      */
     @Test
-    void aDeploymentVariableMayNotSilentlyReplaceAContainersOwn() {
-        EnterpriseEnvironment collides = new EnterpriseEnvironment(List.of(),
-                Map.of("SPIRE_GIT_SECRET", "someone-elses-token"));
+    void aDeploymentVariableMayNotSilentlyReplaceAnyContainersOwn() {
+        Map<String, String> perRole = Map.of(
+                "SPIRE_CLONE_SECRET", "init",
+                "OPENAI_API_KEY", "agent",
+                "SPIRE_GIT_SECRET", "publisher");
 
-        IllegalArgumentException refused =
-                assertThrows(IllegalArgumentException.class, () -> unit(collides));
+        perRole.forEach((name, role) -> {
+            EnterpriseEnvironment collides =
+                    new EnterpriseEnvironment(List.of(), Map.of(name, "someone-elses-value"));
 
-        assertTrue(refused.getMessage().contains("SPIRE_GIT_SECRET"), refused.getMessage());
-        assertTrue(refused.getMessage().contains("silently ignored"), refused.getMessage());
+            IllegalArgumentException refused =
+                    assertThrows(IllegalArgumentException.class, () -> unit(collides), role);
+
+            assertTrue(refused.getMessage().contains(name), refused.getMessage());
+            assertTrue(refused.getMessage().contains(role),
+                    "the message must name the ROLE: init and publisher share one image, so the "
+                            + "image name cannot say which collided — " + refused.getMessage());
+            assertTrue(refused.getMessage().contains("silently ignored"), refused.getMessage());
+        });
     }
 
-    /** A bundle configured at /workspace would replace the agent's work tree with a host file. */
+    /**
+     * A bundle configured at a path the unit already mounts would replace that volume with a
+     * read-only host file — {@code /workspace} would take the agent's work tree away.
+     *
+     * <p>One path per ROLE, for the reason the collision test above loops: narrowing the check to
+     * {@code (enterprise, init)} left the single-path version green, because {@code /workspace} is
+     * mounted by init as well. {@code /gate} is the publisher's alone.
+     */
     @Test
-    void aHostMountMayNotShadowAVolumeTheUnitAlreadyMounts() {
-        EnterpriseEnvironment shadows = new EnterpriseEnvironment(
-                List.of(new HostMount("/opt/acme/ca.crt", "/workspace")), Map.of());
+    void aHostMountMayNotShadowAVolumeAnyContainerAlreadyMounts() {
+        for (String path : List.of("/workspace", "/handoff", "/gate")) {
+            EnterpriseEnvironment shadows = new EnterpriseEnvironment(
+                    List.of(new HostMount("/opt/acme/ca.crt", path)), Map.of());
 
-        IllegalArgumentException refused =
-                assertThrows(IllegalArgumentException.class, () -> unit(shadows));
+            IllegalArgumentException refused =
+                    assertThrows(IllegalArgumentException.class, () -> unit(shadows), path);
 
-        assertTrue(refused.getMessage().contains("/workspace"), refused.getMessage());
+            assertTrue(refused.getMessage().contains(path), refused.getMessage());
+        }
+    }
+
+    /**
+     * A relative host source is not a path to a container runtime — it is a VOLUME NAME.
+     *
+     * <p>So {@code ca-bundle.crt} would mount an empty named volume at the bundle path, which is
+     * exactly the outcome the worker's startup refusal exists to prevent, arriving through it: a
+     * relative path resolves against the worker's own working directory, so the file check passes.
+     */
+    @Test
+    void aRelativeHostSourceIsRefusedBecauseItIsAVolumeNameNotAPath() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> new HostMount("ca-bundle.crt", "/etc/spire/ca-bundle.crt"));
+
+        assertTrue(refused.getMessage().contains("VOLUME NAME"), refused.getMessage());
+        assertDoesNotThrow(() -> new HostMount("/opt/acme/ca.crt", "/etc/spire/ca-bundle.crt"));
+        assertDoesNotThrow(() -> new HostMount("C:\\certs\\ca.crt", "/etc/spire/ca-bundle.crt"),
+                "a developer runs the worker on the host it drives; refusing a real Windows path "
+                        + "would fire the guard on a correct configuration");
+    }
+
+    /** A blank source names nothing, and a container path must be absolute like every mount. */
+    @Test
+    void aHostMountNeedsASourceAndAnAbsoluteTarget() {
+        assertThrows(IllegalArgumentException.class, () -> new HostMount("  ", "/etc/x"));
+        assertThrows(IllegalArgumentException.class, () -> new HostMount("/opt/x", "etc/x"));
+    }
+
+    /** A registry credential must name the registry it is for, or it can match nothing. */
+    @Test
+    void aRegistryCredentialMustNameItsRegistry() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new RegistryCredential(" ", "spire", "TEST-registry-secret"));
     }
 
     /**

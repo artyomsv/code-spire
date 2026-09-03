@@ -109,20 +109,40 @@ public record RunUnitSpec(String runId,
      * <p>The two are set by different people — the operator's proxy configuration against the
      * builder's per-role wiring — so a collision means one of them is being ignored, and nothing
      * says which. Refusing is the only answer that cannot be wrong: either precedence rule is
-     * defensible in the abstract and catastrophic in one direction, since the colliding names that
-     * matter are the credentials each role is handed. Silently letting the deployment win would let
-     * a mistyped operator variable blank the publisher's push token; silently letting the container
-     * win would let the agent bypass the proxy an operator believes is mandatory.
+     * defensible in the abstract and catastrophic in one direction, and the names that would
+     * collide are the credentials each role is handed.
+     *
+     * <p><b>Not reachable today, and that is the reason to have it rather than an argument
+     * against.</b> A review established that the deployment can currently set only nine fixed
+     * names and every container-side name is a literal in the builder or a harness adapter, so no
+     * collision can occur — an earlier version of this comment sold a scenario the code cannot
+     * produce, which is the kind of prose this project treats as a defect. What the check buys is
+     * that the property is structural BEFORE a second runtime arm, a per-repository environment or
+     * an operator-supplied variable name can reach it; by then the silent-precedence bug would be
+     * a live one and this refusal would be a behaviour change rather than an invariant.
      */
     private static void requireNoEnvironmentCollision(EnterpriseEnvironment enterprise,
-                                                      ContainerSpec... containers) {
-        for (ContainerSpec container : containers) {
-            for (String name : enterprise.environment().keySet()) {
-                if (container.environment().containsKey(name)) {
-                    throw new IllegalArgumentException("the deployment sets \"" + name
-                            + "\", which this unit's " + container.image() + " container also sets."
-                            + " One of the two would be silently ignored, so neither is applied.");
-                }
+                                                      ContainerSpec init, ContainerSpec agent,
+                                                      ContainerSpec publisher) {
+        refuseCollision(enterprise, init, "init");
+        refuseCollision(enterprise, agent, "agent");
+        refuseCollision(enterprise, publisher, "publisher");
+    }
+
+    /**
+     * Named by ROLE, not by image.
+     *
+     * <p>The init and publisher containers run the SAME image, so a message naming the image
+     * cannot tell an operator which of the two collided — and the role is the only thing that
+     * makes the collision actionable.
+     */
+    private static void refuseCollision(EnterpriseEnvironment enterprise, ContainerSpec container,
+                                        String role) {
+        for (String name : enterprise.environment().keySet()) {
+            if (container.environment().containsKey(name)) {
+                throw new IllegalArgumentException("the deployment sets \"" + name
+                        + "\", which this unit's " + role + " container also sets."
+                        + " One of the two would be silently ignored, so neither is applied.");
             }
         }
     }

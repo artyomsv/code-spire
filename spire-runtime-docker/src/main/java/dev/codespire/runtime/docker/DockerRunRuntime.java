@@ -43,6 +43,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -115,13 +116,27 @@ public final class DockerRunRuntime implements RunRuntime {
     private static final long PIDS_LIMIT = 512;
 
     /**
-     * What an unqualified or single-segment image reference resolves to.
+     * The one spelling every Docker Hub reference is normalised to before matching.
      *
-     * <p>The address form docker-java expects in an AuthConfig for Docker Hub; the short name
-     * {@code docker.io} is what a reference carries and is NOT what the daemon authenticates
-     * against.
+     * <p>An internal key, not a claim about what the registry protocol expects -- docker-java
+     * itself declares {@code AuthConfig.DEFAULT_SERVER_ADDRESS} as
+     * {@code https://index.docker.io/v1/}, so an earlier version of this comment was simply wrong.
+     * What matters here is that both sides of the comparison go through
+     * {@link #registryHostOf}, so the value is arbitrary as long as it is used consistently.
      */
     static final String DOCKER_HUB = "registry-1.docker.io";
+
+    /**
+     * Every spelling of Docker Hub a reference or an operator can carry.
+     *
+     * <p>Without this, {@code acme/private} and {@code docker.io/acme/private} -- the same image --
+     * matched different registries, so an operator writing the fully qualified form (which is what
+     * registry-agnostic tooling emits, and what a digest pin looks like) got a silent ANONYMOUS
+     * pull and a not-found. Configuring {@code docker.io}, which is what {@code docker login}
+     * accepts, broke the bare form instead. Both are the failure this matching exists to prevent.
+     */
+    private static final java.util.Set<String> DOCKER_HUB_ALIASES =
+            java.util.Set.of("docker.io", "index.docker.io", "registry-1.docker.io");
 
     /** A registry pull of an agent image with a toolchain in it; a stalled one must not hang a run. */
     private static final Duration PULL_TIMEOUT = Duration.ofMinutes(10);
@@ -272,12 +287,7 @@ public final class DockerRunRuntime implements RunRuntime {
         } catch (NotFoundException absent) {
             // not held locally: pull it
         }
-        PullImageCmd pull = client.pullImageCmd(image);
-        if (!image.contains("@")) {
-            NameParser.ReposTag parsed = NameParser.parseRepositoryTag(image);
-            pull = client.pullImageCmd(parsed.repos).withTag(parsed.tag.isEmpty() ? "latest" : parsed.tag);
-        }
-        authFor(image).ifPresent(pull::withAuthConfig);
+        PullImageCmd pull = pullCommandFor(image);
         try {
             if (!pull.exec(new PullImageResultCallback()).awaitCompletion(PULL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Pulling image " + image + " did not complete within " + PULL_TIMEOUT);
@@ -286,6 +296,30 @@ public final class DockerRunRuntime implements RunRuntime {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted pulling image " + image, e);
         }
+    }
+
+    /**
+     * The pull command for this image, authenticated when a credential was issued for its registry.
+     *
+     * <p>Extracted so the ATTACHMENT is assertable without a daemon -- building a command opens no
+     * socket. Deleting the {@code withAuthConfig} line used to break no test at all: {@code authFor}
+     * could keep answering correctly for ever while nothing carried its answer to the pull, and the
+     * only thing that would notice was a live private-registry pull nobody performs. The auth line
+     * also sits after BOTH branches here, so "authenticated in one branch only" is inexpressible.
+     */
+    PullImageCmd pullCommandFor(String image) {
+        PullImageCmd pull = client.pullImageCmd(image);
+        if (!image.contains("@")) {
+            NameParser.ReposTag parsed = NameParser.parseRepositoryTag(image);
+            pull = client.pullImageCmd(parsed.repos).withTag(parsed.tag.isEmpty() ? "latest" : parsed.tag);
+        }
+        authFor(image).ifPresent(pull::withAuthConfig);
+        return pull;
+    }
+
+    /** The credential this runtime pulls with, or empty. Exposed so the worker wiring is assertable. */
+    public Optional<RegistryCredential> registryCredential() {
+        return Optional.ofNullable(registry);
     }
 
     /**
@@ -301,7 +335,11 @@ public final class DockerRunRuntime implements RunRuntime {
         if (registry == null) {
             return Optional.empty();
         }
-        if (!registry.registry().equalsIgnoreCase(registryHostOf(image))) {
+        // Both sides through the same function, so a credential configured as "docker.io" and an
+        // image written "index.docker.io/..." are the one registry they actually are. A raw
+        // string compare here is how the two spellings drifted apart in the first place.
+        String configured = registryHostOf(registry.registry() + "/x");
+        if (!configured.equalsIgnoreCase(registryHostOf(image))) {
             return Optional.empty();
         }
         return Optional.of(new AuthConfig()
@@ -324,10 +362,49 @@ public final class DockerRunRuntime implements RunRuntime {
         String first = image.substring(0, slash);
         boolean looksLikeHost = first.indexOf(".") >= 0 || first.indexOf(":") >= 0
                 || first.equals("localhost");
-        return looksLikeHost ? first : DOCKER_HUB;
+        if (!looksLikeHost || DOCKER_HUB_ALIASES.contains(first.toLowerCase(Locale.ROOT))) {
+            return DOCKER_HUB;
+        }
+        return first;
     }
 
     private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
+        HostConfig host = HostConfig.newHostConfig()
+                .withBinds(bindsFor(spec, container))
+                .withMemory(spec.memoryBytes())
+                .withNanoCPUs(spec.nanoCpus())
+                // Memory and CPU alone do not bound an unconfined agent. A fork bomb exhausts the
+                // host pid_max; a privilege escalation or a raw socket is available by default.
+                .withPidsLimit(PIDS_LIMIT)
+                .withSecurityOpts(List.of("no-new-privileges"))
+                .withCapDrop(Capability.ALL)
+                // salvage() must be able to read the exit code, and an auto-removed container has
+                // none to read. Teardown is destroy()'s job and nothing else's.
+                .withAutoRemove(false);
+
+        List<String> env = new ArrayList<>();
+        // Through the spec, never container.environment(): the deployment CA and proxy live at
+        // unit level so that no arm can apply them to two containers out of three.
+        spec.environmentFor(container).forEach((name, value) -> env.add(name + "=" + value));
+
+        ensureImage(container.image());
+        return client.createContainerCmd(container.image())
+                .withCmd(container.argv())
+                .withEnv(env)             // credentials live HERE, never in a label
+                .withLabels(labelsFor(spec, role))
+                .withHostConfig(host)
+                .exec()
+                .getId();
+    }
+
+    /**
+     * Every volume and host path this container mounts.
+     *
+     * <p>Both loops in one place because they answer one question and get opposite read-only
+     * treatment for opposite reasons: a unit volume may legitimately be writable, a HOST bind
+     * never may.
+     */
+    private List<Bind> bindsFor(RunUnitSpec spec, ContainerSpec container) {
         List<Bind> binds = new ArrayList<>();
         for (Mount mount : container.mounts()) {
             // AccessMode, NOT the boolean overload. Bind(String, Volume, Boolean) is noCopy — an
@@ -341,38 +418,12 @@ public final class DockerRunRuntime implements RunRuntime {
                     mount.readOnly() ? AccessMode.ro : AccessMode.rw));
         }
         for (HostMount mount : spec.hostMounts()) {
-            // AccessMode.ro is not a preference here: this bind reaches the worker HOST, and
-            // the agent container runs untrusted model output at full shell access. HostMount
-            // cannot express a writable one, and this is the line that honours that.
+            // AccessMode.ro is not a preference here: this bind reaches the worker HOST, and the
+            // agent container runs untrusted model output at full shell access. HostMount cannot
+            // express a writable one, and this is the line that honours that.
             binds.add(new Bind(mount.hostPath(), new Volume(mount.path()), AccessMode.ro));
         }
-
-        List<String> env = new ArrayList<>();
-        // Through the spec, never container.environment(): the deployment CA and proxy live at
-        // unit level so that no arm can apply them to two containers out of three.
-        spec.environmentFor(container).forEach((name, value) -> env.add(name + "=" + value));
-
-        HostConfig host = HostConfig.newHostConfig()
-                .withBinds(binds)
-                .withMemory(spec.memoryBytes())
-                .withNanoCPUs(spec.nanoCpus())
-                // Memory and CPU alone do not bound an unconfined agent. A fork bomb exhausts the
-                // host pid_max; a privilege escalation or a raw socket is available by default.
-                .withPidsLimit(PIDS_LIMIT)
-                .withSecurityOpts(List.of("no-new-privileges"))
-                .withCapDrop(Capability.ALL)
-                // salvage() must be able to read the exit code, and an auto-removed container has
-                // none to read. Teardown is destroy()'s job and nothing else's.
-                .withAutoRemove(false);
-
-        ensureImage(container.image());
-        return client.createContainerCmd(container.image())
-                .withCmd(container.argv())
-                .withEnv(env)             // credentials live HERE, never in a label
-                .withLabels(labelsFor(spec, role))
-                .withHostConfig(host)
-                .exec()
-                .getId();
+        return binds;
     }
 
     @Override

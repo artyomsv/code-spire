@@ -183,9 +183,14 @@ class DockerRunRuntimeIT {
                 "sleep 1", Duration.ofMinutes(1), EnterpriseEnvironment.NONE));
         started.add(handle);
 
-        for (Container container : withRegistry.client().listContainersCmd().withShowAll(true)
+        List<Container> containers = withRegistry.client().listContainersCmd().withShowAll(true)
                 .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, "run_unit_reg"))
-                .exec()) {
+                .exec();
+        // An empty list is ZERO assertions and a green test -- the vacuity hole this repository
+        // already paid for once in the contract snapshot. A renamed label or a changed filter API
+        // must fail here rather than silently check nothing.
+        assertEquals(3, containers.size(), "the unit this test created must be what was read");
+        for (Container container : containers) {
             var config = withRegistry.client().inspectContainerCmd(container.getId()).exec();
             for (String entry : config.getConfig().getEnv()) {
                 assertFalse(entry.contains("TEST-registry-secret"), "in the environment: " + entry);
