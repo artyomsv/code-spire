@@ -22,6 +22,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -327,5 +328,34 @@ class CorporateTransportTest {
         fresh.init(null, null, null);
         SSLContext.setDefault(fresh);
         javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(fresh.getSocketFactory());
+    }
+    /**
+     * TLS 1.2 stays enabled, and 1.0/1.1 stay off.
+     *
+     * <p>A guard against the shape of fix, not the value. A linter flags {@code getInstance("TLS")}
+     * and autofixes it to {@code "TLSv1.2"} -- which on this JDK enables 1.2 ALONE and so removes
+     * TLS 1.3: a downgrade shipped to satisfy a rule. The opposite mistake is pinning so high that a
+     * corporate TLS-inspecting proxy offering only 1.2 can no longer be reached, which is exactly
+     * the deployment this class exists for.
+     */
+    @Test
+    void theTrustContextKeepsTlsOneTwoAndRefusesTheDeprecatedVersions(@TempDir Path dir)
+            throws Exception {
+        Endpoint endpoint = startTlsServer(dir);
+        try {
+            CorporateTransport.apply(Map.of(CorporateTransport.CA_BUNDLE, endpoint.pem().toString()));
+
+            List<String> protocols = List.of(
+                    SSLContext.getDefault().getDefaultSSLParameters().getProtocols());
+
+            assertTrue(protocols.contains("TLSv1.2"),
+                    "a proxy offering only 1.2 must still be reachable: " + protocols);
+            assertTrue(protocols.contains("TLSv1.3"), protocols.toString());
+            assertFalse(protocols.contains("TLSv1.1"), protocols.toString());
+            assertFalse(protocols.contains("TLSv1"), protocols.toString());
+        } finally {
+            endpoint.server().stop(0);
+            resetTls();
+        }
     }
 }

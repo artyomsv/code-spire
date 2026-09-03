@@ -7,7 +7,6 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -142,6 +141,17 @@ class DockerRunRuntimeTest {
      * <p>{@code authFor} could answer correctly for ever while nothing carried its answer to the
      * command, and the only thing that would notice is a live private-registry pull nobody
      * performs. Building a command opens no socket, so the attachment is assertable here.
+     *
+     * <p><b>The public half asserts IDENTITY, not absence, and the difference is the whole
+     * portability of this test.</b> An earlier version asserted the Hub pull carried no auth at all
+     * — which passed on a laptop and failed on CI, because docker-java attaches whatever
+     * {@code ~/.docker/config.json} holds for that registry and a runner has one. That assertion was
+     * about the machine, not about this class. Reproduced locally by pointing {@code DOCKER_CONFIG}
+     * at a config with a Hub entry: the same test fails in four seconds.
+     *
+     * <p>An operator's own {@code docker login} reaching a public pull is correct behaviour and not
+     * ours to prevent. What is ours is that the CORPORATE credential never goes to a registry it was
+     * not issued for, and that is what this asserts.
      */
     @Test
     void thePullOfAPrivateImageCarriesTheCredentialAndAPublicPullDoesNot() {
@@ -152,7 +162,13 @@ class DockerRunRuntimeTest {
         assertEquals("spire", privatePull.getAuthConfig().getUsername());
         assertEquals("TEST-registry-secret", privatePull.getAuthConfig().getPassword());
 
-        assertNull(runtime.pullCommandFor("alpine:3.20").getAuthConfig(),
-                "a corporate password must never be attached to a Docker Hub pull");
+        var publicPull = runtime.pullCommandFor("alpine:3.20");
+        if (publicPull.getAuthConfig() != null) {
+            // Whatever the host's own docker config supplies is fine; ours must not be in it.
+            assertNotEquals("spire", publicPull.getAuthConfig().getUsername(),
+                    "a corporate password must never be attached to a Docker Hub pull");
+            assertNotEquals("TEST-registry-secret", publicPull.getAuthConfig().getPassword(),
+                    "a corporate password must never be attached to a Docker Hub pull");
+        }
     }
 }
