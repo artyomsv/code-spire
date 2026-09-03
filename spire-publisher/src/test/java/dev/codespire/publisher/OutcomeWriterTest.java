@@ -60,35 +60,34 @@ class OutcomeWriterTest {
     }
 
     /**
-     * Below the shared floor nothing is redacted, and that is BOTH the decision and the proof.
+     * A SHORT git secret is scrubbed, which is the regression this closes.
      *
-     * <p><b>The decision.</b> The publisher's own copy had no length floor, so this is the single
-     * behaviour it loses by moving to the shared class. Pinned here so the next reader meets a
-     * decision rather than a surprise: redacting a short string turns every innocent occurrence of
-     * it into the marker and leaves an operator a failure detail they cannot read. No forge issues a
-     * token this short, and where a caller CAN refuse one outright it does — see
-     * {@code EnterpriseEnvironmentConfig}, which fails startup on a proxy password below the floor.
+     * <p>This test asserted the exact opposite one round ago, and the reversal is worth reading
+     * rather than skipping. The shared class briefly skipped anything under eight characters, on the
+     * reasoning that redacting a short string makes a failure detail unreadable. True — and the wrong
+     * trade at the point of USE, because Gitea and Forgejo accept an account password for
+     * git-over-HTTP with a default minimum of six, and this container holds the git WRITE token. A
+     * real password reached {@code factory_run.failure_detail} verbatim.
      *
-     * <p><b>The proof.</b> It is also the one assertion here that separates the shared class from a
-     * local copy. Every other test in this file supplies one long secret and asserts the marker,
-     * which the deleted private method satisfied just as well. This one does not: that method would
-     * have redacted {@code short}, because it had no floor to stop it.
-     *
-     * <p>Ordering — longest form first, so one secret containing another is fully redacted — is a
-     * real difference between the two copies and is NOT asserted here, because it cannot be reached
-     * through this class: {@link OutcomeWriter} holds exactly one credential. It is covered where it
-     * is reachable, in {@code SecretScrubTest}. An earlier version of this test claimed to assert it
-     * and did not.
+     * <p><b>Nothing here now separates the shared class from a hypothetical local copy, and that is
+     * the correct state rather than a gap.</b> With the floor gone the two agree on every path this
+     * class can reach: it holds exactly one credential, so ordering is unreachable, and the three
+     * forms were already common to both. Where the difference IS reachable it is covered in
+     * {@code SecretScrubTest}. What guarantees the publisher reaches the shared class is structural —
+     * its own copy is deleted and it has no other scrub — not an assertion.
      */
     @Test
-    void aSecretBelowTheSharedFloorIsNotScrubbed() {
+    void aShortGitSecretIsStillScrubbed() {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8),
-                "bot", "short");
+                "bot", "sh0rt1");
 
-        writer.failed("PUSH_REJECTED", "remote rejected https://bot:short@host/x");
+        writer.failed("PUSH_REJECTED", "remote rejected https://bot:sh0rt1@host/x");
 
-        assertTrue(captured.toString(StandardCharsets.UTF_8).contains("short"),
-                "a secret below SecretScrub.MIN_SECRET_LENGTH is deliberately left alone");
+        String line = captured.toString(StandardCharsets.UTF_8);
+        assertFalse(line.contains("sh0rt1"),
+                "a six-character forge password is what Gitea issues, and this process holds the git "
+                        + "WRITE token: " + line);
+        assertTrue(line.contains(SecretScrub.REDACTED), line);
     }
 }

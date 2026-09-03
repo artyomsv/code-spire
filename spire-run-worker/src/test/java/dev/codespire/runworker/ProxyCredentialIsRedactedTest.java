@@ -10,6 +10,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -100,13 +101,27 @@ class ProxyCredentialIsRedactedTest {
      * The value is percent-DECODED, because the URL carries {@code p%40ss} and the
      * {@code Proxy-Authorization} header carries {@code p@ss}. The header is the text that leaks.
      */
+    /**
+     * A percent-encoded password yields BOTH spellings, because both appear and in different places.
+     *
+     * <p>This asserted only the DECODED form, on the reasoning that the header is the text that
+     * leaks. The header does leak — and so does the environment variable, which carries the operator's
+     * RAW spelling and is what {@code printenv} prints into a run transcript a viewer can read. The
+     * two are not interchangeable and re-encoding does not bridge them: {@code URLEncoder} emits
+     * uppercase hex and {@code +} for a space, so {@code p%2fss%20x} round-trips to {@code p%2Fss+x}
+     * and matches neither. Measured.
+     */
     @Test
-    void aPercentEncodedPasswordIsRecognisedInTheFormThatActuallyLeaks() {
+    void aPercentEncodedPasswordIsRecognisedInBothFormsThatLeak() {
         List<SecretScrub.Credential> found =
                 configuredWith(null, "http://svc:p%40ssw0rd-TEST@proxy.acme.example:3128")
                         .proxyCredentials();
 
-        assertEquals("p@ssw0rd-TEST", found.getFirst().secret());
+        assertEquals(List.of(
+                        new SecretScrub.Credential("svc", "p%40ssw0rd-TEST"),
+                        new SecretScrub.Credential("svc", "p@ssw0rd-TEST")),
+                found,
+                "as written first, because that is the environment variable every container carries");
     }
 
     /**
@@ -135,21 +150,27 @@ class ProxyCredentialIsRedactedTest {
     }
 
     /**
-     * A password the scrub cannot act on is a startup refusal.
+     * A SHORT proxy password starts the worker and is scrubbed, where it used to be a startup refusal.
      *
-     * <p>{@code SecretScrub} ignores anything under its floor, which is right for a run's own tokens
-     * and wrong for a password an operator typed: below it the password appears verbatim in every
-     * failure detail this deployment writes, with nothing on screen saying why.
+     * <p>The refusal is gone with the premise it rested on. {@code SecretScrub} skipped anything under
+     * its floor, so a short password reached every failure detail verbatim and refusing to start was
+     * the only protection available. It no longer skips, so the password is covered like any other.
+     *
+     * <p>Keeping the refusal would have meant asserting a NEW rule about what an operator may
+     * configure — "a proxy password must be at least eight characters" — which this deployment has no
+     * standing to make and which would block a working proxy for a logging reason. The readability
+     * cost is carried by a warning {@code SecretScrub} logs once instead.
      */
     @Test
-    void aProxyPasswordTooShortToScrubIsRefusedAtStartup() {
+    void aShortProxyPasswordIsScrubbedRatherThanRefused() {
         EnterpriseEnvironmentConfig config =
-                configuredWith(null, "http://svc:short@proxy.acme.example:3128");
+                configuredWith(null, "http://svc:sh0rt1@proxy.acme.example:3128");
 
-        IllegalStateException refused = assertThrows(IllegalStateException.class, config::resolve);
+        assertDoesNotThrow(config::resolve, "a short password is a readability problem, not a refusal");
 
-        assertTrue(refused.getMessage().contains("shorter"), refused.getMessage());
-        assertFalse(refused.getMessage().contains("short".repeat(1) + "@"), "never quote the value");
+        String cleaned = SecretScrub.of(config.proxyCredentials())
+                .clean("HTTPS_PROXY=http://svc:sh0rt1@proxy.acme.example:3128");
+        assertFalse(cleaned.contains("sh0rt1"), cleaned);
     }
 
     /**
@@ -201,5 +222,44 @@ class ProxyCredentialIsRedactedTest {
         credentials.encryption = new EncryptionService(EncryptionService.generateKeysetBase64());
         credentials.mapper = new ObjectMapper();
         return credentials;
+    }
+
+    /**
+     * The password is scrubbed in the spelling the CONTAINER carries, not only the decoded one.
+     *
+     * <p>Measured, because the mismatch is easy to talk past. An operator writes
+     * {@code p%2fss%20x}; {@code credentialIn} decodes that to {@code p/ss x}, and
+     * {@code SecretScrub} derives its URL-encoded form with {@code URLEncoder}, which produces
+     * {@code p%2Fss+x} — uppercase hex, and {@code +} for the space. The value actually SET in
+     * every container is the raw URL, so it contains neither form.
+     *
+     * <p>That matters because {@code env} and {@code printenv} are routine agent actions, and their
+     * output goes to {@code run_event}, which a viewer can read. So the scrub must also carry the
+     * secret exactly as it was written.
+     */
+    @Test
+    void theProxyPasswordIsScrubbedInTheSpellingTheContainerCarries() {
+        String asWritten = "p%2fss%20x-TEST";
+        String proxyUrl = "http://svc:" + asWritten + "@proxy.acme.example:3128";
+
+        SecretScrub scrub = SecretScrub.of(configuredWith(null, proxyUrl).proxyCredentials());
+
+        String cleaned = scrub.clean("HTTPS_PROXY=" + proxyUrl);
+        assertFalse(cleaned.contains(asWritten),
+                "the raw spelling is what `printenv` prints into the transcript: " + cleaned);
+    }
+
+    /** And the decoded form too — that is the one a Proxy-Authorization header carries. */
+    @Test
+    void bothSpellingsOfOneProxyPasswordAreScrubbed() {
+        String asWritten = "p%40ss-TEST";
+        String decoded = "p@ss-TEST";
+        String proxyUrl = "http://svc:" + asWritten + "@proxy.acme.example:3128";
+
+        SecretScrub scrub = SecretScrub.of(configuredWith(null, proxyUrl).proxyCredentials());
+
+        String cleaned = scrub.clean("url " + proxyUrl + " header " + decoded);
+        assertFalse(cleaned.contains(asWritten), cleaned);
+        assertFalse(cleaned.contains(decoded), cleaned);
     }
 }

@@ -41,17 +41,34 @@ public final class SecretScrub {
     public static final String REDACTED = "[redacted]";
 
     /**
-     * Below this a "secret" is more likely to be a common substring than a credential.
+     * Shorter than this and a "secret" is more likely a common substring than a credential — so
+     * scrubbing it will make a failure detail hard to read. <b>It is scrubbed anyway.</b>
      *
-     * <p><b>A secret shorter than this is NOT scrubbed</b>, and that is a decision rather than an
-     * oversight: redacting a three-character string turns every innocent occurrence of it into
-     * {@code [redacted]} and leaves an operator a failure detail they cannot read. The publisher's
-     * own copy had no floor, so adopting this one is the single behaviour it loses — no forge issues
-     * a token this short, but the gap is stated here rather than discovered later.
-     * {@code EnterpriseEnvironmentConfig} refuses a proxy password below this length at startup for
-     * exactly that reason, which is the pattern to copy where a caller can refuse.
+     * <p><b>This constant used to gate the scrub, and that was the wrong trade.</b> Skipping a
+     * short secret spends a security property to buy a readability one, at the single instant when
+     * the value IS a live credential and the cost of leaking it is unbounded. It was not
+     * hypothetical: Gitea and Forgejo accept an ACCOUNT PASSWORD for git-over-HTTP with a default
+     * minimum of six characters, nothing validates the length of a factory token an operator
+     * pastes into the registry, and such a password reached {@code factory_run.failure_detail}
+     * verbatim — a column an operator reads.
+     *
+     * <p>So the readability concern is answered where a human can act on it instead: a secret
+     * below this length is scrubbed AND logged once, naming the consequence. A warning an operator
+     * can read beats a silence they cannot.
+     *
+     * <p>Deliberately NOT a refusal. Refusing to run because a forge issued a six-character
+     * password would be a new product rule about what an operator may configure, invented under
+     * cover of a logging fix — and it would block a legitimate Gitea deployment.
      */
-    public static final int MIN_SECRET_LENGTH = 8;
+    public static final int MIN_PLAUSIBLE_SECRET_LENGTH = 8;
+
+    /**
+     * {@code System.Logger}, because this module depends on the JDK and nothing else.
+     *
+     * <p>That is the whole reason it exists as a module: it is consumed by an FSL service and an
+     * Apache library, and pulling a logging framework in here would put it on both classpaths.
+     */
+    private static final System.Logger LOG = System.getLogger(SecretScrub.class.getName());
 
     /**
      * One secret and the username it authenticates with.
@@ -98,14 +115,29 @@ public final class SecretScrub {
         return of(credentials);
     }
 
-    /** Every form of every secret, each paired with the username it is actually sent with. */
+    /**
+     * Every form of every secret, each paired with the username it is actually sent with.
+     *
+     * <p>A blank or null secret contributes nothing — it has no form, and redacting the empty
+     * string would rewrite every character of every message. A SHORT one contributes its forms
+     * like any other, with a warning: see {@link #MIN_PLAUSIBLE_SECRET_LENGTH}.
+     */
     public static SecretScrub of(List<Credential> credentials) {
         List<String> forms = new ArrayList<>();
         for (Credential credential : credentials) {
             String username = credential.username();
             String secret = credential.secret();
-            if (secret == null || secret.length() < MIN_SECRET_LENGTH) {
+            if (secret == null || secret.isBlank()) {
                 continue;
+            }
+            if (secret.length() < MIN_PLAUSIBLE_SECRET_LENGTH) {
+                // The LENGTH, never the value, and never the username either -- this line is
+                // written to a log that exists because credentials must not reach logs.
+                LOG.log(System.Logger.Level.WARNING,
+                        "a configured secret is only {0} characters, so redacting it will also hide"
+                                + " innocent text and make failure details hard to read. It IS"
+                                + " redacted; use a longer credential to get readable messages back.",
+                        secret.length());
             }
             forms.add(secret);
             String encoded = URLEncoder.encode(secret, StandardCharsets.UTF_8);

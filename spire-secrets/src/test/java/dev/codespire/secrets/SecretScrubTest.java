@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -77,17 +78,70 @@ class SecretScrubTest {
         assertEquals(detail, SecretScrub.of(USERNAME).clean(detail));
     }
 
+    /**
+     * A short secret DOES redact ordinary text, and that cost is accepted deliberately.
+     *
+     * <p>This test asserted the opposite until a review found what the opposite costs. A short
+     * "secret" does match ordinary words and does turn a message into noise — but it is still a
+     * credential, and the alternative was leaving a real six-character forge password in a column an
+     * operator reads. Noise is recoverable; a leaked write token is not.
+     *
+     * <p>Kept as a test rather than deleted, because the cost is real and someone will meet it and
+     * wonder. The answer is in the WARN {@code of} logs and in
+     * {@link SecretScrub#MIN_PLAUSIBLE_SECRET_LENGTH}: use a longer credential.
+     */
     @Test
-    void aShortValueIsNotTreatedAsASecret() {
-        // A very short "secret" matches ordinary words and would redact the message into noise,
-        // hiding the failure it was meant to describe.
-        String cleaned = SecretScrub.of(null, "abc").clean("abc appears in this ordinary sentence");
+    void aShortSecretIsScrubbedEvenThoughItMakesTheMessageNoisy() {
+        String cleaned = SecretScrub.of(List.of(new SecretScrub.Credential(null, "abc")))
+                .clean("abc appears in this ordinary sentence");
 
-        assertEquals("abc appears in this ordinary sentence", cleaned);
+        assertEquals(SecretScrub.REDACTED + " appears in this ordinary sentence", cleaned);
     }
 
     @Test
     void nullTextSurvives() {
         assertEquals(null, SecretScrub.of(USERNAME, SECRET).clean(null));
+    }
+
+    /**
+     * A SHORT secret is scrubbed, because at the moment of use it is still a credential.
+     *
+     * <p><b>This reverses a decision, and the reversal is the point.</b> A length floor once
+     * skipped anything under eight characters, on the reasoning that a short "secret" is more
+     * likely a common substring and redacting it makes a failure detail unreadable. The reasoning
+     * about readability holds. The trade does not: it spends a security property to buy a
+     * readability one, at the one instant where the value IS a live credential and the cost of
+     * leaking it is unbounded.
+     *
+     * <p>It is not hypothetical either. Gitea and Forgejo accept an ACCOUNT PASSWORD for
+     * git-over-HTTP with a default minimum of six characters, and nothing validates the length of
+     * a factory token an operator pastes in. Such a password reached
+     * {@code factory_run.failure_detail} verbatim, which an operator reads.
+     *
+     * <p>The readability concern is answered where a human can act on it — see
+     * {@link SecretScrub#MIN_PLAUSIBLE_SECRET_LENGTH}, which is now a warning about a configured
+     * value rather than a silent decision about a live one.
+     */
+    @Test
+    void aSecretShorterThanThePlausibleMinimumIsStillScrubbed() {
+        String shortButReal = "abc123";
+
+        String cleaned = SecretScrub.of(List.of(new SecretScrub.Credential("bot", shortButReal)))
+                .clean("remote rejected https://bot:" + shortButReal + "@host/x");
+
+        assertFalse(cleaned.contains(shortButReal),
+                "a six-character forge password is what Gitea issues, and it is still a credential: "
+                        + cleaned);
+        assertTrue(cleaned.contains(SecretScrub.REDACTED), cleaned);
+    }
+
+    /** A blank or null secret has no form to redact, and redacting "" would erase everything. */
+    @Test
+    void aBlankSecretContributesNoForm() {
+        String text = "nothing to hide here";
+
+        assertEquals(text, SecretScrub.of(List.of(new SecretScrub.Credential("bot", ""))).clean(text));
+        assertEquals(text, SecretScrub.of(List.of(new SecretScrub.Credential("bot", null))).clean(text));
+        assertEquals(text, SecretScrub.of(List.of(new SecretScrub.Credential("bot", "   "))).clean(text));
     }
 }

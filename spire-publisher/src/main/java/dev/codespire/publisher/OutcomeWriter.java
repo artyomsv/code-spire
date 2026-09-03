@@ -29,10 +29,12 @@ public final class OutcomeWriter {
      * <p>Shared with the run worker rather than hand-rolled here. The two copies had drifted:
      * this one had no length floor, redacted in no particular order, and handled a single
      * credential, while the worker's did all three — and this is the container holding the git
-     * WRITE token. One consequence of adopting the shared rules is deliberate and stated at
-     * {@link SecretScrub#MIN_SECRET_LENGTH}: a secret below that length is no longer scrubbed,
-     * because redacting a short string makes a failure detail unreadable. No forge issues a
-     * token that short.
+     * WRITE token.
+     *
+     * <p>The shared class briefly imposed a length floor that this copy never had, which silently
+     * stopped scrubbing a short forge password — Gitea and Forgejo issue them. That floor is gone
+     * (see {@link SecretScrub#MIN_PLAUSIBLE_SECRET_LENGTH}), so the consolidation now loses this
+     * copy nothing at all and gains it ordering, multiple credentials, and one place to fix.
      */
     private final SecretScrub scrub;
 

@@ -160,13 +160,37 @@ public class EnterpriseEnvironmentConfig {
      * <p>Only the credential, never the whole URL. The host is what makes a proxy error legible,
      * and redacting it would leave an operator with a failure that names nothing.
      */
+    /**
+     * Both spellings of every proxy password: as the operator wrote it, and percent-decoded.
+     *
+     * <p>Two credentials rather than one richer type, because {@code SecretScrub} already treats a
+     * list as "every form of every secret" and a second entry costs one more string to match. The
+     * two are different text in different places: the RAW one is the environment variable every
+     * container carries, and the DECODED one is what a {@code Proxy-Authorization: Basic} header
+     * and a verbose {@code curl} print.
+     */
     public List<SecretScrub.Credential> proxyCredentials() {
         return Stream.of(httpProxy, httpsProxy)
                 .flatMap(Optional::stream)
                 .map(EnterpriseEnvironmentConfig::credentialIn)
                 .flatMap(Optional::stream)
+                .flatMap(EnterpriseEnvironmentConfig::bothSpellings)
                 .distinct()
                 .toList();
+    }
+
+    /**
+     * The credential as written, plus its decoded form when the two differ.
+     *
+     * <p>distinct() upstream collapses them back to one when the password carries no escapes, which
+     * is the common case, so this costs nothing there.
+     */
+    private static Stream<SecretScrub.Credential> bothSpellings(SecretScrub.Credential asWritten) {
+        String decoded = decode(asWritten.secret());
+        if (decoded.equals(asWritten.secret())) {
+            return Stream.of(asWritten);
+        }
+        return Stream.of(asWritten, new SecretScrub.Credential(asWritten.username(), decoded));
     }
 
     /**
@@ -180,9 +204,17 @@ public class EnterpriseEnvironmentConfig {
      * is OPTIONAL, because {@code user:pass@proxy:3128} is a form curl accepts and people write --
      * and requiring it meant the password was set in every container and scrubbed from nothing.
      * The search is bounded to the AUTHORITY, so an {@code @} in a path is not read as the end of
-     * a userinfo that is not there. And the value is percent-DECODED, because the URL carries
-     * {@code p%40ss} while the header carries {@code p@ss}, and the header is the text that leaks.
-     * {@code lastIndexOf} stays: a password may itself contain an {@code @}.
+     * a userinfo that is not there. {@code lastIndexOf} stays: a password may itself contain an
+     * {@code @}.
+     *
+     * <p><b>The secret is returned AS WRITTEN, and the decoded form is added separately by</b>
+     * {@link #proxyCredentials()}. Returning only the decoded form was a real gap, and the reason
+     * is easy to talk past: {@code SecretScrub} derives its URL-encoded form with
+     * {@code URLEncoder}, which emits uppercase hex and {@code +} for a space. An operator who
+     * wrote {@code p%2fss%20x} therefore had a decoded form ({@code p/ss x}) and a re-encoded form
+     * ({@code p%2Fss+x}) that matched NEITHER the header nor the environment variable. Measured,
+     * not reasoned about. The variable is what {@code printenv} prints into a run transcript a
+     * viewer can read, so it is the spelling that most needs covering.
      */
     private static Optional<SecretScrub.Credential> credentialIn(String url) {
         int scheme = url.indexOf("://");
@@ -199,7 +231,7 @@ public class EnterpriseEnvironmentConfig {
             return Optional.empty();
         }
         return Optional.of(new SecretScrub.Credential(decode(userInfo.substring(0, colon)),
-                decode(userInfo.substring(colon + 1))));
+                userInfo.substring(colon + 1)));
     }
 
     private static String decode(String value) {
@@ -224,7 +256,13 @@ public class EnterpriseEnvironmentConfig {
         putBothCases(environment, "HTTP_PROXY", trimmed(httpProxy));
         putBothCases(environment, "HTTPS_PROXY", trimmed(httpsProxy));
         putBothCases(environment, "NO_PROXY", trimmed(noProxy));
-        requireScrubbableProxyPasswords();
+        // A short proxy password used to be a startup REFUSAL here, and the refusal is gone with
+        // the premise it rested on: SecretScrub skipped anything under its floor, so a short
+        // password reached every failure detail verbatim and refusing was the only protection.
+        // It no longer skips, so the password is scrubbed like any other and SecretScrub warns
+        // once about the readability cost. Keeping the refusal would have meant asserting a new
+        // rule about what an operator may configure -- "a proxy password must be eight characters"
+        // -- which this deployment has no standing to make and which would block a working proxy.
 
         if (mounts.isEmpty() && environment.isEmpty()) {
             return EnterpriseEnvironment.NONE;
@@ -240,28 +278,6 @@ public class EnterpriseEnvironmentConfig {
         environment.put(name.toLowerCase(Locale.ROOT), value);
     }
 
-    /**
-     * A proxy password the scrub cannot act on is a startup refusal.
-     *
-     * <p>{@code SecretScrub} ignores anything shorter than its floor, on the sound reasoning that
-     * a short "secret" is more likely a common substring than a credential. That holds for a run's
-     * own tokens, which are always long. It does not hold for a password an operator typed: below
-     * the floor it is silently absent from the scrub, so it appears verbatim in every failure
-     * detail this deployment writes and nothing on screen says why.
-     *
-     * <p>Refused rather than warned, because this class already refuses three other otherwise-
-     * silent misconfigurations and a warning at startup is a line nobody reads twice.
-     */
-    private void requireScrubbableProxyPasswords() {
-        for (SecretScrub.Credential credential : proxyCredentials()) {
-            if (credential.secret().length() < SecretScrub.MIN_SECRET_LENGTH) {
-                throw new IllegalStateException("the proxy URL carries a password shorter than the "
-                        + SecretScrub.MIN_SECRET_LENGTH + " characters the transcript scrub acts on,"
-                        + " so it would appear verbatim in every failure detail this deployment"
-                        + " writes. Use a longer password, or a proxy that needs none.");
-            }
-        }
-    }
 
     /**
      * A configured bundle that is not a readable file is a startup refusal.
