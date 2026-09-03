@@ -183,6 +183,47 @@
         "email",
         "acr"
       ]
+    },
+    {
+      "clientId": "spire-run-worker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-only-worker-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:34000/rw/auth/callback",
+        "http://localhost:39285/rw/auth/callback",
+        "http://localhost:34083/rw/auth/callback",
+        "http://localhost:39283/rw/auth/callback",
+        "http://localhost:34700/rw/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:34000",
+        "http://localhost:39285",
+        "http://localhost:34700"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "spire-run-worker",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
     }
   ]
 }

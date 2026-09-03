@@ -20,7 +20,7 @@ services:
   # Two supported ways to get an IdP, both driven by the same knob:
   #   A. this container            -> SPIRE_OIDC_AUTH_SERVER_URL=http://localhost:34567/realms/spire
   #   B. a Keycloak you already run -> point that variable at it, and don't start this profile.
-  # Either way, import infra/keycloak/realm-spire.json: it defines the three clients (one per
+  # Either way, import infra/keycloak/realm-spire.json: it defines the four clients (one per
   # service, so no service can read another's session), both roles, the audience mappers each
   # service's token check needs, and two obviously-synthetic dev users.
   keycloak:

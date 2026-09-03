@@ -36,14 +36,6 @@ COPY --chmod=755 spire-agent-entrypoint.sh /usr/local/bin/spire-agent-entrypoint
 LABEL dev.codespire.agent.toolchain=node
 LABEL dev.codespire.agent.harness=codex
 
-# The two DECLARED clauses of the image contract (docs/factory/AGENT-IMAGE-CONTRACT.md).
-# Declarations, not proofs: `spire-agent-image verify` reports them under a heading that says it
-# did not check them. Present here because the reference image should demonstrate the half of the
-# report FR-F13 is mostly about — without them it prints "(no label)" twice, and the contract
-# claimed otherwise.
-LABEL dev.codespire.agent.toolchain=node
-LABEL dev.codespire.agent.harness=codex
-
 USER 1001:1001
 ENV HOME=/home/agent \
     SPIRE_WORKSPACE=/workspace \

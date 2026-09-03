@@ -10,8 +10,14 @@ import java.util.Map;
 
 /**
  * The init container's entrypoint ({@code spire-clone}): populates {@code /workspace} at the base
- * commit on the run's branch, then exits. It holds the READ credential only — the token that can
- * write never enters the container that touches agent-reachable disk first (ADR-039).
+ * commit on the run's branch, then exits.
+ *
+ * <p><b>It is meant to hold a READ-only credential and today holds the machine account's one
+ * secret</b>, which can also write — {@code Credentials.scm} packs the same value into both slots.
+ * The isolation that does hold is the one that matters most: the AGENT gets no git credential,
+ * JGit persists none under the workspace, and the remote is removed once the clone is done, so
+ * nothing the model can influence ever sees it. The second line of defence — a token that could
+ * not push even if it leaked — is not there yet. See {@code docs/UNVERIFIED.md} §E.
  *
  * <p>The commit identity written into the workspace is the clone credential's username; the
  * e-mail is a placeholder under {@value #IDENTITY_DOMAIN} because the machine account's real

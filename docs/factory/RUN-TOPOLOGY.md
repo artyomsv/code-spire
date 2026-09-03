@@ -320,11 +320,23 @@ can observe or salvage any run.
 
 ## 8. Credentials
 
-Two tokens, different scopes, different containers. Never the same secret in both.
+Two tokens, different scopes, different containers — **the design. Not what ships.**
+
+> **Today one machine-account secret fills both slots.** `Credentials.scm` packs the
+> same secret as the clone credential and the push credential, so the init container holds a token
+> that can write. The isolation that DOES hold is the one the agent is on the other side of: the
+> agent gets no git credential at all, JGit persists none under the workspace, and the remote is
+> removed after the clone — so nothing the model can influence ever sees either. What is not yet
+> true is the second line of defence, a clone token that could not push even if it leaked.
+>
+> Closing it needs a forge-specific read scope (a GitHub fine-grained PAT with `contents:read`,
+> a GitLab `read_repository` token) packed as a second envelope. Tracked in
+> `docs/UNVERIFIED.md` §E; `ROADMAP.md` already records
+> `separatePushCredential` as false everywhere.
 
 | Credential | Container | Scope | Notes |
 |---|---|---|---|
-| clone token | `fetch` init | **read-only** | the pod never holds anything that can write to the repository |
+| clone token | `fetch` init | read-only **by design; today the write token** | the AGENT never holds anything that can write; the init container currently does |
 | model credential | `agent` | model API only | subscription `auth.json` or API key (ADR-031) |
 | push token | `publish` | write, **machine account** (ADR-038) | never the review bot's |
 

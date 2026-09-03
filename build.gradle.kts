@@ -249,7 +249,8 @@ tasks.register("testFast") {
 
 tasks.register("testServices") {
     group = "verification"
-    description = "Runs the four deployables plus spire-runtime-docker (Dev Services: Postgres + Kafka)."
+    description = "Runs the four deployables plus spire-runtime-docker and spire-agent-image " +
+            "(Dev Services: Postgres + Kafka; the last two also drive a real daemon)."
     dependsOn(serviceTestModules.map { ":$it:test" })
 }
 

@@ -53,7 +53,6 @@ class CredentialRefusalHasNoProducerTest {
      * hide behind the coincidence.
      */
     private static final List<String> DEFINITION_AND_CONSUMERS = List.of(
-            "spire-contract/src/main/java/dev/codespire/contract/event/RunFailureCause.java",
             "spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/RunCredentialFeedback.java",
             "spire-orchestrator/src/main/java/dev/codespire/orchestrator/attention/AttentionQueries.java");
 
@@ -87,12 +86,39 @@ class CredentialRefusalHasNoProducerTest {
                 if (!path.endsWith(".java") || !path.contains("/src/main/java/")) {
                     continue;
                 }
-                if (Files.readString(file, StandardCharsets.UTF_8).contains(CAUSE)) {
+                if (scannable(path, Files.readString(file, StandardCharsets.UTF_8)).contains(CAUSE)) {
                     found.add(path);
                 }
             }
         }
         return found;
+    }
+
+    /**
+     * The part of a file this scan is allowed to judge.
+     *
+     * <p>For the definition file, everything except the enum constant's OWN declaration line. Naming
+     * a value where it is defined is not producing it; naming it anywhere else in that file — most
+     * obviously in {@code ALIASES} — is.
+     *
+     * <p><b>An earlier version skipped the whole file, and that hole was measured.</b> Adding
+     * {@code Map.entry("AUTH_FAILED", CREDENTIAL_REJECTED)} to {@code ALIASES} left the entire fast
+     * tier green, while {@code ALIASES}' own javadoc says translating the harness's and publisher's
+     * vocabularies "belongs here, where the wire vocabulary is defined" — so the likeliest arrival
+     * point for the missing producer was inside the one file the guard did not read. A guard weaker
+     * than the claim it protects is worse than no guard, because the claim is then believed.
+     */
+    private static String scannable(String path, String body) {
+        if (!path.endsWith("/RunFailureCause.java")) {
+            return body;
+        }
+        StringBuilder judged = new StringBuilder(body.length());
+        for (String line : body.split("\\R", -1)) {
+            if (!line.strip().startsWith(CAUSE + "(")) {
+                judged.append(line).append('\n');
+            }
+        }
+        return judged.toString();
     }
 
     private static Path repoRoot() {

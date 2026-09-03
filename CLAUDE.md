@@ -1463,6 +1463,37 @@ The design is fully specified in `docs/` — **treat those files as the source o
   - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
     than `succeeded` with no ref — the same call already made for `push_gate_refused`.
   - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V52.
+  - **The run event stream (`cs.run-events`, `run_event`, V44).** The agent's own output
+    reaches an operator live over `/api/ws/runs/{runId}/transcript`, encrypted at rest with the
+    run as AAD and swept on a TTL — high-volume by design, so it is bounded rather than durable
+    (ADR-034); a run's outcome lives in `factory_run` and `llm_charge` and outlives it.
+  - **Salvage before teardown (V49).** A unit is finalized before it is destroyed, and a failed
+    salvage BLOCKS teardown so the evidence survives. A run that delivered but never finished has
+    its own status rather than being labelled a clean success.
+  - **A run writes to the charge ledger (V42).** `llm_charge` gained a neutral subject, so
+    the ADR-025 spend gate — which reads that table with no subject filter — finally sees factory
+    spend. Before this the cap was structurally inert for runs. Unknown usage stays UNKNOWN and is
+    never coerced to a priced zero.
+  - **`run_lease` with owner, heartbeat and the sandbox's identity (V45).** A restarted
+    worker recovers by discovery, not by memory; the lease is what names the unit a heartbeat
+    belongs to. Taken BEFORE the unit is created, deliberately.
+  - **The orphan watchdog.** A sandbox whose lease has gone stale is reclaimed on a timer, because
+    an abandoned one holds the model key and the SCM token until something removes it. It refuses
+    to destroy a unit it could not report on.
+  - **`cs.run-control`, and a cancel that cancels.** Control rides its OWN topic: the
+    command channel is ordered and blocking for the run's whole duration, so a cancel delivered
+    there would be read only once the run it cancels had finished. Steer is refused where the
+    harness does not declare it, rather than silently dropped.
+  - **Idempotent dispatch (V50, V51).** The intent is journalled before dispatch and ambiguity
+    fails CLOSED: an unacknowledged send says nothing about whether the record landed, so the run
+    enters `dispatch_uncertain` and an operator resolves it, rather than being retried
+    into a second paid agent.
+  - **The harness credential pool (V52).** A run calls the model with the factory's OWN keys, never
+    the reviewer's — one exfiltration must not disable reviews and runs together. Least-rested
+    rotation, and two exhaustion states kept apart because a rate limit is a promise and a
+    rejection is an answer. **Both are entered by an operator: nothing in the pipeline reports
+    either yet**, guarded by `CredentialRefusalHasNoProducerTest` and tracked in
+    `docs/UNVERIFIED.md` §A1–A2.
   - **The corporate run-unit environment (FR-F14).** A CA bundle and proxy variables injected into
     every container at run time, and a private-registry credential for the image pull, none of it
     baked into an image. The bundle and proxy live on `RunUnitSpec` rather than on each
@@ -1489,6 +1520,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
     Two guards were also proven for one container out of three, which mutation found and the
     per-role fixtures now close. Operator guidance in `deploy/agent/CORPORATE-ENVIRONMENT.md`,
     runbook Mode R, and the no-baking half is build-enforced over both run-unit Dockerfiles.
+
   - **The agent image contract is written down and checkable (FR-F13, M1 half).**
     `docs/factory/AGENT-IMAGE-CONTRACT.md` is the contract; the new Apache-2.0
     `spire-agent-image` module checks it. **The report has two halves that never mix** —
@@ -1517,6 +1549,52 @@ The design is fully specified in `docs/` — **treat those files as the source o
     `ContractAndCheckerAgreeTest` holds the document and the checker to each other in
     both directions, and now also that the document names every variable the entrypoint requires.
     Runbook Mode S.
+  - **The whole PR reviewed on four lenses after all thirteen tasks had been (2026-09-03).**
+    32 findings, and almost none is a defect inside a task — they are the three shapes a per-task
+    review structurally cannot see. **A fix that landed on one of two siblings:** an earlier round
+    fixed a swallowed exception on one call and left three, and another removed one of four
+    spellings of an MDC key. **A guard whose input can never satisfy it:** the transcript socket
+    closed on `-1` from a `SELECT count(*)`, which always returns a row, so the close was
+    unreachable while a prior round records it resolved — and the scan protecting the credential
+    pool's documented gap allowlisted the very file that holds the alias map a producer would most
+    likely be written into (measured: adding an alias left the fast tier green). **A claim in
+    module A about the behaviour of module B:** `ChangeKind` is carried across the publisher's
+    wire specifically to be reported and dropped at the worker, six documents describe a read-only
+    clone token that does not exist (one token serves clone and push — corrected in all six rather
+    than invented, since a read scope is forge-specific and a product decision), and five places
+    pointed at a `SECURITY.md` factory section that was never written.
+
+    The worst was a class doing the opposite of its own javadoc: `RunCommandDeserializer` promised
+    it never throws on a poison record and overrode nothing, so the base implementation threw and
+    the messaging layer failed the channel — and `failure-strategy` does not apply to a
+    deserialization fault. It serves BOTH worker channels, so one malformed record on
+    `cs.run-control` was a worker that could not be cancelled: the outage that topic exists to
+    remove. Its four siblings all override; this one was a copy that dropped the only line that
+    mattered.
+
+    **Nothing asserted any sandbox control.** ADR-039 makes the container the security boundary and
+    six settings implement it; a repo-wide grep for `withCapDrop`, `no-new-privileges`,
+    `withPidsLimit`, `withMemory` and `withNetworkMode` across every test source returned
+    nothing. The daemon-driving IT asserts *behaviours* and never inspects a `HostConfig`, so it is
+    blind to these by construction.
+
+    Also the **seventh fake-coverage trap, and the first SILENT one** — every previous instance
+    failed loudly with an NPE from a real `DataSource`, while this one sits under the sweep's own
+    `catch (RuntimeException)`, so a plausible call would have left all 27 tests green with the
+    feature inert. And neither Keycloak realm defined the run worker's OIDC client while four
+    documents told an operator it did; adding it caught a second defect on the way in, since the
+    copied client inherited the review worker's `/wk` prefix and port where the run worker owns
+    `/rw` on 34083.
+
+    Eight findings are filed rather than fixed (`techdebt/`), the sharpest being that **a cancel
+    for a run that has not started is accepted and dropped**: `register` runs only after
+    `create` returns and `create` blocks on the clone, so a queued, cloning or
+    dispatch-uncertain run takes a 202 and then runs anyway. Two task reviews each closed the half
+    they could see and the gap is before either. Dispositions in
+    `.claude/reviews/global/factory-m1.md`; the unproven claims in `docs/UNVERIFIED.md`.
+
+  Measured, not estimated: **2549 Java tests across 299 suites** (`testFast` + `testServices`;
+  the nightly `testE2e` tier is separate). `spire-ui` untouched by M1.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

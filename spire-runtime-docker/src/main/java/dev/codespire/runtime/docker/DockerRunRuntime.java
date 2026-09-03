@@ -368,8 +368,17 @@ public final class DockerRunRuntime implements RunRuntime {
         return first;
     }
 
-    private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
-        HostConfig host = HostConfig.newHostConfig()
+    /**
+     * The sandbox controls, extracted so a JVM test can assert them.
+     *
+     * <p>ADR-039 makes the container the security boundary, and until this was extracted NO test
+     * anywhere referenced {@code withCapDrop}, {@code no-new-privileges}, {@code withPidsLimit} or
+     * {@code withMemory} — the daemon-driving IT asserts BEHAVIOURS (a file is readable, an exit
+     * code survives) and never inspects a HostConfig, so a silent removal of any of these would
+     * have left every suite green.
+     */
+    HostConfig hostConfigFor(RunUnitSpec spec, ContainerSpec container) {
+        return HostConfig.newHostConfig()
                 .withBinds(bindsFor(spec, container))
                 .withMemory(spec.memoryBytes())
                 .withNanoCPUs(spec.nanoCpus())
@@ -381,6 +390,10 @@ public final class DockerRunRuntime implements RunRuntime {
                 // salvage() must be able to read the exit code, and an auto-removed container has
                 // none to read. Teardown is destroy()'s job and nothing else's.
                 .withAutoRemove(false);
+    }
+
+    private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
+        HostConfig host = hostConfigFor(spec, container);
 
         List<String> env = new ArrayList<>();
         // Through the spec, never container.environment(): the deployment CA and proxy live at

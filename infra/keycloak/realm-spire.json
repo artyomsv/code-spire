@@ -6,8 +6,14 @@
   "registrationAllowed": false,
   "roles": {
     "realm": [
-      { "name": "spire-viewer", "description": "Read the dashboard" },
-      { "name": "spire-admin", "description": "Manage configuration, replay, prompts" }
+      {
+        "name": "spire-viewer",
+        "description": "Read the dashboard"
+      },
+      {
+        "name": "spire-admin",
+        "description": "Manage configuration, replay, prompts"
+      }
     ]
   },
   "users": [
@@ -19,8 +25,17 @@
       "requiredActions": [],
       "firstName": "DEV",
       "lastName": "Operator",
-      "credentials": [{ "type": "password", "value": "dev-operator", "temporary": false }],
-      "realmRoles": ["spire-admin", "spire-viewer"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-operator",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "spire-admin",
+        "spire-viewer"
+      ]
     },
     {
       "username": "dev-viewer",
@@ -30,8 +45,16 @@
       "requiredActions": [],
       "firstName": "DEV",
       "lastName": "Viewer",
-      "credentials": [{ "type": "password", "value": "dev-viewer", "temporary": false }],
-      "realmRoles": ["spire-viewer"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-viewer",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "spire-viewer"
+      ]
     }
   ],
   "clients": [
@@ -50,17 +73,32 @@
         "http://localhost:34080/api/auth/callback",
         "http://localhost:39280/api/auth/callback"
       ],
-      "webOrigins": ["http://localhost:34000", "http://localhost:39285"],
-      "attributes": { "post.logout.redirect.uris": "http://localhost:34000/*##http://localhost:39285/*" },
+      "webOrigins": [
+        "http://localhost:34000",
+        "http://localhost:39285"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:34000/*##http://localhost:39285/*"
+      },
       "protocolMappers": [
         {
           "name": "audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
-          "config": { "included.client.audience": "spire-orchestrator", "access.token.claim": "true", "id.token.claim": "false" }
+          "config": {
+            "included.client.audience": "spire-orchestrator",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
         }
       ],
-      "defaultClientScopes": ["web-origins", "roles", "profile", "email", "acr"]
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
     },
     {
       "clientId": "spire-gateway",
@@ -77,16 +115,29 @@
         "http://localhost:34081/gw/auth/callback",
         "http://localhost:39281/gw/auth/callback"
       ],
-      "webOrigins": ["http://localhost:34000", "http://localhost:39285"],
+      "webOrigins": [
+        "http://localhost:34000",
+        "http://localhost:39285"
+      ],
       "protocolMappers": [
         {
           "name": "audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
-          "config": { "included.client.audience": "spire-gateway", "access.token.claim": "true", "id.token.claim": "false" }
+          "config": {
+            "included.client.audience": "spire-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
         }
       ],
-      "defaultClientScopes": ["web-origins", "roles", "profile", "email", "acr"]
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
     },
     {
       "clientId": "spire-review-worker",
@@ -103,16 +154,68 @@
         "http://localhost:34082/wk/auth/callback",
         "http://localhost:39282/wk/auth/callback"
       ],
-      "webOrigins": ["http://localhost:34000", "http://localhost:39285"],
+      "webOrigins": [
+        "http://localhost:34000",
+        "http://localhost:39285"
+      ],
       "protocolMappers": [
         {
           "name": "audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
-          "config": { "included.client.audience": "spire-review-worker", "access.token.claim": "true", "id.token.claim": "false" }
+          "config": {
+            "included.client.audience": "spire-review-worker",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
         }
       ],
-      "defaultClientScopes": ["web-origins", "roles", "profile", "email", "acr"]
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
+    },
+    {
+      "clientId": "spire-run-worker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dev-only-worker-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:34000/rw/auth/callback",
+        "http://localhost:39285/rw/auth/callback",
+        "http://localhost:34083/rw/auth/callback",
+        "http://localhost:39283/rw/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:34000",
+        "http://localhost:39285"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "spire-run-worker",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
     }
   ]
 }

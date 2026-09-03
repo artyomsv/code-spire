@@ -840,7 +840,7 @@ curl -s -X POST http://<your-keycloak>/admin/realms \
   --data-binary @infra/keycloak/realm-spire.json
 ```
 
-Either way the realm defines three clients (one per service), both roles, the audience mappers the
+Either way the realm defines four clients (one per service, including the run worker), both roles, the audience mappers the
 services require, and two obviously-synthetic users.
 
 #### Dev logins

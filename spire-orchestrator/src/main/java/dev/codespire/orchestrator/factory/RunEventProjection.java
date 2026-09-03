@@ -109,18 +109,6 @@ public class RunEventProjection {
                 + " WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?", runId, afterSeq, limit);
     }
 
-    /** How many events a run has recorded, or -1 when the run itself is unknown to the transcript. */
-    public long countFor(String runId) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM run_event WHERE run_id = ?")) {
-            ps.setString(1, runId);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getLong(1) : 0;
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("could not count the transcript of " + runId, e);
-        }
-    }
 
     private List<RunEventRecord> read(String runId, String sql, Object... binds) {
         List<RunEventRecord> events = new ArrayList<>();

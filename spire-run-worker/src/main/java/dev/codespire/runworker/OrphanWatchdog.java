@@ -49,7 +49,8 @@ public class OrphanWatchdog {
 
     private static final Logger LOG = Logger.getLogger(OrphanWatchdog.class);
 
-    private static final String RUN_ID_MDC = "runId";
+    /** The dispatcher owns it. Two constants for one MDC key are two things that can drift. */
+    private static final String RUN_ID_MDC = RunDispatcher.RUN_ID_MDC;
 
     /**
      * The slot the terminal report is claimed under.
@@ -304,11 +305,20 @@ public class OrphanWatchdog {
             LOG.debugf("its reclamation was already reported; retrying the teardown only");
             return;
         }
-        results.report(new RunResult.RunFailed(unit.runId(),
+        boolean published = results.report(new RunResult.RunFailed(unit.runId(),
                 RunFailureCause.SANDBOX_LOST.name(), RunFailures.clip(detail),
                 RunFailureCause.SANDBOX_LOST.isRetryable(),
                 // Unknown, and it stays unknown: nothing here measured what the agent spent, and a
                 // zero would price a reclaimed run as free.
                 null));
+        if (!published) {
+            // The claim is taken BEFORE the publish so a duplicate report cannot land a second
+            // unpriceable charge line on a run whose spend is already recorded. That ordering is
+            // right, and it means a broker outage during these few seconds would otherwise burn
+            // the slot for ever: the sandbox is torn down next, the lease released, the unit never
+            // listed again, and the run left open with no automated path to a terminal result.
+            // Giving the slot back is safe precisely because nothing was published.
+            claims.release(unit.runId(), REAP_SLOT);
+        }
     }
 }

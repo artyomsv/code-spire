@@ -48,10 +48,12 @@ reviewer you can extend without touching the core.**
 | `spire-gateway` | 34081 | webhook verify -> translate -> `cs.integration`, returns 202 |
 | `spire-orchestrator` | 34080 | `ReviewLifecycle` decider + sagas, owns the event store, emits `cs.commands`, serves the live dashboard |
 | `spire-review-worker` | 34082 | consumes `cs.commands`: diff fetch, LLM review, idempotent comment posting -> `cs.results` |
+| `spire-run-worker` | 34083 | consumes `cs.run-commands`: builds a three-container run unit on Docker, drives the agent, publishes the result |
 | `spire-ui` | 34000 | React operator UI: live reviews list + per-PR detail (reads `/api/reviews`, `/ws/reviews`) |
 
-Shared libraries: `spire-contract` (domain + wire format), `spire-diff`, `spire-scm-bitbucket`,
-`spire-llm`.
+Shared libraries: `spire-contract` (domain + wire format), `spire-diff`, `spire-scm-*`,
+`spire-llm`, `spire-http`; and for the factory `spire-runtime` (+ its Docker arm),
+`spire-harness` (+ the Codex arm), `spire-workspace` and `spire-agent-image`.
 
 ## Development
 
@@ -156,8 +158,11 @@ Code Spire is **source-available**, split by module — full map and reasoning i
 
 | | License | |
 |---|---|---|
-| **Libraries + plugin SPI** — `spire-contract`, `spire-diff`, `spire-encryption`, `spire-scm-*`, `spire-context-*`, `spire-llm`, `spire-arch` | [Apache-2.0](licenses/Apache-2.0.txt) | Write plugins against these under any license you like, including a proprietary one. |
-| **Services** — `spire-gateway`, `spire-orchestrator`, `spire-review-worker`, `spire-ui` | [FSL-1.1-ALv2](LICENSE) | Self-hosting, internal commercial use, forking, teaching and consulting are all permitted. Reselling it as a competing product or hosted service is not. Each version becomes Apache-2.0 two years after release. |
+| **Libraries + plugin SPI** — `spire-contract`, `spire-diff`, `spire-encryption`, `spire-http`, `spire-scm-*`, `spire-context-*`, `spire-llm`, `spire-arch`, and the factory's `spire-runtime`, `spire-runtime-docker`, `spire-harness`, `spire-harness-codex`, `spire-workspace`, `spire-agent-image` | [Apache-2.0](licenses/Apache-2.0.txt) | Write plugins against these under any license you like, including a proprietary one. |
+| **Services** — `spire-gateway`, `spire-orchestrator`, `spire-review-worker`, `spire-run-worker`, `spire-publisher`, `spire-ui` | [FSL-1.1-ALv2](LICENSE) | Self-hosting, internal commercial use, forking, teaching and consulting are all permitted. Reselling it as a competing product or hosted service is not. Each version becomes Apache-2.0 two years after release. |
+
+`LICENSING.md` is the authoritative per-module map; this table is a summary of it. A licence
+summary that omits a module reads as permissive by omission, which is why both rows name every one.
 
 Versions published before this change remain Apache-2.0; that grant is
 irrevocable. Third-party attributions are in [NOTICE](NOTICE). Contributions:

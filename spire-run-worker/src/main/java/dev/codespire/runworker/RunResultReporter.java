@@ -12,7 +12,9 @@ import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.jboss.logging.Logger;
 
 import java.time.Duration;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Publishes a terminal result for a run this worker is not currently executing.
@@ -55,21 +57,31 @@ public class RunResultReporter {
     }
 
     /** Publish, awaiting the broker's acknowledgement, and report rather than throw on a refusal. */
-    public void report(RunResult result) {
+    /**
+     * @return true when the broker acknowledged the result; false when it did not.
+     *
+     * <p>An answer rather than {@code void}, because the caller may have taken a once-only claim
+     * BEFORE calling — and a claim burnt by a broker outage leaves the run with no automated path
+     * to a terminal result at all. The watchdog is that caller.
+     */
+    public boolean report(RunResult result) {
         try {
             results.send(Record.of(result.runId(), result))
                     .toCompletableFuture()
                     .get(ackSeconds, TimeUnit.SECONDS);
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             LOG.errorf(e, "run %s: reporting its reclamation was interrupted", result.runId());
-        } catch (RuntimeException | java.util.concurrent.ExecutionException
-                 | java.util.concurrent.TimeoutException e) {
-            // The sandbox is already destroyed by this point, so nothing is retried: the next sweep
-            // will not find it again, and the claim would refuse a second report anyway. Said out
-            // loud because the run's row stays 'running' until an operator acts on this line.
-            LOG.errorf(e, "run %s: its reclamation could not be reported, so the run's row will stay"
-                    + " open until an operator clears it", result.runId());
+            return false;
+        } catch (RuntimeException | ExecutionException | TimeoutException e) {
+            // The caller decides what to do about it. This used to say "the sandbox is already
+            // destroyed by this point" — it is not: the watchdog reports BEFORE destroy, and on
+            // the not-salvaged branch the unit is deliberately kept. Said out loud because the
+            // run's row stays open until either a retry or an operator clears it.
+            LOG.errorf(e, "run %s: its reclamation could not be reported, so the run's row stays"
+                    + " open", result.runId());
+            return false;
         }
     }
 }

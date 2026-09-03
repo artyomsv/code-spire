@@ -29,8 +29,9 @@ import java.util.Map;
  *   <li>the publisher gets the write credential and the gate's rules, and NOT the workspace — so it
  *       can never reach agent-authored git config or hooks;</li>
  *   <li>{@code /handoff} is writable by the agent and read-only to the publisher;</li>
- *   <li>the init container gets a READ-only clone credential, so the token that can write never
- *       enters the container that touches agent-reachable disk first.</li>
+ *   <li>the init container gets the clone credential — read-only in the design, and today the
+ *       machine account's single secret, which can also write. The agent is on the far side of
+ *       that either way: it receives no git credential at all. See {@code docs/UNVERIFIED.md} §E.</li>
  * </ul>
  *
  * <p>Each is asserted by a test, because each is a boundary rather than a preference. Two of them

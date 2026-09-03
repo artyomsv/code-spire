@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.ws;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.factory.RunEventProjection;
 import io.quarkus.websockets.next.CloseReason;
 import io.quarkus.websockets.next.OnOpen;
@@ -50,6 +51,18 @@ public class RunTranscriptSocket {
     @Inject
     RunEventProjection transcript;
 
+    /**
+     * Whether the RUN exists, which is a different question from whether it has a transcript.
+     *
+     * <p>The same question the REST route asks. An earlier version asked the transcript for a
+     * count and closed on a negative — but {@code SELECT count(*)} always returns a row, so the
+     * negative was unreachable and the close never fired. It would have been the wrong question
+     * even if it had: a real run has no transcript rows until the agent's first event, which is
+     * exactly when an operator opens a tail.
+     */
+    @Inject
+    FactoryRunProjection runs;
+
     @Inject
     ObjectMapper mapper;
 
@@ -60,7 +73,7 @@ public class RunTranscriptSocket {
             connection.close(new CloseReason(1008, "a transcript tail must name its run"));
             return null;
         }
-        if (transcript.countFor(runId) < 0) {
+        if (runs.find(runId).isEmpty()) {
             // Closed rather than answered with an empty page, matching the REST route's reasoning:
             // an empty transcript reads as "this run produced nothing", which is a different answer
             // from "there is no such run" and sends an operator somewhere else.
@@ -88,10 +101,5 @@ public class RunTranscriptSocket {
             }
         }
         return "";
-    }
-
-    /** The snapshot's shape, so a caller can serialise an empty page the same way. */
-    static List<?> emptyPage() {
-        return List.of();
     }
 }

@@ -129,8 +129,12 @@ argued around:
 - **Run-worker channel semantics** — ack on receipt, `run_claim` as the sole idempotency mechanism,
   and cancel/steer over `cs.run-control` so a cancel does not queue behind the run it cancels.
 - **Failure-cause discriminator** as a column, from a closed set.
-- **Credential pool** with least-recently-exhausted rotation, `rejected` versus `rate_limited`
-  distinguished, and `ALL_CREDENTIALS_EXHAUSTED` as a first-class refusal with an attention row.
+- **Credential pool** with least-recently-exhausted rotation, `rejected` and
+  `rate_limited` as distinct states in the schema, and `ALL_CREDENTIALS_EXHAUSTED`
+  as a first-class refusal with an attention row. **Both states are entered by an operator, not by
+  the pipeline** — nothing emits a credential refusal or a distinct rate limit yet, so rotation on
+  exhaustion is manual. Guarded by `CredentialRefusalHasNoProducerTest`; tracked in
+  `docs/UNVERIFIED.md` §A1–A2.
 - Idempotency: intent journalled before dispatch, ambiguity failing closed.
 - Enterprise image environment: CA bundle, proxy variables, private registry credentials.
 - `spire agent-image verify`, reporting **verified** and **declared** clauses separately.

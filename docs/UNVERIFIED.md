@@ -33,9 +33,11 @@ evidence would settle it**.
 
 ---
 
-## A. Known not to work — documented and build-enforced
+## A. Known not to work — documented, and mostly build-enforced
 
-These are not suspicions. The gap is proven and a guard fails the build if it silently closes.
+These are not suspicions. The gap is proven. Each entry names what guards it, and one names
+nothing — a guard can fail the build when a missing *producer* appears, but not when a behaviour
+quietly starts working.
 
 ### A1. The credential pool cannot retire a dead key
 
@@ -64,7 +66,37 @@ Same shape, same fix, same evidence — a provider response that states a retry-
 `SPIRE_RUN_CREDENTIAL_RATE_LIMIT_DEFAULT_SECONDS` applies only when an operator rests a member by
 hand.
 
-### A3. Code context resolves nothing in the containerised e2e stack
+### A3. A cancel for a run that has not started yet is accepted and dropped
+
+**The claim.** `POST /api/runs/{id}/cancel` answers 202, and two task reviews each
+concluded the unreachable window was closed.
+
+**Why nothing catches it.** `RunRegistry.register` runs only AFTER
+`runtime.create()` returns, and `create` blocks on the init clone for up to
+fifteen minutes. Before that point the control listener finds nothing live, writes a debug line and
+returns — nothing durable. So a run queued on the topic, or cloning, or dispatch-uncertain with the
+record unconsumed, accepts a cancel and then starts anyway and spends its whole wall clock. Both
+task reviews were right about the window they could see: Task 7 owned the executing case, Task 9 the
+uncertain one, and neither could see that the gap is *before* either.
+
+**Evidence needed.** None — this one is established. What it needs is the fix: a durable cancel slot
+in `run_claim` that the dispatcher takes before it creates anything, plus registering
+the run before `create` so a cancel during the clone stops the unit. Deferred out of
+the review-fix batch deliberately: it changes the dispatch path's ordering and the claim table's
+meaning, and wants its own round with its own tests — including one that fails when the dispatcher's
+claim is deleted.
+
+**Operator-facing consequence, which is why it is here rather than only in a debt file:** a 202 for a
+cancel that will not happen is worse than a refusal. It also compounds — the spend cap cannot see the
+queue either, so a backlog accepted while the window read empty cannot currently be stopped short of
+a consumer-group reset.
+
+**Guarded by** nothing, and that is the honest answer rather than an omission: A1 is guarded
+because its gap closes when a *producer appears*, which a source scan can see. This one closes
+when an ordering changes, which it cannot. **Tracked in**
+`techdebt/spire-run-worker/2-3-a-cancel-before-the-run-starts-is-accepted-and-dropped.md`.
+
+### A4. Code context resolves nothing in the containerised e2e stack
 
 **The claim.** `spire-context-code` contributes resolved definitions to a review.
 
@@ -105,6 +137,10 @@ Real code, exercised by nothing. Each is a place where a regression would be sil
   including the one that would have caught both of that task's criticals. It needs a *real*
   subscriber: a faked connection returns whatever endpoint id the test chooses, so it cannot catch
   the defect that mattered. — `.claude/reviews/global/m1-task2-run-event-stream.md`
+  *(The socket's unknown-run guard was also listed here and did not belong: it was not untested,
+  it was DEAD — `countFor` ran `SELECT count(*)`, which always returns a row, so the `-1` its
+  javadoc promised was unreachable. Fixed; recorded here because "untested" and "cannot work" are
+  different claims and this page exists to keep them apart.)*
 - **A lease with no unit is reclaimed by nothing.** `WorkspaceLeases.staleLeases` was written for
   exactly this, with a javadoc naming the watchdog, and has **no production caller**. The run's row
   stays `queued` forever. — `techdebt/spire-run-worker/3-3-a-lease-with-no-unit-is-reclaimed-by-nothing.md`
@@ -167,8 +203,19 @@ Not work. Written down because each has been rediscovered at least once.
   changes no query plan, because V52's partial index carries that column as its second key. Two
   reviews independently failed to kill it. The use stamp is the mechanism rotation actually rests on,
   and *that* mutation does fail.
-- **The spend cap is soft.** Overshoot is bounded by in-flight runs × per-run cost, because charges
-  land after a call completes.
+- **One SCM token serves the clone and the push.** `Credentials.scm` packs the machine
+  account's single secret into both slots, so the init container holds a token that can write —
+  while six places describe a read-only clone token. The agent is unaffected and that is the
+  isolation that matters: it gets no git credential, JGit persists none under the workspace, and
+  the remote is removed after the clone. What is missing is the second line of defence. Closing it
+  needs a forge-specific read scope, which is a product decision rather than a code change; the
+  six documents now say what the code does.
+- **The spend cap is soft, and softer than this page first said.** Charges land only when a call
+  completes, so overshoot is bounded by **queued + in-flight** runs × per-run cost — not by
+  in-flight alone, which is what an earlier version of this line claimed. The worker consumes one
+  command at a time and never re-checks the cap at consumption, so N dispatches accepted while the
+  window reads empty become N sequential paid runs after it has tripped. A live-run cap at dispatch
+  (`SPIRE_FACTORY_MAX_LIVE_RUNS`) bounds the queue; the residual softness is the in-flight half.
 
 ---
 

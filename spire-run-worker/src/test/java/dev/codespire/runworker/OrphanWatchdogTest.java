@@ -110,10 +110,52 @@ class OrphanWatchdogTest {
         }
     }
 
-    /** Answers the leases the test declares, without a database. */
+    /**
+     * Answers the leases the test declares, without a database.
+     *
+     * <p><b>Every method not answered here throws, deliberately.</b> An un-overridden one reaches
+     * a null {@code @Inject} DataSource — and the sweep wraps each unit in
+     * {@code catch (RuntimeException)}, so the NPE would be SWALLOWED and logged rather than
+     * failing the test. Measured: a plausible new call to {@code staleLeases} placed inside that
+     * try left all 27 tests passing with the feature completely inert. That method exists for a
+     * tracked debt item, so the call IS going to be written.
+     *
+     * <p>This is the seventh time a partial test double has cost this repository a defect, and the
+     * first time the swallow made it silent. Throwing is what makes the eighth loud.
+     */
     private static class FakeLeases extends WorkspaceLeases {
         final Map<String, Lease> byRun = new LinkedHashMap<>();
         final List<String> released = new ArrayList<>();
+
+        /** Stands in for the database clock, which is where the real horizon comes from. */
+        Optional<Instant> horizon = Optional.of(Instant.now().minus(STALE_AFTER));
+
+        @Override
+        public boolean take(String runId) {
+            throw new UnsupportedOperationException("the watchdog does not take leases; if it "
+                    + "now does, answer this deliberately rather than reaching a real database");
+        }
+
+        @Override
+        public void recordUnit(String runId, String unitId) {
+            throw new UnsupportedOperationException("not reached by the sweep — answer it here "
+                    + "on purpose if that changes");
+        }
+
+        @Override
+        public void heartbeat() {
+            throw new UnsupportedOperationException("not reached by the sweep — answer it here "
+                    + "on purpose if that changes");
+        }
+
+        @Override
+        public List<Lease> staleLeases(java.time.Duration staleAfter) {
+            throw new UnsupportedOperationException("the sweep is driven by the UNIT listing, so "
+                    + "a lease with no unit is reclaimed by nothing — see "
+                    + "techdebt/spire-run-worker/3-3-a-lease-with-no-unit-is-reclaimed-by-nothing.md. "
+                    + "When that is written, answer this here: an un-overridden call is swallowed "
+                    + "by the sweep own catch and the feature ships inert.");
+        }
 
         @Override
         public String ownerId() {
@@ -124,9 +166,6 @@ class OrphanWatchdogTest {
         public Optional<Lease> find(String runId) {
             return Optional.ofNullable(byRun.get(runId));
         }
-
-        /** Stands in for the database's clock, which is where the real horizon comes from. */
-        Optional<Instant> horizon = Optional.of(Instant.now().minus(STALE_AFTER));
 
         @Override
         public Optional<Instant> staleBefore(Duration staleAfter) {
@@ -140,14 +179,21 @@ class OrphanWatchdogTest {
         }
     }
 
-    /** Takes every claim once, so "reported once ever" is a fact rather than a hope. */
-    /** The real store's rule, which is what a fake of it should implement: one claim per slot. */
+    /**
+     * The real store's rule, which is what a fake of it should implement: one claim per slot, and
+     * a release that gives one back.
+     */
     private static final class FakeClaims extends RunClaimStore {
         final java.util.Set<String> taken = new java.util.LinkedHashSet<>();
 
         @Override
         public boolean claim(String runId, String slot) {
             return taken.add(runId + ":" + slot);
+        }
+
+        @Override
+        public void release(String runId, String slot) {
+            taken.remove(runId + ":" + slot);
         }
     }
 
@@ -163,9 +209,16 @@ class OrphanWatchdogTest {
     private static final class FakeReporter extends RunResultReporter {
         final List<RunResult> reported = new ArrayList<>();
 
+        /** Set by a test that wants the broker to refuse, which is when the claim must come back. */
+        boolean publishes = true;
+
         @Override
-        public void report(RunResult result) {
+        public boolean report(RunResult result) {
+            if (!publishes) {
+                return false;
+            }
             reported.add(result);
+            return true;
         }
     }
 
@@ -325,6 +378,34 @@ class OrphanWatchdogTest {
         watchdog.sweep();
 
         assertEquals(1, reported.size(), "one sandbox, one terminal result, however many sweeps see it");
+    }
+
+    /**
+     * A broker outage must not burn the once-only claim.
+     *
+     * <p>The claim is taken BEFORE the publish, deliberately: a duplicate report would land a
+     * second unpriceable charge line on a run whose spend is already recorded. That ordering also
+     * means a few seconds of broker unavailability would otherwise consume the slot for ever — the
+     * sandbox is torn down next, the lease released, the unit never listed again, and the run left
+     * open with no automated path to a terminal result at all. Giving the slot back is safe
+     * precisely because nothing was published.
+     */
+    @Test
+    void aReportTheBrokerRefusedGivesTheClaimBackSoALaterSweepCanRetry() {
+        runtime.salvageFails = new IllegalStateException("daemon went away");
+        runtime.units.add(new RunHandle("run::github:TEST-acme/app:lost:1", "container-lost"));
+        OrphanWatchdog watchdog = watchdog();
+
+        results.publishes = false;
+        watchdog.sweep();
+        assertEquals(0, reported.size(), "the broker refused, so nothing was reported");
+
+        results.publishes = true;
+        watchdog.sweep();
+
+        assertEquals(1, reported.size(),
+                "the claim came back, so the next sweep could report it; without the release this "
+                        + "run would stay open for ever");
     }
 
     @Test
