@@ -53,6 +53,15 @@ class RunLauncherTest {
             "https://github.com/acme/app.git", "main", "abc1234", "spire/finding-1",
             "fix the typo", "codex", "gpt-5.6", "img", List.of(), 60, "enc-scm", "enc-harness");
 
+    /**
+     * A command whose credential ciphertexts do not decrypt, so scrubFor contributes none of the
+     * run's own secrets. That is the state a deployment-credential test needs: with a run secret
+     * present too, a scrub that removed only the run secret would still look correct.
+     */
+    static RunCommand.ExecuteRun commandWithNoCredentials() {
+        return COMMAND;
+    }
+
     static final String SCM_USERNAME = "TEST-machine-account";
 
     static final String READ_SECRET = "TEST-read-secret-0123456789";
@@ -219,9 +228,30 @@ class RunLauncherTest {
 
     /** The real collaborator, with only its credential source faked. */
     static RunFailures failuresWith(Credentials credentials) {
+        return failuresWith(credentials, noCorporateEnvironment());
+    }
+
+    static RunFailures failuresWith(Credentials credentials, EnterpriseEnvironmentConfig enterprise) {
         RunFailures failures = new RunFailures();
         failures.credentials = credentials;
+        // Set deliberately. An unset collaborator here is an NPE inside scrubFor, reported as a
+        // failure to build a failure -- the fake-coverage trap this repository has now recorded
+        // five separate times.
+        failures.enterprise = enterprise;
         return failures;
+    }
+
+    static EnterpriseEnvironmentConfig noCorporateEnvironment() {
+        return proxiedWith(java.util.Optional.empty());
+    }
+
+    static EnterpriseEnvironmentConfig proxiedWith(java.util.Optional<String> proxySecret) {
+        return new EnterpriseEnvironmentConfig() {
+            @Override
+            public java.util.Optional<String> proxySecret() {
+                return proxySecret;
+            }
+        };
     }
 
     private static RunLauncher launcher(FakeRuntime runtime, FakeAdapter adapter) {

@@ -1756,3 +1756,116 @@ Delete the branches on the forge, the FACTORY provider (`DELETE /api/providers/{
 images if they are not wanted (`docker rmi spire-agent-codex:latest spire-publisher:latest`).
 Volumes and containers are per run and already gone unless a salvage failed, in which case
 `docker ps -a --filter label=dev.codespire.runId` lists what was preserved and why.
+
+## Mode R — the corporate environment reaches a run unit (FR-F14)
+
+**What this proves.** A run behind a TLS-inspecting proxy works: all three containers of the unit
+trust the operator's CA bundle, all three route through the proxy, the agent and publisher images
+pull from a private registry — and none of that is in an image, none of it is writable by the agent,
+and the registry credential is not readable from any container.
+
+Most of this is covered by tests, including a real-daemon one that mounts a bundle and reads it back
+from the agent and the publisher. What only a live pass can show is the part an operator gets wrong:
+that the bundle must be **complete**, and that a proxy without `NO_PROXY` fails in a way that names
+nothing.
+
+**Prerequisites.** Mode Q working end to end first. This mode changes only the worker's environment.
+
+### 1. Refuse a bad bundle path before anything runs
+
+```bash
+SPIRE_RUN_CA_BUNDLE_PATH=/etc/ssl/certs/does-not-exist.crt \
+  ./gradlew :spire-run-worker:quarkusDev
+```
+
+The worker must **refuse to start**, naming both the path you typed and `ca-bundle-path`. This is the
+check that matters most and is invisible when it works: a missing bind source is not an error in
+every container runtime — it can be created as an empty directory — so without the refusal you get
+three variables pointing at a directory and a TLS failure that mentions neither.
+
+Then try a directory rather than a file. Same refusal: a directory passes an `exists()` check and
+fails every TLS call.
+
+### 2. Refuse half a registry credential
+
+```bash
+SPIRE_RUN_REGISTRY_HOST=registry.acme.example \
+SPIRE_RUN_REGISTRY_USERNAME=spire-factory \
+  ./gradlew :spire-run-worker:quarkusDev
+```
+
+Refused at startup, naming `secret`. A partial credential would fall back to an **anonymous** pull,
+so a private image comes back as *not found* and you go and check the image reference instead of the
+password.
+
+### 3. Run with a real bundle and read it back from every container
+
+Build a complete bundle and start the worker with it:
+
+```bash
+cat /etc/ssl/certs/ca-certificates.crt /path/to/your-root.crt > /tmp/spire-full-bundle.crt
+SPIRE_RUN_CA_BUNDLE_PATH=/tmp/spire-full-bundle.crt ./gradlew :spire-run-worker:quarkusDev
+```
+
+Dispatch a run as in Mode Q. While it is alive, or afterwards on a preserved unit:
+
+```bash
+docker ps -a --filter label=dev.codespire.runId --format '{{.ID}} {{.Label "dev.codespire.role"}}'
+
+# for EACH of init, agent and publisher:
+docker inspect --format '{{json .HostConfig.Binds}}' <id>
+docker inspect --format '{{json .Config.Env}}'       <id>
+```
+
+Every one of the three must show the bundle bound **`:ro`** at `/etc/spire/ca-bundle.crt`, and must
+carry `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` pointing at it. The init container
+is the one worth checking most carefully: without the bundle its clone fails at the forge, and a
+clone failure reads like a bad credential.
+
+### 4. Confirm the registry credential is nowhere in the unit
+
+With `SPIRE_RUN_REGISTRY_*` set, dispatch a run and inspect every container:
+
+```bash
+docker inspect --format '{{json .Config.Env}}{{json .Config.Labels}}' <id> | grep -i "$SPIRE_RUN_REGISTRY_SECRET"
+```
+
+Must match nothing, on all three. The credential reaches the image pull and nothing else — the agent
+runs untrusted model output at full shell access and can read its own environment, so a credential
+placed on a container is a credential the model output can read.
+
+### 5. The two mistakes worth making on purpose
+
+**A corporate-only bundle.** Point `SPIRE_RUN_CA_BUNDLE_PATH` at your root certificate *alone*,
+without the public roots appended. The clone succeeds; the agent's first model call fails. This is
+the failure that reads as an outage at your provider, and it is why the documentation insists on a
+complete bundle rather than merely mentioning it.
+
+**A proxy with no `NO_PROXY`.** Set `SPIRE_RUN_HTTPS_PROXY` to a proxy that cannot reach your forge
+and leave `SPIRE_RUN_NO_PROXY` unset. The clone hangs until the init timeout, and nothing in the log
+says "proxy". Add the forge to `NO_PROXY` and it recovers.
+
+### 6. The proxy password does not reach the transcript
+
+If your proxy URL carries basic auth (`http://user:pass@proxy:3128`), force a failure through it —
+point the proxy at a port nothing listens on — and read the run's transcript and its
+`failure_detail`:
+
+```sql
+SELECT failure_cause, failure_detail FROM orchestrator.factory_run WHERE run_id = '<runId>';
+```
+
+The proxy **host** must appear; the **password** must not. The host is what makes the error legible,
+so it is deliberately kept.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Worker will not start, names `ca-bundle-path` | The path is not a readable file **on the worker host** — not inside a container |
+| Worker will not start, names a registry part | One or two of the three `SPIRE_RUN_REGISTRY_*` values are set; it is all three or none |
+| Init exits non-zero with a certificate error | No bundle, or the bundle does not include your forge's issuer |
+| Clone succeeds, agent's first model call fails | Corporate-only bundle: the public roots were not appended |
+| Clone hangs to the init timeout | A proxy is set and the forge is not in `NO_PROXY` |
+| Image pull reports *not found* for a private image | `SPIRE_RUN_REGISTRY_HOST` does not match the image reference's registry, so the pull went anonymous |
+| A container has the bundle bound `rw` | Not reachable through configuration — `HostMount` cannot express a writable bind. Report it |

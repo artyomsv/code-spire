@@ -7,6 +7,7 @@ import com.github.dockerjava.api.command.PullImageResultCallback;
 import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.exception.NotModifiedException;
 import com.github.dockerjava.api.model.AccessMode;
+import com.github.dockerjava.api.model.AuthConfig;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Container;
@@ -22,7 +23,9 @@ import com.github.dockerjava.transport.DockerHttpClient;
 import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
+import dev.codespire.runtime.HostMount;
 import dev.codespire.runtime.Mount;
+import dev.codespire.runtime.RegistryCredential;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.RunUnitSpec;
@@ -111,6 +114,15 @@ public final class DockerRunRuntime implements RunRuntime {
     /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
     private static final long PIDS_LIMIT = 512;
 
+    /**
+     * What an unqualified or single-segment image reference resolves to.
+     *
+     * <p>The address form docker-java expects in an AuthConfig for Docker Hub; the short name
+     * {@code docker.io} is what a reference carries and is NOT what the daemon authenticates
+     * against.
+     */
+    static final String DOCKER_HUB = "registry-1.docker.io";
+
     /** A registry pull of an agent image with a toolchain in it; a stalled one must not hang a run. */
     private static final Duration PULL_TIMEOUT = Duration.ofMinutes(10);
 
@@ -119,7 +131,21 @@ public final class DockerRunRuntime implements RunRuntime {
 
     private final DockerClient client;
 
+    /**
+     * How a private registry is authenticated, or null for an anonymous pull.
+     *
+     * <p>Held by the runtime and never by a spec, so it reaches {@code pullImageCmd} and
+     * nothing else. A container is created with no knowledge of it, which is what makes it
+     * absent from {@code docker inspect} and unreadable by the agent process (FR-F14).
+     */
+    private final RegistryCredential registry;
+
     public DockerRunRuntime() {
+        this(null);
+    }
+
+    public DockerRunRuntime(RegistryCredential registry) {
+        this.registry = registry;
         DefaultDockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
         DockerHttpClient http = new ApacheDockerHttpClient.Builder()
                 .dockerHost(config.getDockerHost())
@@ -251,6 +277,7 @@ public final class DockerRunRuntime implements RunRuntime {
             NameParser.ReposTag parsed = NameParser.parseRepositoryTag(image);
             pull = client.pullImageCmd(parsed.repos).withTag(parsed.tag.isEmpty() ? "latest" : parsed.tag);
         }
+        authFor(image).ifPresent(pull::withAuthConfig);
         try {
             if (!pull.exec(new PullImageResultCallback()).awaitCompletion(PULL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Pulling image " + image + " did not complete within " + PULL_TIMEOUT);
@@ -259,6 +286,45 @@ public final class DockerRunRuntime implements RunRuntime {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted pulling image " + image, e);
         }
+    }
+
+    /**
+     * The credential for this image, or empty.
+     *
+     * <p>Matched on the registry HOST parsed from the reference, so a corporate password is
+     * never presented to a registry it was not issued for. An unqualified reference
+     * ({@code alpine:3.20}) is Docker Hub, so it matches only a credential configured for Hub.
+     * Offering the credential to every pull would be simpler and would send it to whichever
+     * public registry an operator happened to reference.
+     */
+    Optional<AuthConfig> authFor(String image) {
+        if (registry == null) {
+            return Optional.empty();
+        }
+        if (!registry.registry().equalsIgnoreCase(registryHostOf(image))) {
+            return Optional.empty();
+        }
+        return Optional.of(new AuthConfig()
+                .withRegistryAddress(registry.registry())
+                .withUsername(registry.username())
+                .withPassword(registry.secret()));
+    }
+
+    /**
+     * The registry host of an image reference, by the rule the daemon itself uses: the first
+     * path segment is a registry only when it carries a dot or a colon, or is "localhost".
+     * Without that rule {@code acme/app} would parse as the registry {@code acme}, and a
+     * credential for a real host would never match anything.
+     */
+    static String registryHostOf(String image) {
+        int slash = image.indexOf("/");
+        if (slash < 0) {
+            return DOCKER_HUB;
+        }
+        String first = image.substring(0, slash);
+        boolean looksLikeHost = first.indexOf(".") >= 0 || first.indexOf(":") >= 0
+                || first.equals("localhost");
+        return looksLikeHost ? first : DOCKER_HUB;
     }
 
     private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
@@ -274,9 +340,17 @@ public final class DockerRunRuntime implements RunRuntime {
                     new Volume(mount.path()),
                     mount.readOnly() ? AccessMode.ro : AccessMode.rw));
         }
+        for (HostMount mount : spec.hostMounts()) {
+            // AccessMode.ro is not a preference here: this bind reaches the worker HOST, and
+            // the agent container runs untrusted model output at full shell access. HostMount
+            // cannot express a writable one, and this is the line that honours that.
+            binds.add(new Bind(mount.hostPath(), new Volume(mount.path()), AccessMode.ro));
+        }
 
         List<String> env = new ArrayList<>();
-        container.environment().forEach((name, value) -> env.add(name + "=" + value));
+        // Through the spec, never container.environment(): the deployment CA and proxy live at
+        // unit level so that no arm can apply them to two containers out of three.
+        spec.environmentFor(container).forEach((name, value) -> env.add(name + "=" + value));
 
         HostConfig host = HostConfig.newHostConfig()
                 .withBinds(binds)

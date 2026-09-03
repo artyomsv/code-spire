@@ -101,6 +101,29 @@ spire:
     # How long either publish path waits for the broker to acknowledge a result. ONE number: the
     # dispatcher and the reclamation reporter both read it, so they cannot drift.
     result-ack-seconds: ${SPIRE_RUN_RESULT_ACK_SECONDS:30}
+    # The corporate environment (FR-F14). Every one of these is OPTIONAL and unset means absent;
+    # none has a default, because a wrong value here is worse than no value. A CA bundle that is
+    # not the operator's replaces the container's trust store, and a proxy nobody asked for makes
+    # every call in a run go somewhere unintended.
+    #
+    # The path is on the WORKER HOST and is mounted read-only into all three containers of every
+    # unit. It must be a COMPLETE bundle -- the corporate root appended to the public roots --
+    # because two of the three variables it sets replace the trust store rather than adding to it.
+    # The worker refuses to start if it is not a readable file: Docker would otherwise create an
+    # empty directory at the mount point and every TLS call would fail against it.
+    ca-bundle-path: ${SPIRE_RUN_CA_BUNDLE_PATH:}
+    http-proxy: ${SPIRE_RUN_HTTP_PROXY:}
+    https-proxy: ${SPIRE_RUN_HTTPS_PROXY:}
+    # Set this whenever a proxy is set. An internal forge or a self-hosted model endpoint is
+    # routinely reachable only directly, and a proxy with no exception list turns those into a
+    # clone that hangs until the init timeout.
+    no-proxy: ${SPIRE_RUN_NO_PROXY:}
+    # A private registry for the agent and publisher images. All three together or none: a host
+    # and username with no secret falls back to an anonymous pull, which reports a private image
+    # as not found and sends the operator to look at the image reference.
+    registry-host: ${SPIRE_RUN_REGISTRY_HOST:}
+    registry-username: ${SPIRE_RUN_REGISTRY_USERNAME:}
+    registry-secret: ${SPIRE_RUN_REGISTRY_SECRET:}
 
 mp:
   messaging:

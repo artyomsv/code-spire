@@ -456,7 +456,7 @@ four-lens `/code-review` whose findings are fixed before the next task starts.
 - [x] Task 8 — steer, where the harness declares it
 - [x] Task 9 — idempotent dispatch, ambiguity failing closed
 - [x] Task 10 — the credential pool with rotation
-- [ ] Task 11 — the enterprise image environment
+- [x] Task 11 — the enterprise image environment
 - [ ] Task 12 — `spire agent-image verify`
 
 **Exit criteria are proven, not asserted.** Each maps to a test that must exist before M1 is called

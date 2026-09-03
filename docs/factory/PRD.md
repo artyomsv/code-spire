@@ -127,9 +127,15 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   and the reference image's entrypoint contract (`deploy/agent/spire-agent-entrypoint.sh`: prompt on
   stdin, commits to bundles on `/handoff`, `DONE` last) is what any image must provide. The written
   image contract and `spire agent-image verify` are M1, as ROADMAP.md lists them.
-- **FR-F14 — Enterprise image environment [M1].** The contract requires corporate CA bundles, proxy
-  variables and private registry credentials to be honoured, all injected at run time, never baked
-  into an image.
+- **FR-F14 — Enterprise image environment [M1, delivered].** Corporate CA bundles, proxy variables
+  and private registry credentials are honoured, all injected at run time and never baked into an
+  image. The bundle and the proxy live on `RunUnitSpec` rather than on any one container, so
+  "every container of the unit" is structural and no arm can apply them to two parts out of three;
+  the registry credential lives on the RUNTIME instead, because everything on a unit spec reaches a
+  container, where `docker inspect` prints it and the agent can read its own environment. A missing
+  bundle path or a half-supplied registry credential is a startup refusal. Operator guidance in
+  `deploy/agent/CORPORATE-ENVIRONMENT.md`; the no-baking half is build-enforced by
+  `NoCorporateEnvironmentIsBakedIntoAnImageTest`.
 - **FR-F15 — Second harness arm [M5].** At least two harness implementations exist, proving the seam
   rather than asserting it.
 

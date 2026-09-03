@@ -65,6 +65,15 @@ tasks.test {
         rootProject.file("gradle.properties")
     ).withPropertyName("buildDeclarations").withPathSensitivity(PathSensitivity.RELATIVE)
 
+    // NoCorporateEnvironmentIsBakedIntoAnImageTest reads the two RUN-UNIT Dockerfiles as text.
+    // Undeclared they are invisible to the up-to-date check, so adding an ENV HTTPS_PROXY to the
+    // agent image would report a cached PASS from the very edit the check exists to catch --
+    // the same hole the scanned-sources block above was added to close.
+    inputs.files(
+        rootProject.file("deploy/agent/codex/Dockerfile"),
+        rootProject.file("spire-publisher/Dockerfile")
+    ).withPropertyName("runUnitImages").withPathSensitivity(PathSensitivity.RELATIVE)
+
     // ModuleLicensingIsDeclaredTest reads every module LICENSE. Undeclared they are invisible to
     // the up-to-date check, and the check then reports a CACHED PASS over a licence file that was
     // just made wrong — measured, not assumed: with this block absent, restoring the exact

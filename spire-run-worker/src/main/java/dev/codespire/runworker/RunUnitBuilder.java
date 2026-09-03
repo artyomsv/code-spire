@@ -5,6 +5,7 @@ import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -70,6 +71,17 @@ public class RunUnitBuilder {
     @Inject
     Credentials credentials;
 
+    /**
+     * The deployment's corporate CA bundle and proxy, applied to all three containers.
+     *
+     * <p>Read here rather than folded into each ContainerSpec below, so that "every container
+     * of the unit" is a property of {@link RunUnitSpec} and not of this method. The init
+     * container is the one most easily forgotten and the most damaging to forget: without the
+     * bundle its clone fails at the forge, and a clone failure reads like a bad credential.
+     */
+    @Inject
+    EnterpriseEnvironmentConfig enterprise;
+
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
         if (command.maxWallClockSeconds() > maxWallClockSeconds) {
             throw new IllegalArgumentException("the command asks for a wall clock of " + command.maxWallClockSeconds()
@@ -127,6 +139,7 @@ public class RunUnitBuilder {
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
 
         return new RunUnitSpec(command.runId(), init, agent, publisher,
+                enterprise.environment(),
                 MEMORY_BYTES, NANO_CPUS, Duration.ofSeconds(command.maxWallClockSeconds()));
     }
 }

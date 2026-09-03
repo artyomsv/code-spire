@@ -3,6 +3,9 @@ package dev.codespire.runtime.docker;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.exception.NotFoundException;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EnterpriseEnvironment;
+import dev.codespire.runtime.HostMount;
+import dev.codespire.runtime.RegistryCredential;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.Mount;
@@ -10,6 +13,10 @@ import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -54,6 +61,11 @@ class DockerRunRuntimeIT {
      * mounts /handoff READ-ONLY and does not mount /workspace at all.
      */
     private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock) {
+        return unit(id, agentScript, publisherScript, wallClock, EnterpriseEnvironment.NONE);
+    }
+
+    private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock,
+                             EnterpriseEnvironment enterprise) {
         return new RunUnitSpec(id,
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo seeded > /workspace/seed.txt"),
                         Map.of(),
@@ -64,7 +76,7 @@ class DockerRunRuntimeIT {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", publisherScript),
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
-                256L * 1024 * 1024, 1_000_000_000L, wallClock);
+                enterprise, 256L * 1024 * 1024, 1_000_000_000L, wallClock);
     }
 
     private RunHandle start(RunUnitSpec spec) {
@@ -88,7 +100,8 @@ class DockerRunRuntimeIT {
         ContainerSpec noop = new ContainerSpec(image, List.of("sh", "-c", "true"), Map.of(), List.of());
         RunHandle handle = start(new RunUnitSpec("pull-1", noop,
                 new ContainerSpec(image, List.of("sh", "-c", "echo pulled"), Map.of(), List.of()),
-                noop, 64L * 1024 * 1024, 500_000_000L, Duration.ofMinutes(2)));
+                noop, EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L,
+                Duration.ofMinutes(2)));
 
         Finalization finalization = runtime.salvage(handle);
 
@@ -96,6 +109,91 @@ class DockerRunRuntimeIT {
         assertTrue(runtime.client().inspectImageCmd(image).exec().getId().startsWith("sha256:"));
     }
 
+    /**
+     * The corporate CA bundle reaches every container, and reaching it is a daemon property.
+     *
+     * <p>Asserted against a real bind rather than against the spec, because the failure this
+     * guards is not "the builder forgot" -- unit-level placement already settles that -- but
+     * "the arm bound it read-write, or bound it to one container, or created an empty directory
+     * where the file should be". Only the daemon can answer those.
+     *
+     * <p>The publisher reads it too: its push is the git call most likely to meet the corporate
+     * proxy, and the publisher is the container an implementation is most likely to skip because
+     * it mounts nothing else from outside the unit.
+     */
+    @Test
+    void aCaBundleIsReadableInEveryContainerAndIsNotWritable(@TempDir Path hostDir) throws Exception {
+        Path bundle = Files.writeString(hostDir.resolve("ca.crt"), "TEST-CA-BUNDLE-MARKER");
+        EnterpriseEnvironment corporate = new EnterpriseEnvironment(
+                List.of(new HostMount(bundle.toAbsolutePath().toString(), "/etc/spire/ca-bundle.crt")),
+                Map.of("SSL_CERT_FILE", "/etc/spire/ca-bundle.crt"));
+
+        RunHandle handle = start(unit("run_unit_ca",
+                "cat /etc/spire/ca-bundle.crt; echo env=$SSL_CERT_FILE; "
+                        + "if echo x >> /etc/spire/ca-bundle.crt 2>/dev/null; then echo WRITABLE; "
+                        + "else echo read-only; fi; echo x > /handoff/delta",
+                "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
+                        + "cat /etc/spire/ca-bundle.crt",
+                Duration.ofMinutes(2), corporate));
+
+        List<String> agent = new ArrayList<>();
+        List<String> publisher = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, agent::add);
+        runtime.attach(handle, LogChannel.PUBLISHER, publisher::add);
+        runtime.salvage(handle);
+
+        // Joined, not line-matched: cat emits no trailing newline, so the bundle body and the
+        // next echo arrive as ONE log line. A contains() over the lines would fail on a feature
+        // that works, which is what the first version of this assertion did.
+        String agentLog = String.join("|", agent);
+        assertTrue(agentLog.contains("TEST-CA-BUNDLE-MARKER"), "the agent must read the bundle: " + agent);
+        assertTrue(agentLog.contains("env=/etc/spire/ca-bundle.crt"),
+                "and the variable that points at it must be set: " + agent);
+        assertTrue(agentLog.contains("read-only"),
+                "a host bind the agent can write is a host compromise: " + agent);
+        assertTrue(String.join("|", publisher).contains("TEST-CA-BUNDLE-MARKER"),
+                "the publisher pushes over the same corporate TLS: " + publisher);
+
+        // The init container exits before anything can attach to it, so its share of the same
+        // property is read off the created container rather than from a log line.
+        Container init = runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, "run_unit_ca",
+                        DockerRunRuntime.ROLE_LABEL, "init"))
+                .exec().getFirst();
+        var initConfig = runtime.client().inspectContainerCmd(init.getId()).exec();
+        assertTrue(List.of(initConfig.getConfig().getEnv()).stream()
+                        .anyMatch(entry -> entry.equals("SSL_CERT_FILE=/etc/spire/ca-bundle.crt")),
+                "without the bundle the clone fails at the forge, which reads like a bad credential");
+    }
+
+    /**
+     * A private-registry credential authenticates the PULL and is absent from every container.
+     *
+     * <p>{@code docker inspect} is the assertion because it is the exposure: it prints a
+     * container's environment and labels, and the agent process can read its own environment
+     * while running untrusted model output. A credential that only ever reaches pullImageCmd is
+     * invisible to both.
+     */
+    @Test
+    void aRegistryCredentialIsNotReadableFromAnyContainerOfTheUnit() {
+        DockerRunRuntime withRegistry = new DockerRunRuntime(
+                new RegistryCredential("registry.acme.example", "spire", "TEST-registry-secret"));
+
+        RunHandle handle = withRegistry.create(unit("run_unit_reg", "echo x > /handoff/delta",
+                "sleep 1", Duration.ofMinutes(1), EnterpriseEnvironment.NONE));
+        started.add(handle);
+
+        for (Container container : withRegistry.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, "run_unit_reg"))
+                .exec()) {
+            var config = withRegistry.client().inspectContainerCmd(container.getId()).exec();
+            for (String entry : config.getConfig().getEnv()) {
+                assertFalse(entry.contains("TEST-registry-secret"), "in the environment: " + entry);
+            }
+            assertFalse(String.valueOf(config.getConfig().getLabels()).contains("TEST-registry-secret"),
+                    "in a label, which docker inspect prints to anyone who can reach the daemon");
+        }
+    }
     @Test
     void runsInitThenAgentAndPublisherOnSharedVolumes() {
         RunHandle handle = start(unit("run_unit1",
@@ -190,7 +288,8 @@ class DockerRunRuntimeIT {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(),
                         List.of(Mount.writable("ws", "/workspace"))),
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(), List.of()),
-                256L * 1024 * 1024, 1_000_000_000L, Duration.ofMinutes(1));
+                EnterpriseEnvironment.NONE, 256L * 1024 * 1024, 1_000_000_000L,
+                Duration.ofMinutes(1));
 
         assertThrows(IllegalStateException.class, () -> runtime.create(spec));
         started.add(new RunHandle("run_unit7", "unknown"));

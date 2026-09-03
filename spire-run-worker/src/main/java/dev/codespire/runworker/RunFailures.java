@@ -42,6 +42,10 @@ public class RunFailures {
     @Inject
     Credentials credentials;
 
+    /** Holds the one credential a run does not carry: the proxy password, if the URL has one. */
+    @Inject
+    EnterpriseEnvironmentConfig enterprise;
+
     /**
      * A failure whose retry answer is the cause's and whose detail carries no credential.
      *
@@ -96,6 +100,11 @@ public class RunFailures {
             LOG.warnf("run %s: the harness credential could not be decrypted to redact it; this "
                     + "run's failure details are unscrubbed for it", command.runId());
         }
+        // The deployment credential, not the run's: a corporate proxy URL may carry basic auth,
+        // it is set in every container, and git and curl quote the URL they tried. Added here
+        // rather than at each call site so the transcript and the failure detail are covered by
+        // the one scrub that already covers both.
+        enterprise.proxySecret().ifPresent(secrets::add);
         return secrets.isEmpty() ? SecretScrub.none()
                 : SecretScrub.of(username, secrets.toArray(String[]::new));
     }
