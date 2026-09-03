@@ -1,4 +1,4 @@
-package dev.codespire.workspace;
+package dev.codespire.secrets;
 
 import org.junit.jupiter.api.Test;
 

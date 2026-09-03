@@ -187,15 +187,6 @@ public class RunControlListener {
     }
 
     /**
-     * Stop the sandbox, and let the launcher finish the run.
-     *
-     * <p>Nothing is salvaged or destroyed here. The launcher is still blocked on the agent's exit, so
-     * killing the containers makes that call return and the ordinary terminal path runs — which
-     * already salvages before it destroys. A cancel that salvaged for itself would race the launcher
-     * for the same streams, and one that destroyed would throw away the checkpoints the run had
-     * already pushed. Cancel is not delete.
-     */
-    /**
      * Leaves a cancel where a dispatcher that has not started yet will find it.
      *
      * <p>Guarded rather than allowed to escape: this listener's channel ignores failures, so an
@@ -213,6 +204,15 @@ public class RunControlListener {
         }
     }
 
+    /**
+     * Stop the sandbox, and let the launcher finish the run.
+     *
+     * <p>Nothing is salvaged or destroyed here. The launcher is still blocked on the agent's exit,
+     * so killing the containers makes that call return and the ordinary terminal path runs — which
+     * already salvages before it destroys. A cancel that salvaged for itself would race the launcher
+     * for the same streams, and one that destroyed would throw away the checkpoints the run had
+     * already pushed. Cancel is not delete.
+     */
     private void stop(RunRegistry.LiveRun run, String runId) {
         try {
             runtime.cancel(run.handle());

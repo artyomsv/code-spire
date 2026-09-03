@@ -22,34 +22,43 @@ package dev.codespire.runtime;
  * expensive than carrying them — but "waiting for a reader" is now written down instead of
  * implied by a javadoc that claimed one.
  *
+ * <p><b>Read the note uniformly: "no PRODUCTION caller branches on it".</b> A first attempt at
+ * this rewrite said "NOT READ ANYWHERE" of two components that an arm's own test does read, which
+ * is the same drift in the opposite direction — a paragraph written to stop a false claim making
+ * two more. Where an arm declares a value about itself in a test, that is named below.
+ *
  * <p>Six positional booleans, so each is documented: a swapped pair compiles and reads plausibly,
  * and only a test asserting the whole record by value catches it.
  *
  * @param networkPolicy     the runtime can restrict a unit's egress. Absent, the agent reaches
  *                          whatever the host can, and the model-provider allowlist is advisory.
- *                          NOT READ ANYWHERE, so nothing is advisory on that basis today — the
- *                          Docker arm's real exposure is tracked in
+ *                          No production caller branches on it; the Docker arm asserts its own
+ *                          {@code false} in {@code DockerRunRuntimeIT}. So nothing is advisory on
+ *                          that basis today — the real exposure is tracked in
  *                          {@code techdebt/spire-runtime-docker/4-3-the-agent-container-on-the-}
  *                          {@code default-bridge-reaches-host-published-ports.md}.
- * @param resourceLimits    memory and CPU ceilings are enforced rather than requested. Read by
- *                          the Docker arm's own test as a declaration about itself; no caller
- *                          branches on it, because a unit spec that cannot be limited is refused
- *                          by {@code RunUnitSpec} before any runtime sees it.
+ * @param resourceLimits    memory, CPU and disk ceilings are enforced rather than requested. Read
+ *                          by the Docker arm's own test as a declaration about itself; no
+ *                          production caller branches on it, because a unit spec that cannot be
+ *                          limited is refused by {@code RunUnitSpec} before any runtime sees it.
  * @param steering          a running agent can be sent further input. Read by
  *                          {@code RunRuntimeContract}, which holds the declaration to the
  *                          behaviour. No shipped arm has it.
  * @param archival          a finished unit's filesystem can be preserved for inspection, which is
  *                          what makes a failed salvage recoverable rather than merely reported.
- *                          Not read: the Docker arm preserves unconditionally on a failed salvage.
+ *                          Read by nothing at all, production or test: the Docker arm preserves
+ *                          unconditionally on a failed salvage.
  * @param garbageCollection the runtime reclaims abandoned units on its own. Absent, the orphan
- *                          watchdog is the only thing that does. Not read: the watchdog runs
- *                          regardless, and an arm that also collects makes it a no-op rather than
- *                          a conflict.
+ *                          watchdog is the only thing that does. Read by nothing at all: the
+ *                          watchdog runs regardless, and an arm that also collects makes it a
+ *                          no-op rather than a conflict.
  * @param nativeSidecar     Kubernetes >= 1.29 terminates a sidecar when the main container exits.
  *                          Absent, the publisher must learn the agent finished from a sentinel
  *                          file instead, because nothing will stop it otherwise (RUN-TOPOLOGY §3).
- *                          Not read, and the sentinel path is UNCONDITIONAL — so an arm answering
- *                          true would change nothing until that path is made to branch on this.
+ *                          No production caller branches on it — the Docker arm and
+ *                          {@code RuntimeSpiTest} assert its value as a declaration — and the
+ *                          sentinel path is UNCONDITIONAL, so an arm answering true would change
+ *                          nothing until that path is made to branch on this.
  */
 public record RuntimeCapabilities(boolean networkPolicy, boolean resourceLimits, boolean steering,
                                   boolean archival, boolean garbageCollection, boolean nativeSidecar) {

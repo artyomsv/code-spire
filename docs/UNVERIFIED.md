@@ -33,14 +33,19 @@ evidence would settle it**.
 
 ---
 
-## A. Known not to work — documented and build-enforced
+## A. Known not to work — documented, and guarded where a guard is possible
 
-These are not suspicions. The gap is proven and a guard fails the build if it silently closes.
+These are not suspicions: each gap is proven. **A1 and A2 are build-enforced** — a guard fails the
+build if the gap silently closes, so the register cannot go stale without somebody noticing. **A3
+is not**, and saying so is the point of splitting this sentence: what would close it is a provider
+starting to resolve, which no source scan can see.
 
-> One entry here was removed rather than guarded: a cancel for a run that had not started was
-> accepted and dropped, and it is fixed (PR #106) rather than recorded. It is worth remembering
-> that it could not have been guarded the way A1 is — a source scan sees a *producer* appear, not
-> an ordering change — so listing it here was the only mechanism available while it stood.
+> A fourth entry stood here and is gone: a cancel for a run that had not started was accepted and
+> dropped. It is **fixed** (PR #106) rather than merely recorded — twice over, because the first
+> attempt closed only the queued half and left the fifteen-minute clone window open. The entry
+> itself had named the missing half (*"plus registering the run before `create`"*), and deleting
+> it deleted the note that said what had not been done. If an entry here is retired, check the
+> whole of what it specified, not the part that was implemented.
 
 ### A1. The credential pool cannot retire a dead key
 

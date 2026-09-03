@@ -2,7 +2,7 @@ package dev.codespire.runworker;
 
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.harness.RunEvent;
-import dev.codespire.workspace.SecretScrub;
+import dev.codespire.secrets.SecretScrub;
 import org.jboss.logging.Logger;
 
 import java.util.function.Consumer;

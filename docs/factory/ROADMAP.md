@@ -189,8 +189,23 @@ argued around:
   exact defects the runtime exists to prevent.
 
 **Left behind, deliberately.** Eight `techdebt/` entries, two of them High: a run unit has no
-disk bound, and the cancel gap above. Both are closed before M2 starts. The full dispositions are
-in `.claude/reviews/global/factory-m1.md`.
+disk bound, and the cancel gap above. Both were addressed before M2 (PR #106), and the honest
+summary is that one closed and one narrowed:
+
+- **The cancel gap is closed.** A durable claim, read before the unit is created AND again once it
+  is registered. One read was not enough — `create` blocks on an image pull and an init clone, so
+  a cancel arriving in there was written and never looked at again. That first attempt MOVED the
+  window rather than closing it, and its own javadoc claimed otherwise.
+- **The disk bound is narrowed, not closed.** The agent's `/tmp` is bounded and proven against a
+  real kernel; the unit's shared volumes are not, because the only portable enforcement (a
+  size-bounded tmpfs) is dropped when the last container using it stops, which would wipe the
+  clone between `init` exiting and the agent starting. That residual is refiled as **still High**
+  in `techdebt/spire-runtime-docker/2-3-…` and carried as a deployment requirement in
+  RUN-TOPOLOGY §9.7. **A reader of this page alone must not start M2 believing no High debt
+  survived M1.**
+
+The full dispositions are in `.claude/reviews/global/factory-m1.md` and
+`.claude/reviews/global/factory-m1-debt.md`.
 
 **FRs:** FR-F5..F10, F12, F14.
 

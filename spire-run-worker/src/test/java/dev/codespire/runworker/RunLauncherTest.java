@@ -24,7 +24,7 @@ import dev.codespire.runtime.RegistryCredential;
 import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
-import dev.codespire.workspace.SecretScrub;
+import dev.codespire.secrets.SecretScrub;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

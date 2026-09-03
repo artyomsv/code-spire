@@ -51,9 +51,10 @@ class RunDispatcherTest {
     private static final RunResult.RunFinished FINISHED = new RunResult.RunFinished(
             EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null, false);
 
-    /** In-memory claims: the first claim of a slot wins, exactly as the unique key does. */
     /**
-     * Every method the dispatcher reaches, and nothing else.
+     * In-memory claims: the first claim of a slot wins, exactly as the unique key does.
+     *
+     * <p>Every method the dispatcher reaches is overridden here, and nothing else.
      *
      * <p>{@code taken} was NOT overridden when the dispatcher started calling it, and the
      * inherited one opens a real {@code DataSource} — the seventh instance of this trap in this

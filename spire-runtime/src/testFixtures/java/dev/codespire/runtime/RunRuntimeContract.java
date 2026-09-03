@@ -34,10 +34,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p><b>What this deliberately does NOT cover, so it is not mistaken for complete.</b> Read-only
  * mounts, the corporate CA bundle reaching all three containers, the registry credential staying out
- * of every container, and the sandbox limits are asserted by the Docker arm's own tests. They need
- * fixtures — a shell, a writable host path, a private registry — that a contract cannot ask of an
- * arm without describing one arm's world. When a second arm lands, whichever of those it can express
- * generically belongs here.
+ * of every container, the sandbox limits, and <b>whether {@code cancel} actually stops the agent
+ * process</b> are asserted by each arm's own tests. They need fixtures — a shell, a writable host
+ * path, a private registry, a container-state probe — that a contract cannot ask of an arm without
+ * describing one arm's world. When a second arm lands, whichever of those it can express generically
+ * belongs here.
+ *
+ * <p>The cancel entry is worth singling out, because the alternative was worse than the gap. A rule
+ * NAMED for stopping a unit, asserting only that the unit still EXISTS, is satisfied by a
+ * {@code cancel} that does nothing — and this file contains its own proof: {@link
+ * #salvageNeverDestroys} makes the identical assertion after a call that provably stops nothing. A
+ * named-but-empty rule reads as coverage where honest silence does not.
  */
 public abstract class RunRuntimeContract {
 
@@ -45,7 +52,14 @@ public abstract class RunRuntimeContract {
     protected abstract RunRuntime runtime();
 
     /**
-     * A unit whose agent and publisher both start, do nothing of note and exit 0 promptly.
+     * A unit that starts, does nothing of note, and <b>stays alive</b> for the duration of a test.
+     *
+     * <p>The "stays alive" half is load-bearing, and this once said "exits 0 promptly", which is
+     * its opposite. Several rules below are about a unit that still EXISTS — discoverable,
+     * salvaged but not destroyed, cancelled but not destroyed — and a unit whose containers have
+     * all exited satisfies them trivially. An arm implementing the hook as previously written
+     * would have weakened the very rules this contract exists to enforce: the failure class the
+     * file is about, arriving through its own specification.
      *
      * @param runId the id the arm must place the unit under, so {@link RunRuntime#discoverUnits()}
      *              can find it again
@@ -118,8 +132,14 @@ public abstract class RunRuntimeContract {
                         + "impossible — which is the entire reason these are two calls");
     }
 
+    /**
+     * Cancel does not DESTROY, which is the half this contract can state for every arm.
+     *
+     * <p>Renamed from {@code cancelStopsAUnitWithoutDestroyingIt}, which promised more than it
+     * asserts. Whether the process actually stopped needs a per-arm probe; see the class javadoc.
+     */
     @Test
-    void cancelStopsAUnitWithoutDestroyingIt() {
+    void cancelDoesNotDestroyTheUnit() {
         RunHandle handle = place(quietUnit("contract_cancelled"));
 
         runtime().cancel(handle);

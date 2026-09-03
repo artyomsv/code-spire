@@ -477,6 +477,38 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                         + "daemon's disk. Saw: " + output);
     }
 
+    /**
+     * Cancel actually stops the containers — the half {@link RunRuntimeContract} cannot state.
+     *
+     * <p>The contract asserts only that a cancelled unit is not DESTROYED, because
+     * {@code discoverUnits} answers the same for a running and a stopped container on this arm, so
+     * a {@code cancel} implemented as {@code {}} satisfies it — the contract contains its own
+     * proof of that, since {@code salvageNeverDestroys} makes the identical assertion after a call
+     * that stops nothing. Deciding whether a process really stopped needs this arm's own
+     * vocabulary, which is why it lives here.
+     *
+     * <p>Asserted on the DAEMON's view rather than on a log line: an agent that happened to exit on
+     * its own would produce the same output and prove nothing.
+     */
+    @Test
+    void cancelActuallyStopsTheContainers() {
+        RunHandle handle = start(unit("run_cancel_stops", "sleep 300", "sleep 300"));
+
+        runtime.cancel(handle);
+
+        for (String role : List.of("agent", "publisher")) {
+            String containerId = runtime.client().listContainersCmd().withShowAll(true)
+                    .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, "run_cancel_stops",
+                            DockerRunRuntime.ROLE_LABEL, role))
+                    .exec().getFirst().getId();
+            Boolean running = runtime.client().inspectContainerCmd(containerId).exec()
+                    .getState().getRunning();
+            assertEquals(Boolean.FALSE, running,
+                    "the " + role + " container is still running after cancel; an operator who "
+                            + "stopped this run is still being charged for it");
+        }
+    }
+
     @Test
     void theRuntimeDeclaresWhatDockerCannotDo() {
         // Docker has no pod, so no native sidecar termination, and egress restriction needs a

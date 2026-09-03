@@ -10,6 +10,7 @@ import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * The refused paths of a run, between the wire and {@code factory_run.blocked_changes}.
@@ -63,7 +64,8 @@ public final class BlockedChanges {
         try {
             JsonNode array = JSON.readTree(json);
             if (!array.isArray()) {
-                LOG.warnf("blocked_changes is not a JSON array, ignoring: %s", json);
+                // debugf for the same reason as below: this is on a polled surface.
+                LOG.debugf("blocked_changes is not a JSON array, ignoring: %s", json);
                 return List.of();
             }
             List<RunResult.BlockedChange> changes = new ArrayList<>();
@@ -78,26 +80,42 @@ public final class BlockedChanges {
             }
             return List.copyOf(changes);
         } catch (JsonProcessingException e) {
-            LOG.warnf("blocked_changes could not be parsed (%s), reporting no paths for this run",
-                    e.getOriginalMessage());
+            // debugf, not warnf: the attention panel is POLLED, so a single malformed row would
+            // otherwise write a WARN on every refresh for as long as it exists. What an operator
+            // needs is on the row itself, which now says the list is unreadable rather than
+            // trailing off mid-sentence.
+            LOG.debugf(e, "blocked_changes could not be parsed, reporting no paths for this run");
             return List.of();
         }
     }
 
     /**
-     * One human-readable line: {@code .github/workflows/ci.yml (deleted), Jenkinsfile (modified)}.
+     * One human-readable line: {@code .github/workflows/ci.yml (deleted), README.md (renamed to)}.
      *
-     * <p>The kind is lower-cased because it sits inside a sentence, and omitted entirely when the
-     * producer did not report one — {@code (null)} beside a path would read as a third kind rather
-     * than as an absence.
+     * <p>The kind is lower-cased and its underscore becomes a space, because it sits inside a
+     * sentence an operator reads — {@code (renamed_from)} is a wire value showing through. It is
+     * omitted entirely when the producer did not report one: {@code (null)} beside a path would read
+     * as a third kind rather than as an absence.
+     *
+     * <p><b>Never the empty string.</b> An unreadable row used to produce "it changed ." in the
+     * attention panel — a sentence with a hole in it, which reads as a rendering bug and tells an
+     * operator nothing about what to do. The row's own status still says the run was refused, which
+     * is the fact that matters most, so say that instead of trailing off.
      */
     public static String describe(String json) {
+        List<RunResult.BlockedChange> changes = fromJson(json);
+        if (changes.isEmpty()) {
+            return "paths this row can no longer report (its stored list is empty or unreadable)";
+        }
         List<String> parts = new ArrayList<>();
-        for (RunResult.BlockedChange change : fromJson(json)) {
-            parts.add(change.kind() == null
-                    ? change.path()
-                    : change.path() + " (" + change.kind().toLowerCase(java.util.Locale.ROOT) + ")");
+        for (RunResult.BlockedChange change : changes) {
+            parts.add(change.kind() == null ? change.path() : change.path() + " (" + readable(change.kind()) + ")");
         }
         return String.join(", ", parts);
+    }
+
+    /** {@code RENAMED_TO} reads as "renamed to" inside a sentence, not as a constant name. */
+    private static String readable(String kind) {
+        return kind.toLowerCase(Locale.ROOT).replace('_', ' ');
     }
 }

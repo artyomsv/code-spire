@@ -1,4 +1,4 @@
-package dev.codespire.workspace;
+package dev.codespire.secrets;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;

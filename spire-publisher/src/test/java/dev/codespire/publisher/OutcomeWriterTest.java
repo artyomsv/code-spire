@@ -1,6 +1,6 @@
 package dev.codespire.publisher;
 
-import dev.codespire.workspace.SecretScrub;
+import dev.codespire.secrets.SecretScrub;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;

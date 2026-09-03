@@ -3,7 +3,7 @@ package dev.codespire.runworker;
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.harness.RunEvent;
 import dev.codespire.harness.UsageReport;
-import dev.codespire.workspace.SecretScrub;
+import dev.codespire.secrets.SecretScrub;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

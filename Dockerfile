@@ -44,6 +44,7 @@ COPY spire-runtime-docker/build.gradle.kts spire-runtime-docker/
 COPY spire-scm-bitbucket/build.gradle.kts spire-scm-bitbucket/
 COPY spire-scm-github/build.gradle.kts spire-scm-github/
 COPY spire-scm-gitlab/build.gradle.kts spire-scm-gitlab/
+COPY spire-secrets/build.gradle.kts spire-secrets/
 COPY spire-workspace/build.gradle.kts spire-workspace/
 
 # A Windows checkout gives gradlew CRLF and /bin/sh then rejects the shebang with

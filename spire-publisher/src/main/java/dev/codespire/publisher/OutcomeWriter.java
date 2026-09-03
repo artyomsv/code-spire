@@ -3,7 +3,7 @@ package dev.codespire.publisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.workspace.ChangedPath;
-import dev.codespire.workspace.SecretScrub;
+import dev.codespire.secrets.SecretScrub;
 
 import java.io.PrintStream;
 import java.util.LinkedHashMap;
