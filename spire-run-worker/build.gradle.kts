@@ -31,10 +31,17 @@ dependencies {
     implementation(project(":spire-harness-codex"))
     implementation(project(":spire-runtime"))
     implementation(project(":spire-runtime-docker"))
-
-    // NOTE what is absent: spire-workspace. This worker runs no git. If that dependency ever
-    // appears here, the statelessness ADR-039 rests on has been lost — a worker with a clone has a
-    // filesystem, and a run then belongs to the replica that started it.
+    // SecretScrub ONLY, which is text handling: three encodings of a credential, replaced in a
+    // string. Apache -> FSL is allowed (ADR-021), and the two services share no other module.
+    //
+    // This dependency used to be absent ON PURPOSE, and the note here was the tripwire: "if that
+    // dependency ever appears, the statelessness ADR-039 rests on has been lost -- a worker with a
+    // clone has a filesystem, and a run then belongs to the replica that started it." True, and
+    // checked by nothing. spire-arch's RunWorkerRunsNoGitTest now enforces the invariant directly:
+    // this module may import SecretScrub from spire-workspace and NOTHING else. PublishRepo or
+    // WorkspaceClone fails the build with the reason, which a missing dependency could only ever
+    // do by accident.
+    implementation(project(":spire-workspace"))
 
     implementation("io.quarkus:quarkus-jackson")
     implementation("io.quarkus:quarkus-messaging-kafka")

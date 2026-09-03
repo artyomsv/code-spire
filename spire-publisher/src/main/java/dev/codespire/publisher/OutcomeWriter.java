@@ -3,11 +3,9 @@ package dev.codespire.publisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.workspace.ChangedPath;
+import dev.codespire.workspace.SecretScrub;
 
 import java.io.PrintStream;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,15 +21,20 @@ public final class OutcomeWriter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private static final String REDACTED = "***";
-
     private final PrintStream out;
 
-    /** The credential's username; with it, the Basic-auth pair is scrubbed too. Null when unknown. */
-    private final String username;
-
-    /** Scrubbed from every failure detail; null when there is nothing to protect yet. */
-    private final String secret;
+    /**
+     * Removes the credential from every failure detail, in each form it can be rendered in.
+     *
+     * <p>Shared with the run worker rather than hand-rolled here. The two copies had drifted:
+     * this one had no length floor, redacted in no particular order, and handled a single
+     * credential, while the worker's did all three — and this is the container holding the git
+     * WRITE token. One consequence of adopting the shared rules is deliberate and stated at
+     * {@link SecretScrub#MIN_SECRET_LENGTH}: a secret below that length is no longer scrubbed,
+     * because redacting a short string makes a failure detail unreadable. No forge issues a
+     * token that short.
+     */
+    private final SecretScrub scrub;
 
     public OutcomeWriter() {
         this(System.out);
@@ -52,9 +55,10 @@ public final class OutcomeWriter {
     }
 
     public OutcomeWriter(PrintStream out, String username, String secret) {
-        this.username = username;
         this.out = out;
-        this.secret = secret;
+        this.scrub = secret == null || secret.isEmpty()
+                ? SecretScrub.none()
+                : SecretScrub.of(List.of(new SecretScrub.Credential(username, secret)));
     }
 
     public void pushed(String ref, List<ChangedPath> changed) {
@@ -70,34 +74,7 @@ public final class OutcomeWriter {
     }
 
     public void failed(String cause, String detail) {
-        write(entry("event", "failed", "cause", cause, "detail", scrub(detail)));
-    }
-
-    /**
-     * Removes the credential from a message in every form JGit can render it, not only the literal.
-     *
-     * <p>The literal alone was the whole scrub, and it is narrower than it looks: JGit speaks HTTP
-     * Basic, so a transport error can carry the token percent-encoded inside a URI or Base64-encoded
-     * as the {@code Authorization} value, and neither matches the raw string. The forge tokens in
-     * use today are alphanumeric and survive percent-encoding unchanged, so the first form is
-     * defence in depth; the Base64 form is a real gap — {@code user:token} encodes to a string that
-     * shares no substring with the token.
-     */
-    private String scrub(String detail) {
-        if (detail == null || secret == null || secret.isEmpty()) {
-            return detail;
-        }
-        String scrubbed = detail.replace(secret, REDACTED);
-        String encoded = URLEncoder.encode(secret, StandardCharsets.UTF_8);
-        if (!encoded.equals(secret)) {
-            scrubbed = scrubbed.replace(encoded, REDACTED);
-        }
-        if (username != null) {
-            String basic = Base64.getEncoder().encodeToString(
-                    (username + ":" + secret).getBytes(StandardCharsets.UTF_8));
-            scrubbed = scrubbed.replace(basic, REDACTED);
-        }
-        return scrubbed;
+        write(entry("event", "failed", "cause", cause, "detail", scrub.clean(detail)));
     }
 
     private static List<Map<String, String>> describe(List<ChangedPath> paths) {

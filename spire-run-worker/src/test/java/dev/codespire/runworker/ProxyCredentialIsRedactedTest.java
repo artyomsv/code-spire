@@ -2,6 +2,7 @@ package dev.codespire.runworker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.workspace.SecretScrub;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;

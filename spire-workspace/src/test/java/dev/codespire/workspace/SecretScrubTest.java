@@ -1,4 +1,4 @@
-package dev.codespire.runworker;
+package dev.codespire.workspace;
 
 import org.junit.jupiter.api.Test;
 
