@@ -17,6 +17,8 @@ import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -28,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The publisher's own pristine clone of the repository.
@@ -120,6 +123,17 @@ public final class PublishRepo implements AutoCloseable {
      * git repository selects the local transport, which reads agent-authored config and follows
      * {@code objects/info/alternates}, instead of the bundle transport. A symlink points the read at
      * any path the publisher can reach.
+     *
+     * <p><b>The check and the open are not one operation, so the open must not follow links on its
+     * own account.</b> This path lives on {@code /handoff}, which the agent writes, and the two
+     * calls are two syscalls: a rename-over in between made {@code Files.newInputStream} — which
+     * FOLLOWS symlinks — copy an arbitrary file the publisher can read, and its own
+     * {@code /proc/self/environ} carries the git secret. {@link #openWithoutFollowing} closes that
+     * by refusing a link at the open itself, so winning the race gains nothing.
+     *
+     * <p>What remains, stated rather than implied: a FIFO substituted after the attribute check
+     * still opens, and a read from one with no writer blocks. That is a hang bounded by the run's
+     * wall clock, not a disclosure, and NIO cannot express a non-blocking open.
      */
     private Path copyOutOfReach(Path bundle, long maxBytes) throws IOException {
         BasicFileAttributes attributes =
@@ -131,7 +145,7 @@ public final class PublishRepo implements AutoCloseable {
         Path copy = privateStore.resolve("incoming.bundle");
         long copied = 0;
         byte[] buffer = new byte[8192];
-        try (InputStream in = Files.newInputStream(bundle);
+        try (InputStream in = Channels.newInputStream(openWithoutFollowing(bundle));
              OutputStream out = Files.newOutputStream(copy,
                      StandardOpenOption.CREATE,
                      StandardOpenOption.TRUNCATE_EXISTING,
@@ -148,6 +162,23 @@ public final class PublishRepo implements AutoCloseable {
             }
         }
         return copy;
+    }
+
+    /**
+     * Opens a file for reading and refuses a symlink in the SAME operation.
+     *
+     * <p>{@code Set.of}, not {@code EnumSet.of}: {@link StandardOpenOption} and
+     * {@link LinkOption} are two different enums, so the enum-set form does not compile. Both
+     * implement {@code OpenOption}, which is what this set is.
+     *
+     * <p>Package-private so a test can drive the open ALONE. Routing a test through
+     * {@link #fetchBundle} would be satisfied by the attribute check that runs before it, and so
+     * would pass with this open still following links.
+     *
+     * @throws IOException if the path is a symlink, a directory, or unreadable
+     */
+    static SeekableByteChannel openWithoutFollowing(Path file) throws IOException {
+        return Files.newByteChannel(file, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
     }
 
     /**

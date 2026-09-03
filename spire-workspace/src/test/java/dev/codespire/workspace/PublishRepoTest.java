@@ -1,11 +1,13 @@
 package dev.codespire.workspace;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.channels.SeekableByteChannel;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -435,5 +437,41 @@ class PublishRepoTest {
                 publish, null)) {
             assertEquals(publish, repo.path());
         }
+    }
+
+    /**
+     * The bundle is opened without following a symlink, in ONE operation.
+     *
+     * <p>The path is on {@code /handoff}, which the agent writes. Checking the attributes and
+     * then opening are two syscalls, and {@code Files.newInputStream} FOLLOWS links — so a
+     * rename-over between them made the publisher copy any file it can read, and its own
+     * {@code /proc/self/environ} holds the git write token. Measured on Linux: the same symlink
+     * that {@code newInputStream} reads through is refused by this open with
+     * "Symbolic link loop (NOFOLLOW_LINKS specified)".
+     *
+     * <p>Skipped where the OS will not create a symlink — Windows needs a privilege this process
+     * does not hold. The publisher runs on Linux, and CI runs on Linux, so the assertion is real
+     * where it matters. It is a skip rather than a silent pass so a green Windows run cannot be
+     * mistaken for evidence.
+     */
+    @Test
+    void theBundleIsOpenedWithoutFollowingASymlink(@TempDir Path dir) throws Exception {
+        Path secret = dir.resolve("publisher-environment");
+        Files.writeString(secret, "SPIRE_GIT_SECRET=ghp_do-not-read-me");
+        Path swapped = dir.resolve("incoming.bundle");
+        try {
+            Files.createSymbolicLink(swapped, secret);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            Assumptions.abort("this OS will not create a symlink here: " + unavailable.getMessage());
+        }
+
+        // The open ALONE, not the whole method: PublishRepo also checks the attributes first, so
+        // routing through fetchBundle would pass with the open still following links and prove
+        // nothing about the race this closes.
+        assertThrows(IOException.class, () -> {
+            try (SeekableByteChannel ignored = PublishRepo.openWithoutFollowing(swapped)) {
+                throw new IllegalStateException("the symlink was opened");
+            }
+        });
     }
 }
