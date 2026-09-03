@@ -43,19 +43,34 @@ ALTER TABLE factory_run
 -- CREATE TABLE happened to declare first). V47 had to guess one of those once already. A DROP by a
 -- guessed name is the worst kind of failure here: `IF EXISTS` makes a wrong guess succeed silently,
 -- leaving the old constraint in place, and the very first uncertain dispatch then fails to write.
+-- INTO STRICT, not plain INTO, and that word is the whole point of the block. Without it plpgsql
+-- sets the variable to NULL on zero matches and takes an ARBITRARY row on several, raising in
+-- neither case -- so this migration would report success and leave the old constraint in place,
+-- which is exactly the silent-success failure the paragraph above rejects a name guess for. A review
+-- proved it: neutering the LIKE made V51 apply with exit 0 and no notice, and the first uncertain
+-- dispatch then failed against the surviving constraint. STRICT turns both the zero case
+-- (NO_DATA_FOUND) and the several case (TOO_MANY_ROWS) into a loud migration failure.
 DO $$
 DECLARE
     old_name text;
 BEGIN
-    SELECT conname INTO old_name
+    SELECT conname INTO STRICT old_name
       FROM pg_constraint
      WHERE conrelid = 'factory_run'::regclass
        AND contype = 'c'
        AND pg_get_constraintdef(oid) LIKE '%ended_at%';
 
-    IF old_name IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE factory_run DROP CONSTRAINT %I', old_name);
-    END IF;
+    EXECUTE format('ALTER TABLE factory_run DROP CONSTRAINT %I', old_name);
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE EXCEPTION 'no CHECK on factory_run mentions ended_at, so the status/ended_at pairing '
+                        'this migration must replace was not found. Refusing rather than succeeding '
+                        'silently: the first dispatch_uncertain write would otherwise be rejected by '
+                        'whatever constraint is still there.';
+    WHEN TOO_MANY_ROWS THEN
+        RAISE EXCEPTION 'more than one CHECK on factory_run mentions ended_at. Dropping an arbitrary '
+                        'one would leave the other enforcing the old pairing. Name them here '
+                        'deliberately rather than letting scan order decide.';
 END $$;
 
 ALTER TABLE factory_run

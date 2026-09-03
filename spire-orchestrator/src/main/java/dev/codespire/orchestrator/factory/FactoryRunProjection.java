@@ -133,6 +133,34 @@ public class FactoryRunProjection {
     @Inject
     DataSource dataSource;
 
+    /** What a queued row is made of — the dispatch's own inputs, before any result. */
+    public record QueuedRun(String runId, String harness, String model, String baseBranch,
+                            String baseCommit, String branch, String pushedAs) {
+    }
+
+    /**
+     * A row is still "live" — a result may project onto it — while queued, running, or awaiting a
+     * dispatch resolution, and also while it carries EITHER dispatch failure cause.
+     *
+     * <p>All four cases share one fact: the real {@code RunStarted} may still be on its way. A
+     * dispatch failure means the broker did not acknowledge, not that the record was lost, and the
+     * worker consumes one command at a time, so a result routinely arrives after the row was marked.
+     * A result correcting such a row clears the failure it superseded.
+     *
+     * <p><b>{@code DISPATCH_UNCERTAIN} belongs here, and leaving it out was a defect.</b> An operator
+     * resolving "the run did start" wrote that cause — and the row then stopped accepting the very
+     * result they had just asserted was coming, so the branch reached the remote with no row pointing
+     * at it. The asymmetry gave it away: resolving "it never ran" left the row live, so the answer
+     * that ASSERTS a run is executing was the one that discarded its outcome.
+     *
+     * <p>Being live is not being re-armable. {@link #queued} re-arms on its own guard, which names
+     * {@code DISPATCH_FAILED} alone, so admitting the uncertain cause here publishes nothing.
+     */
+    private static final String LIVE = "(status IN ('" + QUEUED + "', '" + RUNNING + "', '"
+            + DISPATCH_UNCERTAIN + "') "
+            + "OR (status = '" + FAILED + "' AND failure_cause IN ('" + DISPATCH_FAILED + "', '"
+            + RunFailureCause.DISPATCH_UNCERTAIN.name() + "')))";
+
     /**
      * A queued row, written BEFORE the command is dispatched so a run can never exist unrecorded.
      *
@@ -143,29 +171,17 @@ public class FactoryRunProjection {
      * would leave that first run's result on a row describing a different base commit, model or
      * account. A differing retry therefore matches no row here and is refused by the caller. Any
      * other existing row is left alone — a succeeded or refused run must not be reopened.
-     */
-    /**
+     *
+     * <p>An uncertain dispatch is NOT re-armed, and that is the fail-closed half: the guard below
+     * names {@link #DISPATCH_FAILED} alone, so a row whose command may already be on the topic is
+     * refused rather than published a second time.
+     *
      * @return whether a row was written or re-armed. {@code false} means the run already exists in
-     *     a state this must not overwrite (queued, running, or finished either way) — the caller
-     *     must refuse rather than dispatch, because the claim store would then drop the command as
-     *     a redelivery and the operator would hold a 201 for a run that never runs.
+     *     a state this must not overwrite (queued, running, awaiting a dispatch resolution, or
+     *     finished either way) — the caller must refuse rather than dispatch, because the claim
+     *     store would then drop the command as a redelivery and the operator would hold a 201 for a
+     *     run that never runs.
      */
-    /** What a queued row is made of — the dispatch's own inputs, before any result. */
-    public record QueuedRun(String runId, String harness, String model, String baseBranch,
-                            String baseCommit, String branch, String pushedAs) {
-    }
-
-    /**
-     * A row is still "live" — a result may project onto it — while queued or running, and also
-     * while it reads {@code failed / DISPATCH_FAILED}: that cause means the broker's ack timed out,
-     * not that the record was lost, and the worker consumes one command at a time, so the real
-     * {@code RunStarted} routinely arrives AFTER the row was marked. A result correcting such a row
-     * clears the failure it superseded.
-     */
-    private static final String LIVE = "(status IN ('" + QUEUED + "', '" + RUNNING + "', '"
-            + DISPATCH_UNCERTAIN + "') "
-            + "OR (status = '" + FAILED + "' AND failure_cause = '" + DISPATCH_FAILED + "'))";
-
     public boolean queued(QueuedRun row) {
         String runId = row.runId();
         String harness = row.harness();
@@ -228,12 +244,15 @@ public class FactoryRunProjection {
         // RunStarted IS the acknowledgement. A redelivered RunStarted after RunFinished must not
         // drag a terminal row back to running, and a terminal row has an ended_at the CHECK would
         // refuse anyway; only the DISPATCH_FAILED shape of "terminal" is reopened.
-        // dispatch_uncertain is reopened here too, and this is what usually resolves it: the
+        // Both dispatch shapes are reopened here, and this is what usually resolves them: the
         // RunStarted IS the acknowledgement the broker never gave us, so the ambiguity ends as a
-        // fact rather than as somebody's decision.
+        // fact rather than as somebody's decision. The failed/DISPATCH_UNCERTAIN shape is included
+        // for the same reason it is in LIVE -- an operator who answered "it did start" must not
+        // thereby stop the row hearing the start.
         update("UPDATE factory_run SET status = ?, failure_cause = NULL, failure_detail = NULL, ended_at = NULL"
-                        + " WHERE run_id = ? AND (status IN (?, ?) OR (status = ? AND failure_cause = ?))",
-                runId, RUNNING, runId, QUEUED, DISPATCH_UNCERTAIN, FAILED, DISPATCH_FAILED);
+                        + " WHERE run_id = ? AND (status IN (?, ?) OR (status = ? AND failure_cause IN (?, ?)))",
+                runId, RUNNING, runId, QUEUED, DISPATCH_UNCERTAIN, FAILED, DISPATCH_FAILED,
+                RunFailureCause.DISPATCH_UNCERTAIN.name());
     }
 
     private void finished(RunResult.RunFinished finished) {
@@ -298,6 +317,9 @@ public class FactoryRunProjection {
      * lets the worker's claim drop the duplicate while its results project onto the re-armed row.
      */
     public void dispatchFailed(String runId, String detail) {
+        // This statement's WHERE is a state guard, so a zero row count is a refusal rather than
+        // the redelivery `update` reports for the event-driven writes. Ignored here on purpose:
+        // the row having moved on means a result already told us more than we were about to.
         // Guarded on QUEUED alone, deliberately not FAIL_SQL's (queued, running) pair. The emitter's
         // ack wait is 10s and the producer's own delivery timeout is 120s, so a slow broker can time
         // the ack out AFTER the record landed and a worker already started the run: its RunStarted
@@ -307,7 +329,7 @@ public class FactoryRunProjection {
         update("""
                 UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()
                  WHERE run_id = ? AND status = ?
-                """, runId, FAILED, DISPATCH_FAILED, detail, runId, QUEUED);
+                """, runId, FAILED, RunFailureCause.DISPATCH_FAILED.name(), detail, runId, QUEUED);
     }
 
     /**
@@ -323,6 +345,8 @@ public class FactoryRunProjection {
      * while still waiting for its own result.
      */
     public void dispatchUncertain(String runId, String detail) {
+        // A state guard, like dispatchFailed above: zero rows means the row moved on, which is
+        // reality answering the question this write was about to ask an operator.
         update("""
                 UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?
                  WHERE run_id = ? AND status = ?
@@ -331,23 +355,46 @@ public class FactoryRunProjection {
     }
 
     /**
-     * An operator decides what became of an unacknowledged dispatch.
+     * The operator found that no run was started, so the row becomes retryable.
      *
-     * <p>Only reachable while the row is still uncertain, so a run that resolved itself — the common
-     * case, where the record did land and its {@code RunStarted} arrived — cannot be overwritten by
-     * a decision made before the operator refreshed the page.
+     * <p>Writes the re-armable {@link #DISPATCH_FAILED} shape, which means the operator's ordinary
+     * retry starts the run through the path that already exists rather than through a second
+     * mechanism invented for this.
      *
-     * <p>The two answers differ in exactly one thing that matters: whether {@link #queued} may re-arm
-     * the row. "It never ran" writes the re-armable {@link #DISPATCH_FAILED} shape, so the operator's
-     * ordinary retry starts the run through the path that already exists. "It ran" writes
-     * {@code DISPATCH_UNCERTAIN} as a terminal cause, which nothing re-arms — because publishing
-     * again for a run that really happened is the duplicate this whole state exists to prevent.
-     *
-     * @param neverRan the operator's finding: true if no run was started, false if one was
-     * @return false when the row is gone or no longer uncertain
+     * @return false when the row is gone or no longer awaiting a resolution
      */
-    public boolean resolveDispatch(String runId, boolean neverRan, String detail) {
-        String cause = neverRan ? DISPATCH_FAILED : RunFailureCause.DISPATCH_UNCERTAIN.name();
+    public boolean resolveAsNeverRan(String runId) {
+        return resolve(runId, RunFailureCause.DISPATCH_FAILED.name(),
+                "an operator confirmed no run was started; retry the original request to start one");
+    }
+
+    /**
+     * The operator found that a run WAS started, so the row is closed and never published again.
+     *
+     * <p>Nothing re-arms this shape, because publishing again for a run that really happened is the
+     * duplicate the whole uncertain state exists to prevent. The row stays inside {@link #LIVE}
+     * though: the result the operator has just asserted is coming must still be able to land.
+     */
+    public boolean resolveAsStarted(String runId) {
+        return resolve(runId, RunFailureCause.DISPATCH_UNCERTAIN.name(),
+                "an operator confirmed the run did start, so it is not published again");
+    }
+
+    /**
+     * The one write, and the one guard.
+     *
+     * <p>Two named methods over this rather than a boolean parameter: the answer was branched on
+     * three separate times in a single request — here for the cause, in the resource for the stored
+     * detail, and again for the log line — so one decision lived in three places free to disagree.
+     * And {@code resolveDispatch(id, false, …)} at a call site says nothing about the fact that
+     * {@code false} is the answer permanently forbidding the retry.
+     *
+     * <p>Guarded on {@link #DISPATCH_UNCERTAIN}, so a run that resolved itself — the common case,
+     * where the record did land and its {@code RunStarted} arrived — cannot be overwritten by a
+     * decision made before the operator refreshed the page. Zero rows here is that refusal, not a
+     * redelivery.
+     */
+    private boolean resolve(String runId, String cause, String detail) {
         return update("""
                 UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()
                  WHERE run_id = ? AND status = ?
@@ -371,13 +418,17 @@ public class FactoryRunProjection {
     }
 
     /**
-     * A terminal-state write that touches no row is a REDELIVERY, not an error — the first delivery
-     * already moved the row. Logged at debug so a genuine ordering fault is still traceable.
-     */
-    /**
-     * @return rows touched. Zero is the ordinary redelivery answer for a projection, and a real
-     *         refusal for a caller that guarded on a state the row is no longer in — which is why
-     *         this returns it rather than only logging it.
+     * Apply one statement, and report how many rows it moved.
+     *
+     * <p>A terminal-state write that touches no row is a REDELIVERY, not an error — the first
+     * delivery already moved the row. Logged at debug so a genuine ordering fault is still
+     * traceable.
+     *
+     * <p>What zero MEANS depends on the statement: for the event-driven writes it is that
+     * redelivery, and for a statement whose WHERE carries a state guard it is a refusal the caller
+     * acts on. Each guarded call site says which it is, because the count alone cannot.
+     *
+     * @return rows touched
      */
     private int update(String sql, String runId, Object... params) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {

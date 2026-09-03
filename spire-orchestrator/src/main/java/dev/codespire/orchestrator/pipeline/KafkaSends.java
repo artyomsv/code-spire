@@ -45,14 +45,32 @@ public final class KafkaSends {
      * existing callers are unaffected — and carries whether the record might have landed anyway.
      *
      * <p>Two of these three outcomes say nothing at all about the record: a wait that elapsed and a
-     * thread that was interrupted are facts about us, not about the partition. Only a rejection the
-     * client calls non-retriable proves the record never left. Reporting all three as one failure is
-     * what let the factory's dispatch record every unacknowledged send as a definite miss, which is
-     * the optimistic reading and the expensive one to be wrong about.
+     * thread that was interrupted are facts about us, not about the partition. Only the third can
+     * ever prove the record never left, and only for the few causes {@link BrokerAckFailure} lists as
+     * impossible after a send. Reporting all three as one failure is what let the factory's dispatch
+     * record every unacknowledged send as a definite miss, which is the optimistic reading and the
+     * expensive one to be wrong about.
      */
-    private static void awaitAck(CompletableFuture<Void> ack, String description) {
+    static void awaitAck(CompletableFuture<Void> ack, String description) {
+        awaitAck(ack, description, ACK_TIMEOUT);
+    }
+
+    /**
+     * Package-private, with the timeout a parameter, because this method had NO test.
+     *
+     * <p>A review proved the gap by mutation: rewriting the timeout branch below to
+     * {@code BrokerAckFailure.rejected(...)} classifies an elapsed wait as a definite miss — which is
+     * verbatim the duplicate-run behaviour this whole change exists to remove — and all 949 tests in
+     * this module still passed. Everything above tested the two factory methods directly, and
+     * everything below mocked the emitter and threw a ready-made failure; nothing crossed the seam
+     * where the classification is actually chosen.
+     *
+     * <p>The timeout is injected rather than the constant read, so a test can drive the elapsed-wait
+     * branch in milliseconds instead of ten seconds.
+     */
+    static void awaitAck(CompletableFuture<Void> ack, String description, Duration timeout) {
         try {
-            ack.get(ACK_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            ack.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw BrokerAckFailure.notAcknowledged("Interrupted awaiting broker ack for " + description, e);
@@ -60,7 +78,7 @@ public final class KafkaSends {
             throw BrokerAckFailure.rejected(description, e.getCause());
         } catch (TimeoutException e) {
             throw BrokerAckFailure.notAcknowledged(
-                    "No broker ack within " + ACK_TIMEOUT.toSeconds() + "s for " + description, e);
+                    "No broker ack within " + timeout.toSeconds() + "s for " + description, e);
         }
     }
 }

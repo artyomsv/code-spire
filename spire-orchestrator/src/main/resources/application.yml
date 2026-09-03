@@ -106,6 +106,13 @@ mp:
           serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
       run-commands-out:
         connector: smallrye-kafka
+        # acks=all, because FR-F10 rests on what an acknowledgement MEANS. SmallRye defaults to 1 --
+        # the leader alone -- so an ack can be lost on failover AFTER the 201, leaving the row queued
+        # for ever: not dispatch_uncertain, so the resolution endpoint refuses it, a retry of the same
+        # subject answers 409 for ever, and no attention row fires. That is FR-F10's mirror image with
+        # no operator path out. It also re-enables producer idempotence, which the client disables
+        # whenever acks is not all, so an internal retry can no longer append the same command twice.
+        acks: all
         topic: cs.run-commands
         key:
           serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -117,6 +124,8 @@ mp:
       # and nothing produced to this topic, which made cancel reachable only by hand.
       run-control-out:
         connector: smallrye-kafka
+        # acks=all for the reason given on run-commands-out above: a leader-only ack can be lost.
+        acks: all
         topic: cs.run-control
         key:
           serializer: org.apache.kafka.common.serialization.StringSerializer

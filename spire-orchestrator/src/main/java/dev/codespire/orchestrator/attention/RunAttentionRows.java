@@ -11,17 +11,23 @@ import java.sql.SQLException;
 import java.util.List;
 
 /**
- * The factory's attention rows: a run the push gate refused, naming the paths it blocked
- * (ROADMAP M0 exit criterion 2).
+ * The factory's two attention rows: a run the push gate refused, and a dispatch nobody can confirm.
  *
- * <p>One row per run, like the per-review rows and for the same reason — a refusal is a discrete
- * event about a specific record, and "3 run(s) refused" throws away the paths, which are the only
- * thing that makes the row actionable. Past {@link #MAX_ROWS} the remainder is one summary row, so
- * a systemic refusal (a protected-paths rule that is too wide) cannot bury the blockers above it.
+ * <p>One row per run in both cases, like the per-review rows and for the same reason — each is a
+ * discrete fact about a specific record, and "3 run(s) refused" throws away the paths, which are the
+ * only thing that makes the row actionable. Past {@link #MAX_ROWS} the remainder is one summary row,
+ * so a systemic fault cannot bury the individual rows above it.
  *
- * <p>Nothing un-refuses a run, so the row clears on an operator's acknowledgement
+ * <p><b>They clear in different ways, and the difference is deliberate.</b> A refusal is over: the
+ * run finished, nothing un-refuses it, so the row clears on an operator's acknowledgement
  * ({@code factory_run.attention_ack_at}) exactly as a failed review's does — otherwise it would be
  * this panel's first permanently-lit row, against the contract that fixing the cause removes it.
+ *
+ * <p>An unresolved dispatch is NOT over — a paid agent may be executing right now — so it carries no
+ * acknowledgement at all. Silencing it would leave that run untracked, which is the opposite of what
+ * the row is for. It clears when the dispatch is resolved, or when the run's own result arrives and
+ * settles the question without anyone being asked. Both of those are "fixing the cause", so the
+ * panel's contract holds by a different route rather than by an exception to it.
  */
 @ApplicationScoped
 public class RunAttentionRows {
@@ -55,7 +61,11 @@ public class RunAttentionRows {
             """ + " LIMIT " + (MAX_ROWS + 1);
 
     void collect(Connection c, List<AttentionView> rows) throws SQLException {
+        collectPushGateRefusals(c, rows);
         collectUncertainDispatches(c, rows);
+    }
+
+    private void collectPushGateRefusals(Connection c, List<AttentionView> rows) throws SQLException {
         int total = 0;
         int listed = 0;
         try (PreparedStatement ps = c.prepareStatement(REFUSED_SQL); ResultSet rs = ps.executeQuery()) {
@@ -109,7 +119,7 @@ public class RunAttentionRows {
                 // that may be executing right now, and silencing it would leave that untracked.
                 // Resolving the dispatch is what removes it, which is the panel's own contract.
                 rows.add(new AttentionView(UNCERTAIN_CODE, Severity.WARNING, runId,
-                        "Run " + runId + " was published but the broker never acknowledged it, so whether"
+                        "Run " + runId + " was dispatched and never acknowledged, so whether"
                                 + " it is running is unknown. It will NOT be retried on its own — retrying a"
                                 + " run that did start puts a second agent on the same branch and pays for"
                                 + " the model twice. If it started, its own result clears this. Otherwise"

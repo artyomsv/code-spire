@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Large |
-| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/FactoryRunProjection.java` (**316** lines), `.../factory/RunResource.java` (**302** lines) |
+| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/RunResource.java` (**~530** lines), `.../factory/FactoryRunProjection.java` (**~450** lines) |
 | Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. |
 | Date | 2026-08-07 (updated 2026-08-09) |
 
@@ -75,8 +75,21 @@ put two rows an operator sees side by side in different files.
 
 | File | Before | Now |
 |---|---|---|
-| `factory/RunResource.java` | 274 | **302** |
-| `factory/FactoryRunProjection.java` | 294 | **316** |
+| `factory/RunResource.java` | 274 | **~530** |
+| `factory/FactoryRunProjection.java` | 294 | **~450** |
+
+**These numbers went stale, which is this entry's own subject arriving one level up.** They read
+302 and 316 through four more M1 tasks that each added to both files, and a review caught the drift
+rather than any check. Approximate now, deliberately: an exact count in a file edited every task is
+a number nobody will maintain, and the entry's argument does not turn on the last ten lines.
+
+**And measure code lines, not physical ones, when deciding whether to act.** Stripping comments and
+blanks leaves roughly 272 and 203 — neither over the guideline. Both files are around 40% comment,
+and that comment is load-bearing rationale (why a catch is wide, why a row is not deleted, why two
+detail texts differ). A physical-line cap penalises exactly what makes them readable and rewards
+deleting the explanations, which is the wrong incentive. Two independent reviews reached this
+conclusion separately and both recommended NOT splitting mid-milestone; that recommendation is
+recorded here rather than re-litigated each round.
 
 Both were already within a few lines of 300, so the growth that crossed it is small: a
 pre-dispatch pricing refusal (~28 lines) and a single read query (~22 lines). Recorded here rather

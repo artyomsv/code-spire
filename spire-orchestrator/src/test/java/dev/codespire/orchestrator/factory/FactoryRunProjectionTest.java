@@ -178,7 +178,7 @@ class FactoryRunProjectionTest {
         String runId = queuedRun();
         projection.dispatchUncertain(runId, "TEST-no ack");
 
-        assertTrue(projection.resolveDispatch(runId, true, "TEST-operator says it never ran"));
+        assertTrue(projection.resolveAsNeverRan(runId));
 
         // The re-armable shape, so the operator's ordinary retry starts the run through the path
         // that already exists rather than through a second mechanism invented for this.
@@ -193,7 +193,7 @@ class FactoryRunProjectionTest {
         String runId = queuedRun();
         projection.dispatchUncertain(runId, "TEST-no ack");
 
-        assertTrue(projection.resolveDispatch(runId, false, "TEST-operator says it did run"));
+        assertTrue(projection.resolveAsStarted(runId));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.FAILED, view.status());
@@ -203,6 +203,50 @@ class FactoryRunProjectionTest {
                         + " happened is the duplicate the whole state exists to prevent");
     }
 
+    /**
+     * The defect a review found by spotting an asymmetry, and the sharpest test in this file.
+     *
+     * <p>Resolving "it never ran" left the row live, so a real result still landed. Resolving "it
+     * ran" — the answer that ASSERTS a run is executing — wrote a cause outside the live set, so the
+     * run's own {@code RunFinished} touched zero rows and was logged at debug. The branch reached
+     * the remote and the row said {@code failed}, with a detail claiming its result was lost, which
+     * the resolution itself had just made true.
+     *
+     * <p>The realistic path is not exotic: a slow or restarted worker with the command still on the
+     * topic is exactly why nothing had arrived when the operator was asked.
+     */
+    @Test
+    void aResultStillLandsOnARunTheOperatorResolvedAsStarted() {
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+        assertTrue(projection.resolveAsStarted(runId));
+
+        projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of("a.txt"),
+                List.of(), null, false));
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
+        assertEquals("refs/heads/spire/x", view.pushedRef(),
+                "the branch is on the remote and the row has to point at it");
+        assertNull(view.failureCause(), "the resolution it superseded is cleared, like any other");
+    }
+
+    /**
+     * Live is not re-armable, and the two must not be confused.
+     *
+     * <p>Admitting the resolved-as-started shape to the live set lets a RESULT land on it. It must
+     * not also let a retry publish a second command — that is the duplicate the whole state exists
+     * to prevent, and it is blocked by {@code queued}'s own guard rather than by liveness.
+     */
+    @Test
+    void aRunResolvedAsStartedIsLiveButStillNotReArmable() {
+        String runId = queuedRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+        assertTrue(projection.resolveAsStarted(runId));
+
+        assertFalse(reQueue(runId));
+    }
+
     @Test
     void aRunThatResolvedItselfCannotBeResolvedByHand() {
         // An operator reading a stale page must not overwrite what the run itself has since said.
@@ -210,7 +254,7 @@ class FactoryRunProjectionTest {
         projection.dispatchUncertain(runId, "TEST-no ack");
         projection.apply(new RunResult.RunStarted(runId, "unit-abc"));
 
-        assertFalse(projection.resolveDispatch(runId, true, "TEST-too late"));
+        assertFalse(projection.resolveAsNeverRan(runId));
         assertEquals(FactoryRunProjection.RUNNING, projection.find(runId).orElseThrow().status());
     }
 

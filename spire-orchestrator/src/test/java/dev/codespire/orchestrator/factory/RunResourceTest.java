@@ -133,6 +133,29 @@ class RunResourceTest {
                 .then().statusCode(400).body(containsString("neverRan"));
     }
 
+    /**
+     * The only live state that had no stop lever, which is the state whose whole premise is that a
+     * paid agent may be executing right now.
+     *
+     * <p>A {@code queued} run — where nothing can possibly be running yet — accepted a cancel, and
+     * this one did not. A control record for a run nobody is executing is passed over quietly by
+     * every replica, so allowing it costs nothing and refusing it removed the only lever on live
+     * spend.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anUnresolvedDispatchCanStillBeCancelled() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        // The negative half lives in aFinishedRunRefusesControlRatherThanAcceptingItSilently, so
+        // this widening cannot be satisfied by making requireLive accept everything.
+        given().contentType("application/json").body("{\"reason\":\"TEST-stop the maybe-run\"}")
+                .when().post("/api/runs/" + runId + "/cancel")
+                .then().statusCode(202);
+    }
+
+
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
     void aRunThatIsNotUncertainCannotBeResolved() {
@@ -143,6 +166,48 @@ class RunResourceTest {
         given().contentType("application/json").body("{\"neverRan\":true}")
                 .when().post("/api/runs/" + runId + "/dispatch-resolution")
                 .then().statusCode(409).body(containsString("not awaiting a dispatch resolution"));
+    }
+
+    /**
+     * The other answer, over HTTP. The projection covers both, but only {@code true} reached the
+     * endpoint — and the two take different code paths through it now that they are separate methods.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anOperatorCanResolveOverHttpThatTheRunDidStart() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().contentType("application/json").body("{\"neverRan\":false}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(204);
+
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200)
+                .body("status", equalTo(FactoryRunProjection.FAILED))
+                .body("failureCause", equalTo("DISPATCH_UNCERTAIN"));
+    }
+
+    /**
+     * "Not dismissable" is stated in three places and enforced in two, and was asserted by nothing.
+     *
+     * <p>Acknowledging must not clear this row: it describes a run that may be executing right now,
+     * so silencing it would leave that untracked. Only resolving the dispatch — or the run's own
+     * result — takes it away.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void acknowledgingDoesNotSilenceAnUnresolvedDispatch() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().when().post("/api/runs/" + runId + "/attention-ack")
+                .then().statusCode(204);
+
+        given().when().get("/api/attention")
+                .then().statusCode(200)
+                .body("find { it.subject == '" + runId + "' }.code",
+                        equalTo("RUN_DISPATCH_UNCERTAIN"));
     }
 
     @Test
@@ -503,7 +568,7 @@ class RunResourceTest {
         given().when().get("/api/runs/" + runId)
                 .then().statusCode(200)
                 .body("status", equalTo(FactoryRunProjection.DISPATCH_UNCERTAIN))
-                .body("failureDetail", equalTo(RunResource.DISPATCH_UNCERTAIN_DETAIL));
+                .body("failureDetail", equalTo(RunResource.uncertainDetail(runId)));
 
         // The broker is back, and the retry is STILL refused -- this is the fail-closed rule. The
         // certain case above is 201 at exactly this point, which is what makes the two differ.

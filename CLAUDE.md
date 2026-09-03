@@ -1461,7 +1461,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
     both build failures through, which is also what makes the credential scrub unbypassable.
   - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
     than `succeeded` with no ref — the same call already made for `push_gate_refused`.
-  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V47.
+  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V51.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

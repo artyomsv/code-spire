@@ -62,10 +62,28 @@ public class RunResource {
     /**
      * Stored on the row for an uncertain dispatch, and deliberately not the phrasing above.
      *
-     * <p>"Retry the same request" is the wrong instruction here and the expensive one: the record
-     * may already be on the topic, so a retry is how a second agent ends up on the branch.
+     * <p>"Retry the same request" is the wrong instruction here and the expensive one: the record may
+     * already be on the topic, so a retry is how a second agent ends up on the branch.
+     *
+     * <p>Per-run rather than a constant, because it names the endpoint. There is no factory UI, so
+     * {@code GET /api/runs/{id}} is the operator's actual surface, and this is the only one of the
+     * four messages about this condition that survives a page reload — the 503, the 409 and the
+     * attention row are all transient. A detail ending "resolve it explicitly" with no address left
+     * the durable one as the least useful.
+     *
+     * <p>Phrased as the consequence rather than as an order. "Do NOT retry" is an imperative on a
+     * state row, and it stops being true the day a resolution UI or a reconciler exists.
      */
-    static final String DISPATCH_UNCERTAIN_DETAIL = "the command was published but never acknowledged; whether it is running is unknown. Do NOT retry: if it started, its result will resolve this row, otherwise resolve it explicitly";
+    static String uncertainDetail(String runId) {
+        return "the command was dispatched and never acknowledged; whether it is running is unknown."
+                + " A retry would publish a second command. If it started, its result will resolve this"
+                + " row; otherwise POST {\"neverRan\": true} to " + resolutionPath(runId);
+    }
+
+    /** Named once, so the four messages about this condition cannot address it differently. */
+    static String resolutionPath(String runId) {
+        return "/api/runs/" + runId + "/dispatch-resolution";
+    }
 
     /** A transcript page, never the whole stream: the per-run cap is ten thousand events. */
     private static final int DEFAULT_TRANSCRIPT_PAGE = 200;
@@ -221,26 +239,47 @@ public class RunResource {
             // so a run nobody will start would sit looking as though it were about to. Anything that
             // is not a classified ack failure counts as AMBIGUOUS, because a fault we cannot read
             // tells us nothing about whether the record left — which is the whole rule here.
-            if (!(e instanceof BrokerAckFailure ack) || ack.mayHaveLanded()) {
-                LOG.errorf(e, "run %s was recorded and published, but the broker never acknowledged it;"
-                        + " whether it is running is unknown until its result arrives or an operator says", runId);
-                projection.dispatchUncertain(runId, DISPATCH_UNCERTAIN_DETAIL);
-                throw new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
-                        .entity("Run " + runId + " was published but not acknowledged: " + e.getMessage()
-                                + ". It may or may not be running, so it is NOT retried automatically."
-                                + " If it started, its own result will resolve this; otherwise resolve it"
-                                + " at POST /api/runs/" + runId + "/dispatch-resolution.")
-                        .build(), e);
+            if (e instanceof BrokerAckFailure ack && !ack.mayHaveLanded()) {
+                throw recordDefiniteMiss(runId, e);
             }
-            // The row stays and says why. Deleting it would leave no record of the attempt at all;
-            // this shape is re-armable, so the operator's identical retry starts the run.
-            LOG.errorf(e, "run %s was recorded but the broker refused its dispatch outright", runId);
-            projection.dispatchFailed(runId, DISPATCH_FAILED_DETAIL);
-            throw new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
-                    .entity("Run " + runId + " was recorded but not dispatched: " + e.getMessage()
-                            + ". Retry the same request once the broker is reachable; it re-arms this run.")
-                    .build(), e);
+            throw recordUncertainDispatch(runId, e);
         }
+    }
+
+    /**
+     * The record never reached a partition, so the run definitely did not start.
+     *
+     * <p>The row stays and says why — deleting it would leave no record of the attempt at all — and
+     * this shape IS re-armable, so the operator's identical retry starts the run.
+     */
+    private ServerErrorException recordDefiniteMiss(String runId, IllegalStateException cause) {
+        LOG.errorf(cause, "run %s was recorded but the broker refused its dispatch outright", runId);
+        projection.dispatchFailed(runId, DISPATCH_FAILED_DETAIL);
+        return new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                .entity("Run " + runId + " was recorded but not dispatched: " + cause.getMessage()
+                        + ". Retry the same request once the broker is reachable; it re-arms this run.")
+                .build(), cause);
+    }
+
+    /**
+     * Nobody knows whether the record landed, so nothing is retried until somebody does.
+     *
+     * <p><b>Says "dispatched", never "published".</b> This branch also takes every fault the ack
+     * helper could not classify — a terminated channel or a full emitter buffer throws before a
+     * record is offered to the producer at all — so asserting the command is on the topic would send
+     * an operator to grep for a record that may never have been serialized. The wording has to be
+     * true of every input to the branch, which is the property the branch was built on.
+     */
+    private ServerErrorException recordUncertainDispatch(String runId, IllegalStateException cause) {
+        LOG.errorf(cause, "run %s was recorded and its dispatch attempted, but no acknowledgement came"
+                + " back; whether it is running is unknown until its result arrives or an operator says", runId);
+        projection.dispatchUncertain(runId, uncertainDetail(runId));
+        return new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                .entity("Run " + runId + " was dispatched and never acknowledged: " + cause.getMessage()
+                        + ". It may or may not be running, so it is NOT retried automatically."
+                        + " If it started, its own result will resolve this; otherwise resolve it"
+                        + " at " + resolutionPath(runId) + ".")
+                .build(), cause);
     }
 
     /**
@@ -256,23 +295,40 @@ public class RunResource {
      * row terminally, because publishing again for a run that really happened is the duplicate this
      * state was created to prevent.
      */
+    /**
+     * The operator's finding.
+     *
+     * <p>A record with a boxed {@code Boolean} rather than a map, because the absent-vs-false
+     * tri-state is load-bearing here: {@code null} is "you did not answer", and the two real answers
+     * do opposite things. A primitive would make the unanswered case default to {@code false}, which
+     * is the answer that permanently forbids the retry. Cancel and steer stay on maps — their fields
+     * are optional strings with real defaults, so nothing is decided by absence.
+     */
+    public record DispatchResolution(Boolean neverRan) {
+    }
+
     @POST
     @Path("/{runId:.+}/dispatch-resolution")
     @Consumes(MediaType.APPLICATION_JSON)
-    public Response resolveDispatch(@PathParam("runId") String runId, Map<String, Object> body) {
-        FactoryRunProjection.RunView run = projection.find(runId)
-                .orElseThrow(() -> new NotFoundException("no such run: " + runId));
-        Object answer = body == null ? null : body.get("neverRan");
-        if (!(answer instanceof Boolean neverRan)) {
+    public Response resolveDispatch(@PathParam("runId") String runId, DispatchResolution body) {
+        projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
+        Boolean neverRan = body == null ? null : body.neverRan();
+        if (neverRan == null) {
             throw badRequest(
                     "Send {\"neverRan\": true} if no run was started, or {\"neverRan\": false} if one was."
                             + " There is no safe default: one answer allows a retry and the other forbids it.");
         }
-        String detail = neverRan
-                ? "an operator confirmed no run was started; retry the original request to start one"
-                : "an operator confirmed the run did start, so it is not retried; its result was lost";
-        if (!projection.resolveDispatch(runId, neverRan, detail)) {
-            throw conflict("run " + runId + " is " + run.status() + ", not awaiting a dispatch resolution."
+        boolean resolved = neverRan
+                ? projection.resolveAsNeverRan(runId)
+                : projection.resolveAsStarted(runId);
+        if (!resolved) {
+            // Re-read, because the refusal means the row moved AFTER the lookup above — which is the
+            // headline race this whole feature exists for, a RunStarted arriving while the operator
+            // was deciding. Reporting the status read before the change made the 409 contradict
+            // itself: "run … is dispatch_uncertain, not awaiting a dispatch resolution".
+            String now = projection.find(runId)
+                    .map(FactoryRunProjection.RunView::status).orElse("gone");
+            throw conflict("run " + runId + " is " + now + ", not awaiting a dispatch resolution."
                     + " A run whose result arrived resolved itself.");
         }
         LOG.warnf("run %s: an operator resolved its uncertain dispatch as %s", runId,
@@ -319,8 +375,8 @@ public class RunResource {
             // agent on the same branch and pay for the model twice.
             return "Run " + runId + " was published but never acknowledged, so whether it is running is "
                     + "unknown. It is deliberately NOT retried. If it started, its own result will "
-                    + "resolve this row; otherwise resolve it at POST /api/runs/" + runId
-                    + "/dispatch-resolution and then retry.";
+                    + "resolve this row; otherwise resolve it at POST " + resolutionPath(runId)
+                    + " and then retry.";
         }
         if (existing != null && FactoryRunProjection.FAILED.equals(existing.status())
                 && FactoryRunProjection.DISPATCH_FAILED.equals(existing.failureCause())) {
@@ -416,9 +472,15 @@ public class RunResource {
         FactoryRunProjection.RunView run = projection.find(runId)
                 .orElseThrow(() -> new NotFoundException("no such run: " + runId));
         if (!FactoryRunProjection.QUEUED.equals(run.status())
-                && !FactoryRunProjection.RUNNING.equals(run.status())) {
+                && !FactoryRunProjection.RUNNING.equals(run.status())
+                // An uncertain dispatch may be executing RIGHT NOW — that is the entire premise of
+                // the state — so it is exactly when a stop is wanted, and refusing here left it as
+                // the only live state with no lever on live spend. A `queued` run, where nothing can
+                // possibly be running yet, accepted one. A control record for a run nobody is running
+                // is passed over quietly by every replica, so allowing this costs nothing.
+                && !FactoryRunProjection.DISPATCH_UNCERTAIN.equals(run.status())) {
             throw conflict("run " + runId + " is " + run.status() + " and cannot be " + verb
-                    + "; only a queued or running run accepts control.");
+                    + "; only a queued, running or unresolved run accepts control.");
         }
     }
 

@@ -118,7 +118,14 @@ public enum RunFailureCause {
     /** Finalization failed, so the workspace is preserved rather than destroyed (FR-F7). */
     SALVAGE_FAILED(false, true),
 
-    /** The broker never acknowledged the dispatch. */
+    /**
+     * The broker refused the dispatch outright, so the record never reached a partition.
+     *
+     * <p>Not "never acknowledged" -- that is {@link #DISPATCH_UNCERTAIN} one line below, and the two
+     * were briefly documented as the same condition. This one is the CERTAIN miss: a serializer that
+     * threw, a payload over the topic limit, an authorization failure. It is the only failure cause a
+     * retried dispatch re-arms, which is why the distinction has to hold.
+     */
     DISPATCH_FAILED(true, false),
 
     /** Dispatch may or may not have landed, and an operator must resolve which (FR-F10). */
