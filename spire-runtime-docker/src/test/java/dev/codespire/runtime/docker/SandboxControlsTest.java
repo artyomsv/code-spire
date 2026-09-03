@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -40,6 +42,8 @@ class SandboxControlsTest {
 
     private static final long NANO_CPUS = 2_000_000_000L;
 
+    static final long DISK_BYTES = 64L * 1024 * 1024;
+
     private final DockerRunRuntime runtime = new DockerRunRuntime();
 
     private static ContainerSpec container(List<Mount> mounts) {
@@ -52,7 +56,7 @@ class SandboxControlsTest {
                 container(List.of(Mount.writable("workspace", "/workspace"),
                         Mount.writable("handoff", "/handoff"))),
                 container(List.of(Mount.readOnly("handoff", "/handoff"))),
-                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, Duration.ofMinutes(30));
+                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofMinutes(30));
     }
 
     /**
@@ -127,5 +131,67 @@ class SandboxControlsTest {
         assertTrue(Arrays.stream(runtime.hostConfigFor(spec, spec.agent()).getBinds())
                         .anyMatch(bind -> bind.getAccessMode().toString().equals("rw")),
                 "and the agent must still be able to write its own workspace");
+    }
+
+    /**
+     * {@code /tmp} is bounded on every container of the unit.
+     *
+     * <p>Memory, CPU and process count were bounded and disk was not, so one
+     * {@code fallocate -l 500G} from an agent at full shell access filled the daemon's disk and
+     * took every concurrent run with it — and on a developer machine the databases beside it.
+     *
+     * <p>{@code /tmp} specifically because it is the one writable path every image has whatever it
+     * mounts. Bounding only the unit volumes would leave an agent free to write here instead,
+     * which makes the volume caps decoration.
+     */
+    @Test
+    void everyContainerGetsASizeBoundedTmp() {
+        RunUnitSpec spec = unit();
+
+        for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
+            Map<String, String> tmpFs = runtime.hostConfigFor(spec, container).getTmpFs();
+            assertNotNull(tmpFs, container.image() + " has no tmpfs, so /tmp is the daemon's disk");
+            String options = tmpFs.get("/tmp");
+            assertNotNull(options, "this container does not bound /tmp: " + tmpFs);
+            assertTrue(options.contains("size=" + DISK_BYTES),
+                    "/tmp is bounded by something other than the unit's declared budget: " + options);
+        }
+    }
+
+    /**
+     * The bound is the SPEC's number, not a constant of this arm's own.
+     *
+     * <p>Two values for one decision is how a limit gets raised in one place and enforced from the
+     * other — the shape the drain window was caught by, where a guard that did not read the arm's
+     * value kept passing after the arm changed it.
+     */
+    @Test
+    void theTmpBoundComesFromTheSpecRatherThanAConstant() {
+        long unusualBudget = 123L * 1024 * 1024;
+        RunUnitSpec spec = new RunUnitSpec("run_disk",
+                container(List.of(Mount.writable("ws", "/workspace"))),
+                container(List.of(Mount.writable("ws", "/workspace"))),
+                container(List.of(Mount.readOnly("ho", "/handoff"))),
+                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, unusualBudget,
+                Duration.ofMinutes(30));
+
+        HostConfig config = runtime.hostConfigFor(spec, spec.agent());
+
+        assertTrue(config.getTmpFs().get("/tmp").contains("size=" + unusualBudget),
+                "the arm must spend the budget the spec declared: " + config.getTmpFs());
+    }
+
+    /**
+     * A unit with no disk bound is refused before any container exists.
+     *
+     * <p>The same rule memory and CPU already had — "unlimited is not a limit" — extended to the
+     * third resource. A spec that reached an arm with an unbounded disk would be enforced by
+     * nothing, and every arm would have to remember to check.
+     */
+    @Test
+    void aUnitWithNoDiskBoundIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> new RunUnitSpec("run_unbounded",
+                container(List.of()), container(List.of()), container(List.of()),
+                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, 0, Duration.ofMinutes(30)));
     }
 }

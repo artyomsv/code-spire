@@ -83,7 +83,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", publisherScript),
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
-                enterprise, 256L * 1024 * 1024, 1_000_000_000L, wallClock);
+                enterprise, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024, wallClock);
     }
 
     @Override
@@ -130,7 +130,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         ContainerSpec noop = new ContainerSpec(image, List.of("sh", "-c", "true"), Map.of(), List.of());
         RunHandle handle = start(new RunUnitSpec("pull-1", noop,
                 new ContainerSpec(image, List.of("sh", "-c", "echo pulled"), Map.of(), List.of()),
-                noop, EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L,
+                noop, EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024,
                 Duration.ofMinutes(2)));
 
         Finalization finalization = runtime.salvage(handle);
@@ -323,7 +323,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(),
                         List.of(Mount.writable("ws", "/workspace"))),
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(), List.of()),
-                EnterpriseEnvironment.NONE, 256L * 1024 * 1024, 1_000_000_000L,
+                EnterpriseEnvironment.NONE, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
                 Duration.ofMinutes(1));
 
         assertThrows(IllegalStateException.class, () -> runtime.create(spec));
@@ -444,6 +444,33 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                         .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=run_unit5"))
                         .exec().getVolumes().isEmpty(),
                 "including its volumes, which no map remembered either");
+    }
+
+    /**
+     * The disk bound is a REAL bound, asserted against the kernel rather than against a HostConfig.
+     *
+     * <p>{@code SandboxControlsTest} asserts the option is set, which is the half a JVM can see. It
+     * cannot see whether the daemon honours it, and "the flag is present" is exactly the shape of
+     * assertion this milestone has been caught by three times — the CA bundle test proved the file
+     * was mounted and not that anything trusted it.
+     *
+     * <p>The unit declares 64 MiB, so a 128 MiB write must fail. {@code dd} reports how much it
+     * actually copied, so a bound that silently did nothing shows up as the full write succeeding.
+     */
+    @Test
+    void aWritePastTheDiskBoundFailsRatherThanReachingTheHost() {
+        RunHandle handle = start(unit("run_disk_bound",
+                "dd if=/dev/zero of=/tmp/fill bs=1M count=128 2>&1; echo AGENT-DONE", "true"));
+
+        List<String> lines = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, lines::add);
+        String output = String.join(System.lineSeparator(), lines);
+
+        assertTrue(output.contains("AGENT-DONE"), "the agent did not run at all: " + output);
+        assertTrue(output.contains("No space left on device"),
+                "a 128 MiB write into a 64 MiB /tmp must be refused by the kernel. Without the "
+                        + "bound this succeeds and the same command with count=500000 fills the "
+                        + "daemon's disk. Saw: " + output);
     }
 
     @Test

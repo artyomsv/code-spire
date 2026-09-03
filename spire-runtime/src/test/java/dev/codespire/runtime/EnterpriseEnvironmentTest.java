@@ -40,7 +40,7 @@ class EnterpriseEnvironmentTest {
                         // a path with another.
                         List.of(Mount.readOnly("handoff", "/handoff"),
                                 Mount.readOnly("gate", "/gate"))),
-                enterprise, 1024, 1024, Duration.ofMinutes(1));
+                enterprise, 1024, 1024, 1024, Duration.ofMinutes(1));
     }
 
     private static EnterpriseEnvironment corporate() {

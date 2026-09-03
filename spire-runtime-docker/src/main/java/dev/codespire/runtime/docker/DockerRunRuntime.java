@@ -385,6 +385,27 @@ public final class DockerRunRuntime implements RunRuntime {
                 // Memory and CPU alone do not bound an unconfined agent. A fork bomb exhausts the
                 // host pid_max; a privilege escalation or a raw socket is available by default.
                 .withPidsLimit(PIDS_LIMIT)
+                // The one writable path every image has whatever it mounts, and the only part of
+                // the unit this arm can bound. A tmpfs size= is a kernel bound -- a write past it
+                // gets ENOSPC -- and it behaves identically on Docker Desktop for Windows and
+                // macOS (both run a real Linux VM), on native Linux and under rootless Docker.
+                //
+                // The SHARED VOLUMES are deliberately NOT tmpfs, and the reason is measured rather
+                // than assumed. A tmpfs-backed local volume is dropped when the last container
+                // using it stops, so two containers that overlap share it and two that do not lose
+                // it: `docker run A` writing a file, then `docker run B` reading it, sees an empty
+                // directory. This unit runs init TO COMPLETION and only then starts the agent, so a
+                // tmpfs /workspace would wipe the clone between the two -- a broken run in place of
+                // an unbounded one. --storage-opt size= is no help either: it needs xfs with pquota,
+                // and Docker Desktop is overlay2 on ext4, so it fails at container creation on the
+                // machines most developers use.
+                //
+                // So /workspace stays unbounded on THIS arm; RUN-TOPOLOGY §9 carries it as a
+                // deployment requirement and techdebt records the two candidate designs. The
+                // Kubernetes arm has no such gap: emptyDir is a POD volume, so it survives an init
+                // container exiting, and medium: Memory + sizeLimit bounds the whole unit. Which is
+                // why diskBytes belongs on the spec even though this arm can only spend part of it.
+                .withTmpFs(Map.of("/tmp", "rw,nosuid,nodev,size=" + spec.diskBytes()))
                 .withSecurityOpts(List.of("no-new-privileges"))
                 .withCapDrop(Capability.ALL)
                 // salvage() must be able to read the exit code, and an auto-removed container has

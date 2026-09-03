@@ -67,6 +67,18 @@ public class RunUnitBuilder {
 
     private static final long MEMORY_BYTES = 4L * 1024 * 1024 * 1024;
 
+    /**
+     * The unit's shared volumes and its /tmp are bounded by this on every arm.
+     *
+     * <p>On the Docker arm the bound is a tmpfs, so this budget is spent from HOST MEMORY rather
+     * than from disk -- the only enforcement that works identically on Docker Desktop for Windows
+     * and macOS, native Linux, rootless Docker and Kubernetes. A repository whose clone needs more
+     * than this fails with ENOSPC rather than filling the daemon's disk and taking every other run
+     * with it. Sized against MEMORY_BYTES deliberately: 2 GiB of workspace inside a 4 GiB unit
+     * leaves the agent process the other half.
+     */
+    private static final long DISK_BYTES = 2L * 1024 * 1024 * 1024;
+
     private static final long NANO_CPUS = 2_000_000_000L;
 
     @Inject
@@ -141,6 +153,6 @@ public class RunUnitBuilder {
 
         return new RunUnitSpec(command.runId(), init, agent, publisher,
                 enterprise.environment(),
-                MEMORY_BYTES, NANO_CPUS, Duration.ofSeconds(command.maxWallClockSeconds()));
+                MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
     }
 }

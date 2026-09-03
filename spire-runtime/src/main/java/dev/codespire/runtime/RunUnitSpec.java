@@ -23,11 +23,41 @@ import java.util.Set;
  * {@link EnterpriseEnvironment} for why it is held here and not on each part. It has no defaulting
  * constructor on purpose: a caller that does not need it says {@link EnterpriseEnvironment#NONE}
  * out loud, the same reasoning that makes {@link Mount#writable} spell its {@code false}.
+ *
+ * <p><b>{@code diskBytes} is a limit like the other two, and it is stated in the SPI rather than
+ * left to each arm, because the portable answer differs per arm while the guarantee must not.</b>
+ * Memory, CPU and process count were bounded and disk was not, so one {@code fallocate} from an
+ * agent at full shell access filled the daemon's disk and took every concurrent run with it — and
+ * on a developer machine the databases beside it.
+ *
+ * <p><b>How much of it an arm can actually spend differs, and that is why the number lives here.</b>
+ * A size-bounded tmpfs is the only enforcement that travels — a write past {@code size=} gets
+ * {@code ENOSPC}, identically on Docker Desktop for Windows and macOS (both run a real Linux VM),
+ * on native Linux, under rootless Docker and on Kubernetes. {@code --storage-opt size=} is not an
+ * option: it needs xfs with pquota, and Docker Desktop is overlay2 on ext4, so it fails at
+ * container creation on the machines most developers use.
+ *
+ * <p>On <b>Kubernetes</b> that covers the whole unit: {@code emptyDir} is a POD volume, so it
+ * survives an init container exiting, and {@code medium: Memory} with {@code sizeLimit} bounds the
+ * shared workspace as well as {@code /tmp}.
+ *
+ * <p>On <b>Docker</b> it covers {@code /tmp} only, and the reason is measured rather than assumed:
+ * a tmpfs-backed local volume is dropped when the last container using it stops. Two containers
+ * that overlap share it; two that do not lose it. This unit runs init TO COMPLETION and only then
+ * starts the agent, so a tmpfs {@code /workspace} would wipe the clone in between — a broken run in
+ * place of an unbounded one. So that arm bounds {@code /tmp}, RUN-TOPOLOGY §9 carries the rest as a
+ * deployment requirement, and {@code techdebt/spire-runtime-docker/} records the two candidate
+ * designs that would close it.
+ *
+ * <p><b>What no arm bounds, said here rather than discovered later:</b> a container's own writable
+ * layer. Closing that portably means a read-only root filesystem, which is a property of the agent
+ * IMAGE rather than of the runtime — so it belongs in AGENT-IMAGE-CONTRACT.md as a clause
+ * {@code spire-agent-image verify} checks, not in a spec component.
  */
 public record RunUnitSpec(String runId,
                           ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
                           EnterpriseEnvironment enterprise,
-                          long memoryBytes, long nanoCpus, Duration wallClock) {
+                          long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock) {
 
     public RunUnitSpec {
         Objects.requireNonNull(runId, "runId");
@@ -36,10 +66,10 @@ public record RunUnitSpec(String runId,
         Objects.requireNonNull(publisher, "publisher");
         Objects.requireNonNull(enterprise, "enterprise");
         Objects.requireNonNull(wallClock, "wallClock");
-        if (memoryBytes <= 0 || nanoCpus <= 0) {
+        if (memoryBytes <= 0 || nanoCpus <= 0 || diskBytes <= 0) {
             throw new IllegalArgumentException(
                     "a run unit needs real limits; unlimited is not a limit (memory=" + memoryBytes
-                            + ", nanoCpus=" + nanoCpus + ")");
+                            + ", nanoCpus=" + nanoCpus + ", disk=" + diskBytes + ")");
         }
         if (runId.isBlank()) {
             // Every container and volume is labelled with it, so a blank one makes a unit
