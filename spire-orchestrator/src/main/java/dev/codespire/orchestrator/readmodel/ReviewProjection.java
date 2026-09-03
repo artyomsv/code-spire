@@ -1811,8 +1811,9 @@ public class ReviewProjection {
         }
         String sql = """
                 INSERT INTO llm_charge (id, subject_id, subject_kind, capability, call_ref, kind, model,
-                        pricing_mode, token_type, tokens, rate_millicents_per_million, cost_millicents)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        pricing_mode, token_type, tokens, rate_millicents_per_million, cost_millicents,
+                        credential_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (call_ref, token_type) DO NOTHING
                 """;
         try (Connection c = dataSource.getConnection()) {
@@ -1876,6 +1877,12 @@ public class ReviewProjection {
         ps.setInt(10, line.tokens());
         setNullableLong(ps, 11, line.rateMillicentsPerMillion());
         setNullableLong(ps, 12, line.costMillicents());
+        // Named rather than left to the column default, for the reason `capability` had to be:
+        // a column omitted from the INSERT takes its default silently, and a NULL here is
+        // indistinguishable from a run whose key nobody recorded. Null IS the right value for a
+        // review call and for a run dispatched before the pool existed -- both genuinely have no
+        // pool member -- so the column stays nullable and the caller supplies the fact.
+        ps.setString(13, call.credentialRef());
     }
 
     /**

@@ -48,10 +48,24 @@ class RunChargesTest {
     /** Answers the model a run was dispatched with, the way factory_run does. */
     private static final class StubRuns extends FactoryRunProjection {
         String model = "TEST-model";
+        java.util.UUID credential;
 
         @Override
         public Optional<String> modelOf(String runId) {
             return Optional.ofNullable(model);
+        }
+
+        /**
+         * Overridden deliberately rather than left to the parent.
+         *
+         * <p>The FIFTH time this repository has hit the same trap: an un-overridden method on a
+         * subclass fake opens a real database connection from a plain unit test, and the failure
+         * arrives as the swallowed catch in the class under test rather than as anything naming
+         * the fake. Every method RunCharges reaches has to be answered here, on purpose.
+         */
+        @Override
+        public Optional<java.util.UUID> harnessCredentialOf(String runId) {
+            return Optional.ofNullable(credential);
         }
     }
 

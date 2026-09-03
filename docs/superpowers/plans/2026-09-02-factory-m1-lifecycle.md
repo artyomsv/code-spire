@@ -377,7 +377,8 @@ an ambiguous outcome fails closed into `dispatch_uncertain`, which an operator r
 
 **FR-F12.** Closes `techdebt/spire-orchestrator/3-3-a-run-defaults-to-the-reviewers-own-model-key.md`.
 
-**Files:** `V49__harness_credential.sql` (orchestrator, encrypted secrets like every registry),
+**Files:** `V52__harness_credential.sql` (the plan said `V49`; that number was taken, as it was
+for Task 9) — orchestrator, encrypted secrets like every registry,
 new `HarnessCredentialPool.java`, `HarnessCredentialResource.java`, `RunAttentionRows`, settings UI.
 
 **Test scenarios**
@@ -451,7 +452,7 @@ four-lens `/code-review` whose findings are fixed before the next task starts.
 - [x] Task 7 — `cs.run-control` and a cancel that cancels
 - [x] Task 8 — steer, where the harness declares it
 - [x] Task 9 — idempotent dispatch, ambiguity failing closed
-- [ ] Task 10 — the credential pool with rotation
+- [x] Task 10 — the credential pool with rotation
 - [ ] Task 11 — the enterprise image environment
 - [ ] Task 12 — `spire agent-image verify`
 

@@ -227,7 +227,7 @@ class LlmChargeProjectionIT {
         String runId = "run::github:TEST-acme/app:row-" + java.util.UUID.randomUUID() + ":1";
 
         projection.recordCharges(ChargeCall.forRun(runId, "CANARY-RUN-" + runId, "TEST-MODEL",
-                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L))));
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L)), null));
 
         assertEquals(List.of("RUN", "BUILD", "BUILD"), rowFacts(runId),
                 "subject_kind, capability and kind must all say this was a run -- money attributed"

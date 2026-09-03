@@ -109,6 +109,9 @@ public class RunResource {
     LlmProviderRegistry llmProviders;
 
     @Inject
+    HarnessCredentialPool pool;
+
+    @Inject
     SpendGate spendGate;
 
     @Inject
@@ -118,8 +121,11 @@ public class RunResource {
     RunCredentials runCredentials;
 
     /**
-     * @param llmProviderId the registered LLM provider whose key the harness runs with; blank means
-     *                      the deployment's default. The key itself never travels in a request.
+     * @param llmProviderId no longer accepted, and refused rather than ignored. The harness key now
+     *                      comes from the rotating pool; a request that pinned one would defeat the
+     *                      rotation, and honouring it silently would be worse. Kept on the record so
+     *                      an existing caller gets a 400 saying what changed, rather than a run
+     *                      dispatched with a credential it did not choose.
      */
     public record DispatchRequest(String workspace, String slug, String providerType, String baseBranch,
                                   String baseCommit, String prompt, String harness, String model,
@@ -131,7 +137,8 @@ public class RunResource {
     public Response dispatch(DispatchRequest req) {
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(req, config);
         ScmProvider account = machineAccount(in);
-        LlmProviderConfig llm = harnessCredentialSource(req.llmProviderId(), in.harness());
+        refusePinnedProvider(req.llmProviderId());
+        HarnessCredentialPool.PoolMember credential = harnessCredential(in.harness());
         refuseAnUnpriceableModel(in.model());
         refuseOverTheSpendCap();
 
@@ -145,14 +152,14 @@ public class RunResource {
                 in.baseBranch(), in.baseCommit(), branch, in.prompt(), in.harness(), in.model(), in.agentImage(),
                 List.of(), config.wallClockSeconds(),
                 runCredentials.packScm(runId, account.botUsername(), account.secret()),
-                runCredentials.packHarness(runId, llm.apiKey()));
+                runCredentials.packHarness(runId, credential.apiKey()));
 
         // Recorded BEFORE dispatch, so a run can never exist on the bus without a row. A retried
         // request for a run that failed to dispatch re-arms it; any other existing row is a run
         // that is queued, running or already finished, and dispatching over it would be dropped by
         // the worker's claim as a redelivery — a 201 for a run that never runs. So: 409, naming it.
         if (!projection.queued(new FactoryRunProjection.QueuedRun(runId, in.harness(), in.model(),
-                in.baseBranch(), in.baseCommit(), branch, account.botUsername()))) {
+                in.baseBranch(), in.baseCommit(), branch, account.botUsername(), credential.id()))) {
             throw conflict(alreadyExists(runId));
         }
         dispatch(runId, command);
@@ -343,22 +350,56 @@ public class RunResource {
      * container that fails at its first model call. Whether the key suits the arm (an OpenAI key
      * for codex) is the operator's to know at M0; the message says so.
      */
-    private LlmProviderConfig harnessCredentialSource(String llmProviderId, String harness) {
-        Optional<LlmProviderConfig> found;
-        if (llmProviderId == null || llmProviderId.isBlank()) {
-            found = llmProviders.resolveDefault();
-        } else {
-            UUID id;
-            try {
-                id = UUID.fromString(llmProviderId);
-            } catch (IllegalArgumentException e) {
-                throw DispatchRequestParser.badRequest("llmProviderId must be a UUID");
-            }
-            found = llmProviders.resolveById(id);
+    /**
+     * The key this run calls the model with, taken from the pool and never from the reviewer.
+     *
+     * <p>This used to fall back to the deployment's DEFAULT LLM provider — the same key the review
+     * pipeline uses. That key then went into a container running an untrusted model on an untrusted
+     * work item at full shell access, where a prompt-injected agent can read its own environment. One
+     * exfiltration disabled reviews and runs together, and the resulting spend spike was
+     * indistinguishable in the ledger from legitimate factory use.
+     *
+     * <p>So there is no fallback. An unconfigured pool is a refusal naming what to configure, which is
+     * the same call {@link #machineAccount} already makes for the push identity: the factory never
+     * borrows the reviewer's identity, in either direction.
+     *
+     * <p>Each refusal says which of the three states the pool is in, because they need three
+     * different actions — wait, replace a key, or configure one at all.
+     */
+    private HarnessCredentialPool.PoolMember harnessCredential(String harness) {
+        return switch (pool.select()) {
+            case HarnessCredentialPool.Selection.Chosen chosen -> chosen.member();
+            case HarnessCredentialPool.Selection.Resting resting -> throw conflict(
+                    "Every harness credential is rate limited. Capacity returns at " + resting.capacityReturnsAt()
+                            + "; the pool recovers on its own, so retry then or add another credential "
+                            + "under Settings -> Harness credentials.");
+            case HarnessCredentialPool.Selection.AllRejected rejected -> throw conflict(
+                    "All " + rejected.count() + " harness credential(s) were refused by their provider. "
+                            + "Nothing recovers on its own: rotating onto a refused key spends a request "
+                            + "per run to rediscover it is dead. Replace the keys, or clear one you have "
+                            + "fixed, under Settings -> Harness credentials.");
+            case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(
+                    "No harness credential is configured, so there is no key for the '" + harness
+                            + "' agent to call the model with. Add one under Settings -> Harness "
+                            + "credentials. The factory deliberately does NOT borrow the reviewer's key: "
+                            + "it goes into a sandbox that runs an untrusted work item at full access.");
+        };
+    }
+
+    /**
+     * The request no longer chooses the key, so a request that tries to is refused rather than
+     * quietly overruled.
+     *
+     * <p>{@code llmProviderId} named an LLM provider whose key the harness would run with. The pool
+     * rotates now, and honouring a pin would defeat the rotation that exists to survive exhaustion.
+     * Ignoring the field silently would be worse: the caller would believe they had pinned a key.
+     */
+    private static void refusePinnedProvider(String llmProviderId) {
+        if (llmProviderId != null && !llmProviderId.isBlank()) {
+            throw DispatchRequestParser.badRequest("llmProviderId is no longer accepted: the harness "
+                    + "credential comes from the rotating pool under Settings -> Harness credentials, "
+                    + "never from an LLM provider the reviewer also uses.");
         }
-        return found.orElseThrow(() -> conflict("No LLM provider supplies the harness credential: set a "
-                + "default LLM provider under Settings -> LLM, or pass llmProviderId. Its key must be "
-                + "one the '" + harness + "' harness accepts."));
     }
 
     /**

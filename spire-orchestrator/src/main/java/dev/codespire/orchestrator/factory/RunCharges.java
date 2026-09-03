@@ -99,7 +99,11 @@ public class RunCharges {
             // produce exactly the redelivery loop the comment below says this catch prevents.
             ModelUsage usage = RunTokenUsage.of(result, model, maxReportedTokens);
             List<ChargeLine> lines = pricer.priceCall(model, usage);
-            ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model, lines));
+            // Which key paid, read from the run's own row like the model beside it. Empty for a run
+            // dispatched before the pool existed; the column is nullable for exactly that.
+            String credentialRef = runs.harnessCredentialOf(runId).map(java.util.UUID::toString).orElse(null);
+            ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model,
+                    lines, credentialRef));
         } catch (RuntimeException e) {
             // The projection has already written this run's terminal status by the time we get here.
             // Throwing would dead-letter the result and replay it, re-applying the projection — so a

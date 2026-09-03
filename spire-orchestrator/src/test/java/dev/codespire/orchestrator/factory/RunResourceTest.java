@@ -99,8 +99,26 @@ class RunResourceTest {
                 "TEST-harness-key", MODEL, null, null, true, true)).id());
     }
 
+    /**
+     * A pool member, because a run no longer borrows the reviewer's key and there is no fallback.
+     *
+     * <p>Added through the pool so the key is Tink-encrypted the way a real one is: a raw INSERT of
+     * a plaintext key does not read back, because selection decrypts.
+     */
+    private void aHarnessCredential() {
+        // Deliberately NOT cleaned between tests: a member a run row points at cannot be deleted,
+        // and that FK is the schema keeping a finished run@Qs attribution from disappearing with the
+        // key. Each call adds its own uniquely-labelled member instead, which also means the pool
+        // grows across this suite and the rotation is exercised rather than assumed.
+        pool.add("TEST-pool-" + UUID.randomUUID(), "openai", "https://api.openai.com", "TEST-agent-key");
+    }
+
+    @Inject
+    HarnessCredentialPool pool;
+
     private String workspaceWithFactoryAccount() {
         defaultLlmProvider();
+        aHarnessCredential();
         String workspace = "TEST-ws-" + UUID.randomUUID().toString().substring(0, 8);
         providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "factory-bot", null, "FACTORY"));
@@ -111,7 +129,7 @@ class RunResourceTest {
     private String registeredRun() {
         String runId = "run::github:TEST-acme/app:transcript-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
-                "abc1234", "spire/x", "spire-bot"));
+                "abc1234", "spire/x", "spire-bot", null));
         return runId;
     }
 
@@ -336,35 +354,60 @@ class RunResourceTest {
                 .then().statusCode(404);
     }
 
+    /**
+     * The harness key comes from the pool, and there is no fallback to the reviewer's (FR-F12).
+     *
+     * <p>This replaces a test asserting the opposite rule. A run used to take the deployment's
+     * DEFAULT LLM provider key when none was named — the same key the review pipeline calls the
+     * model with — and hand it to a container running an untrusted model on an untrusted work item
+     * at full shell access, where a prompt-injected agent can read its own environment. One
+     * exfiltration disabled reviews and runs together.
+     *
+     * <p>So an empty pool is a refusal naming what to configure, which is the same call the push
+     * identity already makes: the factory never borrows the reviewer's identity, in either
+     * direction.
+     */
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
-    void theHarnessCredentialComesFromTheLlmRegistryNeverTheRequest() {
-        // No default provider: refused, naming what to configure. A named provider: accepted. The
-        // key itself is never in the body — the registry is where operator keys live, encrypted.
+    void theHarnessCredentialComesFromThePoolNeverTheReviewersKey() {
         String workspace = workspaceWithFactoryAccount();
         // Scoped to this suite's own fixtures: the database is shared with every other suite, and
-        // an unqualified DELETE here decided their outcomes by test ordering.
-        sql("DELETE FROM llm_provider WHERE name LIKE 'TEST-run-%'");
-        sql("UPDATE llm_provider SET is_default = FALSE WHERE name LIKE 'TEST-%'");
+        // an unqualified UPDATE here decided their outcomes by test ordering. Members are disabled
+        // rather than deleted, because a run row referencing one holds it by foreign key -- which
+        // is the schema keeping a finished run's attribution from vanishing with the key.
+        sql("UPDATE harness_credential SET enabled = FALSE WHERE label LIKE 'TEST-pool-%'");
+
+        // A perfectly good default LLM provider exists -- and is deliberately NOT used.
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
                 .then().statusCode(409)
-                .body(containsString("LLM provider"));
+                .body(containsString("harness credential"))
+                .body(containsString("reviewer"));
 
-        UUID id = defaultLlmProvider();
-        sql("UPDATE llm_provider SET is_default = false WHERE id = '" + id + "'");
+        aHarnessCredential();
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
-                .then().statusCode(409);
+                .then().statusCode(201);
+    }
+
+    /**
+     * A request that tries to pin the key is refused rather than quietly overruled.
+     *
+     * <p>{@code llmProviderId} used to choose the credential. The pool rotates now, so honouring a
+     * pin would defeat the rotation that exists to survive exhaustion — and ignoring the field
+     * silently would leave the caller believing they had pinned a key.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRequestCannotPinTheHarnessCredential() {
+        String workspace = workspaceWithFactoryAccount();
+        UUID id = defaultLlmProvider();
+
         given().contentType("application/json")
                 .body(body(workspace).replace("\"harness\"", "\"llmProviderId\":\"" + id + "\",\"harness\""))
                 .when().post("/api/runs")
-                .then().statusCode(201);
-
-        given().contentType("application/json")
-                .body(body(workspace).replace("\"harness\"", "\"llmProviderId\":\"not-a-uuid\",\"harness\""))
-                .when().post("/api/runs")
-                .then().statusCode(400);
+                .then().statusCode(400)
+                .body(containsString("no longer accepted"));
     }
 
     @Test

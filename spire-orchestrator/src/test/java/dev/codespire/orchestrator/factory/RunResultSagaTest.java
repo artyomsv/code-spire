@@ -44,6 +44,15 @@ class RunResultSagaTest {
         // fake opens a real database connection from a plain unit test -- a trap this repository
         // has hit four times in one milestone.
         saga.charges = charges;
+        // Same reason, and the same trap arriving again with a new collaborator: RunCredentialFeedback
+        // reads the run's row to find which pool member to mark, so leaving it null is an NPE and
+        // leaving it real is a database call from a unit test.
+        saga.credentials = new RunCredentialFeedback() {
+            @Override
+            public void reactTo(RunResult result) {
+                // nothing: what this suite asserts is the saga's ordering, not the pool's health
+            }
+        };
         return saga;
     }
 

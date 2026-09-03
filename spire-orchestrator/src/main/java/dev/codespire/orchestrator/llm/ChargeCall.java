@@ -22,7 +22,8 @@ import java.util.Objects;
  *                    lists verbatim
  */
 public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapability capability,
-                         String callRef, ChargeKind kind, String model, List<ChargeLine> lines) {
+                         String callRef, ChargeKind kind, String model, List<ChargeLine> lines,
+                         String credentialRef) {
 
     public ChargeCall {
         Objects.requireNonNull(subjectId, "subjectId");
@@ -48,12 +49,22 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
     public static ChargeCall forReview(String reviewId, String callRef, ChargeKind kind,
                                        String model, List<ChargeLine> lines) {
         return new ChargeCall(reviewId, ChargeSubject.REVIEW, ChargeCapability.REVIEW,
-                callRef, kind, model, lines);
+                callRef, kind, model, lines, null);
     }
 
-    /** A factory run's spend: the build capability, against a runId. */
-    public static ChargeCall forRun(String runId, String callRef, String model, List<ChargeLine> lines) {
+    /**
+     * A factory run's spend: the build capability, against a runId.
+     *
+     * <p>V42 added {@code llm_charge.credential_ref} for exactly this and nothing wrote it, because
+     * until the credential pool there was no per-run key identity to write. On an UNMETERED
+     * deployment every run charge is an asserted zero, so "which key spent this" was unanswerable by
+     * any other route — the money column cannot distinguish two keys that both cost nothing.
+     *
+     * @param credentialRef which pool member paid, or null when the run names none
+     */
+    public static ChargeCall forRun(String runId, String callRef, String model, List<ChargeLine> lines,
+                                    String credentialRef) {
         return new ChargeCall(runId, ChargeSubject.RUN, ChargeCapability.BUILD,
-                callRef, ChargeKind.BUILD, model, lines);
+                callRef, ChargeKind.BUILD, model, lines, credentialRef);
     }
 }

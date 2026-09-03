@@ -60,9 +60,77 @@ public class RunAttentionRows {
              ORDER BY started_at DESC
             """ + " LIMIT " + (MAX_ROWS + 1);
 
+    static final String POOL_CODE = "HARNESS_POOL_EXHAUSTED";
+
+    /**
+     * The pool's state, as one row rather than one per member (FR-F12).
+     *
+     * <p>Unlike the two above, this is not a fact about a run — it is a fact about the deployment,
+     * and its consequence is that NO run can start. So it counts rather than lists, and it carries no
+     * acknowledgement: a member recovering or being replaced is what removes it, which is the panel's
+     * contract met by the cause going away rather than by an operator silencing it.
+     *
+     * <p>Reports both numbers because they need different actions. A rate limit lifts on its own; a
+     * rejection needs a key replaced. A single "exhausted" count would tell an operator to wait when
+     * the truth is that nothing will ever recover.
+     */
+    private static final String POOL_SQL = """
+            SELECT count(*) FILTER (WHERE enabled)                                   AS members,
+                   count(*) FILTER (WHERE enabled AND rejected_at IS NOT NULL)       AS rejected,
+                   count(*) FILTER (WHERE enabled AND rejected_at IS NULL
+                                      AND rate_limited_until > now())                AS resting,
+                   min(rate_limited_until) FILTER (WHERE enabled AND rejected_at IS NULL
+                                      AND rate_limited_until > now())                AS returns_at
+              FROM harness_credential
+            """;
+
     void collect(Connection c, List<AttentionView> rows) throws SQLException {
         collectPushGateRefusals(c, rows);
         collectUncertainDispatches(c, rows);
+        collectPoolExhaustion(c, rows);
+    }
+
+    /**
+     * Raised only when NOTHING is selectable, not when the pool is merely under strain.
+     *
+     * <p>A pool with one rested member and three rejected ones still starts every run, so a row
+     * there would be a warning about a system that is working — the wallpaper this panel excludes.
+     * The condition is the one an operator can act on: no run can start right now.
+     */
+    private void collectPoolExhaustion(Connection c, List<AttentionView> rows) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(POOL_SQL); ResultSet rs = ps.executeQuery()) {
+            if (!rs.next()) {
+                return;
+            }
+            int members = rs.getInt("members");
+            int rejected = rs.getInt("rejected");
+            int resting = rs.getInt("resting");
+            if (members == 0 || rejected + resting < members) {
+                // No pool at all is not this row's business: a deployment that never runs the factory
+                // should not be nagged about a feature it does not use, and the dispatch refusal
+                // already names what to configure to whoever actually tried.
+                return;
+            }
+            rows.add(new AttentionView(POOL_CODE, Severity.BLOCKING, null, poolMessage(rs, rejected, resting), "/"));
+        }
+    }
+
+    /**
+     * BLOCKING rather than WARNING, on the same reasoning the spend cap's row uses: severity
+     * describes impact, not fault, and while this holds every factory run is refused.
+     */
+    private static String poolMessage(ResultSet rs, int rejected, int resting) throws SQLException {
+        if (resting == 0) {
+            return "All " + rejected + " harness credential(s) were refused by their provider, so no "
+                    + "factory run can start. Nothing recovers on its own — rotating onto a refused key "
+                    + "spends a request per run to rediscover it is dead. Replace the keys, or clear one "
+                    + "you have fixed.";
+        }
+        String returnsAt = String.valueOf(rs.getTimestamp("returns_at").toInstant());
+        String rejectedHalf = rejected == 0 ? ""
+                : " " + rejected + " of them were refused outright and will not come back without a new key.";
+        return "Every harness credential is exhausted, so no factory run can start. The earliest rate "
+                + "limit lifts at " + returnsAt + "." + rejectedHalf;
     }
 
     private void collectPushGateRefusals(Connection c, List<AttentionView> rows) throws SQLException {

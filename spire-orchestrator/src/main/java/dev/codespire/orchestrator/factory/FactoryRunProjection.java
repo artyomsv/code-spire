@@ -14,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * The {@code factory_run} read model.
@@ -120,6 +121,28 @@ public class FactoryRunProjection {
     }
 
     /**
+     * Which pool member this run was dispatched with, or empty when the row names none.
+     *
+     * <p>Empty for a run dispatched before the pool existed, and for a row that cannot be read.
+     * The caller must treat both the same way and mark nothing: guessing a member here would take
+     * a working key out of rotation on the strength of a run that never used it.
+     */
+    public Optional<UUID> harnessCredentialOf(String runId) {
+        String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next()
+                        ? Optional.ofNullable(rs.getObject("harness_credential_id", UUID.class))
+                        : Optional.empty();
+            }
+        } catch (SQLException e) {
+            LOG.errorf(e, "run %s: its harness credential could not be read", runId);
+            return Optional.empty();
+        }
+    }
+
+    /**
      * What the read model knows about one run.
      *
      * @param unitId the sandbox's own id, null until the worker creates one. The route to a unit
@@ -133,9 +156,19 @@ public class FactoryRunProjection {
     @Inject
     DataSource dataSource;
 
-    /** What a queued row is made of — the dispatch's own inputs, before any result. */
+    /**
+     * What a queued row is made of — the dispatch's own inputs, before any result.
+     *
+     * @param harnessCredentialId which pool member this run was dispatched with. Recorded so a
+     *                            credential failure can mark the right member dead, and so the run's
+     *                            charges are attributable to the key that paid for them.
+     *                            Deliberately NOT part of the re-arm comparison: a retry may
+     *                            legitimately draw a different member, which is the rotation working
+     *                            rather than a different request.
+     */
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
-                            String baseCommit, String branch, String pushedAs) {
+                            String baseCommit, String branch, String pushedAs,
+                            UUID harnessCredentialId) {
     }
 
     /**
@@ -193,10 +226,15 @@ public class FactoryRunProjection {
         RunIds.Parsed parsed = RunIds.parse(runId);
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
-                                         harness, model, base_branch, base_commit, branch, pushed_as)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         harness, model, base_branch, base_commit, branch, pushed_as,
+                                         harness_credential_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
-                   SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL, ended_at = NULL
+                   -- The credential is SET but never compared below: a retry may legitimately draw
+                   -- a different pool member, and comparing it would make rotation look like a
+                   -- differing request and refuse the re-arm.
+                   SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL,
+                       ended_at = NULL, harness_credential_id = EXCLUDED.harness_credential_id
                  WHERE factory_run.status = ? AND factory_run.failure_cause = ?
                    AND factory_run.harness = EXCLUDED.harness AND factory_run.model = EXCLUDED.model
                    AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit
@@ -217,8 +255,9 @@ public class FactoryRunProjection {
             ps.setString(11, baseCommit);
             ps.setString(12, branch);
             ps.setString(13, pushedAs);
-            ps.setString(14, FAILED);
-            ps.setString(15, DISPATCH_FAILED);
+            ps.setObject(14, row.harnessCredentialId());
+            ps.setString(15, FAILED);
+            ps.setString(16, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             return ps.executeUpdate() == 1;

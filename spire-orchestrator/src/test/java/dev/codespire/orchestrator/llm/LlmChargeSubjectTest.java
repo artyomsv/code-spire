@@ -120,7 +120,7 @@ class LlmChargeSubjectTest {
         String sharedId = "run::github:TEST-acme/app:shared-" + UUID.randomUUID() + ":1";
 
         projection.recordCharges(ChargeCall.forRun(sharedId, "CANARY-RUN-" + sharedId, "TEST-MODEL",
-                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L))));
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L)), null));
         projection.recordCharges(ChargeCall.forReview(sharedId, "CANARY-REVIEW-" + sharedId,
                 ChargeKind.REVIEW, "TEST-MODEL",
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 1_000L))));
@@ -136,7 +136,7 @@ class LlmChargeSubjectTest {
         // simply not been written — which is how a filter test becomes a test of nothing.
         String sharedId = "run::github:TEST-acme/app:shared-" + UUID.randomUUID() + ":1";
         projection.recordCharges(ChargeCall.forRun(sharedId, "CANARY-RUN-" + sharedId, "TEST-MODEL",
-                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L))));
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L)), null));
         projection.recordCharges(ChargeCall.forReview(sharedId, "CANARY-REVIEW-" + sharedId,
                 ChargeKind.REVIEW, "TEST-MODEL",
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 1_000L))));
