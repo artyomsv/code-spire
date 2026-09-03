@@ -23,8 +23,8 @@ dependencies {
     // The same client the reference runtime arm uses, at the same version: a
     // checker that talked to the daemon differently from the thing it verifies
     // for would be checking its own beliefs.
-    implementation("com.github.docker-java:docker-java-core:3.5.1")
-    implementation("com.github.docker-java:docker-java-transport-httpclient5:3.5.1")
+    implementation("com.github.docker-java:docker-java-core:3.7.1")
+    implementation("com.github.docker-java:docker-java-transport-httpclient5:3.7.1")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
