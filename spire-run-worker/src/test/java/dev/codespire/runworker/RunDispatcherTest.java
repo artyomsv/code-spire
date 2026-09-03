@@ -4,7 +4,15 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.runtime.Finalization;
+import dev.codespire.runtime.LogChannel;
+import dev.codespire.runtime.RunHandle;
+import dev.codespire.runtime.RunRuntime;
+import dev.codespire.runtime.RunUnitSpec;
+import dev.codespire.runtime.RuntimeCapabilities;
+import dev.codespire.runtime.RuntimeType;
 import io.smallrye.reactive.messaging.kafka.Record;
+import java.time.Duration;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.junit.jupiter.api.Test;
@@ -16,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -66,10 +75,28 @@ class RunDispatcherTest {
             return taken.add(runId + "/" + slot);
         }
 
+        /** Set to make the read fail, for the path where the claim table is unreadable. */
+        RuntimeException readFailsWith;
+
+        /**
+         * Written by the next {@code taken} call, once, to stand in for a cancel that arrives
+         * WHILE {@code create} is blocked. Nothing else can express that ordering: the claim has
+         * to appear between the dispatcher's two reads.
+         */
+        String appearAfterFirstRead;
+
         @Override
         public boolean taken(String runId, String slot) {
             order.add("read-" + slot);
-            return taken.contains(runId + "/" + slot);
+            if (readFailsWith != null) {
+                throw readFailsWith;
+            }
+            boolean present = taken.contains(runId + "/" + slot);
+            if (appearAfterFirstRead != null) {
+                taken.add(appearAfterFirstRead);
+                appearAfterFirstRead = null;
+            }
+            return present;
         }
 
         @Override
@@ -194,6 +221,69 @@ class RunDispatcherTest {
     private final List<String> order = new ArrayList<>();
     private final FakeClaims claims = new FakeClaims(order);
     private final FakeLauncher launcher = new FakeLauncher(order);
+
+    /**
+     * Records the one runtime call the dispatcher is allowed to make, and refuses the rest.
+     *
+     * <p>Placement, salvage and teardown belong to the launcher. The dispatcher reaches the
+     * runtime for exactly one reason — stopping a unit cancelled while it was being created — so
+     * every other method throws rather than offering a no-op that would look like coverage.
+     */
+    static final class FakeRuntime implements RunRuntime {
+        final List<RunHandle> cancelled = new ArrayList<>();
+
+        @Override
+        public void cancel(RunHandle handle) {
+            cancelled.add(handle);
+        }
+
+        @Override
+        public RuntimeType type() {
+            return RuntimeType.DOCKER;
+        }
+
+        @Override
+        public RuntimeCapabilities capabilities() {
+            return new RuntimeCapabilities(false, true, false, true, true, false);
+        }
+
+        @Override
+        public RunHandle create(RunUnitSpec spec) {
+            throw new UnsupportedOperationException("the launcher creates units, not the dispatcher");
+        }
+
+        @Override
+        public void attach(RunHandle handle, LogChannel channel, java.util.function.Consumer<String> lines) {
+            throw new UnsupportedOperationException("the launcher reads logs, not the dispatcher");
+        }
+
+        @Override
+        public void steer(RunHandle handle, String instruction) {
+            throw new UnsupportedOperationException("steering rides the control listener");
+        }
+
+        @Override
+        public Finalization salvage(RunHandle handle) {
+            throw new UnsupportedOperationException("the launcher salvages, not the dispatcher");
+        }
+
+        @Override
+        public void destroy(RunHandle handle) {
+            throw new UnsupportedOperationException("cancel is not delete");
+        }
+
+        @Override
+        public List<RunHandle> discoverUnits() {
+            throw new UnsupportedOperationException("discovery is the watchdog's");
+        }
+
+        @Override
+        public Duration drainWindow() {
+            throw new UnsupportedOperationException("the ack budget reads this, not the dispatcher");
+        }
+    }
+
+    private final FakeRuntime runtime = new FakeRuntime();
     private final FakeEmitter results = new FakeEmitter();
     private final FakeLeases leases = new FakeLeases(order);
     private final RunRegistry registry = new RunRegistry();
@@ -250,6 +340,7 @@ class RunDispatcherTest {
     private RunDispatcher dispatcher() {
         RunDispatcher d = new RunDispatcher();
         d.claims = claims;
+        d.runtime = runtime;
         d.launcher = launcher;
         d.results = results;
         d.leases = leases;
@@ -277,14 +368,19 @@ class RunDispatcherTest {
         Delivery delivery = new Delivery(order);
         dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
 
-        assertEquals(List.of("claim", "ack", "read-cancel", "lease", "launch", "unit", "release"), order,
+        assertEquals(List.of("claim", "ack", "read-cancel", "lease", "launch", "unit", "read-cancel",
+                        "release"), order,
                 "the claim goes first (a crash between them must not lose the command), the ack "
                         + "before the run (an hour-long run must not age the record), the CANCEL "
                         + "check before anything is created -- a run stopped while its record was "
                         + "still on the topic must not get a sandbox, a lease or a credential -- "
-                        + "and then the LEASE before the unit can exist: a crash there leaves a row "
-                        + "the watchdog can reconcile, where the reverse leaves a sandbox nothing "
-                        + "knows about");
+                        + "then the LEASE before the unit can exist (a crash there leaves a row the "
+                        + "watchdog can reconcile, where the reverse leaves a sandbox nothing knows "
+                        + "about), and the cancel read AGAIN once the unit is registered. TWO reads "
+                        + "is the whole fix: create() blocks on a pull and a clone, so a cancel "
+                        + "arriving between them found an empty registry, wrote its claim, and "
+                        + "nothing looked at it a second time. Deleting either read reopens a "
+                        + "window, so both positions are pinned here rather than only the first.");
         assertTrue(delivery.acked);
         assertEquals(List.of("RunStarted", "RunFinished"),
                 results.sent.stream().map(r -> r.getClass().getSimpleName()).toList());
@@ -577,19 +673,74 @@ class RunDispatcherTest {
     /**
      * The cancel claim is READ, never consumed.
      *
-     * <p>Claiming it would let a redelivery of the same command start the run the operator
-     * cancelled: the first delivery would take the slot, the second would find it free. The command
-     * channel redelivers on exactly the shapes this worker is built to survive, so "it worked once"
-     * is not enough.
+     * <p><b>An earlier version of this test could not fail for the property it names.</b> It
+     * delivered the same command twice and asserted the launcher never ran — but the second
+     * delivery never reaches the cancel check at all, because {@code claim(EXECUTE_SLOT)} returns
+     * false and the handler returns as a redelivery. Swapping {@code taken} for {@code claim} — the
+     * exact mutation it existed to catch — left it green.
+     *
+     * <p>So the property is asserted where it lives: the slot is still present after the read, and
+     * exactly one slot was ever claimed. Consuming it would let a redelivery that re-arms the
+     * execute slot start the run the operator stopped.
      */
     @Test
-    void aRedeliveredCommandIsStillRefusedByTheSameCancel() {
-        claims.taken.add(EXECUTE.runId() + "/" + RunDispatcher.CANCEL_SLOT);
-        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+    void theCancelClaimSurvivesTheReadThatFoundIt() {
+        String cancel = EXECUTE.runId() + "/" + RunDispatcher.CANCEL_SLOT;
+        claims.taken.add(cancel);
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
-        assertEquals(0, launcher.launches,
-                "the second delivery must find the cancel still recorded, not consumed by the first");
+        assertTrue(claims.taken.contains(cancel),
+                "the cancel must outlive the read; a consumed slot is a cancel that stops exactly"
+                        + " one delivery of a command the broker may redeliver");
+        assertEquals(List.of(EXECUTE.runId() + "/" + RunDispatcher.EXECUTE_SLOT, cancel),
+                List.copyOf(claims.taken),
+                "only the execute slot may be CLAIMED; the cancel slot is read");
+    }
+
+    /**
+     * A cancel that arrives while {@code create} is blocked still stops the unit.
+     *
+     * <p><b>The window one read left open.</b> {@code create} blocks on an image pull and an init
+     * clone — ten and fifteen minutes on the Docker arm — and the registry a cancel normally
+     * reaches is populated only when it returns. A cancel in there found nothing registered, wrote
+     * the claim, and nothing read it again: the run spent its whole wall clock and the operator had
+     * a 202. One read had moved the defect, not removed it.
+     *
+     * <p>The fake makes the claim appear on the first read, which is the only way to express
+     * "arrived after the dispatcher looked and before the unit existed".
+     */
+    @Test
+    void aCancelArrivingWhileTheUnitIsBeingCreatedStopsIt() {
+        claims.appearAfterFirstRead = EXECUTE.runId() + "/" + RunDispatcher.CANCEL_SLOT;
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(1, launcher.launches, "the run had already started; this is not the queued case");
+        assertEquals(List.of(launcher.unitId),
+                runtime.cancelled.stream().map(RunHandle::providerRunId).toList(),
+                "the unit must be stopped once the cancel becomes visible, or the agent runs to its"
+                        + " wall clock after an operator stopped it");
+    }
+
+    /**
+     * An unreadable claim table ends the run terminally instead of silently.
+     *
+     * <p>The read fails CLOSED by throwing, which is the right direction. But it happens PAST the
+     * ack, where this class's own rule is that nothing may throw: the record is settled, the
+     * execute slot is claimed, and an escape leaves the run in `queued` for ever with every
+     * redelivery refused. The lease guard below it always had this shape; this read did not.
+     */
+    @Test
+    void anUnreadableClaimTableEndsTheRunRatherThanEscaping() {
+        claims.readFailsWith = new IllegalStateException("could not read the cancel claim");
+
+        Delivery delivery = new Delivery(order);
+        assertDoesNotThrow(() -> dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join());
+
+        assertEquals(0, launcher.launches, "a run whose cancel cannot be read must not start");
+        RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
+        assertEquals(RunFailureCause.WORKER_FAILED.name(), reported.cause(),
+                "a run that reports nothing is indistinguishable from one still working");
     }
 }

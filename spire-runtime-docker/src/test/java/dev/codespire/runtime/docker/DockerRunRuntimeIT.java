@@ -456,6 +456,10 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
      *
      * <p>The unit declares 64 MiB, so a 128 MiB write must fail. {@code dd} reports how much it
      * actually copied, so a bound that silently did nothing shows up as the full write succeeding.
+     *
+     * <p>Written as the AGENT, which is the only container this bound applies to: the publisher
+     * clones into {@code java.io.tmpdir}, so bounding its {@code /tmp} would fail a large
+     * repository after the model had already been paid. See {@code DockerRunRuntime.tmpFsFor}.
      */
     @Test
     void aWritePastTheDiskBoundFailsRatherThanReachingTheHost() {

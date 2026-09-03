@@ -134,27 +134,47 @@ class SandboxControlsTest {
     }
 
     /**
-     * {@code /tmp} is bounded on every container of the unit.
+     * The AGENT's {@code /tmp} is bounded.
      *
      * <p>Memory, CPU and process count were bounded and disk was not, so one
      * {@code fallocate -l 500G} from an agent at full shell access filled the daemon's disk and
      * took every concurrent run with it — and on a developer machine the databases beside it.
      *
      * <p>{@code /tmp} specifically because it is the one writable path every image has whatever it
-     * mounts. Bounding only the unit volumes would leave an agent free to write here instead,
-     * which makes the volume caps decoration.
+     * mounts. Bounding only the unit volumes would leave an agent free to write here instead.
      */
     @Test
-    void everyContainerGetsASizeBoundedTmp() {
+    void theAgentGetsASizeBoundedTmp() {
         RunUnitSpec spec = unit();
 
-        for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
+        Map<String, String> tmpFs = runtime.hostConfigFor(spec, spec.agent()).getTmpFs();
+        assertNotNull(tmpFs, "the agent has no tmpfs, so its /tmp is the daemon's disk");
+        assertEquals("rw,nosuid,nodev,size=" + DISK_BYTES, tmpFs.get("/tmp"),
+                "asserted whole, not by substring: size=671088640 contains size=67108864, so a "
+                        + "ten-fold budget error would satisfy a contains() check");
+    }
+
+    /**
+     * The init and publisher containers are deliberately NOT bounded, and this pins the reason.
+     *
+     * <p><b>Bounding all three was the first version, and it was a regression.</b> The publisher
+     * clones the repository into {@code java.io.tmpdir}, so a bound {@code /tmp} turns any
+     * repository larger than the budget into an {@code ENOSPC} at publish time — after the agent
+     * has been paid, with nothing delivered — where before it simply worked.
+     *
+     * <p>The threat model settles it: this is a containment control against untrusted model output
+     * at full shell access. Init and publisher run this project's own code and hold the credentials
+     * the agent is denied. Bounding them buys no containment and costs a working publish.
+     */
+    @Test
+    void theInitAndPublisherContainersAreNotTmpfsBounded() {
+        RunUnitSpec spec = unit();
+
+        for (ContainerSpec container : List.of(spec.init(), spec.publisher())) {
             Map<String, String> tmpFs = runtime.hostConfigFor(spec, container).getTmpFs();
-            assertNotNull(tmpFs, container.image() + " has no tmpfs, so /tmp is the daemon's disk");
-            String options = tmpFs.get("/tmp");
-            assertNotNull(options, "this container does not bound /tmp: " + tmpFs);
-            assertTrue(options.contains("size=" + DISK_BYTES),
-                    "/tmp is bounded by something other than the unit's declared budget: " + options);
+            assertTrue(tmpFs == null || !tmpFs.containsKey("/tmp"),
+                    "this container runs our own code and clones into java.io.tmpdir; bounding it "
+                            + "fails a large repository AFTER the model has been paid: " + tmpFs);
         }
     }
 
@@ -177,7 +197,7 @@ class SandboxControlsTest {
 
         HostConfig config = runtime.hostConfigFor(spec, spec.agent());
 
-        assertTrue(config.getTmpFs().get("/tmp").contains("size=" + unusualBudget),
+        assertEquals("rw,nosuid,nodev,size=" + unusualBudget, config.getTmpFs().get("/tmp"),
                 "the arm must spend the budget the spec declared: " + config.getTmpFs());
     }
 

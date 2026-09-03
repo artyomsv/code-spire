@@ -5,6 +5,7 @@ import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.runtime.RunHandle;
+import dev.codespire.runtime.RunRuntime;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.Record;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -43,18 +44,36 @@ public class RunDispatcher {
     static final String EXECUTE_SLOT = "execute";
 
     /**
+     * The transcript line a cancel writes, spelled the same as {@link RunControlListener}'s.
+     *
+     * <p>An operator reading a run that simply stopped cannot tell a deliberate stop from a fault,
+     * and the two places that can stop a run must not label it differently.
+     */
+    static final String CANCELLED_NOTE = "CANCELLED";
+
+    /**
      * Recorded by {@link RunControlListener} when a cancel arrives for a run no replica is
-     * executing yet, and read here before anything is created.
+     * executing yet, and read TWICE here — before anything is created, and again the moment the
+     * unit becomes addressable.
      *
      * <p><b>It is durable because the window it covers is.</b> The registry a cancel normally
-     * reaches is in memory and is only populated once {@code create} RETURNS — and create blocks
-     * on the init clone for up to fifteen minutes. Before that point a run may be queued on the
-     * topic, cloning, or dispatch-uncertain with its record unconsumed, and in every one of those
-     * the listener found nothing live, wrote a debug line, and the run then started anyway and
-     * spent its whole wall clock. The endpoint had already answered 202.
+     * reaches is in memory and is only populated once {@code create} RETURNS. Before that point a
+     * run may be queued on the topic, cloning, or dispatch-uncertain with its record unconsumed,
+     * and in every one of those the listener found nothing live, wrote a debug line, and the run
+     * then started anyway and spent its whole wall clock. The endpoint had already answered 202.
      *
-     * <p>Two prior reviews each closed the half they could see — one the executing case, one the
-     * uncertain one — and the gap was before either.
+     * <p><b>One read only MOVED the window; it takes two to close it.</b> {@code create} blocks on
+     * the image pull and the init clone — bounded at ten and fifteen minutes on the Docker arm —
+     * so a cancel arriving after the first read and before registration found an empty registry,
+     * wrote this claim, and nothing read it again. Up to twenty-five minutes in which a cancel was
+     * accepted and silently dropped: the exact defect this slot exists to remove, relocated rather
+     * than closed. The second read sits immediately after {@link RunRegistry#register}, and the
+     * pairing is what makes it airtight — the listener writes this claim only after finding the
+     * registry EMPTY, so whichever side wins the race, one of the two reads sees it. A cancel
+     * arriving after registration reaches the registry directly and needs no claim at all.
+     *
+     * <p>Three reviews each closed a different half of this one hole — the executing case, the
+     * dispatch-uncertain case, then the queued case — before anyone read the whole path.
      *
      * <p>READ, never claimed, by the dispatcher. Consuming it would let a redelivery of the same
      * command start the run the operator cancelled.
@@ -67,6 +86,14 @@ public class RunDispatcher {
 
     @Inject
     RunClaimStore claims;
+
+    /**
+     * Only to stop a unit cancelled while it was being created — see
+     * {@code stopIfCancelledWhileCreating}. Everything else about placement belongs to the
+     * launcher; this dispatcher does not create, salvage or destroy.
+     */
+    @Inject
+    RunRuntime runtime;
 
     @Inject
     RunLauncher launcher;
@@ -146,7 +173,24 @@ public class RunDispatcher {
         // Before ANY of it: the unit, the lease, the credentials, the money. A cancel that
         // arrived while this record was still on the topic is recorded in the claim table and
         // nowhere else, because no replica had the run in memory to stop.
-        if (claims.taken(execute.runId(), CANCEL_SLOT)) {
+        //
+        // GUARDED, because this is past the ack. RunClaimStore.taken fails closed by throwing,
+        // which is the right direction -- a database fault must not start a run somebody
+        // cancelled -- but an exception escaping HERE breaks this class's own rule that nothing
+        // after the ack may throw: the record is settled, the execute slot is claimed, and the run
+        // would sit in `queued` for ever with no terminal result, refusing every redelivery. The
+        // lease guard eleven lines below already had this shape; this one did not.
+        boolean cancelledBeforeStart;
+        try {
+            cancelledBeforeStart = claims.taken(execute.runId(), CANCEL_SLOT);
+        } catch (RuntimeException e) {
+            LOG.errorf("run %s: its cancel claim could not be read (%s); no unit is created",
+                    execute.runId(), e.getClass().getSimpleName());
+            emit(failures.of(execute, RunFailureCause.WORKER_FAILED.name(),
+                    "the run's cancel claim could not be read, so no sandbox was created"));
+            return DONE;
+        }
+        if (cancelledBeforeStart) {
             LOG.info("cancelled before it started; no unit is created");
             emit(failures.of(execute, RunFailureCause.CANCELLED.name(),
                     "cancelled before the run started, so no sandbox was created"));
@@ -244,8 +288,9 @@ public class RunDispatcher {
         @Override
         public void unitCreated(String unitId, RunNotes notes) {
             unitExists = true;
-            // Registered the instant the sandbox exists, so the window in which a cancel cannot
-            // reach the run is the container's creation and nothing more. The run's transcript is
+            // Registered the instant the sandbox exists. From here a cancel reaches the run through
+            // the registry like any other; before here it could only have been recorded as a claim,
+            // which is what stopIfCancelledWhileCreating reads below. The run's transcript is
             // registered with it, so a control action writes into the run's own numbered stream
             // rather than a second counter that would collide with the agent's.
             registry.register(runId, harness, new RunHandle(runId, unitId), notes);
@@ -257,6 +302,47 @@ public class RunDispatcher {
             // unit id exist. It used to carry the run id twice, so the one field meant to point an
             // operator at a preserved sandbox pointed at nothing.
             emit(new RunResult.RunStarted(runId, unitId));
+            stopIfCancelledWhileCreating(unitId, notes);
+        }
+
+        /**
+         * The second read of {@link #CANCEL_SLOT}, and the one that closes the window rather than
+         * moving it.
+         *
+         * <p>{@code create} blocks for as long as an image pull and an init clone take. A cancel
+         * arriving in there found an empty registry and wrote the claim, and the dispatcher's
+         * pre-create read had already happened. Reading again HERE — after registration, so the two
+         * orderings interleave safely — is what leaves no window.
+         *
+         * <p>Ordered after the lease and the started event on purpose. A unit stopped before its
+         * lease names it is a sandbox the watchdog cannot attribute, which is the state the lease
+         * ordering above exists to prevent; stopping a fully accounted-for unit costs one extra
+         * event and loses nothing.
+         *
+         * <p>Everything here is best-effort and swallowed, deliberately and twice over. The caller
+         * ({@code RunLauncher.announce}) already discards anything thrown from this callback, so a
+         * throw would be invisible rather than fatal; and a database fault at this instant must not
+         * cost a RUNNING unit its outcome. Failing to stop it degrades to the previous behaviour —
+         * the run finishes and reports honestly — which is why this is ERROR-logged rather than
+         * rethrown.
+         */
+        private void stopIfCancelledWhileCreating(String unitId, RunNotes notes) {
+            try {
+                if (!claims.taken(runId, CANCEL_SLOT)) {
+                    return;
+                }
+                LOG.warnf("run %s: cancelled while its unit was being created; stopping it now", runId);
+                // Through the registry, so the terminal result is relabelled CANCELLED instead of
+                // reporting the agent failure a killed process produces.
+                registry.cancel(runId);
+                notes.note(CANCELLED_NOTE,
+                        "stopped by an operator: cancelled while the sandbox was being created", false);
+                runtime.cancel(new RunHandle(runId, unitId));
+            } catch (RuntimeException e) {
+                LOG.errorf(e, "run %s: it could not be stopped after a cancel arrived during its"
+                                + " creation (%s); it continues until its wall clock",
+                        runId, e.getClass().getSimpleName());
+            }
         }
 
         @Override
