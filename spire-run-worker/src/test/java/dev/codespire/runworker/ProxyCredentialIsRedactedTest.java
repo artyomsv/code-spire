@@ -13,7 +13,6 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -98,10 +97,6 @@ class ProxyCredentialIsRedactedTest {
     }
 
     /**
-     * The value is percent-DECODED, because the URL carries {@code p%40ss} and the
-     * {@code Proxy-Authorization} header carries {@code p@ss}. The header is the text that leaks.
-     */
-    /**
      * A percent-encoded password yields BOTH spellings, because both appear and in different places.
      *
      * <p>This asserted only the DECODED form, on the reasoning that the header is the text that
@@ -121,7 +116,10 @@ class ProxyCredentialIsRedactedTest {
                         new SecretScrub.Credential("svc", "p%40ssw0rd-TEST"),
                         new SecretScrub.Credential("svc", "p@ssw0rd-TEST")),
                 found,
-                "as written first, because that is the environment variable every container carries");
+                "both spellings, and the ORDER here is incidental -- SecretScrub sorts every form "
+                        + "longest-first, so the list order changes no behaviour. It is pinned only "
+                        + "because an exact-list assertion is the one that catches a spelling going "
+                        + "missing in either direction");
     }
 
     /**
@@ -247,13 +245,25 @@ class ProxyCredentialIsRedactedTest {
         String cleaned = scrub.clean("HTTPS_PROXY=" + proxyUrl);
         assertFalse(cleaned.contains(asWritten),
                 "the raw spelling is what `printenv` prints into the transcript: " + cleaned);
+        assertTrue(cleaned.contains("proxy.acme.example"),
+                "the HOST must survive, or a scrub that redacted everything would pass this test "
+                        + "and leave an operator a failure that names nothing: " + cleaned);
     }
 
-    /** And the decoded form too — that is the one a Proxy-Authorization header carries. */
+    /**
+     * And the decoded form too — that is the one a Proxy-Authorization header carries.
+     *
+     * <p><b>{@code %2f}, not {@code %40}, and the difference is the whole test.</b> With
+     * {@code %40} this could not see a decode-only regression: {@code URLEncoder.encode("p@ss")}
+     * returns {@code p%40ss} — the operator's own spelling, because {@code 40} has no hex LETTER
+     * and so no case to differ on — so the DECODED credential's derived form reproduces the raw
+     * text by coincidence and the assertion below passes with the raw spelling never collected.
+     * Measured. {@code %2f} round-trips as {@code %2F} and the coincidence is gone.
+     */
     @Test
     void bothSpellingsOfOneProxyPasswordAreScrubbed() {
-        String asWritten = "p%40ss-TEST";
-        String decoded = "p@ss-TEST";
+        String asWritten = "p%2fss-TEST";
+        String decoded = "p/ss-TEST";
         String proxyUrl = "http://svc:" + asWritten + "@proxy.acme.example:3128";
 
         SecretScrub scrub = SecretScrub.of(configuredWith(null, proxyUrl).proxyCredentials());
@@ -261,5 +271,51 @@ class ProxyCredentialIsRedactedTest {
         String cleaned = scrub.clean("url " + proxyUrl + " header " + decoded);
         assertFalse(cleaned.contains(asWritten), cleaned);
         assertFalse(cleaned.contains(decoded), cleaned);
+    }
+
+    /**
+     * A bare {@code %} in the password does not throw, and is still scrubbed.
+     *
+     * <p>{@code URLDecoder} rejects a {@code %} that is not an escape, and {@code 100%secure} is a
+     * password an operator writes — {@code credentialIn}'s own javadoc already says a password
+     * "routinely contains characters URI rejects". The deleted startup refusal was the only caller
+     * of {@link EnterpriseEnvironmentConfig#proxyCredentials()}, so that throw used to happen at
+     * boot by accident.
+     *
+     * <p>Without this, the first caller is the run-launch path: the throw lands AFTER the unit has
+     * been created with the model key and git token in it, the dispatcher's catch re-enters the
+     * same code and throws again, and the {@code finally} that calls {@code registry.forget} is
+     * never entered — leaving a credential-bearing sandbox the watchdog is forbidden to reclaim.
+     * One mistyped character, every run.
+     */
+    @Test
+    void aBarePercentInTheProxyPasswordDoesNotThrowOutOfTheScrub() {
+        EnterpriseEnvironmentConfig config =
+                configuredWith(null, "http://svc:100%secure-TEST@proxy.acme.example:3128");
+
+        List<SecretScrub.Credential> found = assertDoesNotThrow(config::proxyCredentials);
+
+        assertEquals(List.of(new SecretScrub.Credential("svc", "100%secure-TEST")), found,
+                "a % that is not an escape means the value already IS its own decoded form, so one "
+                        + "entry is the truthful answer");
+        assertFalse(SecretScrub.of(found).clean("HTTPS_PROXY=http://svc:100%secure-TEST@p:3128")
+                .contains("100%secure-TEST"), "and it is still scrubbed");
+    }
+
+    /**
+     * A literal {@code +} is not a space, and the header form must match what curl sends.
+     *
+     * <p>{@code URLDecoder} is a FORM decoder: it turns {@code +} into a space. A URI userinfo has
+     * no such convention — curl percent-decodes only — so decoding {@code a+b} to {@code a b} would
+     * derive a base64 form for a password that is never sent, leaving the real
+     * {@code Proxy-Authorization} header uncovered.
+     */
+    @Test
+    void aLiteralPlusInTheProxyPasswordIsNotDecodedToASpace() {
+        List<SecretScrub.Credential> found =
+                configuredWith(null, "http://svc:a+b-TEST@proxy.acme.example:3128").proxyCredentials();
+
+        assertEquals(List.of(new SecretScrub.Credential("svc", "a+b-TEST")), found,
+                "one entry: the value decodes to itself, so there is no second spelling");
     }
 }

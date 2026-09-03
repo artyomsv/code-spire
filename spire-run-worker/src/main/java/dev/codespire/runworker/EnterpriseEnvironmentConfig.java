@@ -159,15 +159,13 @@ public class EnterpriseEnvironmentConfig {
      *
      * <p>Only the credential, never the whole URL. The host is what makes a proxy error legible,
      * and redacting it would leave an operator with a failure that names nothing.
-     */
-    /**
-     * Both spellings of every proxy password: as the operator wrote it, and percent-decoded.
      *
-     * <p>Two credentials rather than one richer type, because {@code SecretScrub} already treats a
+     * <p><b>Both spellings of every password: as the operator wrote it, and percent-decoded.</b>
+     * Two credentials rather than one richer type, because {@code SecretScrub} already treats a
      * list as "every form of every secret" and a second entry costs one more string to match. The
      * two are different text in different places: the RAW one is the environment variable every
-     * container carries, and the DECODED one is what a {@code Proxy-Authorization: Basic} header
-     * and a verbose {@code curl} print.
+     * container carries and {@code printenv} prints into a transcript, and the DECODED one is what
+     * a {@code Proxy-Authorization: Basic} header and a verbose {@code curl} print.
      */
     public List<SecretScrub.Credential> proxyCredentials() {
         return Stream.of(httpProxy, httpsProxy)
@@ -234,8 +232,42 @@ public class EnterpriseEnvironmentConfig {
                 userInfo.substring(colon + 1)));
     }
 
+    /**
+     * Percent-decoded where that is what the value is, and returned unchanged where it is not.
+     *
+     * <p><b>It must never throw, and the reason is a defect this branch introduced.</b>
+     * {@code URLDecoder} rejects a bare {@code %} — {@code 100%secure} and {@code pa%ss} both
+     * throw — and a bare {@code %} is a legal password character an operator writes. That used to
+     * be caught at boot by accident: the deleted startup refusal was the only caller of
+     * {@link #proxyCredentials()}, so a URL like that failed loudly before any run existed.
+     *
+     * <p>With the refusal gone the first caller is {@code RunFailures.scrubFor}, and the throw
+     * lands somewhere far worse. {@code RunLauncher} builds the transcript scrub AFTER
+     * {@code runtime.create(unit)} has put the model key and the git write token into three
+     * containers; {@code RunDispatcher}'s catch then calls {@code failures.of(...)}, which
+     * re-enters this same code and throws a SECOND time, escaping the handler before its
+     * {@code finally} runs. {@code registry.forget} never happens, and that dispatcher comment
+     * says what follows: a credential-bearing sandbox permanently unreclaimable by the watchdog.
+     * One mistyped character, every run, deterministically.
+     *
+     * <p>Returning the value unchanged is the right answer as well as the safe one: a {@code %}
+     * the operator did not mean as an escape means the value already IS its own decoded form, and
+     * {@link #bothSpellings} then collapses to the single entry that is true.
+     *
+     * <p><b>{@code +} is protected first.</b> {@code URLDecoder} is a FORM decoder and turns
+     * {@code +} into a space, which no URI userinfo means by it — curl percent-decodes only. So a
+     * password {@code a+b} would yield a "decoded" form {@code a b} that appears on no wire while
+     * the real header form went uncovered. Escaping it first makes the decode percent-only.
+     */
     private static String decode(String value) {
-        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+        try {
+            return URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException notPercentEncoded) {
+            // Deliberately not logged: the exception message quotes two characters of the
+            // password ("Error at index 0 in: \"ss\""), and this class exists to keep exactly
+            // that out of a log.
+            return value;
+        }
     }
 
     private EnterpriseEnvironment buildEnvironment() {
@@ -277,7 +309,6 @@ public class EnterpriseEnvironmentConfig {
         environment.put(name, value);
         environment.put(name.toLowerCase(Locale.ROOT), value);
     }
-
 
     /**
      * A configured bundle that is not a readable file is a startup refusal.

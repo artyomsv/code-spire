@@ -133,8 +133,12 @@ That is a deliberate trade, not an oversight. Give the proxy a service account s
 not reused elsewhere. What Code Spire *can* do, and does, is keep that password out of anything it
 stores: the run transcript and `factory_run.failure_detail` are scrubbed of it in every form it takes
 — literal, URL-encoded, and the `Proxy-Authorization: Basic` header a verbose `curl` prints. A
-password too short for that scrub to act on safely is refused at startup rather than silently left in
-the clear.
+short password is scrubbed like any other -- it is still a credential, and forge accounts issue
+six-character ones. The worker warns that redacting a short value also hides innocent text, which
+makes failure details harder to read; use a longer password to get readable messages back.
+
+An earlier version refused a short password at startup, on the reasoning that the scrub could not act
+on it. The scrub acts on it now, so that refusal would only have blocked a working proxy.
 
 ## What a working corporate deployment looks like
 

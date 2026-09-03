@@ -86,6 +86,11 @@ specified, not the part that was implemented.**
 - [rules/4, rules/6] `MODULES.md` gains a section for the new module and its glance-table row —
   round 1
 
+> **Both security findings below were taken in PR #107**, in the dedicated pass this file said they
+> wanted. They are left here under Dismissed rather than moved, because the disposition recorded at
+> the time is what a reader of THIS round needs — but neither is open, and `sec/M1` was answered by
+> a different remedy than the one proposed. See `.claude/reviews/global/credential-scrub-forms.md`.
+
 ## Dismissed (acknowledged, will not fix; agents may escalate with explicit justification)
 
 - [sec/M1] **Refuse an SCM secret below `MIN_SECRET_LENGTH` at `PublisherConfig` and at FACTORY
@@ -95,12 +100,15 @@ specified, not the part that was implemented.**
   path this branch does not otherwise touch, and refusing at save time changes an existing API's
   contract. Worth doing; wants its own change so the refusal message and the migration story for an
   already-registered short secret get designed rather than bolted on.
+  **PR #107 took the opposite remedy and it is better: the floor was removed instead, so a short
+  secret is scrubbed like any other and no refusal is needed anywhere.**
 - [sec/M2] **The proxy password is scrubbed decoded, while the container environment carries the
   operator's raw percent-encoded spelling.** Correct and narrow: it needs a password containing an
   escape whose case or `+`/`%20` form differs from `URLEncoder`'s output, and the exposure is an
   agent running `printenv` into a transcript. The fix is a second form on `Credential`, which is a
   change to the shared scrubber's data model — better with the M1 finding above, in one pass over
   what a credential's *forms* are.
+  **Fixed in PR #107** — both spellings are collected, and the `+`-as-space half was found there too.
 - [rules/6] Commit `30f3226`'s subject is 74 characters against a 72 limit. Already pushed; the
   finding says itself it is not worth a rewrite. Later subjects are within the limit.
 - [qa/6] `DockerTestsAreSerialisedTest` does not scan `src/testFixtures`. Verified as theoretical

@@ -4,8 +4,12 @@ import org.junit.jupiter.api.Test;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -143,5 +147,65 @@ class SecretScrubTest {
         assertEquals(text, SecretScrub.of(List.of(new SecretScrub.Credential("bot", ""))).clean(text));
         assertEquals(text, SecretScrub.of(List.of(new SecretScrub.Credential("bot", null))).clean(text));
         assertEquals(text, SecretScrub.of(List.of(new SecretScrub.Credential("bot", "   "))).clean(text));
+    }
+
+    /**
+     * The warning fires, and carries the LENGTH and neither the value nor the username.
+     *
+     * <p>This is the whole compensation for removing the length gate — "a warning an operator can
+     * read beats a silence they cannot" — and it was asserted by nothing. In a class whose entire
+     * purpose is keeping credentials out of logs, the single most damaging edit possible is adding
+     * the secret to this line's arguments, and it would have passed every test in the repository.
+     */
+    @Test
+    void aShortSecretWarnsWithItsLengthAndNeitherItsValueNorItsUsername() {
+        List<String> warnings = warningsFrom(
+                () -> SecretScrub.of(List.of(new SecretScrub.Credential("bot", "abc123"))));
+
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.getFirst().contains("{0}") || warnings.getFirst().contains("6"),
+                "the length is what makes the warning actionable: " + warnings.getFirst());
+        assertFalse(warnings.getFirst().contains("abc123"), "never the value");
+        assertFalse(warnings.getFirst().contains("bot"), "never the username either");
+    }
+
+    /** The negative control: a plausible credential is silent, or the warning is just noise. */
+    @Test
+    void aPlausibleSecretWarnsAboutNothing() {
+        assertTrue(warningsFrom(
+                () -> SecretScrub.of(List.of(new SecretScrub.Credential("bot", SECRET)))).isEmpty());
+    }
+
+    /**
+     * Captures what this class logs. It logs through {@code System.Logger}, which routes to
+     * {@code java.util.logging} in a module that depends on the JDK and nothing else.
+     *
+     * <p>Copied from {@code UnifiedDiffParserTest} in spire-diff, the other framework-free module
+     * that had to solve this.
+     */
+    private static List<String> warningsFrom(Runnable building) {
+        Logger logger = Logger.getLogger(SecretScrub.class.getName());
+        List<String> captured = new ArrayList<>();
+        Handler handler = new Handler() {
+            @Override
+            public void publish(LogRecord entry) {
+                captured.add(entry.getMessage());
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(handler);
+        try {
+            building.run();
+        } finally {
+            logger.removeHandler(handler);
+        }
+        return captured;
     }
 }

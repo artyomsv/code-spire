@@ -52,9 +52,14 @@ public final class SecretScrub {
      * pastes into the registry, and such a password reached {@code factory_run.failure_detail}
      * verbatim — a column an operator reads.
      *
-     * <p>So the readability concern is answered where a human can act on it instead: a secret
-     * below this length is scrubbed AND logged once, naming the consequence. A warning an operator
-     * can read beats a silence they cannot.
+     * <p>So the readability concern is answered where a human can act on it instead: a secret below
+     * this length is scrubbed, and every scrub built from it logs a warning naming the consequence.
+     * A warning an operator can read beats a silence they cannot.
+     *
+     * <p><b>Every scrub, not once.</b> An earlier wording said "logged once" and that was never
+     * true — a scrub is built per run launch and again on every failure, so a deployment with a
+     * short credential sees this repeatedly. Said plainly rather than corrected by deduplicating,
+     * because a reader who believes it is deduplicated will build on that.
      *
      * <p>Deliberately NOT a refusal. Refusing to run because a forge issued a six-character
      * password would be a new product rule about what an operator may configure, invented under

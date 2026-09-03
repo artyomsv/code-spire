@@ -31,7 +31,7 @@ class RunEventStreamTest {
     /** Collects what would have gone to the topic, in the order it was offered. */
     private final List<RunEventRecord> published = new ArrayList<>();
 
-    /** A secret long enough to clear the scrub's floor, in the shape a real token has. */
+    /** A secret in the shape a real model key has; length no longer changes whether it is scrubbed. */
     private static final String MODEL_KEY = "TEST-model-key-9876543210";
 
     private RunEventStream stream() {
