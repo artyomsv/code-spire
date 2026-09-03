@@ -143,6 +143,53 @@ argued around:
 charge. Killing the sandbox mid-run yields a classified failure, not a stall. Exhausting one
 credential rotates to the next without re-charging the call.
 
+**Delivered (2026-09-03, PR #96).** Thirteen tasks, each written test-first, mutation-verified and
+four-lens reviewed before the next began, then one whole-PR round over all forty commits.
+**2549 tests across 299 suites**, both PR tiers green.
+
+Two exit criteria are proven by tests. The third — *exhausting one credential rotates to the next*
+— is proven only for the rotation itself: **nothing in the pipeline reports an exhausted
+credential**, so the transition is entered by an operator by hand. That gap is guarded by
+`CredentialRefusalHasNoProducerTest` and recorded in `docs/UNVERIFIED.md` §A1–A2 rather than
+counted as delivered.
+
+What the build taught that the design or the plan had wrong, each fixed in the code rather than
+argued around:
+
+- **The plan's own claim about the pipeline was the thing most often wrong.** Three separate
+  features shipped green, documented, and inert — the credential pool (the test built the wire
+  string by hand, so nothing asked whether the pipeline ever produces it), the corporate CA bundle
+  (the test asserted the file is MOUNTED, not that anything trusts it — and the JVM containers read
+  neither `SSL_CERT_FILE` nor `NODE_EXTRA_CA_CERTS`), and the conformance checker (the test
+  asserted the clause mapping, not the verdict against a real image, and the checker accused three
+  conforming clauses). None was found by reading a file. All three were found by reading a PATH.
+- **A per-task review cannot see three whole shapes of defect**, which is why the whole-PR round
+  exists and should be planned into M2 rather than treated as optional: a fix that lands on one of
+  two siblings, a guard whose input can never satisfy it, and a claim in module A about the
+  behaviour of module B. The Critical it found — `RunCommandDeserializer` overriding nothing
+  while its javadoc promised it never throws — made ONE malformed record on `cs.run-control` a
+  worker that could not be cancelled: the outage that topic exists to remove.
+- **The security boundary was asserted by nothing.** ADR-039 makes the container the boundary and
+  six settings implement it; a repo-wide grep for `withCapDrop`, `no-new-privileges`,
+  `withPidsLimit`, `withMemory` and `withNetworkMode` across every test source returned
+  nothing. A daemon-driving integration test asserts BEHAVIOURS and never inspects a
+  `HostConfig`, so it is blind to these by construction.
+- **Two prior reviews can each close half of one hole and leave it open.** Cancel is the worked
+  example: one round owned the executing case, another the dispatch-uncertain one, and the gap is
+  BEFORE either — `register` runs after `create` returns and `create` blocks on the clone
+  for up to fifteen minutes, so a queued or cloning run takes a 202 and runs anyway.
+- **The timeout ladder must be derived, not chosen.** A slow LLM call is permitted by one setting
+  and killed by another with the same default; `LlmTimeoutBudget` now refuses to start when the
+  ack threshold does not exceed what one command may spend, and ADR-019 makes that TWO model calls
+  per command, so a budget sized for one looks generous and still stalls.
+- **Docker-driving test tasks must be serialised.** Two of them meeting on one daemon produced
+  failures whose symptoms ("no such container", a destroy that removed nothing) impersonate the
+  exact defects the runtime exists to prevent.
+
+**Left behind, deliberately.** Eight `techdebt/` entries, two of them High: a run unit has no
+disk bound, and the cancel gap above. Both are closed before M2 starts. The full dispositions are
+in `.claude/reviews/global/factory-m1.md`.
+
 **FRs:** FR-F5..F10, F12, F14.
 
 ---
