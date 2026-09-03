@@ -15,6 +15,13 @@ import java.util.Map;
  * works on {@link java.nio.file.Path} and so throws on filenames git permits, and takes its case
  * sensitivity from the filesystem instead of from the rule. See {@link PathGlob}.
  *
+ * <p><b>A SYMLINK is judged by where it points the forge, not by the glob.</b> A link committed
+ * at {@code .github} redirects every workflow read into agent-authored content while appearing
+ * in the diff as the single path {@code .github}, which no floor glob matches. So a link that is
+ * AT or ABOVE a protected directory is refused on that ground alone. Whether a given forge
+ * follows such a link is forge-specific (Jenkins does, through checkout), and a floor that only
+ * refuses what every forge honours is not a floor.
+ *
  * <p>The decision ignores {@link ChangeKind} deliberately. Every kind that touches a protected path
  * must refuse — the union is "refuse" — so branching on the kind could only ever narrow that,
  * adding a way to miss and no way to catch. The kind is still REPORTED, because an operator reading
@@ -61,7 +68,8 @@ public final class PushGate {
                 blocked.putIfAbsent("", changed);
                 continue;
             }
-            if (matchesAny(FLOOR, path) || matchesAny(profile, path)) {
+            if (matchesAny(FLOOR, path) || matchesAny(profile, path)
+                    || (changed.symlink() && ProtectedPaths.isAtOrAboveAProtectedDirectory(path))) {
                 blocked.putIfAbsent(path, changed);
             }
         }

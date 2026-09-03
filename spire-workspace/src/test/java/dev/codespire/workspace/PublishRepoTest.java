@@ -42,6 +42,23 @@ class PublishRepoTest {
         assertEquals(0, p.waitFor(), String.join(" ", argv));
     }
 
+    /**
+     * Writes a blob and returns its id, so a tree entry can be built without the filesystem.
+     *
+     * <p>Windows will not create a symlink without a privilege this process does not hold, and
+     * the mode is a GIT fact rather than a filesystem one. {@code update-index --cacheinfo} writes
+     * mode 120000 straight into the index on every platform, which is what a forge actually reads.
+     */
+    private String hashObject(Path repo, String content) throws Exception {
+        Process p = new ProcessBuilder("git", "hash-object", "-w", "--stdin")
+                .directory(repo.toFile()).redirectErrorStream(true).start();
+        p.getOutputStream().write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        p.getOutputStream().close();
+        String out = new String(p.getInputStream().readAllBytes()).trim();
+        assertEquals(0, p.waitFor(), out);
+        return out;
+    }
+
     private String rev(Path repo, String ref) throws Exception {
         Process p = new ProcessBuilder("git", "rev-parse", ref).directory(repo.toFile())
                 .redirectErrorStream(true).start();
@@ -436,6 +453,64 @@ class PublishRepoTest {
         try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
                 publish, null)) {
             assertEquals(publish, repo.path());
+        }
+    }
+
+    /**
+     * A symlink tree entry reaches the gate AS a symlink.
+     *
+     * <p>The seam, and the reason this test is here rather than only in {@code PushGateTest}. That
+     * one hands {@code PushGate} a {@code ChangedPath} whose flag is set by hand, so it proves the
+     * rule and says nothing about whether anything ever produces the input. Make {@code safe}
+     * ignore the mode and every gate test still passes while the floor is blind again.
+     *
+     * <p>Mode 120000 is written into the index directly. Windows refuses to create a symlink
+     * without a privilege this process does not hold, and it would be the wrong thing to assert
+     * anyway: what a forge reads is the tree entry.
+     *
+     * <p>The link goes at {@code .gitlab}, which the seed does not have, so it is the only change
+     * in the diff. Linking {@code .github} required deleting the real directory first, which
+     * deletes a workflow the floor refuses anyway — so the gate half of this test passed with the
+     * symlink rule removed. Found by mutation, not by reading.
+     */
+    @Test
+    void aSymlinkCommittedAtAProtectedDirectoryReachesTheGateAsALink(@TempDir Path dir)
+            throws Exception {
+        Path bare = origin(dir);
+        String base = rev(dir.resolve("seed"), "HEAD");
+
+        Path ws = dir.resolve("agent-ws");
+        git(dir, "git", "clone", bare.toUri().toString(), ws.toString());
+        git(ws, "git", "config", "user.email", "bot@spire");
+        git(ws, "git", "config", "user.name", "spire-bot");
+        git(ws, "git", "checkout", "-b", "spire/run_1");
+        // .gitlab, which the seed does NOT have, so the link is the ONLY change in the diff.
+        // An earlier version linked .github and had to delete the real directory first — which
+        // deletes .github/workflows/ci.yml, a path the floor refuses on its own. The gate
+        // assertion below then held with the symlink rule deleted, proving nothing.
+        String target = hashObject(ws, "payload");
+        git(ws, "git", "update-index", "--add", "--cacheinfo", "120000," + target + ",.gitlab");
+        git(ws, "git", "commit", "-m", "redirect .gitlab");
+
+        Path bundle = dir.resolve("delta.bundle");
+        git(ws, "git", "bundle", "create", bundle.toString(), base + "..HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            ChangeSet changes = repo.changesSince(base, sha);
+
+            assertEquals(1, changes.paths().size(),
+                    "the fixture must change nothing else, or the gate assertion below is"
+                            + " satisfied by whatever else it refused: " + changes.paths());
+            ChangedPath link = changes.paths().getFirst();
+            assertEquals(".gitlab", link.path());
+            assertTrue(link.symlink(), "the mode did not survive the diff: " + link);
+
+            // And the whole way through, so the two halves are joined by something. This is the
+            // assertion the symlink rule is judged by: no glob matches ".gitlab".
+            assertFalse(PushGate.decide(changes, List.of()).allowed(),
+                    "a link redirecting .gitlab must not be pushable");
         }
     }
 

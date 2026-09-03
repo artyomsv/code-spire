@@ -4,6 +4,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -239,21 +240,24 @@ public final class PublishRepo implements AutoCloseable {
             for (DiffEntry entry : diff.scan(
                     walk.parseCommit(ObjectId.fromString(baseCommit)).getTree(),
                     walk.parseCommit(ObjectId.fromString(sha)).getTree())) {
+                // The mode of the side the path comes from. A DELETE has no new mode, and a
+                // rename has one on each side — a file renamed onto a symlink and a symlink
+                // renamed onto a file are different facts, and the gate judges both sides.
                 switch (entry.getChangeType()) {
-                    case ADD -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED));
-                    case MODIFY -> paths.add(safe(entry.getNewPath(), ChangeKind.MODIFIED));
-                    case DELETE -> paths.add(safe(entry.getOldPath(), ChangeKind.DELETED));
+                    case ADD -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED, entry.getNewMode()));
+                    case MODIFY -> paths.add(safe(entry.getNewPath(), ChangeKind.MODIFIED, entry.getNewMode()));
+                    case DELETE -> paths.add(safe(entry.getOldPath(), ChangeKind.DELETED, entry.getOldMode()));
                     case RENAME -> {
                         // BOTH sides. A rename INTO a protected path is the obvious evasion, and a
                         // rename OUT of one deletes it.
-                        paths.add(safe(entry.getOldPath(), ChangeKind.RENAMED_FROM));
-                        paths.add(safe(entry.getNewPath(), ChangeKind.RENAMED_TO));
+                        paths.add(safe(entry.getOldPath(), ChangeKind.RENAMED_FROM, entry.getOldMode()));
+                        paths.add(safe(entry.getNewPath(), ChangeKind.RENAMED_TO, entry.getNewMode()));
                     }
                     // A COPY leaves the source untouched, so reporting RENAMED_FROM for it would
                     // assert a move that did not happen — and the gate refuses either side of a
                     // rename, so copying a workflow to docs/example.yml would kill a run that
                     // changed no CI at all. It is an addition, and only the new path is new.
-                    case COPY -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED));
+                    case COPY -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED, entry.getNewMode()));
                 }
             }
             return new ChangeSet(paths);
@@ -318,7 +322,7 @@ public final class PublishRepo implements AutoCloseable {
      * a glob against something the forge will not write is how a gate comes to disagree with the
      * repository it protects.
      */
-    private static ChangedPath safe(String path, ChangeKind kind) {
+    private static ChangedPath safe(String path, ChangeKind kind, FileMode mode) {
         if (path == null || path.isBlank() || "/dev/null".equals(path)) {
             throw new UnsafeTreePathException(String.valueOf(path));
         }
@@ -333,7 +337,7 @@ public final class PublishRepo implements AutoCloseable {
                 throw new UnsafeTreePathException(path);
             }
         }
-        return new ChangedPath(path, kind);
+        return new ChangedPath(path, kind, FileMode.SYMLINK.equals(mode));
     }
 
     /**
