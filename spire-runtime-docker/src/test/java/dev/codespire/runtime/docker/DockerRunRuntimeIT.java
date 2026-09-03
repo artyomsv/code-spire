@@ -10,6 +10,8 @@ import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunHandle;
+import dev.codespire.runtime.RunRuntime;
+import dev.codespire.runtime.RunRuntimeContract;
 import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -36,8 +38,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Docker, which is the thing most likely to be wrong.
  *
  * <p>Pulls {@code alpine:3.20} on first run.
+ *
+ * <p><b>It extends {@link RunRuntimeContract}</b>, which is where the rules every arm must obey
+ * live. What stays here is what needs THIS arm's world to state — a shell, a writable host path,
+ * a private registry, a {@code HostConfig} to inspect. What moved out is what any arm must satisfy,
+ * so a Kubernetes arm inherits the rules instead of being written against three disagreeing fakes.
  */
-class DockerRunRuntimeIT {
+class DockerRunRuntimeIT extends RunRuntimeContract {
 
     private static final String IMAGE = "alpine:3.20";
 
@@ -77,6 +84,29 @@ class DockerRunRuntimeIT {
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
                 enterprise, 256L * 1024 * 1024, 1_000_000_000L, wallClock);
+    }
+
+    @Override
+    protected RunRuntime runtime() {
+        return runtime;
+    }
+
+    /**
+     * The contract's quiet unit: everything exits 0 promptly.
+     *
+     * <p>{@code sleep 30} in the publisher, not an immediate exit — several contract rules are
+     * about a unit that still EXISTS (discoverable, salvaged but not destroyed, cancelled but not
+     * destroyed), and a unit whose containers have all exited is still held by this arm but gives
+     * cancel nothing to act on.
+     */
+    @Override
+    protected RunUnitSpec quietUnit(String runId) {
+        return unit(runId, "sleep 30", "sleep 30");
+    }
+
+    @Override
+    protected RunUnitSpec echoingUnit(String runId, String marker) {
+        return unit(runId, "echo " + marker, "true");
     }
 
     private RunHandle start(RunUnitSpec spec) {
