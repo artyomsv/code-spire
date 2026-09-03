@@ -1892,3 +1892,56 @@ so it is deliberately kept.
 | Clone hangs to the init timeout | A proxy is set and the forge is not in `NO_PROXY` |
 | Image pull reports *not found* for a private image | `SPIRE_RUN_REGISTRY_HOST` does not match the image reference's registry, so the pull went anonymous |
 | A container has the bundle bound `rw` | Not reachable through configuration — `HostMount` cannot express a writable bind. Report it |
+
+## Mode S — the agent image contract (FR-F13)
+
+**What this proves.** `spire agent-image verify` tells an operator whether their own image can run a
+factory job, and — the part that matters — tells them plainly which clauses it *proved* and which it
+only read off a label.
+
+```bash
+./gradlew :spire-agent-image:installDist
+./spire-agent-image/build/install/spire-agent-image/bin/spire-agent-image verify spire-agent-codex:latest
+```
+
+### 1. The reference image conforms
+
+Every VERIFIED clause should read `PASS`, and the exit code should be `0`:
+
+```bash
+echo $?
+```
+
+### 2. The two halves are visibly different
+
+Read the output, not just the exit code. The second heading says **the image says so; this command
+did NOT verify it**, and the two declared clauses each carry the reason they cannot be checked.
+
+This is the point of the command. A conformance report that printed `toolchain: OK` would read as
+proof; it would only mean the label was present, so an image declaring a toolchain it does not have
+would pass — and the first thing to notice would be a run that had already been paid for.
+
+### 3. Break one clause and confirm it is named
+
+```bash
+printf 'FROM spire-agent-codex:latest\nUSER 0:0\n' | docker build -t spire-agent-broken:latest -
+./spire-agent-image/build/install/spire-agent-image/bin/spire-agent-image verify spire-agent-broken:latest
+```
+
+`non-root` must read `FAIL` and name what it found (`USER=0:0`), and the exit code must be `1`. A
+report saying only "verification failed" would send you to read the checker's source.
+
+### 4. A label the image is lying about still passes
+
+Tag an image with a toolchain it does not carry and verify it. It **conforms** — because no verified
+clause checked the label, and saying otherwise would be the blend the report shape exists to prevent.
+The declaration appears under the declared heading with what the image claimed.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| exit `2`, "could not verify" | The daemon is unreachable, or the image is not present locally. This is a CHECKER problem — distinguished from `1` on purpose, because "I could not check this" and "this image is wrong" call for opposite actions |
+| Every runtime clause reads `NOT CHECKED` | Same cause. The clauses that need no container are still answered above them |
+| `mount-points` FAIL on an image you believe is correct | The directories exist but belong to root. A fresh volume inherits the mount point's ownership, so the agent could not write its own workspace |
+| `handoff-bundles` FAIL with `git` also FAIL | Fix `git` first; the handoff is git bundles, so the second failure is a consequence of the first |

@@ -125,8 +125,15 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   milestones, on purpose:** M0 delivers the half the walking skeleton needs — `agentImage` is a
   per-run parameter carried on `ExecuteRun` and honoured by the runtime, a digest reference works,
   and the reference image's entrypoint contract (`deploy/agent/spire-agent-entrypoint.sh`: prompt on
-  stdin, commits to bundles on `/handoff`, `DONE` last) is what any image must provide. The written
-  image contract and `spire agent-image verify` are M1, as ROADMAP.md lists them.
+  stdin, commits to bundles on `/handoff`, `DONE` last) is what any image must provide. **The M1
+  half is delivered:** the contract is written down in `docs/factory/AGENT-IMAGE-CONTRACT.md` and
+  `spire agent-image verify <image>` checks it. The report has two halves that never mix --
+  **verified** clauses the command proved against the image, and **declared** clauses the image
+  claims through a label and the command cannot prove. The split is structural rather than a flag:
+  a declaration has no pass/fail component, so reporting one as verified is inexpressible. A report
+  that blended them would read as proof, and an image declaring a toolchain it does not carry would
+  pass with the first thing to notice being a run already paid for. `ContractAndCheckerAgreeTest`
+  fails the build when the document and the checker disagree in either direction.
 - **FR-F14 — Enterprise image environment [M1, delivered].** Corporate CA bundles, proxy variables
   and private registry credentials are honoured, all injected at run time and never baked into an
   image. The bundle and the proxy live on `RunUnitSpec` rather than on any one container, so

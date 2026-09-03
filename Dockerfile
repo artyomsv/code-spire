@@ -16,6 +16,7 @@ WORKDIR /workspace
 # Build files first, so the dependency layer caches independently of source edits.
 COPY gradlew settings.gradle.kts gradle.properties build.gradle.kts ./
 COPY gradle/ gradle/
+COPY spire-agent-image/build.gradle.kts spire-agent-image/
 COPY spire-arch/build.gradle.kts spire-arch/
 COPY spire-context-code/build.gradle.kts spire-context-code/
 COPY spire-context-confluence/build.gradle.kts spire-context-confluence/

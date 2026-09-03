@@ -148,6 +148,8 @@ val dockerDrivingModules = listOf(
     "spire-runtime-docker",
     "spire-run-worker",
     "spire-e2e",
+    // The conformance checker starts a container per probe against the reference image.
+    "spire-agent-image",
 )
 
 subprojects {
@@ -216,6 +218,10 @@ val fastTestModules = listOf(
 )
 
 val serviceTestModules = listOf(
+    // Its clause LOGIC is tested against a fake probe and needs nothing; its reference-image
+    // check drives a real daemon, and a conformance checker whose own reference image is never
+    // checked is the shape this repository keeps finding. Service tier, and the Docker lock.
+    "spire-agent-image",
     "spire-runtime-docker",
     "spire-run-worker",
     "spire-gateway",

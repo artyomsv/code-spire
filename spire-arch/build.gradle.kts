@@ -74,6 +74,14 @@ tasks.test {
         rootProject.file("spire-publisher/Dockerfile")
     ).withPropertyName("runUnitImages").withPathSensitivity(PathSensitivity.RELATIVE)
 
+    // ContractAndCheckerAgreeTest reads the agent-image contract against the checker constants.
+    // Undeclared they are invisible to the up-to-date check, so documenting a clause nothing
+    // checks -- or checking one nothing documents -- would report a cached PASS from the very edit
+    // the guard exists to catch.
+    inputs.files(
+        rootProject.file("docs/factory/AGENT-IMAGE-CONTRACT.md")
+    ).withPropertyName("agentImageContract").withPathSensitivity(PathSensitivity.RELATIVE)
+
     // ModuleLicensingIsDeclaredTest reads every module LICENSE. Undeclared they are invisible to
     // the up-to-date check, and the check then reports a CACHED PASS over a licence file that was
     // just made wrong — measured, not assumed: with this block absent, restoring the exact
