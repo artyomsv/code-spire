@@ -39,6 +39,12 @@ public final class PublisherOutcome {
 
     private static final Logger LOG = Logger.getLogger(PublisherOutcome.class);
 
+    /** Longer than any real path, short enough that a thousand of them stay readable. */
+    private static final int MAX_PATH_CHARS = 512;
+
+    /** The longest real value is RENAMED_FROM; anything longer is not a kind. */
+    private static final int MAX_KIND_CHARS = 32;
+
     private final Set<String> changedPaths = new LinkedHashSet<>();
 
     /**
@@ -118,8 +124,24 @@ public final class PublisherOutcome {
                 continue;
             }
             String kind = entry.isObject() ? entry.path("kind").asText(null) : null;
-            blocked.put(path, new RunResult.BlockedChange(path, kind));
+            blocked.put(path, new RunResult.BlockedChange(clip(path, MAX_PATH_CHARS),
+                    clip(kind, MAX_KIND_CHARS)));
         }
+    }
+
+    /**
+     * Bounds one entry, because the count cap alone does not bound the TEXT.
+     *
+     * <p>These reach an operator's attention row as one joined sentence, and both values come from
+     * a branch an agent authored. A thousand paths was already capped; a thousand paths each a
+     * megabyte long was not. Clipped rather than rejected: a truncated path still tells an operator
+     * which file tripped the gate, and dropping the entry would lose that.
+     */
+    private static String clip(String value, int max) {
+        if (value == null || value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, max) + "…";
     }
 
     private void collect(JsonNode array, Set<String> into) {

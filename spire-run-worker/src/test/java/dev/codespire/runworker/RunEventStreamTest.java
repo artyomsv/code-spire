@@ -35,7 +35,12 @@ class RunEventStreamTest {
     private static final String MODEL_KEY = "TEST-model-key-9876543210";
 
     private RunEventStream stream() {
-        return new RunEventStream(RUN_ID, SecretScrub.of("TEST-bot", MODEL_KEY), published::add);
+        // The Credential form, like production: pairing a secret with the wrong username builds a
+        // base64 form that appears on no wire, which is the misuse that made the varargs factory
+        // package-private.
+        return new RunEventStream(RUN_ID,
+                SecretScrub.of(List.of(new SecretScrub.Credential("TEST-bot", MODEL_KEY))),
+                published::add);
     }
 
     @Test

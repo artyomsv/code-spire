@@ -56,7 +56,18 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     void tearDownEveryUnit() {
         // Containers are created withAutoRemove(false) so salvage can read an exit code, which
         // means nothing reclaims them but destroy. A failed assertion must not leak a unit.
-        started.forEach(runtime::destroy);
+        //
+        // Guarded per unit: a test that destroys its own unit makes the second destroy throw, and an
+        // unguarded forEach would then skip every LATER unit in the list -- each one a sandbox
+        // holding a model credential that nothing reclaims. RunRuntimeContract's own teardown says
+        // exactly this, and this one did not.
+        for (RunHandle handle : started) {
+            try {
+                runtime.destroy(handle);
+            } catch (RuntimeException alreadyGone) {
+                // The ordinary case for a test that destroyed its own unit.
+            }
+        }
     }
 
     private RunUnitSpec unit(String id, String agentScript, String publisherScript) {

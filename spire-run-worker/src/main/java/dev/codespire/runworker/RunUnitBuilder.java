@@ -68,14 +68,29 @@ public class RunUnitBuilder {
     private static final long MEMORY_BYTES = 4L * 1024 * 1024 * 1024;
 
     /**
-     * The unit's shared volumes and its /tmp are bounded by this on every arm.
+     * The disk budget a run unit declares. <b>How much of it an arm can actually spend differs.</b>
      *
-     * <p>On the Docker arm the bound is a tmpfs, so this budget is spent from HOST MEMORY rather
-     * than from disk -- the only enforcement that works identically on Docker Desktop for Windows
-     * and macOS, native Linux, rootless Docker and Kubernetes. A repository whose clone needs more
-     * than this fails with ENOSPC rather than filling the daemon's disk and taking every other run
-     * with it. Sized against MEMORY_BYTES deliberately: 2 GiB of workspace inside a 4 GiB unit
-     * leaves the agent process the other half.
+     * <p>On <b>Kubernetes</b> it covers the whole unit: {@code emptyDir} is a POD volume, so it
+     * survives an init container exiting, and {@code medium: Memory} with {@code sizeLimit} bounds
+     * the shared workspace as well as {@code /tmp}.
+     *
+     * <p>On <b>Docker</b> it buys the AGENT's {@code /tmp} and nothing else. The shared volumes are
+     * not bounded there — a tmpfs local volume is dropped when the last container using it stops, so
+     * a tmpfs {@code /workspace} would wipe the clone between init exiting and the agent starting —
+     * and the init and publisher containers are deliberately left alone, because the publisher clones
+     * into {@code java.io.tmpdir} and a bound {@code /tmp} there fails a large repository AFTER the
+     * model has been paid. See {@code DockerRunRuntime.tmpFsFor}; the residual is
+     * {@code techdebt/spire-runtime-docker/2-3-…} and RUN-TOPOLOGY §9.7.
+     *
+     * <p><b>An earlier version of this comment said the opposite of all of it</b> — that the shared
+     * volumes were bounded on every arm, and that a large clone would ENOSPC rather than fill the
+     * daemon's disk. On the only shipped arm the clone goes to the UNBOUNDED {@code /workspace}, so
+     * it will do exactly what the sentence claimed was fixed. This is the file where the number is
+     * chosen, which makes it the file a future author reads.
+     *
+     * <p>Sized against {@link #MEMORY_BYTES} because a tmpfs is charged to the container's memory
+     * cgroup: 2 GiB of scratch inside a 4 GiB container leaves the agent process the other half. Note
+     * the limit is PER CONTAINER, so a unit's worst case is not 4 GiB but three times it.
      */
     private static final long DISK_BYTES = 2L * 1024 * 1024 * 1024;
 

@@ -22,6 +22,15 @@ import java.util.Map;
  * follows such a link is forge-specific (Jenkins does, through checkout), and a floor that only
  * refuses what every forge honours is not a floor.
  *
+ * <p><b>That rule covers the FLOOR and not a profile's own globs, and the limitation is stated
+ * rather than left to be inferred from silence.</b> {@link ProtectedPaths} derives its protected
+ * directories from the floor, which is a fixed list this module owns; a profile's globs arrive as
+ * compiled {@link PathGlob}s whose source text is gone by the time the gate runs. A profile
+ * protecting {@code deploy/**} is therefore defeated by a link at {@code deploy}, exactly as the
+ * floor was. Closing it means keeping each glob's pattern alongside its matcher, which is worth
+ * doing when a profile is first configured in anger — the floor is the layer that has to hold
+ * today, because ADR-036 lets a profile narrow what the factory may touch and never widen it.
+ *
  * <p>The decision ignores {@link ChangeKind} deliberately. Every kind that touches a protected path
  * must refuse — the union is "refuse" — so branching on the kind could only ever narrow that,
  * adding a way to miss and no way to catch. The kind is still REPORTED, because an operator reading

@@ -125,7 +125,13 @@ class M0WalkingSkeletonTest {
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
         assertNull(finished.pushedRef(), "a refused push must not deliver anything");
-        assertEquals(List.of(".github/workflows/x.yml"), finished.blocked().stream().map(RunResult.BlockedChange::path).toList());
+        // The KIND, not only the path. This is the only test in the repository where the real
+        // publisher image, the real push gate and a real refusal meet, so it is the only place the
+        // kind is asserted across the WHOLE seam rather than from hand-written JSON. Mapping it away
+        // would leave the branch's headline claim resting on two tests that each hold one end of a
+        // wire and neither the wire. This file is created, so ADDED.
+        assertEquals(List.of(new RunResult.BlockedChange(".github/workflows/x.yml", "ADDED")),
+                finished.blocked());
         assertTrue(finished.refused());
         assertFalse(origin.hasBranch("spire/ci"), "nothing reached the remote");
     }
@@ -137,7 +143,12 @@ class M0WalkingSkeletonTest {
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(command, RunObserver.IGNORING));
 
-        assertEquals(List.of(".github/workflows/ci.yml"), finished.blocked().stream().map(RunResult.BlockedChange::path).toList());
+        // MODIFIED here where the case above is ADDED, which is the distinction the whole change
+        // exists for: an operator reading a refusal needs to know whether the factory edited a
+        // workflow or created one, and after M2 dispatches agents at real findings that difference
+        // is the difference between a bad fix and an attempt to weaken what reviews the fix.
+        assertEquals(List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "MODIFIED")),
+                finished.blocked());
         assertFalse(origin.hasBranch("spire/ci-edit"));
     }
 

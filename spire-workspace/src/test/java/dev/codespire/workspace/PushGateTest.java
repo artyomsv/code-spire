@@ -294,26 +294,39 @@ class PushGateTest {
     }
 
     /**
-     * A link AT a protected directory is refused, though no glob matches its path.
+     * A link ABOVE a protected directory is refused, though no glob matches its path.
      *
-     * <p>{@code .github -> payload/} appears in the diff as the single path {@code .github}. Every
-     * floor glob for it carries the {@code .github/workflows/} prefix, so the gate saw one
-     * unremarkable path while a forge that follows the link would read its workflows out of
-     * agent-authored content.
+     * <p>{@code .github -> payload/} appears in the diff as the single path {@code .github}, which
+     * is not itself a protected directory — every floor glob for it carries the
+     * {@code .github/workflows/} prefix. So the gate saw one unremarkable path while a forge that
+     * follows the link would read its workflows out of agent-authored content. This is the
+     * ancestor branch of the rule.
+     *
+     * <p>The two symlink cases were once named for each other's branch, which is harmless to
+     * coverage and expensive to a reader auditing a security floor.
      */
     @Test
-    void aSymlinkAtAProtectedDirectoryIsRefused() {
+    void aSymlinkAboveAProtectedDirectoryIsRefused() {
         ChangeSet linked = new ChangeSet(List.of(
                 new ChangedPath(".github", ChangeKind.ADDED, true)));
 
         assertFalse(PushGate.decide(linked, List.of()).allowed());
     }
 
-    /** Above one, too: the link does not have to sit on the directory it redirects. */
+    /** AT one, too: {@code .gitlab} IS a protected directory, so this is the equality branch. */
     @Test
-    void aSymlinkAboveAProtectedDirectoryIsRefused() {
+    void aSymlinkAtAProtectedDirectoryIsRefused() {
         ChangeSet linked = new ChangeSet(List.of(
                 new ChangedPath(".gitlab", ChangeKind.RENAMED_TO, true)));
+
+        assertFalse(PushGate.decide(linked, List.of()).allowed());
+    }
+
+    /** A submodule entry redirects a read the same way, and is judged the same way. */
+    @Test
+    void aGitlinkAtAProtectedDirectoryIsRefused() {
+        ChangeSet linked = new ChangeSet(List.of(
+                new ChangedPath(".circleci", ChangeKind.ADDED, true)));
 
         assertFalse(PushGate.decide(linked, List.of()).allowed());
     }

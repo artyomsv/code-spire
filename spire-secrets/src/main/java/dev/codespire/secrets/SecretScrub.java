@@ -77,12 +77,20 @@ public final class SecretScrub {
     }
 
     /**
-     * Every form the given secrets can appear in, longest first.
+     * Every form the given secrets can appear in, longest first, all sharing one username.
      *
      * <p>Longest first matters: one secret can contain another as a substring, and redacting the
      * shorter one first leaves the tail of the longer in place.
+     *
+     * <p><b>Package-private, and deliberately not public.</b> Production builds a
+     * {@link Credential} list at both call sites, and this shape is the one whose misuse
+     * {@link Credential} documents as having happened: a proxy password handed here alongside the
+     * SCM username produced a base64 form that appears on no wire, so the header it was meant to
+     * cover matched nothing. Publishing it from a shared module would re-offer that mistake to
+     * every future caller; {@code of(List.of(new Credential(user, secret)))} is two tokens more
+     * and cannot pair the wrong two values silently.
      */
-    public static SecretScrub of(String username, String... secrets) {
+    static SecretScrub of(String username, String... secrets) {
         List<Credential> credentials = new ArrayList<>();
         for (String secret : secrets) {
             credentials.add(new Credential(username, secret));

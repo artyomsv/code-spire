@@ -337,7 +337,13 @@ public final class PublishRepo implements AutoCloseable {
                 throw new UnsafeTreePathException(path);
             }
         }
-        return new ChangedPath(path, kind, FileMode.SYMLINK.equals(mode));
+        // GITLINK too: a submodule entry at or above a protected directory redirects what a
+        // forge reads there just as a symlink does, and `actions/checkout submodules:true`
+        // fetches it. Adding a NEW submodule needs a .gitmodules edit, which the floor already
+        // refuses, so this is defence in depth rather than a hole -- but the floor exists
+        // precisely because one layer is not enough.
+        return new ChangedPath(path, kind,
+                FileMode.SYMLINK.equals(mode) || FileMode.GITLINK.equals(mode));
     }
 
     /**
