@@ -107,7 +107,7 @@ class RunResourceTest {
      */
     private void aHarnessCredential() {
         // Deliberately NOT cleaned between tests: a member a run row points at cannot be deleted,
-        // and that FK is the schema keeping a finished run@Qs attribution from disappearing with the
+        // and that FK is the schema keeping a finished run's attribution from disappearing with the
         // key. Each call adds its own uniquely-labelled member instead, which also means the pool
         // grows across this suite and the rotation is exercised rather than assumed.
         pool.add("TEST-pool-" + UUID.randomUUID(), "openai", "https://api.openai.com", "TEST-agent-key");

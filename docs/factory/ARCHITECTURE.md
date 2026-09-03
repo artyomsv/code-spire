@@ -282,7 +282,7 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 |---|---|
 | `run_claim` | idempotency claim per `(run_id, slot)` — same shape as `comment_idempotency` |
 | `run_lease` | sandbox ↔ workspace, **plus owner id and heartbeat** — see below |
-| `harness_credential_state` | pool member health: available / rate-limited-until / rejected / disabled |
+
 
 **The orphan definition, because "somebody's job" is not a design.** With more than one run-worker
 replica on one Docker daemon or in one namespace, `discoverUnits()` enumerates *every* sandbox,

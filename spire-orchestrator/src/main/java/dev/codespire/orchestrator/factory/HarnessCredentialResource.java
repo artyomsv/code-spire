@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.ClientErrorException;
@@ -37,8 +38,19 @@ public class HarnessCredentialResource {
 
     private static final Logger LOG = Logger.getLogger(HarnessCredentialResource.class);
 
+    /** The vendor types this deployment can speak to, as the LLM registry lists them. */
+    private static final java.util.Set<String> TYPES = java.util.Set.of("openai", "anthropic", "gemini");
+
     @Inject
     HarnessCredentialPool pool;
+
+    /**
+     * Relaxes the https/public-host guard in dev and test only, exactly as every sibling registry
+     * reads it. The same property name, so one setting governs every operator-entered base URL.
+     */
+    @org.eclipse.microprofile.config.inject.ConfigProperty(
+            name = "spire.security.allow-insecure-provider-urls", defaultValue = "false")
+    boolean allowInsecureProviderUrls;
 
     /** What an operator sends to add a member. The key is write-only and never read back. */
     public record NewCredential(String label, String type, String baseUrl, String apiKey) {
@@ -56,8 +68,24 @@ public class HarnessCredentialResource {
             throw badRequest("label, type, baseUrl and apiKey are all required. The key is stored "
                     + "encrypted and is never returned by this API.");
         }
-        HarnessCredentialPool.MemberView added =
-                pool.add(in.label().trim(), in.type().trim(), in.baseUrl().trim(), in.apiKey());
+        if (!TYPES.contains(in.type().trim())) {
+            throw badRequest("type must be one of " + TYPES + ", was: " + in.type().trim());
+        }
+        // The SSRF/https guard every other registry applies, and it matters MORE here: this is the
+        // endpoint an agent container would be pointed at, so an http:// entry ships the key in
+        // cleartext off the sandbox network and a private address aims the agent at internal
+        // infrastructure. This was the one registry without it.
+        PublicHttpsGuard.validate(in.baseUrl().trim(), allowInsecureProviderUrls);
+        HarnessCredentialPool.MemberView added;
+        try {
+            added = pool.add(in.label().trim(), in.type().trim(), in.baseUrl().trim(), in.apiKey());
+        } catch (HarnessCredentialPool.DuplicateLabelException e) {
+            // 409 rather than the bare 500 a unique violation used to produce. The label is
+            // load-bearing: the migration says outright that "which key is dead" is unanswerable
+            // when two are called the same.
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity(e.getMessage()).build(), e);
+        }
         LOG.infof("harness credential %s added to the pool", added.id());
         return Response.status(Response.Status.CREATED).entity(added).build();
     }
@@ -65,16 +93,33 @@ public class HarnessCredentialResource {
     /**
      * Take a member out of rotation without destroying what it paid for.
      *
-     * <p>Disables rather than deletes, and the schema enforces it: a {@code factory_run} row holds
-     * the member by foreign key, so a hard delete would take a finished run's attribution with it —
-     * which is the same call ADR-024 made when a delete button turned out to be destroying a charge
-     * ledger.
+     * <p>Disables rather than deletes, and the schema is what makes that the only option: a
+     * {@code factory_run} row references the member and the foreign key carries no
+     * {@code ON DELETE}, so a hard delete is REFUSED rather than cascaded.
+     *
+     * <p>This javadoc previously said the opposite — that a delete would take the attribution with
+     * it — while three other places in the same change stated it correctly. The operator-facing
+     * one was the wrong one.
+     *
+     * <p>Reversible: see {@link #enable}. Disabling the last member otherwise left an operator with
+     * a pool refusing every run and an add that 409s on the label they had just disabled.
      */
     @DELETE
     @Path("/{id}")
     public Response disable(@PathParam("id") String id) {
         if (!pool.remove(uuid(id))) {
             throw new NotFoundException("no such harness credential: " + id);
+        }
+        return Response.noContent().build();
+    }
+
+    /** Return a disabled member to the pool. Disabling is not deletion, so it is not one-way. */
+    @POST
+    @Path("/{id}/enable")
+    @Consumes(MediaType.WILDCARD)
+    public Response enable(@PathParam("id") String id) {
+        if (!pool.enable(uuid(id))) {
+            throw new NotFoundException("no disabled harness credential with id: " + id);
         }
         return Response.noContent().build();
     }
@@ -114,7 +159,13 @@ public class HarnessCredentialResource {
     @Path("/{id}/rest")
     @Consumes(MediaType.WILDCARD)
     public Response rest(@PathParam("id") String id) {
-        pool.markRateLimited(uuid(id), null);
+        // 404 like its two siblings. It used to answer 204 whatever happened, so an operator who
+        // mistyped an id -- or rested an already-refused member, whose CHECK makes the write a
+        // no-op -- got a success AND a log line asserting a rest that was never written.
+        if (!pool.markRateLimited(uuid(id), null)) {
+            throw new NotFoundException("no harness credential to rest: " + id
+                    + " (an already-refused member cannot rest -- clear its rejection first)");
+        }
         return Response.noContent().build();
     }
 

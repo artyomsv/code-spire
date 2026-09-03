@@ -14,6 +14,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * A run's spend, written to the ledger the spend cap reads.
@@ -101,7 +102,7 @@ public class RunCharges {
             List<ChargeLine> lines = pricer.priceCall(model, usage);
             // Which key paid, read from the run's own row like the model beside it. Empty for a run
             // dispatched before the pool existed; the column is nullable for exactly that.
-            String credentialRef = runs.harnessCredentialOf(runId).map(java.util.UUID::toString).orElse(null);
+            String credentialRef = runs.harnessCredentialOf(runId).map(UUID::toString).orElse(null);
             ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model,
                     lines, credentialRef));
         } catch (RuntimeException e) {

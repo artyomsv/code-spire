@@ -379,7 +379,10 @@ an ambiguous outcome fails closed into `dispatch_uncertain`, which an operator r
 
 **Files:** `V52__harness_credential.sql` (the plan said `V49`; that number was taken, as it was
 for Task 9) — orchestrator, encrypted secrets like every registry,
-new `HarnessCredentialPool.java`, `HarnessCredentialResource.java`, `RunAttentionRows`, settings UI.
+new `HarnessCredentialPool.java`, `HarnessCredentialResource.java`, `RunAttentionRows`.
+The settings UI is deliberately NOT built -- one screen for credentials while runs themselves have
+none would make the pool the only visible part of the factory; see
+`techdebt/spire-ui/4-3-the-factory-has-no-screens-at-all.md`.
 
 **Test scenarios**
 

@@ -83,6 +83,12 @@ put two rows an operator sees side by side in different files.
 rather than any check. Approximate now, deliberately: an exact count in a file edited every task is
 a number nobody will maintain, and the entry's argument does not turn on the last ten lines.
 
+**Update (M1 Task 10):** `RunResource` crossed 300 on this entry's OWN preferred measure — 301 code
+lines at `0c06be3`, up from 289 — which is the first time either file has. The Task 10 review round
+then removed the dead `LlmProviderRegistry` injection and four imports the credential-pool change
+left behind, so it is marginally back under; the point is that the crossing happened and the entry
+did not notice, which is this entry's own subject arriving one level up for the second time.
+
 **And measure code lines, not physical ones, when deciding whether to act.** Stripping comments and
 blanks leaves roughly 272 and 203 — neither over the guideline. Both files are around 40% comment,
 and that comment is load-bearing rationale (why a catch is wide, why a row is not deleted, why two

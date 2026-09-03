@@ -55,7 +55,8 @@ CREATE TABLE harness_credential (
     -- A member cannot be both, and the pairing is what keeps the two recovery rules apart. A row
     -- claiming a rate limit AND a rejection has no defined return time, so the selector would have
     -- to guess -- and the guess that reads it as a rate limit retries a dead key for ever.
-    CHECK (rate_limited_until IS NULL OR rejected_at IS NULL)
+    CONSTRAINT harness_credential_one_exhaustion_state
+        CHECK (rate_limited_until IS NULL OR rejected_at IS NULL)
 );
 
 -- The selector's own query: enabled members that are not rejected and not still rate-limited,

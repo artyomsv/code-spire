@@ -230,11 +230,20 @@ public class FactoryRunProjection {
                                          harness_credential_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
-                   -- The credential is SET but never compared below: a retry may legitimately draw
-                   -- a different pool member, and comparing it would make rotation look like a
-                   -- differing request and refuse the re-arm.
+                   -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
+                   -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
+                   -- command may be the one that runs: an unacknowledged dispatch is re-armed while
+                   -- its original may already be on the topic. So the row can be asked to name two
+                   -- different members and can hold only one.
+                   --
+                   -- Overwriting was worse than either. The run executing with member A would report
+                   -- its key refused, the row would name member B, and the pool would retire a HEALTHY
+                   -- key while leaving the dead one in rotation -- and charge A's spend to B. Keeping
+                   -- A instead is just the mirror-image guess. Empty is the only honest answer, and
+                   -- `harnessCredentialOf` already treats it as "mark nothing", which is the safe half
+                   -- the feedback class states as its own rule.
                    SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL,
-                       ended_at = NULL, harness_credential_id = EXCLUDED.harness_credential_id
+                       ended_at = NULL, harness_credential_id = NULL
                  WHERE factory_run.status = ? AND factory_run.failure_cause = ?
                    AND factory_run.harness = EXCLUDED.harness AND factory_run.model = EXCLUDED.model
                    AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit

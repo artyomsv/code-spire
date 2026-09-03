@@ -71,9 +71,18 @@ class HarnessCredentialResourceTest {
         String id = added();
 
         given().when().delete("/api/harness-credentials/" + id).then().statusCode(204);
-        // Still listed, so the row an attribution points at is still there.
+        // Still listed, so the row an attribution points at is still there -- AND actually disabled.
+        // Asserting only the listing let a mutation that stopped setting enabled=false pass.
         given().when().get("/api/harness-credentials")
-                .then().statusCode(200).body(containsString(id));
+                .then().statusCode(200)
+                .body(containsString(id))
+                .body("find { it.id == '" + id + "' }.enabled", org.hamcrest.Matchers.is(false));
+
+        // And it comes back, because disabling is not deletion.
+        given().when().post("/api/harness-credentials/" + id + "/enable").then().statusCode(204);
+        given().when().get("/api/harness-credentials")
+                .then().statusCode(200)
+                .body("find { it.id == '" + id + "' }.enabled", org.hamcrest.Matchers.is(true));
     }
 
     @Test

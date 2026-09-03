@@ -6,8 +6,6 @@ import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
-import dev.codespire.orchestrator.llm.LlmProviderConfig;
-import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.pipeline.BrokerAckFailure;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import jakarta.annotation.security.RolesAllowed;
@@ -28,8 +26,6 @@ import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Dispatches a factory run.
@@ -106,9 +102,6 @@ public class RunResource {
     FactoryConfig config;
 
     @Inject
-    LlmProviderRegistry llmProviders;
-
-    @Inject
     HarnessCredentialPool pool;
 
     @Inject
@@ -138,9 +131,18 @@ public class RunResource {
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(req, config);
         ScmProvider account = machineAccount(in);
         refusePinnedProvider(req.llmProviderId());
-        HarnessCredentialPool.PoolMember credential = harnessCredential(in.harness());
         refuseAnUnpriceableModel(in.model());
         refuseOverTheSpendCap();
+        // LAST of the checks, because selecting is a WRITE: it stamps last_used_at and so consumes a
+        // rotation slot. Placed above these two it did that for every request they then refused, and
+        // it holds a decrypted key from here on, so there is no reason to take it across work that
+        // may throw.
+        //
+        // The `queued` 409 below still runs after it, and that one cannot be moved: the row write
+        // needs the member's id. So a duplicate-subject request does still stamp a tiebreaker. That
+        // costs one rotation position and no key, which is the residue rather than a fix, and it is
+        // said here rather than left to be rediscovered.
+        HarnessCredentialPool.PoolMember credential = harnessCredential();
 
         RepoRef repo = new RepoRef(in.workspace(), in.slug());
         String runId = RunIds.of(in.scmType(), in.workspace(), in.slug(), in.subject(), FIRST_ATTEMPT);
@@ -290,19 +292,6 @@ public class RunResource {
     }
 
     /**
-     * An operator says what became of an unacknowledged dispatch (FR-F10).
-     *
-     * <p>Only for the runs reality did not resolve. A record that landed produces a
-     * {@code RunStarted}, which reopens the row on its own — so this exists for the case where
-     * nothing ever arrives and somebody has to look at the topic, the worker's logs, or the forge.
-     *
-     * <p>{@code neverRan} is the whole decision, and the two answers differ in whether the run may be
-     * started again. Saying it never ran writes the re-armable failed shape, so an identical retry of
-     * the original request starts it through the path that already exists. Saying it ran closes the
-     * row terminally, because publishing again for a run that really happened is the duplicate this
-     * state was created to prevent.
-     */
-    /**
      * The operator's finding.
      *
      * <p>A record with a boxed {@code Boolean} rather than a map, because the absent-vs-false
@@ -314,6 +303,19 @@ public class RunResource {
     public record DispatchResolution(Boolean neverRan) {
     }
 
+    /**
+     * An operator says what became of an unacknowledged dispatch (FR-F10).
+     *
+     * <p>Only for the runs reality did not resolve. A record that landed produces a
+     * {@code RunStarted}, which reopens the row on its own — so this exists for the case where
+     * nothing ever arrives and somebody has to look at the topic, the worker's logs, or the forge.
+     *
+     * <p>{@code neverRan} is the whole decision, and the two answers differ in whether the run may
+     * be started again. Saying it never ran writes the re-armable failed shape, so an identical
+     * retry of the original request starts it through the path that already exists. Saying it ran
+     * closes the row terminally, because publishing again for a run that really happened is the
+     * duplicate this state was created to prevent.
+     */
     @POST
     @Path("/{runId:.+}/dispatch-resolution")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -344,13 +346,6 @@ public class RunResource {
     }
 
     /**
-     * The harness runs with a key from the LLM provider registry — the named provider, else the
-     * deployment's default — because that registry is where operator keys live, encrypted, and a
-     * request body is not. 409 when neither exists: dispatching anyway would start and pay for a
-     * container that fails at its first model call. Whether the key suits the arm (an OpenAI key
-     * for codex) is the operator's to know at M0; the message says so.
-     */
-    /**
      * The key this run calls the model with, taken from the pool and never from the reviewer.
      *
      * <p>This used to fall back to the deployment's DEFAULT LLM provider — the same key the review
@@ -366,23 +361,40 @@ public class RunResource {
      * <p>Each refusal says which of the three states the pool is in, because they need three
      * different actions — wait, replace a key, or configure one at all.
      */
-    private HarnessCredentialPool.PoolMember harnessCredential(String harness) {
-        return switch (pool.select()) {
+    private HarnessCredentialPool.PoolMember harnessCredential() {
+        HarnessCredentialPool.Selection selection;
+        try {
+            selection = pool.select();
+        } catch (IllegalStateException e) {
+            // A read fault, not an empty pool. The pool throws rather than answering Empty
+            // precisely to preserve that distinction, and nothing downstream of a bare 500 says
+            // it -- so an operator would go and add keys they already have.
+            throw new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                    .entity("The harness credential pool could not be read, so no key could be"
+                            + " chosen. Nothing was dispatched and nothing was spent. This is a"
+                            + " database fault, not a missing credential -- do not add keys in"
+                            + " response to it.")
+                    .build(), e);
+        }
+        return switch (selection) {
             case HarnessCredentialPool.Selection.Chosen chosen -> chosen.member();
             case HarnessCredentialPool.Selection.Resting resting -> throw conflict(
-                    "Every harness credential is rate limited. Capacity returns at " + resting.capacityReturnsAt()
-                            + "; the pool recovers on its own, so retry then or add another credential "
-                            + "under Settings -> Harness credentials.");
+                    "No harness credential is available. Capacity returns at "
+                            + resting.capacityReturnsAt() + "; the pool recovers on its own, so retry"
+                            + " then or add another credential under Settings -> Harness credentials."
+                            + (resting.rejected() == 0 ? ""
+                                    : " " + resting.rejected() + " of them were refused outright and"
+                                            + " will NOT come back without a new key."));
             case HarnessCredentialPool.Selection.AllRejected rejected -> throw conflict(
                     "All " + rejected.count() + " harness credential(s) were refused by their provider. "
                             + "Nothing recovers on its own: rotating onto a refused key spends a request "
                             + "per run to rediscover it is dead. Replace the keys, or clear one you have "
                             + "fixed, under Settings -> Harness credentials.");
             case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(
-                    "No harness credential is configured, so there is no key for the '" + harness
-                            + "' agent to call the model with. Add one under Settings -> Harness "
-                            + "credentials. The factory deliberately does NOT borrow the reviewer's key: "
-                            + "it goes into a sandbox that runs an untrusted work item at full access.");
+                    "No harness credential is configured, so there is no key for this run to call the"
+                            + " model with. Add one under Settings -> Harness credentials. The factory"
+                            + " deliberately does NOT borrow the reviewer's key: it goes into a sandbox"
+                            + " that runs an untrusted work item at full access.");
         };
     }
 

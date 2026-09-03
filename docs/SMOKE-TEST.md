@@ -1647,9 +1647,37 @@ against a forge, authenticated as a machine account.
    A workspace may hold a `REVIEWER` row and a `FACTORY` row side by side; the role is part of every
    lookup's key, so neither path can be handed the other's token.
 
-5. **The harness credential.** The run's model key comes from the LLM provider registry — the
-   provider named by `llmProviderId`, else the deployment's default. For the codex arm that key must
-   be an OpenAI API key. Settings → LLM, or `POST /api/llm-providers`.
+5. **The harness credential pool.** The run's model key comes from the factory's OWN pool, never
+   from the LLM provider registry the reviewer uses. There is no fallback: with an empty pool the
+   dispatch is refused, naming what to configure.
+
+   That separation is the point rather than an inconvenience. This key goes into a container
+   running an untrusted model on an untrusted work item at full shell access, where a
+   prompt-injected agent can read its own environment — so one exfiltration must not disable
+   reviews as well, and a spend spike from a leaked key must be distinguishable in the ledger.
+
+   ```bash
+   curl -sS -X POST http://localhost:34080/api/harness-credentials \
+     -H 'content-type: application/json' -d '{
+       "label":"codex-primary","type":"openai",
+       "baseUrl":"https://api.openai.com","apiKey":"<sk-...>"}'
+   ```
+
+   Register two or more to see the rotation: the pool hands out the member that has rested
+   longest, so repeated dispatches alternate. For the codex arm the key must be an OpenAI API key.
+
+   `GET /api/harness-credentials` lists the pool — never the keys. A member can be rested
+   (`POST /{id}/rest`), disabled (`DELETE /{id}`), brought back (`POST /{id}/enable`), or returned
+   after a refusal (`POST /{id}/clear-rejection`).
+
+   **`llmProviderId` on a dispatch is now a `400`.** The pool rotates, so a request that pinned a
+   key would defeat it; refusing is deliberate, because honouring it silently would be worse.
+
+   **Known gap, so a rejected key does not surprise you:** nothing in the pipeline reports a
+   credential refusal yet, so a dead key is NOT taken out of rotation automatically. A run using
+   it fails as `MODEL_UNAVAILABLE` or `AGENT_FAILED` and the pool hands it out again. Retire it by
+   hand with `DELETE /{id}`. See
+   `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 
 ### Trigger — exit criterion 1
 
@@ -1711,11 +1739,15 @@ against a forge, authenticated as a machine account.
 | Symptom | Likely cause |
 |---|---|
 | `409` naming `FACTORY` | No FACTORY-role provider for that workspace; a REVIEWER row does not count and is never used as a fallback |
-| `409` naming `LLM provider` | No default LLM provider and no `llmProviderId` — the harness credential has no source |
+| `409` naming `No harness credential is configured` | The pool is empty. Add one at `POST /api/harness-credentials`; the reviewer's LLM provider is deliberately not used as a fallback |
+| `409` naming `Capacity returns at ...` | Every member is exhausted. The message says when the earliest rate limit lifts, and how many were refused outright and will NOT come back without a new key |
+| `409` naming `were refused by their provider` | Every member was refused. Nothing recovers on its own — replace the keys, or `POST /{id}/clear-rejection` on one you have fixed |
+| `400` naming `llmProviderId is no longer accepted` | The request pinned a credential. The pool chooses now; drop the field |
+| `503` naming `could not be read` | A database fault reading the pool, NOT a missing credential. Nothing was dispatched and nothing was spent — do not add keys in response to it |
 | `400` naming `spire.factory.agent-image` | The harness has no image configured in the orchestrator (`spire.factory.agent-image.<harness>`) |
 | `failed` / `SANDBOX_UNREACHABLE`, init exit non-zero | The clone failed: wrong token, wrong base commit (must be reachable from the remote's branches), or `spire-publisher:latest` not built. The unit is left behind on purpose — `docker logs` the init container |
 | `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: branch outside `spire/`, equal to the base, or a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
-| Codex exits immediately, `no output` | `OPENAI_API_KEY` rejected or absent — check the LLM provider's key with its Check button; the key must be OpenAI's for this arm |
+| Codex exits immediately, `no output` | The pool member's key was rejected or absent, and the key must be OpenAI's for this arm. Nothing retires it automatically (see step 5) — `DELETE /api/harness-credentials/{id}` and dispatch again |
 | `succeeded` with `pushedRef: null` | The agent committed nothing — its bundle never existed. Read the agent container's log; the prompt may not have asked for a commit |
 
 ### Cleanup

@@ -48,6 +48,9 @@ class RunCredentialFeedbackTest {
     RunCharges charges;
 
     @Inject
+    RunResultSaga saga;
+
+    @Inject
     DataSource dataSource;
 
     @BeforeEach
@@ -109,6 +112,26 @@ class RunCredentialFeedbackTest {
         assertEquals(only, assertChosen(), "the key is still handed out, because nothing proved it bad");
     }
 
+    /**
+     * The wiring, not the translation.
+     *
+     * <p>Every other test here calls {@code feedback.reactTo} directly, so deleting the saga's call
+     * to it left the whole suite green while the feature did nothing — the installed-and-inert seam
+     * this class's own javadoc names as the thing this project keeps rediscovering, and then did not
+     * assert.
+     */
+    @Test
+    void aRefusalReachesThePoolThroughTheSagaAndNotOnlyByADirectCall() {
+        UUID refused = member("refused");
+        String runId = runOn(refused);
+
+        saga.on(new RunResult.RunFailed(runId, "CREDENTIAL_REJECTED", "the provider refused", false, null));
+
+        assertTrue(view(refused).rejectedAt() != null,
+                "the saga must reach the feedback path; a direct call proves the translation, not the"
+                        + " wiring, and the wiring is what a deleted line removes");
+    }
+
     @Test
     void aRunThatNamesNoMemberMarksNothing() {
         // A run dispatched before the pool existed. Marking an arbitrary member on its behalf would
@@ -153,9 +176,10 @@ class RunCredentialFeedbackTest {
     }
 
     @Test
-    void aReviewsChargeNamesNoCredential() {
-        // The other half. A review call has no pool member, and null is the right answer rather than
-        // a borrowed one -- which is the whole point of the factory not sharing the reviewer's key.
+    void aRunThatNamesNoMemberIsChargedWithoutAnAttribution() {
+        // Renamed: this drives the RUN path with a null member, not ChargeCall.forReview. The old
+        // name asserted coverage of a path this test never touches -- and a review charge genuinely
+        // has no pool member, which is the reviewer/factory separation working.
         String runId = runOn(null);
 
         charges.record(new RunResult.RunFinished(runId, null, java.util.List.of(), java.util.List.of(),

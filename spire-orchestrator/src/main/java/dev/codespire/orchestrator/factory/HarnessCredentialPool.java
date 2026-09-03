@@ -12,11 +12,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -39,6 +37,13 @@ import java.util.UUID;
  * wrong, revoked, or out of credit, and retrying it spends one request per run to learn nothing. A
  * single "unavailable until" column forces one of those to be wrong, and the direction that reads a
  * rejection as a pause is how a pool stops rotating while still looking healthy.
+ *
+ * <p><b>Neither state has an automatic producer today, and that is the honest statement of what this
+ * class currently is.</b> See {@link RunCredentialFeedback} and
+ * {@code techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md}:
+ * nothing in the shipped pipeline emits a credential-refusal cause, so both marks are operator-driven.
+ * The rotation, the separation from the reviewer's key and the exhaustion refusal are all live; the
+ * self-healing is not.
  */
 @ApplicationScoped
 public class HarnessCredentialPool {
@@ -62,8 +67,28 @@ public class HarnessCredentialPool {
     @ConfigProperty(name = "spire.run.credential-rate-limit-default-seconds", defaultValue = "900")
     long defaultRateLimitSeconds;
 
-    /** One member with its key decrypted. Never logged, never returned by the REST surface. */
+    /**
+     * One member with its key decrypted.
+     *
+     * <p>{@code toString} masks the key. A record prints every component, and
+     * {@code LOG.debugf("selected %s", member)} is the obvious line for somebody to write — the same
+     * reason {@code ExecuteRun} and {@code Credentials.Scm} mask theirs. A convention the type does
+     * not enforce is one the type does not have.
+     *
+     * <p>{@code label}, {@code type} and {@code baseUrl} are operator METADATA: they name the key in
+     * a vendor console and in this pool's own listing, and {@code baseUrl} is validated on the way in
+     * like every sibling registry's. The dispatch path reads only {@code apiKey} — the endpoint the
+     * agent calls is the harness image's, not this row's — so registering a member against a
+     * self-hosted base URL does not change where the model call goes. Recorded in the javadoc because
+     * the REST surface demands both fields, which reasonably implies they route something.
+     */
     public record PoolMember(UUID id, String label, String type, String baseUrl, String apiKey) {
+
+        @Override
+        public String toString() {
+            return "PoolMember[id=" + id + ", label=" + label + ", type=" + type
+                    + ", baseUrl=" + baseUrl + ", apiKey=***]";
+        }
     }
 
     /**
@@ -74,13 +99,23 @@ public class HarnessCredentialPool {
 
         /** A usable member. */
         record Chosen(PoolMember member) implements Selection {
+
+            @Override
+            public String toString() {
+                return "Chosen[" + member + "]";
+            }
         }
 
         /**
-         * Nothing is available now, but a rate limit lifts at {@code capacityReturnsAt}. The pool
-         * heals itself; the operator's action is to wait, or to add another member.
+         * Nothing is available now, but a rate limit lifts at {@code capacityReturnsAt}.
+         *
+         * @param rejected how many members will NOT come back when it does. Carried because the wait
+         *                 is only half the story: a pool of three with two refused and one resting
+         *                 recovers to a single key, and an operator told only "retry then" waits for
+         *                 members that are permanently dead. The attention row said this and the
+         *                 dispatch refusal did not, which is the drift {@link PoolHealth} now closes.
          */
-        record Resting(Instant capacityReturnsAt) implements Selection {
+        record Resting(Instant capacityReturnsAt, int rejected) implements Selection {
         }
 
         /**
@@ -100,16 +135,26 @@ public class HarnessCredentialPool {
      *
      * <p>"Rested longest" rather than "least recently used" is the rotation this needs: a member that
      * was rate-limited an hour ago is a better bet than one that was rate-limited a minute ago, and a
-     * member that has never been exhausted is the best bet of all. Ordering by use alone would send
-     * the next run straight back at the key that just ran out.
+     * member that has never been exhausted is the best bet of all. {@code last_used_at} then breaks
+     * the tie, which is the ONLY ordering that applies to a healthy pool where nothing has ever been
+     * exhausted — that is, to a working deployment most of the time.
      *
-     * <p>Selection and the use stamp are ONE statement. Read-then-update would let two dispatches a
-     * millisecond apart both read the same longest-rested member and both take it, which is the
-     * failure that makes a rotation policy look installed and do nothing under exactly the load it
-     * exists for.
+     * <p>Selection and the use stamp are ONE statement, so no caller can read a member and stamp it
+     * in two steps and let a third dispatch interleave between them. It is deliberately NOT a lock:
+     * two dispatches a millisecond apart may legitimately receive the same member, because a key is
+     * not exclusive and serving two runs at once is what a pool is for. A probe confirms the spread
+     * — eight concurrent sessions taking 320 members from a pool of four came out 80/80/80/80.
      *
-     * <p>Two members serving two runs at once is fine and expected — a key is not exclusive. The
-     * statement is about ORDER, not about locking.
+     * <p>The statement is a WRITE, so callers must run every refusal they can before reaching it:
+     * a request refused afterwards has consumed a rotation slot for a member it never used.
+     *
+     * <p><b>The ORDER BY and V52's partial index are one decision written twice, and only the index
+     * is load-bearing.</b> Deleting {@code last_used_at NULLS FIRST} from this clause changes no
+     * observable behaviour and no test can catch it, because the index carries that column as its
+     * second key and Postgres returns rows in full index order anyway. Two reviews independently
+     * failed to kill that mutation, which is worth recording so nobody hunts it a third time. What
+     * IS asserted is the mechanism the rotation actually rests on — the use stamp above — and
+     * removing that does fail a test. Change the index and this clause together.
      */
     public Selection select() {
         String sql = """
@@ -124,49 +169,65 @@ public class HarnessCredentialPool {
                         LIMIT 1)
                 RETURNING id, label, type, base_url, api_key
                 """;
+        UUID chosen = null;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             if (rs.next()) {
-                UUID id = rs.getObject("id", UUID.class);
-                return new Selection.Chosen(new PoolMember(id, rs.getString("label"),
-                        rs.getString("type"), rs.getString("base_url"),
-                        encryption.decryptString(rs.getString("api_key"), aad(id))));
+                chosen = rs.getObject("id", UUID.class);
+                return new Selection.Chosen(decrypt(chosen, rs));
             }
         } catch (SQLException e) {
             // Not an empty pool: a read fault is not "you have no credentials", and answering Empty
-            // would send an operator to configure keys they already have. The caller refuses either
-            // way, but it must refuse with the right sentence.
+            // would send an operator to configure keys they already have.
             throw new IllegalStateException("The harness credential pool could not be read", e);
+        } catch (RuntimeException e) {
+            // A key that cannot be DECRYPTED -- a rotated keyset, a row restored from a backup taken
+            // under a different one, a broken AAD binding. EncryptionService throws
+            // IllegalStateException, not SQLException, so this used to escape as a bare 500 with the
+            // use stamp already committed: the member stayed in rotation and failed one dispatch in N
+            // for ever, with nothing naming which member or why.
+            //
+            // Retired rather than merely reported, because the answer is the same as a provider
+            // refusal: nothing but an operator brings it back.
+            LOG.errorf(e, "harness credential %s could not be decrypted; it leaves the pool until an"
+                    + " operator replaces it", chosen);
+            markRejected(chosen);
+            return whyNothingIsAvailable();
         }
         return whyNothingIsAvailable();
+    }
+
+    private PoolMember decrypt(UUID id, ResultSet rs) throws SQLException {
+        return new PoolMember(id, rs.getString("label"), rs.getString("type"), rs.getString("base_url"),
+                encryption.decryptString(rs.getString("api_key"), aad(id)));
     }
 
     /**
      * Nothing was selectable — say which of the three reasons, in the order that decides the action.
      *
      * <p>Rate limits first: if ANY member is resting, the pool recovers on its own and the honest
-     * answer names the time. Only when none is resting does "every member is rejected" become the
-     * whole story, and only when there is no enabled member at all is the answer "configure one".
+     * answer names the time AND how many will not return with it. Only when none is resting does
+     * "every member is rejected" become the whole story.
+     *
+     * <p>The last branch is the transient race — a rate limit expiring, or a rejection being cleared,
+     * between the selecting statement and this one. It answers {@code Resting(now)} rather than
+     * {@code Empty}, because "no harness credential is configured" is precisely the wrong sentence
+     * for an operator who has several, and it is the sentence this method's own design set out to
+     * avoid.
      */
     private Selection whyNothingIsAvailable() {
-        String sql = """
-                SELECT count(*) FILTER (WHERE enabled)                                     AS enabled_members,
-                       count(*) FILTER (WHERE enabled AND rejected_at IS NOT NULL)         AS rejected,
-                       min(rate_limited_until) FILTER (WHERE enabled AND rejected_at IS NULL
-                                                         AND rate_limited_until > now())   AS returns_at
-                  FROM harness_credential
-                """;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            if (!rs.next() || rs.getInt("enabled_members") == 0) {
+        try (Connection c = dataSource.getConnection()) {
+            PoolHealth health = PoolHealth.read(c);
+            if (health.members() == 0) {
                 return new Selection.Empty();
             }
-            Timestamp returnsAt = rs.getTimestamp("returns_at");
-            if (returnsAt != null) {
-                return new Selection.Resting(returnsAt.toInstant());
+            if (health.returnsAt() != null) {
+                return new Selection.Resting(health.returnsAt(), health.rejected());
             }
-            int rejected = rs.getInt("rejected");
-            return rejected > 0 ? new Selection.AllRejected(rejected) : new Selection.Empty();
+            if (health.rejected() == health.members()) {
+                return new Selection.AllRejected(health.rejected());
+            }
+            return new Selection.Resting(Instant.now(), health.rejected());
         } catch (SQLException e) {
             throw new IllegalStateException("The harness credential pool could not be read", e);
         }
@@ -176,21 +237,28 @@ public class HarnessCredentialPool {
      * The provider rate-limited this member; it comes back on its own.
      *
      * <p>{@code until} is the provider's own answer when it gave one. A null becomes a bounded
-     * default rather than an indefinite rest, because an unstated limit is still a promise.
+     * default computed by the DATABASE's clock, not this process's: every other timestamp on the row
+     * comes from {@code now()}, and a feature whose promise is "capacity returns at a stated time"
+     * must not state it against a second clock.
      *
      * <p>{@code exhausted_at} is stamped whether or not the member is currently selectable, since it
-     * is the rotation order rather than the availability test — a member that ran out an hour ago
-     * should still sort behind one that never has.
+     * is the rotation order rather than the availability test.
+     *
+     * @return whether a member was actually marked. False for an unknown id AND for an
+     *         already-refused member, whose CHECK forbids carrying both states — a caller that
+     *         reported success for either would assert a rest that never happened.
      */
-    public void markRateLimited(UUID id, Instant until) {
-        Instant returnsAt = until != null ? until
-                : Instant.now().plus(Duration.ofSeconds(defaultRateLimitSeconds));
-        update("""
+    public boolean markRateLimited(UUID id, Instant until) {
+        boolean marked = update("""
                 UPDATE harness_credential
-                   SET rate_limited_until = ?, exhausted_at = now(), updated_at = now()
+                   SET rate_limited_until = COALESCE(?, now() + make_interval(secs => ?)),
+                       exhausted_at = now(), updated_at = now()
                  WHERE id = ? AND rejected_at IS NULL
-                """, id, Timestamp.from(returnsAt), id);
-        LOG.warnf("harness credential %s is rate limited until %s; the pool will rotate past it", id, returnsAt);
+                """, id, until == null ? null : Timestamp.from(until), (double) defaultRateLimitSeconds) == 1;
+        if (marked) {
+            LOG.warnf("harness credential %s is rate limited; the pool will rotate past it", id);
+        }
+        return marked;
     }
 
     /**
@@ -199,15 +267,18 @@ public class HarnessCredentialPool {
      * <p>No expiry, on purpose. A key that was refused will be refused again, so a pool that retried
      * it would spend one request per run rediscovering that — and the runs it burns are paid ones.
      */
-    public void markRejected(UUID id) {
-        update("""
+    public boolean markRejected(UUID id) {
+        boolean marked = update("""
                 UPDATE harness_credential
                    SET rejected_at = now(), rate_limited_until = NULL, exhausted_at = now(),
                        updated_at = now()
                  WHERE id = ? AND rejected_at IS NULL
-                """, id, id);
-        LOG.errorf("harness credential %s was refused by its provider and is out of the pool until an"
-                + " operator replaces or clears it", id);
+                """, id) == 1;
+        if (marked) {
+            LOG.errorf("harness credential %s was refused and is out of the pool until an operator"
+                    + " replaces or clears it", id);
+        }
+        return marked;
     }
 
     /** An operator says the key works again — a rotated secret, or restored credit. */
@@ -216,7 +287,7 @@ public class HarnessCredentialPool {
                 UPDATE harness_credential
                    SET rejected_at = NULL, rate_limited_until = NULL, updated_at = now()
                  WHERE id = ? AND rejected_at IS NOT NULL
-                """, id, id) == 1;
+                """, id) == 1;
     }
 
     /** What the settings surface shows. Never carries the key. */
@@ -244,7 +315,20 @@ public class HarnessCredentialPool {
         }
     }
 
-    /** Add a member. The key is Tink-encrypted with its AAD bound to the row, like every registry. */
+    /** Raised when a label is already taken, so the caller can answer 409 rather than 500. */
+    public static class DuplicateLabelException extends IllegalStateException {
+        DuplicateLabelException(String label, Throwable cause) {
+            super("a harness credential named \"" + label + "\" already exists", cause);
+        }
+    }
+
+    /**
+     * Add a member. The key is Tink-encrypted with its AAD bound to the row, like every registry.
+     *
+     * @throws DuplicateLabelException when the label is taken. The unique label is load-bearing — the
+     *         migration's own reasoning is that "which key is dead" is unanswerable when two are
+     *         called the same — so the collision needs an answer an operator can act on.
+     */
     public MemberView add(String label, String type, String baseUrl, String apiKey) {
         UUID id = UUID.randomUUID();
         try (Connection c = dataSource.getConnection();
@@ -260,15 +344,32 @@ public class HarnessCredentialPool {
             ps.executeUpdate();
             return new MemberView(id, label, type, baseUrl, true, null, null, null);
         } catch (SQLException e) {
+            if ("23505".equals(e.getSQLState())) {
+                throw new DuplicateLabelException(label, e);
+            }
             throw new IllegalStateException("The harness credential could not be added", e);
         }
     }
 
+    /**
+     * Take a member out of rotation, keeping the row.
+     *
+     * <p>Disabled rather than deleted because a {@code factory_run} row references it: the foreign
+     * key has no {@code ON DELETE}, so a hard delete is REFUSED rather than cascaded, and the row a
+     * finished run's attribution points at stays where it is.
+     *
+     * <p>The ciphertext stays too. Disabling is not revocation — a leaked key has to be revoked at
+     * the vendor, and nothing here can do that.
+     */
     public boolean remove(UUID id) {
-        // The run rows keep pointing at it, so the FK is ON DELETE unset rather than CASCADE: a
-        // deleted member must not take a finished run's attribution with it.
         return update("UPDATE harness_credential SET enabled = FALSE, updated_at = now() WHERE id = ?",
-                id, id) == 1;
+                id) == 1;
+    }
+
+    /** Bring a disabled member back, because disabling is not deletion and must not be one-way. */
+    public boolean enable(UUID id) {
+        return update("UPDATE harness_credential SET enabled = TRUE, updated_at = now()"
+                + " WHERE id = ? AND NOT enabled", id) == 1;
     }
 
     private static Instant instant(ResultSet rs, String column) throws SQLException {
@@ -276,11 +377,20 @@ public class HarnessCredentialPool {
         return value == null ? null : value.toInstant();
     }
 
-    private int update(String sql, UUID id, Object... params) {
+    /**
+     * Apply one statement whose id is bound LAST.
+     *
+     * <p>Every statement here ends in {@code WHERE id = ?}, so the id is named once and bound once.
+     * It used to be passed twice — for the error message and again as a parameter — which a reader
+     * had to open this method to discover, and whose failure mode is a runtime "no value specified
+     * for parameter 1" in the code that decides which key is marked dead.
+     */
+    private int update(String sql, UUID id, Object... leadingParams) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) {
-                ps.setObject(i + 1, params[i]);
+            for (int i = 0; i < leadingParams.length; i++) {
+                ps.setObject(i + 1, leadingParams[i]);
             }
+            ps.setObject(leadingParams.length + 1, id);
             return ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("The harness credential " + id + " could not be updated", e);

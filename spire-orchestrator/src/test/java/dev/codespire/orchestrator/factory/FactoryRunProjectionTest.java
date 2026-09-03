@@ -27,6 +27,19 @@ class FactoryRunProjectionTest {
     @Inject
     FactoryRunProjection projection;
 
+    @Inject
+    HarnessCredentialPool pool;
+
+    /**
+     * A REAL pool member, because factory_run.harness_credential_id is a foreign key -- a random
+     * UUID is refused, which is the schema keeping a run's attribution pointing at something that
+     * exists.
+     */
+    private java.util.UUID poolMember(String suffix) {
+        return pool.add("TEST-pool-frp-" + suffix + "-" + java.util.UUID.randomUUID(), "openai",
+                "https://api.openai.com", "TEST-agent-key").id();
+    }
+
     @Test
     void aRunThatDeliveredNothingIsNotRecordedAsSucceeded() {
         // The agent exited cleanly and committed nothing. A legitimate outcome, and the walking
@@ -247,6 +260,44 @@ class FactoryRunProjectionTest {
         assertFalse(reQueue(runId));
     }
 
+    /**
+     * A re-armed dispatch attributes to NOTHING, because it cannot attribute honestly.
+     *
+     * <p>The re-arm exists because the FIRST command may be the one that runs — an unacknowledged
+     * dispatch is retried while its original may already be on the topic. So the row can be asked
+     * to name two members and can hold one.
+     *
+     * <p>Overwriting was the worst of the three options: the run executing with member A reports
+     * its key refused, the row names member B, and the pool retires a HEALTHY key while leaving the
+     * dead one in rotation — and charges A's spend to B. Keeping A is the mirror-image guess. Empty
+     * is the only honest answer, and the feedback path already treats it as "mark nothing".
+     */
+    @Test
+    void aReArmedDispatchAttributesToNoCredentialRatherThanTheWrongOne() {
+        java.util.UUID first = poolMember("first");
+        java.util.UUID second = poolMember("second");
+        String runId = "run::github:TEST-acme/app:rearm-" + java.util.UUID.randomUUID() + ":1";
+        assertTrue(queueWith(runId, first));
+        assertEquals(first.toString(), column(runId, "harness_credential_id").getFirst());
+        projection.dispatchFailed(runId, "TEST-refused outright");
+
+        assertTrue(queueWith(runId, second), "the identical retry still re-arms");
+
+        assertNull(column(runId, "harness_credential_id").getFirst(),
+                "two commands may be live and only one can be named, so the row names neither");
+    }
+
+    /** A first dispatch DOES record its member — otherwise the rule above is vacuous. */
+    @Test
+    void aFirstDispatchRecordsTheMemberItDrewFrom() {
+        java.util.UUID member = poolMember("solo");
+        String runId = "run::github:TEST-acme/app:attrib-" + java.util.UUID.randomUUID() + ":1";
+
+        assertTrue(queueWith(runId, member));
+
+        assertEquals(member.toString(), column(runId, "harness_credential_id").getFirst());
+    }
+
     @Test
     void aRunThatResolvedItselfCannotBeResolvedByHand() {
         // An operator reading a stale page must not overwrite what the run itself has since said.
@@ -313,6 +364,15 @@ class FactoryRunProjectionTest {
         String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
         assertTrue(reQueue(runId));
         return runId;
+    }
+
+    /**
+     * A dispatch naming a specific pool member. The credential is deliberately NOT part of the
+     * re-arm comparison, so two calls with different members still count as the identical request.
+     */
+    private boolean queueWith(String runId, java.util.UUID credential) {
+        return projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/x", "spire-bot", credential));
     }
 
     /**

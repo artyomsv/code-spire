@@ -54,3 +54,31 @@ something false.
   `ResultSaga`; that one is already in scope at the charge site.
 - Task 10 is the natural owner — it is the task that makes the column mean something, and it will be
   editing the credential resolution path anyway.
+
+## Progress — M1 Task 10 (2026-09-03)
+
+**The RUN half is closed.** `harness_credential` gives a run a per-key identity for the first time,
+`factory_run.harness_credential_id` records which member it was dispatched with, and `RunCharges`
+binds it into `llm_charge.credential_ref`. V42 added that column for exactly this and nothing had
+ever written it, because until the pool there was no per-run credential to write.
+
+**The REVIEW half is open, and this entry deliberately shipped half of what it asked for.** Its own
+Suggested Solutions said "both paths, or neither — populating it for runs alone produces a column
+that is filled for half the rows, which reads as done and is worse than uniformly NULL." That
+objection is answered rather than ignored: `V52` documents the split on the column itself, so a
+NULL now means "a review call, or a run from before the pool" rather than "nobody got round to it".
+A half-filled column with a written-down rule is not the ambiguity the objection was about.
+
+**And the entry's premise for the review half was wrong.** It claimed the credential is "already in
+scope at the charge site". A review found otherwise: `ResultSaga.charge` works from `ReviewGenerated`
+usage and has no credential in hand at all. So the review half is not a one-line addition — it needs
+the resolved provider carried to the charge site, which is a change to the review pipeline and not
+to the factory.
+
+### Remaining
+
+- Carry the resolved LLM provider id from `ResultSaga`'s credential brokering to the charge site, so
+  a review call names the key that paid for it too.
+- Note that the reviewer's key and the factory's pool are now different registries entirely, so the
+  two attributions will never be comparable ids — which is correct, and the point of ADR-038's
+  reasoning applied to the model side.
