@@ -5,6 +5,7 @@ import com.github.dockerjava.api.command.InspectImageResponse;
 import com.github.dockerjava.api.model.ContainerConfig;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,6 +22,13 @@ import java.util.Objects;
  * {@code USER 1001} may still have a root-owned {@code /workspace}, and that combination is the one
  * that produces a run which clones correctly and then does nothing. So the checker starts one
  * short-lived container per probe rather than reading metadata and hoping.
+ *
+ * <p><b>A false accusation is worse than a miss.</b> This is a checker, so an operator acts on what
+ * it says: a clause reported FAIL sends them to change an image that may be correct. Every path that
+ * cannot answer therefore reports {@link #unknown} — a checker problem, said as one — rather than
+ * letting "no answer" collapse into "the answer was no". A review found three clauses doing exactly
+ * that collapse, and the resulting report blamed a conforming entrypoint for three defects it did
+ * not have.
  */
 public final class AgentImageVerifier {
 
@@ -29,6 +37,51 @@ public final class AgentImageVerifier {
 
     /** The workspace the entrypoint commits in. */
     static final String WORKSPACE = "/workspace";
+
+    /** The sentinel the stub harness looks for on stdin. Obviously synthetic, never a real prompt. */
+    static final String PROMPT_SENTINEL = "SPIRE-CONFORMANCE-PROMPT";
+
+    /** The suffix the handoff protocol names. */
+    private static final String BUNDLE_SUFFIX = ".bundle";
+
+    /** The probe script's answer keys, written once and read once. A typo would be a silent null. */
+    private static final String GIT_KEY = "git";
+
+    private static final String CA_KEY = "ca";
+
+    private static final String WORKSPACE_KEY = "workspace";
+
+    private static final String HANDOFF_KEY = "handoff";
+
+    private static final String YES = "yes";
+
+    /** The longest image-controlled string that reaches a report line. */
+    private static final int MAX_QUOTED_CHARS = 200;
+
+    /**
+     * What a clause says when it passes and when it fails.
+     *
+     * <p>A record rather than two more string parameters: {@code booleanClause} took four, over the
+     * rule, and the two prose arguments were transposable with no compiler complaint — a
+     * transposition prints the failure text on a passing image and nothing catches it.
+     */
+    private record ClauseText(String id, String onPass, String onFail) {
+    }
+
+    private static final ClauseText GIT_CLAUSE = new ClauseText(Clauses.GIT,
+            "a git binary is on PATH",
+            "no git binary: the handoff is git bundles, so checkpointing would silently produce "
+                    + "nothing");
+
+    private static final ClauseText CA_CLAUSE = new ClauseText(Clauses.CA_CERTIFICATES,
+            "a system trust store is present",
+            "no system trust store: every TLS call fails with UnknownIssuer, and at least one "
+                    + "harness retries silently");
+
+    private static final ClauseText STDIN_CLAUSE = new ClauseText(Clauses.PROMPT_ON_STDIN,
+            "the harness received the work item on stdin",
+            "the harness did not see the work item on stdin; on argv it is visible in the host "
+                    + "process list and can be committed by an autosave");
 
     private final ImageProbe probe;
 
@@ -61,24 +114,28 @@ public final class AgentImageVerifier {
                             + "handoff protocol around it and the run would produce nothing");
         }
         return ConformanceReport.Verification.passed(Clauses.ENTRYPOINT,
-                String.join(" ", entrypoint));
+                bounded(String.join(" ", entrypoint)));
     }
 
     /**
-     * An empty {@code USER} is root.
+     * Root is uid 0, however the image spells it.
      *
-     * <p>Docker's default when the instruction is absent, which makes "no USER" and "USER root" the
-     * same fact — and the absent form is the one an author does not notice.
+     * <p>Decided on the UID FIELD alone. An earlier version tested the whole string against
+     * {@code "root"}, {@code "0"} and a {@code "0:"} prefix — so {@code USER root:root}, a
+     * documented and common Dockerfile form, matched none of them and an image running as uid 0 was
+     * reported as conforming. That is the one clause whose whole purpose is that this container runs
+     * untrusted model output at full shell access.
      */
     private static ConformanceReport.Verification nonRoot(InspectImageResponse inspected) {
         String user = config(inspected) == null ? null : config(inspected).getUser();
-        if (user == null || user.isBlank() || user.equals("root") || user.startsWith("0:")
-                || user.equals("0")) {
+        String uid = user == null ? "" : user.split(":", 2)[0].trim();
+        if (uid.isEmpty() || uid.equals("root") || uid.equals("0")) {
             return ConformanceReport.Verification.failed(Clauses.NON_ROOT,
-                    "runs as root (USER=" + (user == null || user.isBlank() ? "<unset>" : user)
+                    "runs as root (USER=" + (user == null || user.isBlank()
+                            ? "<unset>" : bounded(user))
                             + "); this container runs untrusted model output at full shell access");
         }
-        return ConformanceReport.Verification.passed(Clauses.NON_ROOT, "USER=" + user);
+        return ConformanceReport.Verification.passed(Clauses.NON_ROOT, "USER=" + bounded(user));
     }
 
     private static ContainerConfig config(InspectImageResponse inspected) {
@@ -88,27 +145,14 @@ public final class AgentImageVerifier {
     /**
      * The clauses that need the image running.
      *
-     * <p>One container, not six: each probe costs a container create, start, wait and remove, and a
-     * conformance check an operator runs before every deploy is one they will stop running if it
-     * takes a minute. The script writes one line per clause and the results are read back by
-     * prefix.
+     * <p>One container for the four cheap ones: each probe costs a container create, start, wait and
+     * remove, and a check an operator runs before every deploy is one they stop running if it takes
+     * a minute. The script writes one line per clause and the results are read back by key.
      */
     private List<ConformanceReport.Verification> runtimeClauses(String image) {
-        String script = String.join("; ",
-                "id -u > /tmp/uid 2>/dev/null || true",
-                "echo git=$(command -v git >/dev/null 2>&1 && echo yes || echo no)",
-                "echo ca=$( { [ -f /etc/ssl/certs/ca-certificates.crt ] "
-                        + "|| [ -f /etc/ssl/cert.pem ] "
-                        + "|| [ -d /etc/ssl/certs ] && [ -n \"$(ls /etc/ssl/certs 2>/dev/null)\" ]; } "
-                        + "&& echo yes || echo no)",
-                "echo workspace=$( [ -d " + WORKSPACE + " ] && [ -w " + WORKSPACE + " ] "
-                        + "&& echo writable || echo no)",
-                "echo handoff=$( [ -d " + HANDOFF + " ] && [ -w " + HANDOFF + " ] "
-                        + "&& echo writable || echo no)");
-
         ImageProbe.Result result;
         try {
-            result = probe.run(image, List.of("sh", "-c", script));
+            result = probe.run(image, List.of("sh", "-c", runtimeProbeScript()));
         } catch (RuntimeException unreachable) {
             // Every runtime clause is unknown, and saying so is the honest answer. Reporting them
             // as failures would send an operator to fix an image that may be perfectly good.
@@ -118,34 +162,70 @@ public final class AgentImageVerifier {
         Map<String, String> answers = parse(result.output());
         List<ConformanceReport.Verification> verified = new ArrayList<>();
         verified.add(mountPoints(answers));
-        verified.add(booleanClause(Clauses.GIT, answers.get("git"),
-                "a git binary is on PATH", "no git binary: the handoff is git bundles, so "
-                        + "checkpointing would silently produce nothing"));
-        verified.add(booleanClause(Clauses.CA_CERTIFICATES, answers.get("ca"),
-                "a system trust store is present", "no system trust store: every TLS call fails "
-                        + "with UnknownIssuer, and at least one harness retries silently"));
+        verified.add(booleanClause(GIT_CLAUSE, answers.get(GIT_KEY)));
+        verified.add(booleanClause(CA_CLAUSE, answers.get(CA_KEY)));
         verified.addAll(handoffProtocol(image));
         return verified;
     }
 
+    /**
+     * The one shell program the cheap clauses are decided by.
+     *
+     * <p>A text block, because the earlier concatenated form hid a real defect: the trust-store test
+     * read {@code A || B || C && D}, and POSIX gives {@code &&} and {@code ||} equal precedence with
+     * left associativity — so {@code D} gated all three alternatives and an image whose store is
+     * only {@code /etc/ssl/cert.pem} was told it had none. The third alternative is braced now, and
+     * the shape is visible.
+     *
+     * <p>Ownership as well as writability for the mount points. Root can write a 1001-owned
+     * directory, so writability alone passed the one image where the mismatch was real — and that
+     * mismatch is what makes git refuse the workspace as dubiously owned.
+     */
+    private static String runtimeProbeScript() {
+        return String.join("\n",
+                "echo " + GIT_KEY + "=$(command -v git >/dev/null 2>&1 && echo " + YES + " || echo no)",
+                "echo " + CA_KEY + "=$({ [ -f /etc/ssl/certs/ca-certificates.crt ] "
+                        + "|| [ -f /etc/ssl/cert.pem ] "
+                        + "|| { [ -d /etc/ssl/certs ] && [ -n \"$(ls /etc/ssl/certs 2>/dev/null)\" ]; }; } "
+                        + "&& echo " + YES + " || echo no)",
+                ownershipProbe(WORKSPACE_KEY, WORKSPACE),
+                ownershipProbe(HANDOFF_KEY, HANDOFF));
+    }
+
+    private static String ownershipProbe(String key, String path) {
+        return "echo " + key + "=$( [ -d " + path + " ] && [ -w " + path + " ] "
+                + "&& [ \"$(stat -c %u " + path + " 2>/dev/null)\" = \"$(id -u)\" ] "
+                + "&& echo " + YES + " || echo no)";
+    }
+
+    /**
+     * Both mount points, or a clear statement that the probe answered about neither.
+     *
+     * <p>The null path is not decoration: without it, a probe that never ran a shell at all (an
+     * image with no {@code sh}, an exec-format failure) produced "missing or not writable by the run
+     * user" beside two clauses correctly reading NOT CHECKED — one report, two standards of honesty.
+     */
     private static ConformanceReport.Verification mountPoints(Map<String, String> answers) {
-        boolean workspace = "writable".equals(answers.get("workspace"));
-        boolean handoff = "writable".equals(answers.get("handoff"));
-        if (workspace && handoff) {
+        String workspace = answers.get(WORKSPACE_KEY);
+        String handoff = answers.get(HANDOFF_KEY);
+        if (workspace == null && handoff == null) {
+            return unknown(Clauses.MOUNT_POINTS, "the probe returned no answer for this clause");
+        }
+        if (YES.equals(workspace) && YES.equals(handoff)) {
             return ConformanceReport.Verification.passed(Clauses.MOUNT_POINTS,
                     WORKSPACE + " and " + HANDOFF + " exist and belong to the run user");
         }
         List<String> wrong = new ArrayList<>();
-        if (!workspace) {
+        if (!YES.equals(workspace)) {
             wrong.add(WORKSPACE);
         }
-        if (!handoff) {
+        if (!YES.equals(handoff)) {
             wrong.add(HANDOFF);
         }
         return ConformanceReport.Verification.failed(Clauses.MOUNT_POINTS,
-                String.join(" and ", wrong) + " missing or not writable by the run user; a fresh "
-                        + "volume inherits the directory's ownership, so the agent could not write "
-                        + "its own workspace");
+                String.join(" and ", wrong) + " missing, or not owned and writable by the run user; "
+                        + "a fresh volume inherits the directory's ownership, so the agent could not "
+                        + "write its own workspace and git would refuse it as dubiously owned");
     }
 
     /**
@@ -158,70 +238,100 @@ public final class AgentImageVerifier {
     private List<ConformanceReport.Verification> handoffProtocol(String image) {
         String stub = String.join("; ",
                 "cat > /tmp/seen",
-                "grep -q SPIRE-CONFORMANCE-PROMPT /tmp/seen && echo stdin=yes || echo stdin=no",
+                "grep -q " + PROMPT_SENTINEL + " /tmp/seen && echo stdin=" + YES + " || echo stdin=no",
                 "cd " + WORKSPACE,
                 "echo conformance > probe.txt");
 
         ImageProbe.Result result;
         try {
-            result = probe.runAgent(image, List.of("sh", "-c", stub), "SPIRE-CONFORMANCE-PROMPT");
+            result = probe.runAgent(image, List.of("sh", "-c", stub), PROMPT_SENTINEL);
         } catch (RuntimeException unreachable) {
-            return List.of(
-                    unknown(Clauses.PROMPT_ON_STDIN, unreachable.getMessage()),
-                    unknown(Clauses.HANDOFF_BUNDLES, unreachable.getMessage()),
-                    unknown(Clauses.HANDOFF_DONE_LAST, unreachable.getMessage()));
+            return handoffUnknown(unreachable.getMessage());
+        }
+        if (!result.started()) {
+            // The entrypoint never reached the harness. Blaming the three clauses would name three
+            // specific defects the image does not have — measured, on a conforming entrypoint.
+            return handoffUnknown(result.output());
         }
 
         List<ConformanceReport.Verification> verified = new ArrayList<>();
-        verified.add(booleanClause(Clauses.PROMPT_ON_STDIN,
-                result.output().contains("stdin=yes") ? "yes" : "no",
-                "the harness received the work item on stdin",
-                "the harness did not see the work item on stdin; on argv it is printed by "
-                        + "docker inspect and by the host process list"));
-        verified.add(result.handoff().stream().anyMatch(name -> name.endsWith(".bundle"))
-                ? ConformanceReport.Verification.passed(Clauses.HANDOFF_BUNDLES,
-                        "commits left as bundles on " + HANDOFF)
-                : ConformanceReport.Verification.failed(Clauses.HANDOFF_BUNDLES,
-                        "no *.bundle on " + HANDOFF + " after the harness committed; this container "
-                                + "holds no credential, so a bundle is the only way work leaves it"));
-        verified.add(result.doneWrittenLast()
-                ? ConformanceReport.Verification.passed(Clauses.HANDOFF_DONE_LAST,
-                        "DONE was written after the last bundle")
-                : ConformanceReport.Verification.failed(Clauses.HANDOFF_DONE_LAST,
-                        "DONE was not written last; the publisher treats it as \"everything is "
-                                + "here\" and would drain before the final bundle was written"));
+        verified.add(booleanClause(STDIN_CLAUSE,
+                result.output().contains("stdin=" + YES) ? YES : "no"));
+        verified.add(bundlesClause(result));
+        verified.add(doneClause(result));
         return verified;
     }
 
-    private static ConformanceReport.Verification booleanClause(String id, String answer,
-                                                                String onPass, String onFail) {
+    private static List<ConformanceReport.Verification> handoffUnknown(String why) {
+        return List.of(unknown(Clauses.PROMPT_ON_STDIN, why),
+                unknown(Clauses.HANDOFF_BUNDLES, why),
+                unknown(Clauses.HANDOFF_DONE_LAST, why));
+    }
+
+    private static ConformanceReport.Verification bundlesClause(ImageProbe.Result result) {
+        return result.handoff().stream().anyMatch(name -> name.endsWith(BUNDLE_SUFFIX))
+                ? ConformanceReport.Verification.passed(Clauses.HANDOFF_BUNDLES,
+                        "commits left as bundles on " + HANDOFF)
+                : ConformanceReport.Verification.failed(Clauses.HANDOFF_BUNDLES,
+                        "no *" + BUNDLE_SUFFIX + " on " + HANDOFF + " after the harness committed; "
+                                + "this container holds no credential, so a bundle is the only way "
+                                + "work leaves it");
+    }
+
+    /**
+     * Three answers, not two.
+     *
+     * <p>An absent {@code DONE} and a {@code DONE} written early both mean the clause fails, and
+     * they call for opposite fixes — so a single boolean printed "DONE was not written last" about
+     * an entrypoint that never wrote one at all, while the shell had already computed the
+     * distinction and Java discarded it.
+     */
+    private static ConformanceReport.Verification doneClause(ImageProbe.Result result) {
+        return switch (result.done()) {
+            case WRITTEN_LAST -> ConformanceReport.Verification.passed(Clauses.HANDOFF_DONE_LAST,
+                    "DONE was written after the last bundle");
+            case BUNDLE_AFTER_DONE -> ConformanceReport.Verification.failed(Clauses.HANDOFF_DONE_LAST,
+                    "a bundle was written AFTER DONE; the publisher treats DONE as \"everything is "
+                            + "here\" and would drain before that bundle existed");
+            case NEVER_WRITTEN -> ConformanceReport.Verification.failed(Clauses.HANDOFF_DONE_LAST,
+                    "DONE was never written; the publisher waits for it, so it would drain only on "
+                            + "its timeout and report whatever it had");
+        };
+    }
+
+    private static ConformanceReport.Verification booleanClause(ClauseText text, String answer) {
         if (answer == null) {
-            return unknown(id, "the probe returned no answer for this clause");
+            return unknown(text.id(), "the probe returned no answer for this clause");
         }
-        return "yes".equals(answer) || "writable".equals(answer)
-                ? ConformanceReport.Verification.passed(id, onPass)
-                : ConformanceReport.Verification.failed(id, onFail);
+        return YES.equals(answer)
+                ? ConformanceReport.Verification.passed(text.id(), text.onPass())
+                : ConformanceReport.Verification.failed(text.id(), text.onFail());
     }
 
     /**
      * A clause the checker could not reach.
      *
-     * <p>Reported as a FAILURE, not silently omitted: a conformance report missing a clause reads as
-     * a shorter contract, and "the daemon was unreachable" must not be mistaken for "this image is
-     * fine". The detail says which it is.
+     * <p>Reported as a FAILURE in the report — a clause silently omitted reads as a shorter contract
+     * — but marked, so {@link ConformanceReport#anyNotChecked()} can tell the CLI to exit "could not
+     * check" rather than "this image is wrong". Those call for opposite actions.
      */
-    private static ConformanceReport.Verification unknown(String id, String why) {
-        return ConformanceReport.Verification.failed(id,
-                "NOT CHECKED — " + why + ". This is a checker problem, not necessarily an image one.");
+    static ConformanceReport.Verification unknown(String id, String why) {
+        return ConformanceReport.Verification.notChecked(id,
+                bounded(why == null ? "the probe gave no reason" : why));
     }
 
+    /**
+     * Every clause that needs a container, derived rather than listed.
+     *
+     * <p>A hardcoded list here would silently omit the ninth clause somebody adds, and the omission
+     * is the failure {@code unknown} exists to prevent. The two config clauses are answered without
+     * a container, so they are the exclusion.
+     */
     private static List<ConformanceReport.Verification> unreachableClauses(String why) {
-        List<ConformanceReport.Verification> verified = new ArrayList<>();
-        for (String id : List.of(Clauses.MOUNT_POINTS, Clauses.GIT, Clauses.CA_CERTIFICATES,
-                Clauses.PROMPT_ON_STDIN, Clauses.HANDOFF_BUNDLES, Clauses.HANDOFF_DONE_LAST)) {
-            verified.add(unknown(id, why));
-        }
-        return verified;
+        return Clauses.VERIFIED.stream()
+                .filter(id -> !id.equals(Clauses.ENTRYPOINT) && !id.equals(Clauses.NON_ROOT))
+                .map(id -> unknown(id, why))
+                .toList();
     }
 
     private static List<ConformanceReport.Declaration> declarations(InspectImageResponse inspected) {
@@ -229,17 +339,31 @@ public final class AgentImageVerifier {
                 ? Map.of() : config(inspected).getLabels();
         return List.of(
                 new ConformanceReport.Declaration(Clauses.TOOLCHAIN,
-                        labels.get(Clauses.TOOLCHAIN_LABEL),
+                        bounded(labels.get(Clauses.TOOLCHAIN_LABEL)),
                         "verifying this needs the repository the image would build, which a "
                                 + "checker holding only the image does not have"),
                 new ConformanceReport.Declaration(Clauses.HARNESS,
-                        labels.get(Clauses.HARNESS_LABEL),
+                        bounded(labels.get(Clauses.HARNESS_LABEL)),
                         "verifying this needs a model credential and a paid call, so a "
                                 + "conformance check would cost money to run"));
     }
 
+    /**
+     * Bounds an image-controlled string before it reaches a report line.
+     *
+     * <p>A label has no length limit, and neither does an ENTRYPOINT array. Control characters are
+     * removed separately, in {@link ConformanceReport}'s own constructors, so nothing can reach
+     * {@code render()} carrying them whatever path it took.
+     */
+    private static String bounded(String value) {
+        if (value == null || value.length() <= MAX_QUOTED_CHARS) {
+            return value;
+        }
+        return value.substring(0, MAX_QUOTED_CHARS) + "…";
+    }
+
     private static Map<String, String> parse(String output) {
-        Map<String, String> answers = new java.util.LinkedHashMap<>();
+        Map<String, String> answers = new LinkedHashMap<>();
         for (String line : output.split("\\R")) {
             int equals = line.indexOf('=');
             if (equals > 0) {

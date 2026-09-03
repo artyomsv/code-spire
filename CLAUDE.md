@@ -35,7 +35,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
-| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
@@ -1488,6 +1488,34 @@ The design is fully specified in `docs/` — **treat those files as the source o
     Two guards were also proven for one container out of three, which mutation found and the
     per-role fixtures now close. Operator guidance in `deploy/agent/CORPORATE-ENVIRONMENT.md`,
     runbook Mode R, and the no-baking half is build-enforced over both run-unit Dockerfiles.
+  - **The agent image contract is written down and checkable (FR-F13, M1 half).**
+    `docs/factory/AGENT-IMAGE-CONTRACT.md` is the contract; the new Apache-2.0
+    `spire-agent-image` module checks it. **The report has two halves that never mix** —
+    VERIFIED clauses the command proved by inspecting and RUNNING the image, and DECLARED clauses
+    the image claims through a label and the command cannot prove (its toolchain needs the
+    repository; its harness needs a paid call). A blended report reads as proof, so an image
+    declaring a toolchain it does not carry would pass with a paid run being the first thing to
+    notice. The split is structural: a declaration has no pass/fail component, and the report
+    refuses a verification carrying a declared clause id.
+    **What review found is the part worth keeping.** A checker-side setup failure was reported as
+    three image defects — the seed container accepted a BLANK commit when git refused the
+    workspace as dubiously owned, the entrypoint then aborted on its required variable, and three
+    clauses blamed a conforming entrypoint; reproduced on the reference image using the runbook's
+    own commands. `USER root:root` passed the non-root clause, because the check
+    tested the whole string rather than the uid field. The trust-store test read
+    `A || B || C && D`, which POSIX parses as `((A||B)||C) && D` — so
+    an image whose store is only `/etc/ssl/cert.pem` was told it had none, a false
+    accusation from a checker. A hostile LABEL could forge `PASS` lines and conceal
+    the verdict line, re-blending in the terminal the two halves the data model separates (Docker
+    stores ESC and CR verbatim — measured); every image-controlled string is stripped of control
+    characters now. And the probe containers ran image-chosen code with the default network and
+    full capabilities while the class javadoc promised neither — no probe needs a network, so they
+    have none. The contract itself was incomplete for its stated purpose: three clauses are only
+    passable by an image honouring five `SPIRE_*` variables the document named
+    nowhere, so a third party building from it alone failed three clauses.
+    `ContractAndCheckerAgreeTest` holds the document and the checker to each other in
+    both directions, and now also that the document names every variable the entrypoint requires.
+    Runbook Mode S.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
@@ -1524,9 +1552,9 @@ from a crashed run are `docker ps -a --filter label=dev.codespire.runId`.
 
 ```bash
 ./gradlew testFast                        # 19 Docker-free modules, ~1 min
-./gradlew testServices                    # 5 service modules: the 4 deployables on Dev Services (Postgres +
-                                          # Kafka) plus spire-runtime-docker; it and spire-run-worker
-                                          # also drive a real Docker daemon
+./gradlew testServices                    # 6 service modules: the 4 deployables on Dev Services (Postgres +
+                                          # Kafka) plus spire-runtime-docker and spire-agent-image;
+                                          # those two and spire-run-worker drive a real Docker daemon
 ```
 
 **The packaged stack** (`deploy/`, host ports 347xx — distinct from dev's 34xxx and 392xx):
@@ -1591,7 +1619,7 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   site is a runtime wire break rather than a compile error. Adding a second exception means
   amending that allowlist, on purpose.
 - **Test tasks that drive the real Docker daemon hold a lock, one at a time.** `spire-runtime-docker`,
-  `spire-run-worker` and `spire-e2e` create, inspect and destroy containers on the one daemon, and
+  `spire-run-worker`, `spire-e2e` and `spire-agent-image` create, inspect and destroy containers on the one daemon, and
   `org.gradle.parallel=true` used to let two of them meet there — `DockerRunRuntimeIT` failed two
   cases whose symptoms ("no such container", a destroy that removed nothing) impersonate the exact
   defects the runtime exists to prevent, while passing 15/15 run alone. They now share a build service

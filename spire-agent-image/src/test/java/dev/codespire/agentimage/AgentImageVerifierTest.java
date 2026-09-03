@@ -86,10 +86,11 @@ class AgentImageVerifierTest {
     }
 
     private static final String ALL_GOOD =
-            "git=yes\nca=yes\nworkspace=writable\nhandoff=writable\n";
+            "git=yes\nca=yes\nworkspace=yes\nhandoff=yes\n";
 
     private static ImageProbe.Result conformingAgentRun() {
-        return new ImageProbe.Result("stdin=yes\n", List.of("1.bundle", "DONE"), true);
+        return new ImageProbe.Result("stdin=yes\n", true, List.of("1.bundle", "DONE"),
+                ImageProbe.Done.WRITTEN_LAST);
     }
 
     private static ConformanceReport verify(ContainerConfig config, String runOutput,
@@ -139,7 +140,7 @@ class AgentImageVerifierTest {
     void wrongMountOwnershipFailsNamingTheClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()),
-                "git=yes\nca=yes\nworkspace=no\nhandoff=writable\n", conformingAgentRun());
+                "git=yes\nca=yes\nworkspace=no\nhandoff=yes\n", conformingAgentRun());
 
         ConformanceReport.Verification mounts = clause(report, Clauses.MOUNT_POINTS);
         assertFalse(mounts.passed());
@@ -163,7 +164,8 @@ class AgentImageVerifierTest {
     void aPromptNotSeenOnStdinFailsTheClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
-                new ImageProbe.Result("stdin=no\n", List.of("1.bundle", "DONE"), true));
+                new ImageProbe.Result("stdin=no\n", true, List.of("1.bundle", "DONE"),
+                        ImageProbe.Done.WRITTEN_LAST));
 
         assertFalse(clause(report, Clauses.PROMPT_ON_STDIN).passed());
         assertTrue(clause(report, Clauses.PROMPT_ON_STDIN).detail().contains("argv"));
@@ -174,7 +176,8 @@ class AgentImageVerifierTest {
     void noBundleOnHandoffFailsTheClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
-                new ImageProbe.Result("stdin=yes\n", List.of("DONE"), true));
+                new ImageProbe.Result("stdin=yes\n", true, List.of("DONE"),
+                        ImageProbe.Done.WRITTEN_LAST));
 
         assertFalse(clause(report, Clauses.HANDOFF_BUNDLES).passed());
     }
@@ -184,7 +187,8 @@ class AgentImageVerifierTest {
     void doneWrittenBeforeTheLastBundleFailsTheClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
-                new ImageProbe.Result("stdin=yes\n", List.of("DONE", "1.bundle"), false));
+                new ImageProbe.Result("stdin=yes\n", true, List.of("DONE", "1.bundle"),
+                        ImageProbe.Done.BUNDLE_AFTER_DONE));
 
         assertFalse(clause(report, Clauses.HANDOFF_DONE_LAST).passed());
         assertTrue(clause(report, Clauses.HANDOFF_DONE_LAST).detail().contains("publisher"));
@@ -245,5 +249,181 @@ class AgentImageVerifierTest {
         assertTrue(clause(report, Clauses.GIT).detail().contains("not necessarily an image one"));
         assertTrue(clause(report, Clauses.ENTRYPOINT).passed(),
                 "the clauses that need no container are still answered");
+    }
+    /**
+     * Root is uid 0 however the image spells it.
+     *
+     * <p>{@code USER root:root} is a documented Dockerfile form and an earlier version matched
+     * none of its branches, so an image running as uid 0 was reported as CONFORMING — on the one
+     * clause whose whole purpose is that this container runs untrusted model output at full shell
+     * access. Enumerated rather than sampled, because the defect was a spelling nobody tried.
+     */
+    @Test
+    void everySpellingOfRootIsCaught() {
+        for (String user : java.util.Arrays.asList("root", "root:root", "root:0", "root:agent",
+                "0", "0:0", "0:agent", "", "  ", null)) {
+            ConformanceReport report = verify(
+                    configWith(user, new String[] {"/entrypoint"}, Map.of()),
+                    ALL_GOOD, conformingAgentRun());
+
+            assertFalse(clause(report, Clauses.NON_ROOT).passed(),
+                    "USER=" + user + " is uid 0: " + clause(report, Clauses.NON_ROOT).detail());
+        }
+    }
+
+    /** And a real non-root user passes, in both spellings. */
+    @Test
+    void aNonRootUserPassesInEitherSpelling() {
+        for (String user : java.util.List.of("1001", "1001:1001", "agent", "agent:agent")) {
+            ConformanceReport report = verify(
+                    configWith(user, new String[] {"/entrypoint"}, Map.of()),
+                    ALL_GOOD, conformingAgentRun());
+
+            assertTrue(clause(report, Clauses.NON_ROOT).passed(), user);
+        }
+    }
+
+    /** An empty ENTRYPOINT array is no entrypoint, and Docker stores it as one. */
+    @Test
+    void anEmptyEntrypointArrayFailsTheClause() {
+        ConformanceReport report = verify(configWith("1001", new String[0], Map.of()),
+                ALL_GOOD, conformingAgentRun());
+
+        assertFalse(clause(report, Clauses.ENTRYPOINT).passed());
+    }
+
+    /** The git clause had no failing case at all: it could have been nailed open. */
+    @Test
+    void aMissingGitBinaryFailsTheClause() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()),
+                "git=no\nca=yes\nworkspace=yes\nhandoff=yes\n", conformingAgentRun());
+
+        assertFalse(clause(report, Clauses.GIT).passed());
+        assertTrue(clause(report, Clauses.GIT).detail().contains("bundles"));
+    }
+
+    /** A trust store missing on its own, which the isolated-break IT could not distinguish. */
+    @Test
+    void aMissingTrustStoreFailsOnlyThatClause() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()),
+                "git=yes\nca=no\nworkspace=yes\nhandoff=yes\n", conformingAgentRun());
+
+        assertEquals(java.util.List.of(Clauses.CA_CERTIFICATES),
+                report.failures().stream().map(ConformanceReport.Verification::id).toList());
+    }
+
+    /** The handoff half of the mount-point clause, which only the workspace half was tested for. */
+    @Test
+    void aHandoffThatIsNotWritableFailsAndNamesOnlyIt() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()),
+                "git=yes\nca=yes\nworkspace=yes\nhandoff=no\n", conformingAgentRun());
+
+        assertFalse(clause(report, Clauses.MOUNT_POINTS).passed());
+        assertTrue(clause(report, Clauses.MOUNT_POINTS).detail().contains("/handoff"));
+        assertFalse(clause(report, Clauses.MOUNT_POINTS).detail().contains("/workspace"),
+                "only the directory that is wrong, or the operator fixes the wrong one");
+    }
+
+    /** A probe that answered nothing is NOT CHECKED, not "missing or not writable". */
+    @Test
+    void aProbeThatAnsweredNothingReportsNotCheckedRatherThanAccusingTheImage() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()),
+                "", conformingAgentRun());
+
+        for (String id : java.util.List.of(Clauses.MOUNT_POINTS, Clauses.GIT, Clauses.CA_CERTIFICATES)) {
+            assertTrue(clause(report, id).notChecked(), id + ": " + clause(report, id).detail());
+        }
+    }
+
+    /**
+     * The entrypoint never reached the harness: three clauses NOT CHECKED, not three accusations.
+     *
+     * <p>This is the case a review reproduced on the REAL reference image, using the runbook's own
+     * commands. A checker-side setup failure produced three specific defects the image did not
+     * have, and nothing covered the path.
+     */
+    @Test
+    void anAgentThatNeverStartedReportsNotCheckedRatherThanThreeDefects() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
+                ImageProbe.Result.neverStarted("could not create a probe repository"));
+
+        for (String id : java.util.List.of(Clauses.PROMPT_ON_STDIN, Clauses.HANDOFF_BUNDLES,
+                Clauses.HANDOFF_DONE_LAST)) {
+            assertTrue(clause(report, id).notChecked(), id + ": " + clause(report, id).detail());
+        }
+        assertTrue(clause(report, Clauses.GIT).passed(),
+                "the clauses that DID get an answer keep it");
+    }
+
+    /** A throwing agent probe is the same answer as one that never started. */
+    @Test
+    void anAgentProbeThatThrowsReportsNotChecked() {
+        ImageProbe throwingAgent = new ImageProbe() {
+            @Override
+            public com.github.dockerjava.api.command.InspectImageResponse inspect(String image) {
+                return inspectionOf(configWith("1001", new String[] {"/entrypoint"}, Map.of()));
+            }
+
+            @Override
+            public Result run(String image, java.util.List<String> argv) {
+                return Result.of(ALL_GOOD);
+            }
+
+            @Override
+            public Result runAgent(String image, java.util.List<String> argv, String prompt) {
+                throw new IllegalStateException("the probe did not exit within 300s");
+            }
+        };
+
+        ConformanceReport report = new AgentImageVerifier(throwingAgent).verify("acme/agent:1");
+
+        assertTrue(clause(report, Clauses.HANDOFF_BUNDLES).notChecked());
+        assertTrue(clause(report, Clauses.HANDOFF_BUNDLES).detail().contains("300s"),
+                "the reason travels, or the operator cannot tell a hang from a busy daemon");
+    }
+
+    /** DONE never written and DONE written early fail the same clause and read differently. */
+    @Test
+    void aMissingDoneIsReportedAsMissingRatherThanAsWrittenEarly() {
+        ConformanceReport neverWritten = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
+                new ImageProbe.Result("stdin=yes\n", true, java.util.List.of("1.bundle"),
+                        ImageProbe.Done.NEVER_WRITTEN));
+
+        assertFalse(clause(neverWritten, Clauses.HANDOFF_DONE_LAST).passed());
+        assertTrue(clause(neverWritten, Clauses.HANDOFF_DONE_LAST).detail().contains("never written"),
+                clause(neverWritten, Clauses.HANDOFF_DONE_LAST).detail());
+    }
+
+    /** Every clause the daemon could not reach, derived rather than listed by hand. */
+    @Test
+    void anUnreachableProbeReportsEveryRuntimeClauseNotOnlyTheOnesSomebodyListed() {
+        ImageProbe broken = new ImageProbe() {
+            @Override
+            public com.github.dockerjava.api.command.InspectImageResponse inspect(String image) {
+                return inspectionOf(configWith("1001", new String[] {"/entrypoint"}, Map.of()));
+            }
+
+            @Override
+            public Result run(String image, java.util.List<String> argv) {
+                throw new IllegalStateException("daemon unreachable");
+            }
+
+            @Override
+            public Result runAgent(String image, java.util.List<String> argv, String prompt) {
+                throw new IllegalStateException("daemon unreachable");
+            }
+        };
+
+        ConformanceReport report = new AgentImageVerifier(broken).verify("acme/agent:1");
+
+        assertEquals(Clauses.VERIFIED,
+                report.verified().stream().map(ConformanceReport.Verification::id).toList(),
+                "a clause silently omitted reads as a shorter contract");
     }
 }

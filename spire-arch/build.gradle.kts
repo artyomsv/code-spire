@@ -79,7 +79,11 @@ tasks.test {
     // checks -- or checking one nothing documents -- would report a cached PASS from the very edit
     // the guard exists to catch.
     inputs.files(
-        rootProject.file("docs/factory/AGENT-IMAGE-CONTRACT.md")
+        rootProject.file("docs/factory/AGENT-IMAGE-CONTRACT.md"),
+        // The contract must document the interface this script enforces, so the script is an
+        // input too: adding a required variable to it without documenting it must fail here
+        // rather than report a cached pass.
+        rootProject.file("deploy/agent/spire-agent-entrypoint.sh")
     ).withPropertyName("agentImageContract").withPathSensitivity(PathSensitivity.RELATIVE)
 
     // ModuleLicensingIsDeclaredTest reads every module LICENSE. Undeclared they are invisible to

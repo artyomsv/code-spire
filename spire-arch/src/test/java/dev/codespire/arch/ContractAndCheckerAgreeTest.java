@@ -139,6 +139,34 @@ class ContractAndCheckerAgreeTest {
     }
 
     /**
+     * The contract must document the interface its clauses enforce.
+     *
+     * <p>Three verified clauses are only passable by an image honouring five environment
+     * variables, and an earlier version of the contract named none of them — so an image written
+     * from the document alone failed three clauses with nothing to explain why. Ids agreeing is
+     * not the same as the document being sufficient, and only this notices the difference.
+     */
+    @Test
+    void theContractDocumentsTheRunTimeInterfaceItsClausesRequire() throws IOException {
+        String contract = RootBuild.read(CONTRACT);
+        String entrypoint = RootBuild.read("deploy/agent/spire-agent-entrypoint.sh");
+
+        Set<String> required = new LinkedHashSet<>();
+        Matcher variables = Pattern.compile("SPIRE_[A-Z_]+").matcher(entrypoint);
+        while (variables.find()) {
+            required.add(variables.group());
+        }
+        assertFalse(required.isEmpty(), "the reference entrypoint named no SPIRE_ variable at all");
+
+        for (String variable : required) {
+            assertTrue(contract.contains(variable),
+                    variable + " is required by the reference entrypoint and documented nowhere in "
+                            + CONTRACT + "; an image built from the contract alone would fail a "
+                            + "clause with no way to find out why");
+        }
+    }
+
+    /**
      * The scan must have parsed something.
      *
      * <p>Every assertion above compares two collections, and two empty collections are equal — the

@@ -30,20 +30,48 @@ public interface ImageProbe {
     Result runAgent(String image, List<String> harnessArgv, String prompt);
 
     /**
+     * What became of {@code DONE} on the handoff.
+     *
+     * <p>Three answers rather than a boolean, because "never written" and "written before the last
+     * bundle" fail the same clause and call for opposite fixes — and a boolean made the report say
+     * the second about an entrypoint that had done the first.
+     */
+    enum Done {
+
+        /** No bundle is newer than DONE, which is what the publisher relies on. */
+        WRITTEN_LAST,
+
+        /** A bundle appeared after DONE; the publisher would drain before it existed. */
+        BUNDLE_AFTER_DONE,
+
+        /** No DONE at all; the publisher would wait for its timeout. */
+        NEVER_WRITTEN
+    }
+
+    /**
      * What a probe observed.
      *
-     * @param output          everything the container printed, stdout and stderr merged
-     * @param handoff         file names left on {@code /handoff}, empty for a plain {@link #run}
-     * @param doneWrittenLast whether {@code DONE} was the newest file on {@code /handoff}
+     * @param output  everything the container printed, stdout and stderr merged
+     * @param started whether the container's own setup got as far as the harness. FALSE means the
+     *                checker learned nothing about the image's handoff behaviour, which is not the
+     *                same as learning that the behaviour is wrong — a distinction an earlier version
+     *                collapsed, and it made a conforming entrypoint look like three separate defects
+     * @param handoff file names left on the handoff volume, empty for a plain {@link #run}
+     * @param done    what became of DONE
      */
-    record Result(String output, List<String> handoff, boolean doneWrittenLast) {
+    record Result(String output, boolean started, List<String> handoff, Done done) {
 
         public Result {
             handoff = List.copyOf(handoff);
         }
 
         static Result of(String output) {
-            return new Result(output, List.of(), false);
+            return new Result(output, true, List.of(), Done.NEVER_WRITTEN);
+        }
+
+        /** The probe could not get the image as far as running the harness. */
+        static Result neverStarted(String output) {
+            return new Result(output, false, List.of(), Done.NEVER_WRITTEN);
         }
     }
 }

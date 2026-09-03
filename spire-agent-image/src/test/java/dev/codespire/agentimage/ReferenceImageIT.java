@@ -45,6 +45,9 @@ class ReferenceImageIT {
 
     private static final List<String> BUILT = new ArrayList<>();
 
+    /** Build contexts, deleted with the images they produced. */
+    private static final List<Path> CONTEXTS = new ArrayList<>();
+
     private static DockerClient client() {
         DefaultDockerClientConfig config =
                 DefaultDockerClientConfig.createDefaultConfigBuilder().build();
@@ -56,7 +59,20 @@ class ReferenceImageIT {
     }
 
     @AfterAll
-    static void removeBuiltImages() {
+    static void removeBuiltImagesAndContexts() {
+        for (Path context : CONTEXTS) {
+            try (var paths = Files.walk(context)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException ignored) {
+                        // A leaked temp file is tidier than a teardown that replaces the result.
+                    }
+                });
+            } catch (IOException ignored) {
+                // Same.
+            }
+        }
         for (String tag : BUILT) {
             try {
                 CLIENT.removeImageCmd(tag).withForce(true).exec();
@@ -73,16 +89,41 @@ class ReferenceImageIT {
      * <p>{@code asRoot} is the one difference in the second image, so a failure can only be the
      * clause under test — the discipline that makes a negative case worth having at all.
      */
-    private static String buildProbeImage(String tag, boolean asRoot) throws IOException {
-        return buildProbeImage(tag, asRoot, false);
+    /** The image the contract describes: non-root, both mount points, git, a trust store. */
+    private static String buildConforming() throws IOException {
+        return buildProbeImage(CONFORMING, false, false);
     }
 
+    /** The same image, running as uid 0. */
+    private static String buildAsRoot() throws IOException {
+        return buildProbeImage(AS_ROOT, true, false);
+    }
+
+    /** The same image with its trust store removed, and nothing else changed. */
+    private static String buildWithoutTrustStore() throws IOException {
+        return buildProbeImage(NO_TRUST_STORE, false, true);
+    }
+
+    /**
+     * Two boolean flags, reached only through the three named builders above.
+     *
+     * <p>Call sites reading {@code buildProbeImage(NO_TRUST_STORE, false, true)} are exactly the
+     * unreadability the no-flag-parameters rule targets, and one transposition silently builds a
+     * different image than the test name claims.
+     */
     private static String buildProbeImage(String tag, boolean asRoot, boolean withoutTrustStore)
             throws IOException {
-        Path context = Files.createTempDirectory("spire-conformance-build-");
+        if (BUILT.contains(tag)) {
+            // Built once per class. Two cases want the conforming image, and building it twice
+            // also put its tag in BUILT twice, so teardown removed it and then threw.
+            return tag;
+        }
+        // The assertion BEFORE the temp directory, or a wrong repo root leaks one per attempt.
         Path entrypoint = repoRoot().resolve("deploy/agent/spire-agent-entrypoint.sh");
         assertTrue(Files.isRegularFile(entrypoint),
                 "the real entrypoint must be what is built, or this tests a copy that can drift");
+        Path context = Files.createTempDirectory("spire-conformance-build-");
+        CONTEXTS.add(context);
         Files.copy(entrypoint, context.resolve("spire-agent-entrypoint"));
 
         String dockerfile = String.join("\n",
@@ -113,10 +154,21 @@ class ReferenceImageIT {
         return tag;
     }
 
+    /**
+     * Handed in by Gradle, not guessed from the working directory.
+     *
+     * <p>The module directory's parent is right under Gradle and is still a guess — and
+     * {@code spire-arch} solved this one module away, with {@code RootBuild.repoRoot()} reading an
+     * explicit property and a comment saying why. Guessing fails loudly here rather than quietly,
+     * but it fails on the entrypoint assertion, which names the wrong cause.
+     */
     private static Path repoRoot() {
-        // The module directory's parent. Not a system property, because this test is run by Gradle
-        // and by an IDE and both set the working directory to the module.
-        return Path.of("").toAbsolutePath().getParent();
+        String root = System.getProperty("spire.repoRoot");
+        if (root == null || root.isBlank()) {
+            throw new IllegalStateException("spire.repoRoot is unset — the Gradle test task must "
+                    + "pass it (see spire-agent-image/build.gradle.kts)");
+        }
+        return Path.of(root);
     }
 
     private static ConformanceReport verify(String image) {
@@ -126,7 +178,7 @@ class ReferenceImageIT {
     /** The reference entrypoint is its own first test. */
     @Test
     void aConformingImagePassesEveryVerifiedClause() throws IOException {
-        ConformanceReport report = verify(buildProbeImage(CONFORMING, false));
+        ConformanceReport report = verify(buildConforming());
 
         assertTrue(report.conforms(), report.render());
         assertEquals(Clauses.VERIFIED,
@@ -143,7 +195,7 @@ class ReferenceImageIT {
      */
     @Test
     void anImageWithNoTrustStoreFailsExactlyThatClause() throws IOException {
-        ConformanceReport report = verify(buildProbeImage(NO_TRUST_STORE, false, true));
+        ConformanceReport report = verify(buildWithoutTrustStore());
 
         assertFalse(report.conforms(), report.render());
         assertEquals(List.of(Clauses.CA_CERTIFICATES),
@@ -162,7 +214,7 @@ class ReferenceImageIT {
      */
     @Test
     void anImageRunningAsRootFailsTheNonRootClause() throws IOException {
-        ConformanceReport report = verify(buildProbeImage(AS_ROOT, true));
+        ConformanceReport report = verify(buildAsRoot());
 
         assertFalse(report.conforms(), report.render());
         assertTrue(report.failures().stream()
@@ -179,7 +231,7 @@ class ReferenceImageIT {
      */
     @Test
     void declaredClausesAreReportedSeparatelyFromVerifiedOnes() throws IOException {
-        ConformanceReport report = verify(buildProbeImage(CONFORMING, false));
+        ConformanceReport report = verify(buildConforming());
 
         assertEquals(List.of(Clauses.TOOLCHAIN, Clauses.HARNESS),
                 report.declared().stream().map(ConformanceReport.Declaration::id).toList());

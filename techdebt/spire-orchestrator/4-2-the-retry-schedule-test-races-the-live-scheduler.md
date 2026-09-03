@@ -23,6 +23,27 @@ The failure is unhelpful in the way that matters: `expected: <true> but was: <fa
 about retry bookkeeping reads as a broken retry, and sends the next person to the projection rather
 than to the clock.
 
+## A second method, and a second date (2026-09-03)
+
+`onlyOneClaimWinsSoAnAttemptCannotBeDispatchedTwice` exhibits the same race. It schedules a retry
+due one second in the past and claims it twice, asserting the first call wins; when the live sweep
+lands in the window before the first claim, the row is already gone and `first` is empty.
+
+Observed in a full `testFast testServices` run on the branch that added `spire-agent-image` to the
+service tier. That module builds container images during its tests, so it widened the window rather
+than created it — every other suite in both tiers was green, and this test passed alone in 32
+seconds.
+
+A duplicate entry for this was filed the same day and deleted: nobody searched first, which
+`techdebt/README.md` names as the specific failure it exists to prevent. Worth recording, because
+the duplicate also reasoned from the WORSE of the two fixes below — it proposed disabling the
+scheduler globally and then argued against itself on the grounds that other tests might depend on
+the sweep. The first suggestion here does not have that problem.
+
+`ScheduledWorkIsDeclaredTest` in `spire-run-worker` is the precedent for the second suggestion: its
+test profile disables the scheduler and it asserts the `@Scheduled` DECLARATION by reflection
+instead, so a sweep nobody called cannot make an assertion true for the wrong reason.
+
 ## Risks
 
 - An intermittent red on an unrelated change, which is the shape that teaches a team to re-run

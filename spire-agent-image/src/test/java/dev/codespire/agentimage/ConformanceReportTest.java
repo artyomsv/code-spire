@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -92,7 +93,8 @@ class ConformanceReportTest {
     /** A missing label is reported as absent, not as a failure — there is nothing to fail. */
     @Test
     void aMissingLabelIsReportedAsAbsentRatherThanAsAFailure() {
-        String rendered = report(List.of(),
+        String rendered = report(
+                List.of(ConformanceReport.Verification.passed(Clauses.GIT, "present")),
                 List.of(new ConformanceReport.Declaration(Clauses.HARNESS, null, "needs a paid call")))
                 .render();
 
@@ -118,5 +120,96 @@ class ConformanceReportTest {
         assertTrue(report.render().contains("USER=<unset>"),
                 "the observation, or the operator cannot tell what to change");
         assertTrue(report.render().contains("DOES NOT CONFORM"));
+    }
+    /**
+     * A hostile label cannot forge a report line or hide one.
+     *
+     * <p>Docker stores {@code ESC}, {@code CR} and {@code LF} in a label verbatim — measured — so
+     * without neutralisation an image could print {@code \r\n  PASS  …} into the verified half,
+     * or an SGR conceal to hide the {@code DOES NOT CONFORM} line that comes after it. Separating
+     * the halves in the data model buys nothing if the image can re-blend them on the screen the
+     * operator is told to read.
+     */
+    @Test
+    void aHostileLabelCannotForgeOrHideAReportLine() {
+        String hostile = "node\u001b[2J\u001b[H\r\n  PASS  forged-clause\u001b[8m";
+
+        ConformanceReport report = report(
+                List.of(ConformanceReport.Verification.failed(Clauses.GIT, "absent")),
+                List.of(new ConformanceReport.Declaration(Clauses.TOOLCHAIN, hostile, "needs the repo")));
+
+        String rendered = report.render();
+        assertFalse(rendered.contains("\u001b"), "no escape may survive: " + rendered);
+        assertFalse(rendered.contains("\r"), "no carriage return may survive");
+        assertEquals(0, rendered.lines().filter(line -> line.startsWith("  PASS")).count(),
+                "the only verified clause FAILED, so a PASS line could only have come from the "
+                        + "label: " + rendered);
+        assertTrue(rendered.contains("DOES NOT CONFORM"),
+                "and the verdict line must still be reachable");
+    }
+
+    /** The same neutralisation on the other image-controlled path: a clause detail. */
+    @Test
+    void aHostileEntrypointOrUserCannotForgeAReportLine() {
+        String hostile = "/bin/sh\r\n  PASS  forged";
+
+        String rendered = report(
+                List.of(ConformanceReport.Verification.passed(Clauses.ENTRYPOINT, hostile)),
+                List.of()).render();
+
+        assertEquals(1, rendered.lines().filter(line -> line.startsWith("  PASS")).count(), rendered);
+    }
+
+    /**
+     * A verified list holding a DECLARED clause id is refused at construction.
+     *
+     * <p>The assurance split is structural — a declaration has nowhere to put a pass/fail — but
+     * clause IDENTITY was defence by test only: {@code new Verification(Clauses.TOOLCHAIN, true,
+     * …)} compiled, and the constant is public. One check makes both halves structural.
+     */
+    @Test
+    void aDeclaredClauseCannotBeSmuggledIntoTheVerifiedList() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> report(List.of(ConformanceReport.Verification.passed(
+                                Clauses.TOOLCHAIN, "the label was present")),
+                        List.of()));
+
+        assertTrue(refused.getMessage().contains(Clauses.TOOLCHAIN), refused.getMessage());
+    }
+
+    /**
+     * An empty verified list is refused, because {@code conforms()} is an allMatch.
+     *
+     * <p>Vacuously true over nothing, so an empty report would render "CONFORMS: every verified
+     * clause passed" having checked none — the shape this repository already paid for once in a
+     * contract-snapshot test.
+     */
+    @Test
+    void aReportWithNoVerifiedClauseIsRefusedRatherThanRenderingAsConforming() {
+        assertThrows(IllegalArgumentException.class, () -> report(List.of(), List.of()));
+    }
+
+    /** A clause that was not checked is a failure in the report and is marked as unchecked. */
+    @Test
+    void aNotCheckedClauseIsAFailureThatSaysItIsACheckerProblem() {
+        ConformanceReport report = report(
+                List.of(AgentImageVerifier.unknown(Clauses.GIT, "daemon unreachable")), List.of());
+
+        assertFalse(report.conforms());
+        assertTrue(report.anyNotChecked());
+        assertTrue(report.render().contains("not necessarily an image one"), report.render());
+    }
+
+    /** A passed clause cannot also claim it was not checked. */
+    @Test
+    void aClauseCannotBothPassAndBeUnchecked() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConformanceReport.Verification(Clauses.GIT, true, true, "impossible"));
+    }
+
+    /** A label present but blank is no label; the report must not print an empty claim. */
+    @Test
+    void aBlankLabelIsTreatedAsAbsent() {
+        assertFalse(new ConformanceReport.Declaration(Clauses.HARNESS, "   ", "why").isPresent());
     }
 }

@@ -38,4 +38,8 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+    // Handed in explicitly rather than guessed from the working directory, so the reference-image
+    // check builds the same entrypoint from Gradle and from an IDE. The same reasoning, and the
+    // same property name, as spire-arch.
+    systemProperty("spire.repoRoot", rootProject.projectDir.absolutePath)
 }

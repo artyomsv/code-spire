@@ -4,7 +4,7 @@ A run unit's agent container is **your** image. Code Spire ships a reference one
 (`deploy/agent/codex/Dockerfile`) and it is a reference, never a requirement: any image that
 satisfies the clauses below can run a factory job.
 
-This page is the contract. `spire agent-image verify <image>` checks it, and
+This page is the contract. `spire-agent-image verify <image>` checks it, and
 `ContractAndCheckerAgreeTest` fails the build if this page and that command ever disagree — every
 clause here has a check, and no check is undocumented.
 
@@ -22,9 +22,31 @@ have passes, and the first thing that notices is a run that has already been pai
 
 ---
 
+## The run-time interface
+
+These are the five variables a run sets, and the three handoff clauses below are only passable
+by an image that honours them. An earlier version of this page listed the clauses and not the
+interface — so an image written from the contract ALONE failed three of them with nothing here
+to explain why. A contract that is not sufficient to build against is not doing its job.
+
+| Variable | Meaning |
+|---|---|
+| `SPIRE_PROMPT` | The work item. Your entrypoint must deliver it to the harness on **stdin**, and must not put it on argv. |
+| `SPIRE_WORKSPACE` | The checkout to work in. `/workspace` unless set. |
+| `SPIRE_HANDOFF` | Where bundles and `DONE` are written. `/handoff` unless set. |
+| `SPIRE_BASE_COMMIT` | The commit the workspace starts at. **Required** — a bundle is `$SPIRE_BASE_COMMIT..HEAD` and there is no safe guess, so the reference entrypoint refuses to start without it. |
+| `SPIRE_AUTOSAVE_SECONDS` | How often to checkpoint while the harness runs. A default is fine. |
+
+The harness argv arrives as the container **command**, so your entrypoint receives it as
+`$@` and runs it. Everything else — committing, bundling, writing `DONE` —
+is the entrypoint's job. `deploy/agent/spire-agent-entrypoint.sh` is a working
+implementation you may copy or replace.
+
+---
+
 ## Verified clauses
 
-Each has a stable id. `spire agent-image verify` prints the id, so a failure is greppable.
+Each has a stable id. `spire-agent-image verify` prints the id, so a failure is greppable.
 
 ### `entrypoint` — the image has an entrypoint
 
@@ -49,7 +71,10 @@ volume mounted onto a directory inherits that directory's ownership — so if th
 agent cannot write its own workspace and cannot produce a bundle. The symptom is a run that clones
 correctly and then does nothing.
 
-*Verified by:* running the image and reading the ownership.
+*Verified by:* running the image and testing that the run user both owns and can write them.
+Ownership as well as writability, because root can write a 1001-owned directory — so
+writability alone passes the one image where the mismatch is real, and that mismatch is exactly
+what makes git refuse the workspace as dubiously owned.
 
 ### `git` — a git binary is on `PATH`
 
@@ -68,9 +93,10 @@ this store at run time (FR-F14), but an image with none at all fails before that
 
 ### `prompt-on-stdin` — the harness receives the prompt on stdin
 
-The work item reaches the harness on standard input, never on argv. A prompt on argv is visible in
-`docker inspect` and in the host's process list; it is also attacker-influenced text in a position
-where quoting mistakes become command injection.
+The work item reaches the harness on standard input, never on argv. A prompt on argv is visible in the host's process list to every user on the machine, can be swept
+into a commit by the autosave, and sits where a quoting mistake becomes command injection. It is
+NOT about `docker inspect`, which prints the environment too — an earlier version
+of this page gave that as the reason, and it does not hold.
 
 *Verified by:* running the image with a stub harness that echoes what it read.
 
@@ -99,8 +125,8 @@ verified.
 
 ### `toolchain` — `dev.codespire.agent.toolchain`
 
-What the image can build. The reference Codex image declares `node`; an image for a Java repository
-would declare something else.
+What the image can build. The reference Codex image declares `node`; an image for a Java repository would
+declare something else. An image that declares nothing is reported as `(no label)` and still conforms — nothing checked it either way.
 
 *Why it cannot be verified:* "carries the repository's toolchain" is a claim about a pairing of an
 image and a repository. The checker has the image and no repository, so any generic check it could

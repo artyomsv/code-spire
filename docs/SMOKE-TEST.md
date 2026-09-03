@@ -1899,6 +1899,9 @@ so it is deliberately kept.
 factory job, and — the part that matters — tells them plainly which clauses it *proved* and which it
 only read off a label.
 
+Needs **JDK 25** on `PATH` or `JAVA_HOME` — the installed distribution is built for it, and an older
+`java` dies with `UnsupportedClassVersionError` before printing anything.
+
 ```bash
 ./gradlew :spire-agent-image:installDist
 ./spire-agent-image/build/install/spire-agent-image/bin/spire-agent-image verify spire-agent-codex:latest
@@ -1942,6 +1945,6 @@ The declaration appears under the declared heading with what the image claimed.
 | Symptom | Cause |
 |---|---|
 | exit `2`, "could not verify" | The daemon is unreachable, or the image is not present locally. This is a CHECKER problem — distinguished from `1` on purpose, because "I could not check this" and "this image is wrong" call for opposite actions |
-| Every runtime clause reads `NOT CHECKED` | Same cause. The clauses that need no container are still answered above them |
+| A report prints, some clauses read `NOT CHECKED`, and the exit code is `2` | The daemon answered `inspect` but a probe container could not run or finish. The clauses that need no container are still answered above them, and the exit code says "could not check" rather than "wrong image" |
 | `mount-points` FAIL on an image you believe is correct | The directories exist but belong to root. A fresh volume inherits the mount point's ownership, so the agent could not write its own workspace |
 | `handoff-bundles` FAIL with `git` also FAIL | Fix `git` first; the handoff is git bundles, so the second failure is a consequence of the first |
