@@ -35,7 +35,7 @@ public class AttentionResource {
     /**
      * Acknowledge a ledger-wide cost condition, so calls already priced stop being counted.
      *
-     * <p>Only the two {@link CostAttentionRow} conditions accept this, and an unknown code is a 404
+     * <p>Only the {@link CostAttentionRow} conditions accept this, and an unknown code is a 404
      * rather than a silent success: every other row describes current state, where silencing something
      * repairable would let a broken system look healthy.
      *

@@ -5,6 +5,7 @@ import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -28,8 +29,9 @@ import java.util.Map;
  *   <li>the publisher gets the write credential and the gate's rules, and NOT the workspace — so it
  *       can never reach agent-authored git config or hooks;</li>
  *   <li>{@code /handoff} is writable by the agent and read-only to the publisher;</li>
- *   <li>the init container gets a READ-only clone credential, so the token that can write never
- *       enters the container that touches agent-reachable disk first.</li>
+ *   <li>the init container gets the clone credential — read-only in the design, and today the
+ *       machine account's single secret, which can also write. The agent is on the far side of
+ *       that either way: it receives no git credential at all. See {@code docs/UNVERIFIED.md} §E.</li>
  * </ul>
  *
  * <p>Each is asserted by a test, because each is a boundary rather than a preference. Two of them
@@ -69,6 +71,17 @@ public class RunUnitBuilder {
 
     @Inject
     Credentials credentials;
+
+    /**
+     * The deployment's corporate CA bundle and proxy, applied to all three containers.
+     *
+     * <p>Read here rather than folded into each ContainerSpec below, so that "every container
+     * of the unit" is a property of {@link RunUnitSpec} and not of this method. The init
+     * container is the one most easily forgotten and the most damaging to forget: without the
+     * bundle its clone fails at the forge, and a clone failure reads like a bad credential.
+     */
+    @Inject
+    EnterpriseEnvironmentConfig enterprise;
 
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
         if (command.maxWallClockSeconds() > maxWallClockSeconds) {
@@ -127,6 +140,7 @@ public class RunUnitBuilder {
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
 
         return new RunUnitSpec(command.runId(), init, agent, publisher,
+                enterprise.environment(),
                 MEMORY_BYTES, NANO_CPUS, Duration.ofSeconds(command.maxWallClockSeconds()));
     }
 }

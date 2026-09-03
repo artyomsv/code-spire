@@ -1,11 +1,13 @@
 package dev.codespire.runtime.docker;
 
+import dev.codespire.runtime.RegistryCredential;
 import org.junit.jupiter.api.Test;
 
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -38,5 +40,135 @@ class DockerRunRuntimeTest {
         assertNotEquals(DockerRunRuntime.volumeName(RUN_ID, "work"),
                 DockerRunRuntime.volumeName("run::github:acme/app:finding-1:2", "work"));
         assertNotEquals(DockerRunRuntime.volumeName(RUN_ID, "work"), DockerRunRuntime.volumeName(RUN_ID, "out"));
+    }
+
+    /**
+     * This arm refuses to steer, and the refusal is the implementation.
+     *
+     * <p>Asserted here because nothing else reaches it: the control listener refuses first on the
+     * harness's declared capability, and no shipped harness declares steering, so the whole
+     * delivery path is unreachable on a real deployment. Its own test stubbed a fake runtime that
+     * threw, which proves the listener handles the throw and not that this arm produces one --
+     * giving the method an empty body failed nothing anywhere.
+     *
+     * <p>A quiet no-op here would let an operator's instruction vanish while every layer above
+     * reported success, which is the failure the SPI method was deliberately given no default to
+     * prevent.
+     */
+    @Test
+    void steeringIsRefusedRatherThanSilentlyIgnored() {
+        DockerRunRuntime runtime = new DockerRunRuntime();
+
+        UnsupportedOperationException refused = assertThrows(UnsupportedOperationException.class,
+                () -> runtime.steer(new dev.codespire.runtime.RunHandle(RUN_ID, "unit-1"), "try again"));
+
+        assertTrue(refused.getMessage().contains(RUN_ID),
+                "the run must be named, or an operator cannot tell which instruction went nowhere");
+    }
+    /**
+     * A private credential is offered only to the registry it was issued for.
+     *
+     * <p>The parse follows the daemon own rule: a first path segment is a registry only when it
+     * carries a dot or a colon, or is localhost. Without that rule {@code acme/app} would parse as
+     * the registry {@code acme}, a credential for a real host would match nothing, and every
+     * private pull would silently fall back to anonymous and report the image as not found.
+     */
+    @Test
+    void anImageReferenceResolvesToTheRegistryTheDaemonWouldUse() {
+        assertEquals(DockerRunRuntime.DOCKER_HUB, DockerRunRuntime.registryHostOf("alpine:3.20"));
+        assertEquals(DockerRunRuntime.DOCKER_HUB, DockerRunRuntime.registryHostOf("acme/app:1"),
+                "a two-segment name is a Hub namespace, not a host");
+        assertEquals("registry.acme.example",
+                DockerRunRuntime.registryHostOf("registry.acme.example/team/app:1"));
+        assertEquals("localhost:5000", DockerRunRuntime.registryHostOf("localhost:5000/app:1"));
+        assertEquals("ghcr.io",
+                DockerRunRuntime.registryHostOf("ghcr.io/acme/app@sha256:" + "0".repeat(64)));
+    }
+    /**
+     * A corporate password is never presented to a registry it was not issued for.
+     *
+     * <p>The security half of the match. Offering the credential to every pull would be simpler
+     * and would send it to whichever public registry an operator happened to reference -- a
+     * password handed to a third party by a name in a config file.
+     */
+    @Test
+    void aRegistryCredentialIsOfferedOnlyToItsOwnRegistry() {
+        DockerRunRuntime runtime = new DockerRunRuntime(
+                new RegistryCredential("registry.acme.example", "spire", "TEST-registry-secret"));
+
+        assertTrue(runtime.authFor("registry.acme.example/team/agent:1").isPresent());
+        assertTrue(runtime.authFor("REGISTRY.ACME.EXAMPLE/team/agent:1").isPresent(),
+                "a registry host is case-insensitive, and a reference may be typed either way");
+        assertTrue(runtime.authFor("alpine:3.20").isEmpty(), "Docker Hub is not this registry");
+        assertTrue(runtime.authFor("ghcr.io/acme/agent:1").isEmpty());
+        assertTrue(runtime.authFor("acme/agent:1").isEmpty(),
+                "a Hub namespace that happens to read like a host must not match one");
+    }
+
+    /** With no credential configured every pull is anonymous, which is the ordinary deployment. */
+    @Test
+    void anUnconfiguredRuntimePullsAnonymously() {
+        assertTrue(new DockerRunRuntime().authFor("registry.acme.example/team/agent:1").isEmpty());
+    }
+    /**
+     * Docker Hub has three spellings and they are one registry.
+     *
+     * <p>Without normalising, {@code acme/private} and {@code docker.io/acme/private} -- the same
+     * image -- matched different registries, so an operator writing the fully qualified form (what
+     * registry-agnostic tooling emits, and what a digest pin looks like) got a silent ANONYMOUS
+     * pull and a not-found. Configuring {@code docker.io}, which is what {@code docker login}
+     * accepts, broke the bare form instead.
+     */
+    @Test
+    void everySpellingOfDockerHubIsTheSameRegistry() {
+        assertEquals(DockerRunRuntime.DOCKER_HUB, DockerRunRuntime.registryHostOf("docker.io/acme/app:1"));
+        assertEquals(DockerRunRuntime.DOCKER_HUB,
+                DockerRunRuntime.registryHostOf("index.docker.io/acme/app:1"));
+        assertEquals(DockerRunRuntime.DOCKER_HUB,
+                DockerRunRuntime.registryHostOf("registry-1.docker.io/acme/app:1"));
+
+        DockerRunRuntime hub = new DockerRunRuntime(
+                new RegistryCredential("docker.io", "spire", "TEST-registry-secret"));
+        assertTrue(hub.authFor("acme/private:1").isPresent(),
+                "a credential configured the way docker login accepts must match the bare form");
+        assertTrue(hub.authFor("index.docker.io/acme/private:1").isPresent());
+        assertTrue(hub.authFor("registry.acme.example/team/app:1").isEmpty());
+    }
+
+    /**
+     * The credential must actually be ATTACHED to the pull, not merely computed.
+     *
+     * <p>{@code authFor} could answer correctly for ever while nothing carried its answer to the
+     * command, and the only thing that would notice is a live private-registry pull nobody
+     * performs. Building a command opens no socket, so the attachment is assertable here.
+     *
+     * <p><b>The public half asserts IDENTITY, not absence, and the difference is the whole
+     * portability of this test.</b> An earlier version asserted the Hub pull carried no auth at all
+     * — which passed on a laptop and failed on CI, because docker-java attaches whatever
+     * {@code ~/.docker/config.json} holds for that registry and a runner has one. That assertion was
+     * about the machine, not about this class. Reproduced locally by pointing {@code DOCKER_CONFIG}
+     * at a config with a Hub entry: the same test fails in four seconds.
+     *
+     * <p>An operator's own {@code docker login} reaching a public pull is correct behaviour and not
+     * ours to prevent. What is ours is that the CORPORATE credential never goes to a registry it was
+     * not issued for, and that is what this asserts.
+     */
+    @Test
+    void thePullOfAPrivateImageCarriesTheCredentialAndAPublicPullDoesNot() {
+        DockerRunRuntime runtime = new DockerRunRuntime(
+                new RegistryCredential("registry.acme.example", "spire", "TEST-registry-secret"));
+
+        var privatePull = runtime.pullCommandFor("registry.acme.example/team/agent:1");
+        assertEquals("spire", privatePull.getAuthConfig().getUsername());
+        assertEquals("TEST-registry-secret", privatePull.getAuthConfig().getPassword());
+
+        var publicPull = runtime.pullCommandFor("alpine:3.20");
+        if (publicPull.getAuthConfig() != null) {
+            // Whatever the host's own docker config supplies is fine; ours must not be in it.
+            assertNotEquals("spire", publicPull.getAuthConfig().getUsername(),
+                    "a corporate password must never be attached to a Docker Hub pull");
+            assertNotEquals("TEST-registry-secret", publicPull.getAuthConfig().getPassword(),
+                    "a corporate password must never be attached to a Docker Hub pull");
+        }
     }
 }

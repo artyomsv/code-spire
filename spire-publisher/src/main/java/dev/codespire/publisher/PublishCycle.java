@@ -84,10 +84,22 @@ public final class PublishCycle {
         try {
             outcome.pushed(repo.pushRef(sha, branch, credential), changes.paths());
             return true;
-        } catch (GitAPIException | PushRefusedException e) {
-            // PushRefusedException is the forge's own ruleset saying no, which JGit reports as a
-            // status rather than throwing on its own. Never reported as a success.
-            outcome.failed("PUSH_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
+        } catch (PushRefusedException refusal) {
+            // The forge answering no, which JGit reports as a per-ref status rather than by
+            // throwing. A branch that moved under the run is its own cause: reported as a generic
+            // push failure it sends an operator to the forge's ruleset, when the actual remedy is
+            // to clone the branch rather than the base commit — the resume work's job. Never a
+            // force-push from here, which would discard whatever moved the branch.
+            outcome.failed(refusal.isNonFastForward() ? "NON_FAST_FORWARD" : "PUSH_REJECTED",
+                    refusal.getClass().getSimpleName() + ": " + refusal.getMessage());
+            return false;
+        } catch (GitAPIException transport) {
+            // The forge never answered. Retryable, unlike a refusal, because the same push may well
+            // succeed — which is the answer CLONE_FAILED already gives for the identical condition
+            // on the way in. Collapsing this into the refusal above said "never retry" for a
+            // network fault.
+            outcome.failed("PUSH_TRANSPORT_FAILED",
+                    transport.getClass().getSimpleName() + ": " + transport.getMessage());
             return false;
         }
     }

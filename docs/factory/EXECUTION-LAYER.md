@@ -127,6 +127,14 @@ available ──429 / window exhausted──► rate_limited(until) ──expiry
           ──operator────────────────► disabled
 ```
 
+> **Both provider-driven arrows are DESIGN, not delivered behaviour.** Nothing in the shipped
+> pipeline emits a credential refusal or a distinct rate limit: a refused key arrives as
+> `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores rather than resting a good key
+> on every provider blip. So both transitions are taken by an operator today, through
+> `POST /api/harness-credentials/{id}/rest` and `/clear-rejection`. `spire-arch`'s
+> `CredentialRefusalHasNoProducerTest` fails the build when a producer appears — that red is the
+> signal to delete this note. See `docs/UNVERIFIED.md` §A1–A2 for what evidence would close it.
+
 Four rules:
 
 1. **Rotation's charge identity depends on what was rotated, and the two cases are opposite.**

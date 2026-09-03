@@ -9,6 +9,7 @@ import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.LlmProviderInput;
 import dev.codespire.orchestrator.llm.LlmProviderRegistry;
+import dev.codespire.orchestrator.pipeline.BrokerAckFailure;
 import dev.codespire.orchestrator.provider.ProviderInput;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
@@ -42,12 +43,29 @@ class RunResourceTest {
     @Inject
     FactoryRunProjection projection;
 
+    /** The JSON form of a value, so a fixture replace is anchored to something that exists. */
+    private static String quoted(String value) {
+        return '"' + value + '"';
+    }
+
     private static String body(String workspace) {
+        return bodyWithModel(workspace, MODEL);
+    }
+
+    /**
+     * A dispatch request naming its model explicitly.
+     *
+     * <p>The model used to be an arbitrary uncatalogued name, which was fine while nothing read
+     * it at dispatch. It is now the catalogued one, because a run whose model cannot be priced is
+     * refused before it spends -- so a fixture naming an unknown model would make every dispatch
+     * test assert the refusal rather than the path it was written for.
+     */
+    private static String bodyWithModel(String workspace, String model) {
         return """
                 {"workspace":"%s","slug":"app","providerType":"github",
                  "baseCommit":"0123456789abcdef0123456789abcdef01234567","prompt":"fix the typo",
-                 "harness":"codex","model":"gpt-5.6"}
-                """.formatted(workspace);
+                 "harness":"codex","model":"%s"}
+                """.formatted(workspace, model);
     }
 
     @Inject
@@ -81,43 +99,315 @@ class RunResourceTest {
                 "TEST-harness-key", MODEL, null, null, true, true)).id());
     }
 
+    /**
+     * A pool member, because a run no longer borrows the reviewer's key and there is no fallback.
+     *
+     * <p>Added through the pool so the key is Tink-encrypted the way a real one is: a raw INSERT of
+     * a plaintext key does not read back, because selection decrypts.
+     */
+    private void aHarnessCredential() {
+        // Deliberately NOT cleaned between tests: a member a run row points at cannot be deleted,
+        // and that FK is the schema keeping a finished run's attribution from disappearing with the
+        // key. Each call adds its own uniquely-labelled member instead, which also means the pool
+        // grows across this suite and the rotation is exercised rather than assumed.
+        pool.add("TEST-pool-" + UUID.randomUUID(), "openai", "https://api.openai.com", "TEST-agent-key");
+    }
+
+    @Inject
+    HarnessCredentialPool pool;
+
     private String workspaceWithFactoryAccount() {
         defaultLlmProvider();
+        aHarnessCredential();
         String workspace = "TEST-ws-" + UUID.randomUUID().toString().substring(0, 8);
         providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "factory-bot", null, "FACTORY"));
         return workspace;
     }
 
+    /** A run row this suite owns, written straight to the projection rather than dispatched. */
+    private String registeredRun() {
+        String runId = "run::github:TEST-acme/app:transcript-" + UUID.randomUUID() + ":1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
+                "abc1234", "spire/x", "spire-bot", null));
+        return runId;
+    }
+
+    /**
+     * There is no safe default for this decision, so a body without it is refused (FR-F10).
+     *
+     * <p>The two answers do opposite things — one allows the run to be started again, the other
+     * forbids it — so guessing either way is how a duplicate paid run happens, or how a run that
+     * never started is abandoned. A 400 asking the question is the honest answer.
+     */
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
-    void theHarnessCredentialComesFromTheLlmRegistryNeverTheRequest() {
-        // No default provider: refused, naming what to configure. A named provider: accepted. The
-        // key itself is never in the body — the registry is where operator keys live, encrypted.
+    void aDispatchResolutionWithoutAnAnswerIsRefused() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().contentType("application/json").body("{}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(400).body(containsString("neverRan"));
+    }
+
+    /**
+     * The only live state that had no stop lever, which is the state whose whole premise is that a
+     * paid agent may be executing right now.
+     *
+     * <p>A {@code queued} run — where nothing can possibly be running yet — accepted a cancel, and
+     * this one did not. A control record for a run nobody is executing is passed over quietly by
+     * every replica, so allowing it costs nothing and refusing it removed the only lever on live
+     * spend.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anUnresolvedDispatchCanStillBeCancelled() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        // The negative half lives in aFinishedRunRefusesControlRatherThanAcceptingItSilently, so
+        // this widening cannot be satisfied by making requireLive accept everything.
+        given().contentType("application/json").body("{\"reason\":\"TEST-stop the maybe-run\"}")
+                .when().post("/api/runs/" + runId + "/cancel")
+                .then().statusCode(202);
+    }
+
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunThatIsNotUncertainCannotBeResolved() {
+        // A run whose result arrived resolved itself, and an operator on a stale page must not be
+        // able to overwrite what the run has since said.
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(409).body(containsString("not awaiting a dispatch resolution"));
+    }
+
+    /**
+     * The other answer, over HTTP. The projection covers both, but only {@code true} reached the
+     * endpoint — and the two take different code paths through it now that they are separate methods.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anOperatorCanResolveOverHttpThatTheRunDidStart() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().contentType("application/json").body("{\"neverRan\":false}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(204);
+
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200)
+                .body("status", equalTo(FactoryRunProjection.FAILED))
+                .body("failureCause", equalTo("DISPATCH_UNCERTAIN"));
+    }
+
+    /**
+     * "Not dismissable" is stated in three places and enforced in two, and was asserted by nothing.
+     *
+     * <p>Acknowledging must not clear this row: it describes a run that may be executing right now,
+     * so silencing it would leave that untracked. Only resolving the dispatch — or the run's own
+     * result — takes it away.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void acknowledgingDoesNotSilenceAnUnresolvedDispatch() {
+        String runId = registeredRun();
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().when().post("/api/runs/" + runId + "/attention-ack")
+                .then().statusCode(204);
+
+        given().when().get("/api/attention")
+                .then().statusCode(200)
+                .body("find { it.subject == '" + runId + "' }.code",
+                        equalTo("RUN_DISPATCH_UNCERTAIN"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void resolvingAnUnknownRunIsNotFound() {
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/run::github:TEST-acme/app:never-registered:1/dispatch-resolution")
+                .then().statusCode(404);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerMayNotResolveADispatch() {
+        // It decides whether a paid run is started again, so it is admin by ADR-022's first rule.
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/run::github:TEST-acme/app:any:1/dispatch-resolution")
+                .then().statusCode(403);
+    }
+
+    /**
+     * The producer the control listener shipped without.
+     *
+     * <p>Nothing in the repository published to {@code cs.run-control}, so cancel and steer were
+     * reachable only by hand-producing to the topic — a consumer delivered for an operator control an
+     * operator could not use, and the plan's own Task 7 file list named this endpoint.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunningRunAcceptsACancel() {
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/" + runId + "/cancel")
+                .then().statusCode(202);
+    }
+
+    /**
+     * The refusal an operator can actually see, and the reason it lives here rather than in the
+     * worker.
+     *
+     * <p>Every replica reads every control record, so a listener cannot tell "not running on me" from
+     * "not running anywhere" and has to pass over both quietly. This endpoint reads the row, so it
+     * can say which — synchronously, instead of leaving an operator watching a timeline that will
+     * never change.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aFinishedRunRefusesControlRatherThanAcceptingItSilently() {
+        String runId = registeredRun();
+        projection.apply(new dev.codespire.contract.event.RunResult.RunFinished(
+                runId, "refs/heads/spire/x", List.of("a.txt"), List.of(), null, false));
+
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/" + runId + "/cancel")
+                .then().statusCode(409).body(containsString("cannot be cancelled"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void controlForAnUnknownRunIsNotFound() {
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/run::github:TEST-acme/app:never-registered:1/cancel")
+                .then().statusCode(404);
+    }
+
+    /**
+     * A blank instruction is refused where the caller can read the reason.
+     *
+     * <p>{@code SteerRun}'s own constructor bounds it, but over Kafka those guards fire inside the
+     * worker's deserializer, which answers null and drops the record — so the operator would be told
+     * nothing at all. Building the command here turns that into a 400.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aBlankInstructionIsRefusedAtTheEdge() {
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"instruction\":\"\"}")
+                .when().post("/api/runs/" + runId + "/steer")
+                .then().statusCode(400);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunningRunAcceptsASteer() {
+        String runId = registeredRun();
+
+        given().contentType("application/json").body("{\"instruction\":\"prefer the smaller change\"}")
+                .when().post("/api/runs/" + runId + "/steer")
+                .then().statusCode(202);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerMayNotStopARun() {
+        // Control is admin, by ADR-022's first rule: a steer directs a credentialed agent and costs
+        // model calls, and a cancel ends work someone else started.
+        given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
+                .when().post("/api/runs/run::github:TEST-acme/app:any:1/cancel")
+                .then().statusCode(403);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewersTranscriptRequestIsNotSwallowedByTheRunDetailRoute() {
+        // The detail route's path regex is greedy (.+), so it can match a run id WITH /transcript
+        // still attached and answer "no such run: .../transcript". JAX-RS ranks candidates by
+        // literal character count and should prefer the transcript route — but "should" is not a
+        // property to rest a route on, and the failure is a 404 that reads like a missing run.
+        String runId = registeredRun();
+
+        given().when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(200);
+
+        // ...and the detail route still answers for the id alone.
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aTranscriptOfAnUnknownRunIsNotFound() {
+        // Rather than an empty page, which reads as "this run produced nothing" for a run that does
+        // not exist at all — two different answers an operator acts on differently.
+        given().when().get("/api/runs/run::github:TEST-acme/app:never-registered:1/transcript")
+                .then().statusCode(404);
+    }
+
+    /**
+     * The harness key comes from the pool, and there is no fallback to the reviewer's (FR-F12).
+     *
+     * <p>This replaces a test asserting the opposite rule. A run used to take the deployment's
+     * DEFAULT LLM provider key when none was named — the same key the review pipeline calls the
+     * model with — and hand it to a container running an untrusted model on an untrusted work item
+     * at full shell access, where a prompt-injected agent can read its own environment. One
+     * exfiltration disabled reviews and runs together.
+     *
+     * <p>So an empty pool is a refusal naming what to configure, which is the same call the push
+     * identity already makes: the factory never borrows the reviewer's identity, in either
+     * direction.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void theHarnessCredentialComesFromThePoolNeverTheReviewersKey() {
         String workspace = workspaceWithFactoryAccount();
         // Scoped to this suite's own fixtures: the database is shared with every other suite, and
-        // an unqualified DELETE here decided their outcomes by test ordering.
-        sql("DELETE FROM llm_provider WHERE name LIKE 'TEST-run-%'");
-        sql("UPDATE llm_provider SET is_default = FALSE WHERE name LIKE 'TEST-%'");
+        // an unqualified UPDATE here decided their outcomes by test ordering. Members are disabled
+        // rather than deleted, because a run row referencing one holds it by foreign key -- which
+        // is the schema keeping a finished run's attribution from vanishing with the key.
+        sql("UPDATE harness_credential SET enabled = FALSE WHERE label LIKE 'TEST-pool-%'");
+
+        // A perfectly good default LLM provider exists -- and is deliberately NOT used.
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
                 .then().statusCode(409)
-                .body(containsString("LLM provider"));
+                .body(containsString("harness credential"))
+                .body(containsString("reviewer"));
 
-        UUID id = defaultLlmProvider();
-        sql("UPDATE llm_provider SET is_default = false WHERE id = '" + id + "'");
+        aHarnessCredential();
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
-                .then().statusCode(409);
+                .then().statusCode(201);
+    }
+
+    /**
+     * A request that tries to pin the key is refused rather than quietly overruled.
+     *
+     * <p>{@code llmProviderId} used to choose the credential. The pool rotates now, so honouring a
+     * pin would defeat the rotation that exists to survive exhaustion — and ignoring the field
+     * silently would leave the caller believing they had pinned a key.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRequestCannotPinTheHarnessCredential() {
+        String workspace = workspaceWithFactoryAccount();
+        UUID id = defaultLlmProvider();
+
         given().contentType("application/json")
                 .body(body(workspace).replace("\"harness\"", "\"llmProviderId\":\"" + id + "\",\"harness\""))
                 .when().post("/api/runs")
-                .then().statusCode(201);
-
-        given().contentType("application/json")
-                .body(body(workspace).replace("\"harness\"", "\"llmProviderId\":\"not-a-uuid\",\"harness\""))
-                .when().post("/api/runs")
-                .then().statusCode(400);
+                .then().statusCode(400)
+                .body(containsString("no longer accepted"));
     }
 
     @Test
@@ -181,7 +471,7 @@ class RunResourceTest {
         String request = body(workspace).replace("\"harness\"", "\"subject\":\"capped\",\"harness\"");
         SpendWindow.Usage baseline = spendWindow.since(Instant.now().minus(capPolicy.window()))
                 .orElseThrow(() -> new AssertionError("the ledger read failed"));
-        reviews.recordCharges(new ChargeCall("TEST-run-cap-" + workspace, "CANARY-RUN-CAP-" + workspace,
+        reviews.recordCharges(ChargeCall.forReview("TEST-run-cap-" + workspace, "CANARY-RUN-CAP-" + workspace,
                 ChargeKind.REVIEW, MODEL, List.of(ChargeLine.unmetered(TokenType.INPUT, 1_000))));
         settings.set(CapPolicy.KEY_CALLS, String.valueOf(baseline.calls() + 1));
         try {
@@ -243,12 +533,12 @@ class RunResourceTest {
 
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
-    void aDispatchTheBrokerNeverAcknowledgedIsRecordedAsFailedAndARetryReArmsIt() {
-        // An ack timeout proves nothing about whether the record landed. So the row is neither
+    void aDispatchTheBrokerRefusedOutrightIsFailedAndARetryReArmsIt() {
+        // The certain half of FR-F10. A rejection the client calls non-retriable was decided before
+        // anything reached a partition, so the run definitely did not start: the row is neither
         // deleted (a run possibly on the bus with no record — the very thing writing it first
-        // prevents) nor left as a queued run nobody will ever start: it is marked, and the same
-        // request re-arms it. If the first dispatch did land, the worker's claim drops the second
-        // and the first run's results project onto the re-armed row.
+        // prevents) nor left as a queued run nobody will ever start. It is marked re-armable, and
+        // the same request starts it.
         String workspace = workspaceWithFactoryAccount();
         String request = body(workspace).replace("\"harness\"", "\"subject\":\"retry-me\",\"harness\"");
         String runId = "run::github:" + workspace + "/app:retry-me:1";
@@ -256,7 +546,10 @@ class RunResourceTest {
         QuarkusMock.installMockForType(new RunCommandEmitter() {
             @Override
             public void dispatch(RunCommand command) {
-                throw new IllegalStateException("No broker ack within 10s for run command ExecuteRun");
+                // Non-retriable, so the client is telling us the record never left. This is the
+                // ONLY shape that may re-arm: everything else has to fail closed.
+                throw BrokerAckFailure.rejected("run command ExecuteRun",
+                        new org.apache.kafka.common.errors.RecordTooLargeException("too big"));
             }
         }, RunCommandEmitter.class);
 
@@ -286,6 +579,99 @@ class RunResourceTest {
                 .then().statusCode(200)
                 .body("status", equalTo(FactoryRunProjection.QUEUED))
                 .body("failureCause", nullValue());
+    }
+
+    /**
+     * The uncertain half, and the one that decides money (FR-F10).
+     *
+     * <p>An acknowledgement that never arrives says nothing about the record: the producer may
+     * still be retrying and the append may already have happened. Recording that as a definite
+     * failure — which is what this path did — makes the row re-armable, so an operator's identical
+     * retry publishes a second command and, if the first landed after all, a second agent works the
+     * same branch with the model paid twice.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aDispatchTheBrokerNeverAcknowledgedIsUncertainAndIsNotRetried() {
+        String workspace = workspaceWithFactoryAccount();
+        String request = body(workspace).replace("\"harness\"", "\"subject\":\"maybe-sent\",\"harness\"");
+        String runId = "run::github:" + workspace + "/app:maybe-sent:1";
+
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                throw BrokerAckFailure.notAcknowledged("No broker ack within 10s", null);
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(503)
+                .body(containsString("NOT retried automatically"));
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200)
+                .body("status", equalTo(FactoryRunProjection.DISPATCH_UNCERTAIN))
+                .body("failureDetail", equalTo(RunResource.uncertainDetail(runId)));
+
+        // The broker is back, and the retry is STILL refused -- this is the fail-closed rule. The
+        // certain case above is 201 at exactly this point, which is what makes the two differ.
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                throw new AssertionError("an uncertain run must not be published again");
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(409)
+                .body(containsString("dispatch-resolution"));
+
+        // ...until an operator resolves it, after which the ordinary retry path works again.
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(204);
+
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                // the broker is back
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(201);
+    }
+
+    /**
+     * A publish fault this code cannot classify is treated as ambiguous, not as a definite failure.
+     *
+     * <p>Narrowing the catch to the classified type was a regression found by an existing test: any
+     * other fault escaped as a 500 with the row left {@code queued}, so a run nobody would ever
+     * start sat looking as though it were about to. Failing closed is also the safer reading — a
+     * fault we cannot read tells us nothing about whether the record left.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anUnclassifiedPublishFaultFailsClosedRatherThanEscaping() {
+        String workspace = workspaceWithFactoryAccount();
+        String request = body(workspace).replace("\"harness\"", "\"subject\":\"odd-fault\",\"harness\"");
+        String runId = "run::github:" + workspace + "/app:odd-fault:1";
+
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                throw new IllegalStateException("something the ack helper did not classify");
+            }
+        }, RunCommandEmitter.class);
+
+        given().contentType("application/json").body(request)
+                .when().post("/api/runs")
+                .then().statusCode(503);
+        given().when().get("/api/runs/" + runId)
+                .then().statusCode(200)
+                .body("status", equalTo(FactoryRunProjection.DISPATCH_UNCERTAIN));
     }
 
     @Test
@@ -348,7 +734,7 @@ class RunResourceTest {
                 .body(ok.replace("\"fix the typo\"", "\"" + "x".repeat(64 * 1024 + 1) + "\""))
                 .when().post("/api/runs").then().statusCode(400).body(containsString("prompt"));
         given().contentType("application/json")
-                .body(ok.replace("\"gpt-5.6\"", "\"-c model_providers.openai.base_url=http://attacker.example/v1\""))
+                .body(ok.replace(quoted(MODEL), "\"-c model_providers.openai.base_url=http://attacker.example/v1\""))
                 .when().post("/api/runs").then().statusCode(400).body(containsString("model"));
         for (String bad : List.of("..main", "/main", "main/", "a//b", "feature/.hidden", "-x", "x.lock", "a b")) {
             given().contentType("application/json")
@@ -413,5 +799,36 @@ class RunResourceTest {
         given().contentType("application/json").body(body("acme"))
                 .when().post("/api/runs")
                 .then().statusCode(401);
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aRunOnAnUnpriceableModelIsRefusedBeforeItSpends() {
+        // The half that protects the cap rather than reporting on it. Pricing is post-hoc -- the
+        // charge is written when the run is already over -- so dispatch is the last point at which
+        // an unpriceable run can still be refused rather than merely noticed afterwards.
+        //
+        // Leaving it out is worse than it looks: every charge for such a run is recorded UNKNOWN,
+        // whose cost is NULL, and SUM() skips NULL. So the money cap would be reading a total that
+        // omits precisely the runs it could not price.
+        String workspace = workspaceWithFactoryAccount();
+        String uncatalogued = "TEST-MODEL-WITH-NO-RATES-" + UUID.randomUUID();
+
+        given().contentType("application/json").body(bodyWithModel(workspace, uncatalogued))
+                .when().post("/api/runs")
+                .then().statusCode(409)
+                .body(containsString("no usable pricing"));
+    }
+
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aPriceableModelStillDispatches() {
+        // The other half. Without it the refusal could be unconditional and every test above would
+        // still pass, because they assert their own paths rather than this gate.
+        String workspace = workspaceWithFactoryAccount();
+
+        given().contentType("application/json").body(body(workspace))
+                .when().post("/api/runs")
+                .then().statusCode(201);
     }
 }

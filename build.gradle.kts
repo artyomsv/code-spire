@@ -112,12 +112,56 @@ abstract class DevServicesReaper : BuildService<BuildServiceParameters.None>, Au
 val devServicesReaper =
     gradle.sharedServices.registerIfAbsent("devServicesReaper", DevServicesReaper::class) {}
 
+/**
+ * The one real Docker daemon, held by one test task at a time.
+ *
+ * `org.gradle.parallel=true` plus a `testServices` over five modules put `spire-runtime-docker` and
+ * `spire-run-worker` on the same daemon at the same moment, and `DockerRunRuntimeIT` failed two
+ * cases that both read as container-lifecycle bugs: "no such container" on an inspect, and a destroy
+ * that removed nothing. Run alone the same suite passed 15 of 15, twice. A red that impersonates the
+ * exact defect the code under test exists to prevent is dearer than the parallelism it buys.
+ *
+ * A shared service rather than `org.gradle.parallel=false`, because only these tasks contend: the
+ * other three service modules boot their own Dev Services containers and are free to run alongside
+ * anything. `DockerTestsAreSerialisedTest` asserts both halves -- including, against gradle.properties,
+ * that parallelism is on at all -- and derives the list below from the
+ * test sources rather than trusting it — a module that starts driving the daemon and forgets to
+ * declare itself fails the build instead of flaking months later.
+ */
+abstract class DockerDaemonLock : BuildService<BuildServiceParameters.None>
+
+val dockerDaemonLock =
+    gradle.sharedServices.registerIfAbsent("dockerDaemonLock", DockerDaemonLock::class) {
+        maxParallelUsages.set(1)
+    }
+
+/**
+ * Modules whose TESTS talk to the daemon directly — creating, inspecting, exec'ing or destroying
+ * containers. Not "modules that use Docker": every service module boots Dev Services containers, and
+ * serialising those would be the slow fix this service exists to avoid.
+ *
+ * `spire-e2e` is here although it runs in the nightly tier and so never meets `testServices` in CI.
+ * The lock is about the daemon, not about a tier, and a local run of both tiers is precisely the
+ * case a tier-shaped rule would miss.
+ */
+val dockerDrivingModules = listOf(
+    "spire-runtime-docker",
+    "spire-run-worker",
+    "spire-e2e",
+    // The conformance checker starts a container per probe against the reference image.
+    "spire-agent-image",
+)
+
 subprojects {
     tasks.withType<Test>().configureEach {
         usesService(devServicesReaper)
         // Force instantiation, which is what takes the snapshot: a service Gradle never creates is
         // a service Gradle never closes.
         doFirst { devServicesReaper.get() }
+
+        if (project.name in dockerDrivingModules) {
+            usesService(dockerDaemonLock)
+        }
     }
 }
 
@@ -174,6 +218,10 @@ val fastTestModules = listOf(
 )
 
 val serviceTestModules = listOf(
+    // Its clause LOGIC is tested against a fake probe and needs nothing; its reference-image
+    // check drives a real daemon, and a conformance checker whose own reference image is never
+    // checked is the shape this repository keeps finding. Service tier, and the Docker lock.
+    "spire-agent-image",
     "spire-runtime-docker",
     "spire-run-worker",
     "spire-gateway",
@@ -201,7 +249,8 @@ tasks.register("testFast") {
 
 tasks.register("testServices") {
     group = "verification"
-    description = "Runs the three deployables' tests (Quarkus Dev Services: Postgres + Kafka)."
+    description = "Runs the four deployables plus spire-runtime-docker and spire-agent-image " +
+            "(Dev Services: Postgres + Kafka; the last two also drive a real daemon)."
     dependsOn(serviceTestModules.map { ":$it:test" })
 }
 

@@ -164,7 +164,7 @@ class CapAttentionTest {
      */
     private void seedUnmeteredCalls(String reviewId, int count) {
         for (int i = 0; i < count; i++) {
-            projection.recordCharges(new ChargeCall(reviewId, "CANARY-CAP-ATTENTION-" + reviewId + "-" + i,
+            projection.recordCharges(ChargeCall.forReview(reviewId, "CANARY-CAP-ATTENTION-" + reviewId + "-" + i,
                     ChargeKind.REVIEW, "TEST-MODEL", List.of(ChargeLine.unmetered(TokenType.INPUT, 1_000))));
         }
     }

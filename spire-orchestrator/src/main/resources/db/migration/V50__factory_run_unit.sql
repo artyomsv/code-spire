@@ -1,0 +1,12 @@
+-- Where the sandbox an operator has to find is finally written down.
+--
+-- RunStarted carries a providerRunId documented as the pod name or container id, and until M1 it
+-- carried the run id twice -- the event was emitted before the unit was created, so no handle
+-- existed. Task 5 fixed the wire. This is the other half: the projection was discarding the value,
+-- so the corrected id reached nothing an operator can read, and the container label remained the
+-- only route to a preserved sandbox exactly as the runbook says.
+--
+-- Nullable, for the same reason the worker's own lease column is: the row is written when the run is
+-- QUEUED, and the unit does not exist until the worker creates it. A run that never got that far
+-- legitimately names none.
+ALTER TABLE factory_run ADD COLUMN unit_id TEXT;

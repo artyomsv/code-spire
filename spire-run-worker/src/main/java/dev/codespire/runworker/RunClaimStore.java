@@ -1,5 +1,6 @@
 package dev.codespire.runworker;
 
+import org.jboss.logging.Logger;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -19,10 +20,39 @@ import java.sql.SQLException;
 @ApplicationScoped
 public class RunClaimStore {
 
+    private static final Logger LOG = Logger.getLogger(RunClaimStore.class);
+
     @Inject
     DataSource dataSource;
 
     /** @return true when THIS caller took the slot; false when it was already taken. */
+    /**
+     * Gives a slot back, for the one shape that needs it: a claim taken BEFORE work that then
+     * failed in a way that leaves nothing recorded.
+     *
+     * <p>Deliberately not a general undo. A claim exists so a paid or duplicate action happens
+     * once, and releasing one after the action succeeded would re-arm exactly that. The caller
+     * must have established that the work did NOT happen — the watchdog's report is the case: it
+     * claims, then publishes, and a broker outage during that publish would otherwise burn the
+     * slot for ever and leave the run with no path to a terminal result.
+     *
+     * <p>Failure to release is logged rather than thrown: the caller is already handling a fault,
+     * and replacing its error with this one loses the fault that mattered. The cost is a slot that
+     * stays taken, which is the state it was in anyway.
+     */
+    public void release(String runId, String slot) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "DELETE FROM runworker.run_claim WHERE run_id = ? AND slot = ?")) {
+            ps.setString(1, runId);
+            ps.setString(2, slot);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            LOG.warnf(e, "could not release the %s claim for %s; it stays taken, so the action it "
+                    + "guards will not be retried automatically", slot, runId);
+        }
+    }
+
     public boolean claim(String runId, String slot) {
         String sql = """
                 INSERT INTO runworker.run_claim (run_id, slot)

@@ -129,8 +129,12 @@ argued around:
 - **Run-worker channel semantics** — ack on receipt, `run_claim` as the sole idempotency mechanism,
   and cancel/steer over `cs.run-control` so a cancel does not queue behind the run it cancels.
 - **Failure-cause discriminator** as a column, from a closed set.
-- **Credential pool** with least-recently-exhausted rotation, `rejected` versus `rate_limited`
-  distinguished, and `ALL_CREDENTIALS_EXHAUSTED` as a first-class refusal with an attention row.
+- **Credential pool** with least-recently-exhausted rotation, `rejected` and
+  `rate_limited` as distinct states in the schema, and `ALL_CREDENTIALS_EXHAUSTED`
+  as a first-class refusal with an attention row. **Both states are entered by an operator, not by
+  the pipeline** — nothing emits a credential refusal or a distinct rate limit yet, so rotation on
+  exhaustion is manual. Guarded by `CredentialRefusalHasNoProducerTest`; tracked in
+  `docs/UNVERIFIED.md` §A1–A2.
 - Idempotency: intent journalled before dispatch, ambiguity failing closed.
 - Enterprise image environment: CA bundle, proxy variables, private registry credentials.
 - `spire agent-image verify`, reporting **verified** and **declared** clauses separately.
@@ -310,7 +314,7 @@ decided; the sixth needs a fact only the operator holds.
 | 1b | Where does the workspace live, across replicas and nodes? | **In the run pod, nowhere else** (ADR-039). The pod clones itself, checkpoints continuously to the branch, and is destroyed; the forge is the durable state. The bind-mounted-workspace design made the worker stateful and broke run recovery. | [RUN-TOPOLOGY §2–3](./RUN-TOPOLOGY.md) |
 | 2 | Does one token serve both forge API and git push? | **Yes on all three forges** — GitHub App installation token, GitHub PAT, GitLab PAT with `write_repository`, Bitbucket API token. One credential per (machine account, provider); `separatePushCredential` is a declared capability, false everywhere today, so a forge that splits them later is an adapter change. Never the review bot's credential; injected per run; never URL-embedded. | [EXECUTION-LAYER §3.4](./EXECUTION-LAYER.md) |
 | 3 | The protected-path matcher and refusal surface | **The JDK's `PathMatcher` with `glob:` syntax** — no new dialect, no dependency. (`PathGlobs` was named in a first draft and is the wrong tool: it maps a path *to* a group glob, it does not match one *against* a glob.) Match the changed-path set against base, **both sides of a rename**, **deletions included**; the CI floor matches **case-insensitively**. Refusal is `push_gate_refused`, naming every blocked path. | [AUTONOMY §5](./AUTONOMY.md) |
-| 4 | The run charge row's shape | `review_id` → **`subject_id` + `subject_kind`** (`REVIEW`\|`RUN`); `kind` CHECK extended with `SPEC`, `PLAN`, `BUILD`, `FIX`; `CallRefs` gains `run:{runId}:{attempt}:{seq}`. Ten existing reads updated in the same migration. A run id in a column named `review_id` was rejected outright. | [ARCHITECTURE §7](./ARCHITECTURE.md) |
+| 4 | The run charge row's shape | `review_id` → **`subject_id` + `subject_kind`** (`REVIEW`\|`RUN`); `kind` CHECK extended with `SPEC`, `PLAN`, `BUILD`, `FIX`; `CallRefs` gains `run:{runId}:{seq}` (the attempt already lives in the run id, so a second `{attempt}` segment would restate it). Ten existing reads updated in the same migration. A run id in a column named `review_id` was rejected outright. | [ARCHITECTURE §7](./ARCHITECTURE.md) |
 | 5 | The run worker's channel semantics | **Its own topics** — `cs.run-commands` / `cs.run-control` / `cs.run-results` — because `ActionCommand` declares `reviewId()` as mandatory and a run has a `runId`; a run id behind a method named `reviewId()` is a name that lies. The worker **writes `run_claim` then acks** (that order — the reverse loses the command on a crash); concurrency is a bounded executor, not consumer parallelism. | [ARCHITECTURE §5.1](./ARCHITECTURE.md) |
 | 6 | Subscription-decision provenance | **Closed.** The operator raised it with **OpenAI support** and was told the use is permitted; recorded 2026-09-01. The published terms leave it open, the vendor's support answer settles it for this deployment, and the ticket in the operator's support history is the artifact if it is challenged. | [ADR-031](../DECISIONS.md) |
 

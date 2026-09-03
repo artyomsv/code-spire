@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.scm.RepoRef;
 import io.smallrye.reactive.messaging.kafka.Record;
@@ -16,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -38,7 +40,7 @@ class RunDispatcherTest {
             "fix the typo", "codex", "gpt-5.6", "img", List.of(), 60, "enc-scm", "enc-harness");
 
     private static final RunResult.RunFinished FINISHED = new RunResult.RunFinished(
-            EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null);
+            EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null, false);
 
     /** In-memory claims: the first claim of a slot wins, exactly as the unique key does. */
     static final class FakeClaims extends RunClaimStore {
@@ -65,14 +67,40 @@ class RunDispatcherTest {
             this.order = order;
         }
 
+        /** What the unit id would be, announced the way the real launcher announces it. */
+        String unitId = "container-abc123";
+
+        RunResult result = FINISHED;
+
+        // The form the dispatcher actually calls. Overriding a different arity compiles, runs
+        // the REAL launcher, and every assertion about ordering and idempotency then measures
+        // nothing -- which is exactly what happened once on this class.
+        /** Whether the fake reports the sandbox destroyed. Silence means it is still there. */
+        boolean releasesTheUnit = true;
+
+        /** Runs while the launcher is "executing", so a test can cancel a run in flight. */
+        Runnable onLaunch;
+
         @Override
-        public RunResult launch(RunCommand.ExecuteRun command) {
+        public RunResult launch(RunCommand.ExecuteRun command, RunObserver observer) {
             order.add("launch");
             launches++;
+
             if (failWith != null) {
                 throw failWith;
             }
-            return FINISHED;
+            if (unitId != null) {
+                observer.unitCreated(unitId, RunNotes.IGNORING);
+            }
+            // AFTER the unit exists, because that is the only window in which a real cancel can
+            // reach a run: the registry has nothing to cancel before the sandbox is registered.
+            if (onLaunch != null) {
+                onLaunch.run();
+            }
+            if (releasesTheUnit) {
+                observer.unitReleased();
+            }
+            return result;
         }
     }
 
@@ -145,13 +173,80 @@ class RunDispatcherTest {
     private final FakeClaims claims = new FakeClaims(order);
     private final FakeLauncher launcher = new FakeLauncher(order);
     private final FakeEmitter results = new FakeEmitter();
+    private final FakeLeases leases = new FakeLeases(order);
+    private final RunRegistry registry = new RunRegistry();
     private final RunDispatcher dispatcher = dispatcher();
+
+    /**
+     * Records the lease calls in the same order list as the claim and the launch, so the
+     * take-before-create ordering is a fact about the sequence rather than about two separate
+     * assertions that could both hold in the wrong order.
+     *
+     * <p>Every method the dispatcher reaches is overridden deliberately. An un-overridden one
+     * opens a real database connection from a plain unit test -- a trap this repository has hit
+     * four times in one milestone.
+     */
+    static final class FakeLeases extends WorkspaceLeases {
+        final List<String> order;
+        String unitId;
+        boolean released;
+
+        FakeLeases(List<String> order) {
+            this.order = order;
+        }
+
+        /** false makes the dispatcher refuse, which is the one lease write that reports. */
+        boolean takeSucceeds = true;
+
+        boolean preserved;
+
+        @Override
+        public boolean take(String runId) {
+            order.add("lease");
+            return takeSucceeds;
+        }
+
+        @Override
+        public void preserve(String runId) {
+            order.add("preserve");
+            preserved = true;
+        }
+
+        @Override
+        public void recordUnit(String runId, String unit) {
+            order.add("unit");
+            unitId = unit;
+        }
+
+        @Override
+        public void release(String runId) {
+            order.add("release");
+            released = true;
+        }
+    }
 
     private RunDispatcher dispatcher() {
         RunDispatcher d = new RunDispatcher();
         d.claims = claims;
         d.launcher = launcher;
         d.results = results;
+        d.leases = leases;
+        d.registry = registry;
+        // The real collaborator with a faked credential source, so the dispatcher's own failures
+        // get the same scrub and the same retry answer the launcher's do. Leaving it unwired is
+        // what the review found: this class built details the launcher's rules never touched.
+        d.failures = RunLauncherTest.failuresWith(new Credentials() {
+            @Override
+            public Scm scm(String runId, String packed) {
+                return new Scm(RunLauncherTest.SCM_USERNAME, RunLauncherTest.READ_SECRET,
+                        RunLauncherTest.SCM_USERNAME, RunLauncherTest.WRITE_SECRET);
+            }
+
+            @Override
+            public java.util.Map<String, String> harnessEnv(String runId, String packed) {
+                return java.util.Map.of("OPENAI_API_KEY", RunLauncherTest.MODEL_KEY);
+            }
+        });
         return d;
     }
 
@@ -160,9 +255,11 @@ class RunDispatcherTest {
         Delivery delivery = new Delivery(order);
         dispatcher.onCommand(delivery.of(EXECUTE)).toCompletableFuture().join();
 
-        assertEquals(List.of("claim", "ack", "launch"), order,
+        assertEquals(List.of("claim", "ack", "lease", "launch", "unit", "release"), order,
                 "the claim goes first (a crash between them must not lose the command), the ack "
-                        + "before the run (an hour-long run must not age the record), the run last");
+                        + "before the run (an hour-long run must not age the record), then the LEASE "
+                        + "before the unit can exist -- a crash there leaves a row the watchdog can "
+                        + "reconcile, where the reverse leaves a sandbox nothing knows about");
         assertTrue(delivery.acked);
         assertEquals(List.of("RunStarted", "RunFinished"),
                 results.sent.stream().map(r -> r.getClass().getSimpleName()).toList());
@@ -182,14 +279,19 @@ class RunDispatcherTest {
     @Test
     void anUnexpectedLauncherFailureStillReportsATerminalResult() {
         // A run that reports nothing is indistinguishable from one still working.
-        launcher.failWith = new IllegalStateException("daemon vanished");
+        // The catch-all: the exception nobody has reviewed, by definition. Its message therefore
+        // gets the same scrub as every other failure detail, which it did not before.
+        launcher.failWith = new IllegalStateException(
+                "daemon vanished: env=[OPENAI_API_KEY=" + RunLauncherTest.MODEL_KEY + "]");
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         RunResult last = results.sent.getLast();
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, last);
         assertEquals("WORKER_FAILED", failed.cause());
-        assertTrue(failed.detail().contains("daemon vanished"));
-        assertTrue(failed.retryable());
+        assertTrue(failed.detail().contains("daemon vanished"), "the diagnosis must survive");
+        assertFalse(failed.detail().contains(RunLauncherTest.MODEL_KEY),
+                "a credential reached failure_detail through the dispatcher's catch-all");
+        assertTrue(failed.retryable(), "and the answer comes from the cause, not from this call site");
     }
 
     @Test
@@ -245,5 +347,173 @@ class RunDispatcherTest {
         assertNull(delivery.nacked);
         assertEquals(0, launcher.launches);
         assertTrue(claims.taken.isEmpty(), "a cancel must not take the execute slot from a later ExecuteRun");
+    }
+
+    @Test
+    void theStartedEventNamesTheSandboxNotTheRun() {
+        // RunStarted used to be emitted BEFORE the unit was created, so no handle existed and the
+        // run id was passed in its place. The one field meant to point an operator at a preserved
+        // unit pointed at nothing, and the container label was the documented workaround.
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        RunResult.RunStarted started = (RunResult.RunStarted) results.sent.getFirst();
+        assertEquals("container-abc123", started.providerRunId());
+        assertNotEquals(started.runId(), started.providerRunId(),
+                "the two fields answer different questions; filling one with the other says nothing");
+    }
+
+    @Test
+    void theLeaseRecordsTheUnitTheLauncherAnnounced() {
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals("container-abc123", leases.unitId);
+    }
+
+    @Test
+    void aUnitTheLauncherDidNotDestroyKeepsItsLeaseAndIsStamped() {
+        // The deliberate exception, and the one the watchdog depends on. Releasing here would make
+        // the preservation invisible to the control plane all over again.
+        //
+        // Keyed on what the launcher REPORTS, not on the result's cause. Re-deriving it was wrong
+        // on four paths -- an init failure the arm keeps on purpose, a throwing salvage after a
+        // publisher failure, a throwing destroy, and anything escaping the loop -- each leaving a
+        // sandbox with a live credential and no lease naming it.
+        launcher.releasesTheUnit = false;
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertFalse(leases.released,
+                "a unit kept for inspection must stay leased, or nothing can find it afterwards");
+        assertTrue(leases.preserved,
+                "and STAMPED, or the heartbeat refreshes it forever and it never goes stale --"
+                        + " which is the preservation being invisible all over again");
+    }
+
+    @Test
+    void aSuccessfulRunWhoseCauseSaysNothingAboutTheUnitStillReleases() {
+        // The other half of the inversion. A wire result cannot carry a worker-internal fact, so
+        // the observer is the only thing that can say the sandbox is gone.
+        launcher.result = new RunResult.RunFinished(EXECUTE.runId(), "refs/heads/spire/x",
+                List.of(), List.of(), null, true);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(leases.released,
+                "an unobserved AGENT is not an unobserved UNIT; the launcher destroyed this one");
+    }
+
+    @Test
+    void aRunThatNeverCreatedAUnitReleasesItsLease() {
+        // A lease with no unit is the deliberate window the take-before-create ordering opens.
+        // Once the run is over with nothing created, it is just a row nobody will ever reconcile.
+        launcher.unitId = null;
+        launcher.releasesTheUnit = false;
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "RUNTIME_UNAVAILABLE", "daemon down",
+                true, null);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(leases.released);
+    }
+
+    @Test
+    void aLeaseThatCouldNotBeTakenRefusesTheRun() {
+        // The one lease write that reports rather than swallows. Every other one happens after the
+        // money is spent; this one happens before the unit exists, so continuing without it would
+        // produce a sandbox with no lease for the whole life of the run.
+        leases.takeSucceeds = false;
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(0, launcher.launches, "nothing may be created without a lease naming it");
+        assertEquals(List.of("RunFailed"),
+                results.sent.stream().map(r -> r.getClass().getSimpleName()).toList(),
+                "and the refusal is reported, so the run does not simply vanish");
+    }
+
+    @Test
+    void anOrdinaryFailureReleasesItsLease() {
+        // The other half. A lease nobody releases becomes an orphan the watchdog will act on, so
+        // keeping every failure's lease would make the watchdog chase units that are already gone.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 2", false, null);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertTrue(leases.released);
+    }
+
+    @Test
+    void aFailureWhoseUnitSurvivedKeepsItsLeaseWhateverItsCause() {
+        // A publisher-reported cause -- PUSH_REJECTED and its siblings -- was NOT in the cause
+        // list this used to derive preservation from, so those runs released their lease while
+        // their containers were still running. The cause is now irrelevant; only the report counts.
+        launcher.releasesTheUnit = false;
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "PUSH_REJECTED", "forge said no",
+                false, null);
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertFalse(leases.released);
+        assertTrue(leases.preserved);
+    }
+
+    @Test
+    void aRunIsRegisteredWhileItExecutesAndForgottenAfterwards() {
+        // The registry is what lets a cancel on the control topic reach a run the ordered blocking
+        // command channel is still holding. Registered the instant the sandbox exists, so the
+        // window in which a cancel cannot reach the run is the container's creation and nothing
+        // more; forgotten at the end, so a late cancel cannot resurrect a destroyed handle.
+        // Both halves. Asserting only the second passes when the run was never registered at all,
+        // which a mutation proved: deleting registry.register from LeaseKeeper.unitCreated left this
+        // green while the cancel path and the watchdog's one absolute exemption both went inert.
+        launcher.onLaunch = () -> {
+            assertTrue(registry.isExecuting(EXECUTE.runId()), "live while the launcher holds it");
+            assertEquals(1, registry.size());
+        };
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertEquals(0, registry.size(), "a finished run is not live work");
+    }
+
+    @Test
+    void aCancelledRunIsReportedCancelledRatherThanBroken() {
+        // Cancelling kills the agent, so the launcher sees a non-zero exit and classifies an
+        // ordinary agent failure. That is true of what it observed and wrong about what happened:
+        // an operator who stopped a run must not be told it broke, and CANCELLED is not retryable
+        // while the causes it would otherwise be given are.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false, null);
+        launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
+        assertEquals(RunFailureCause.CANCELLED, RunFailureCause.of(reported.cause()));
+        assertFalse(reported.retryable(), "a run somebody stopped must not be retried on its own");
+    }
+
+    @Test
+    void aCancelThatRacedASuccessfulPushDoesNotUndoIt() {
+        // A cancel arriving in the last second of a successful push did not un-push anything.
+        // Rewriting a delivered branch as cancelled would lose the one fact an operator needs.
+        launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        assertInstanceOf(RunResult.RunFinished.class, results.sent.getLast());
+    }
+
+    @Test
+    void aCancelledRunKeepsWhatTheAgentSpent() {
+        // The tokens were bought before the operator stopped it, and this failure is the only
+        // record of them that reaches the orchestrator.
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false,
+                java.util.Map.of("INPUT", 1200L));
+        launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
+
+        dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
+
+        RunResult.RunFailed reported = (RunResult.RunFailed) results.sent.getLast();
+        assertEquals(1200L, reported.tokenUsage().get("INPUT"));
     }
 }

@@ -88,7 +88,7 @@ class M0WalkingSkeletonTest {
     void anOrdinaryChangeReachesTheRemoteAuthoredByTheMachineAccount() throws Exception {
         RunCommand.ExecuteRun command = run("ordinary", commitAll("echo new > NEW.md"));
 
-        RunResult result = launcher.launch(command);
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
         assertTrue(finished.pushedRef().endsWith("spire/ordinary"), "the guaranteed output is a pushed branch");
@@ -110,7 +110,7 @@ class M0WalkingSkeletonTest {
         // the script copies its stdin into the tree, and nothing else about the prompt does.
         RunCommand.ExecuteRun command = run("prompt", commitAll("cat > SEEN.txt"));
 
-        RunResult result = launcher.launch(command);
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
 
         assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
         assertEquals("the prompt, on stdin", origin.contentOf("spire/prompt", "SEEN.txt"));
@@ -121,7 +121,7 @@ class M0WalkingSkeletonTest {
         RunCommand.ExecuteRun command = run("ci",
                 commitAll("mkdir -p .github/workflows && echo evil > .github/workflows/x.yml"));
 
-        RunResult result = launcher.launch(command);
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
 
         RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
         assertNull(finished.pushedRef(), "a refused push must not deliver anything");
@@ -135,7 +135,7 @@ class M0WalkingSkeletonTest {
         // The seed carries a workflow; changing it is the other half of "touches a CI file".
         RunCommand.ExecuteRun command = run("ci-edit", commitAll("echo tampered >> .github/workflows/ci.yml"));
 
-        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(command));
+        RunResult.RunFinished finished = assertInstanceOf(RunResult.RunFinished.class, launcher.launch(command, RunObserver.IGNORING));
 
         assertEquals(List.of(".github/workflows/ci.yml"), finished.blockedPaths());
         assertFalse(origin.hasBranch("spire/ci-edit"));
@@ -145,7 +145,7 @@ class M0WalkingSkeletonTest {
     void aHarnessThatCommitsNothingAndFailsIsReportedAsAFailureNotAnEmptySuccess() throws Exception {
         RunCommand.ExecuteRun command = run("nothing", "echo no commits; exit 3");
 
-        RunResult result = launcher.launch(command);
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, result, result.toString());
         assertEquals("PROVIDER_ERROR", failed.cause());

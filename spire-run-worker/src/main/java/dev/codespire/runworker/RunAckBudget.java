@@ -63,9 +63,50 @@ public class RunAckBudget {
             defaultValue = "" + DEFAULT_QUEUE_FACTOR)
     int queueSizeFactor;
 
+    @ConfigProperty(name = "mp.messaging.incoming.run-control-in.throttled.unprocessed-record-max-age.ms",
+            defaultValue = "" + DEFAULT_MAX_AGE_MS)
+    long controlMaxAgeMs;
+
+    @ConfigProperty(name = "mp.messaging.incoming.run-control-in.max.poll.records",
+            defaultValue = "" + DEFAULT_POLL_RECORDS)
+    int controlPollRecords;
+
+    @ConfigProperty(name = "mp.messaging.incoming.run-control-in.max-queue-size-factor",
+            defaultValue = "" + DEFAULT_QUEUE_FACTOR)
+    int controlQueueSizeFactor;
+
     void check(@Observes StartupEvent event) {
         verify(Duration.ofSeconds(maxWallClockSeconds), runtime.drainWindow(), Duration.ofMillis(maxAgeMs),
                 pollRecords, queueSizeFactor);
+        verifyControl(Duration.ofMillis(controlMaxAgeMs), controlPollRecords, controlQueueSizeFactor);
+    }
+
+    /**
+     * The control channel needs the same guard for a different reason.
+     *
+     * <p>It shipped declaring only its topic, group and offset reset, and so inherited the same
+     * 60-second default the work channel was explicitly raised from after the incident this class
+     * exists to prevent. Its handler is a docker call with no timeout of its own, and the moment an
+     * operator most needs to cancel runs is when the daemon is wedged — so the default would fail
+     * the channel exactly when cancellation is the thing being relied on.
+     *
+     * <p>The budget is not the work channel's: a cancel does not wait out a wall clock or a drain,
+     * it waits out one unresponsive runtime call. {@link #ACK_ALLOWANCE} is that floor.
+     */
+    static void verifyControl(Duration maxAge, int pollRecords, int queueSizeFactor) {
+        if (pollRecords != 1 || queueSizeFactor != 1) {
+            throw new IllegalStateException("run-control-in must poll one record with no prefetch "
+                    + "(max.poll.records=1, max-queue-size-factor=1); found " + pollRecords + " and "
+                    + queueSizeFactor + ". A prefetched cancel ages behind the one in hand, and the "
+                    + "connector fails the channel on the record that ages out — which would end "
+                    + "cancellation for every run.");
+        }
+        if (maxAge.compareTo(ACK_ALLOWANCE) < 0) {
+            throw new IllegalStateException("run-control-in throttled.unprocessed-record-max-age.ms is "
+                    + maxAge.toMillis() + ", under the " + ACK_ALLOWANCE.toSeconds() + "s a control "
+                    + "record may need while the runtime is unresponsive. Below this the channel dies "
+                    + "on a wedged daemon, which is when cancelling matters most.");
+        }
     }
 
     /**

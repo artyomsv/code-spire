@@ -39,6 +39,7 @@ dependencies {
     implementation("io.quarkus:quarkus-jackson")
     implementation("io.quarkus:quarkus-messaging-kafka")
     implementation("io.quarkus:quarkus-jdbc-postgresql")
+    implementation("io.quarkus:quarkus-scheduler") // the lease heartbeat: a live run must not read as an orphan
     implementation("io.quarkus:quarkus-flyway")
     implementation("io.quarkus:quarkus-config-yaml")
     implementation("io.quarkus:quarkus-smallrye-health")

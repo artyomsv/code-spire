@@ -82,10 +82,95 @@ spire:
     # The other half of the run unit. Required: a registry prefix and a digest are the deployment's,
     # and a latest tag cannot say which publisher gated a run. Dev and test use the locally built tag.
     publisher-image: ${SPIRE_PUBLISHER_IMAGE}
+    # Declared HERE and nowhere else. The scheduler that advances the heartbeat and the startup
+    # guard that checks it against the staleness window both resolve this key, so a change moves
+    # both. Inline defaults on each meant two literals for one decision -- the exact fault the
+    # guard exists to catch, reproduced inside the guard.
+    lease-heartbeat: ${SPIRE_RUN_LEASE_HEARTBEAT:30s}
+    # How long a lease may go un-heartbeated before its sandbox is treated as an orphan. The
+    # worker refuses to start unless a live run survives four missed sweeps.
+    orphan-stale-after-seconds: ${SPIRE_RUN_ORPHAN_STALE_AFTER_SECONDS:600}
+    # How often the watchdog looks. Sweeping faster than a unit can become an orphan only costs
+    # container listings; sweeping slower extends how long a preserved sandbox keeps its
+    # credentials, because a preserved unit is reclaimed on the next tick with no staleness wait.
+    orphan-sweep: ${SPIRE_RUN_ORPHAN_SWEEP:5m}
+    # The switch. It destroys containers on a timer, so an operator who sees it misbehave needs a
+    # control rather than a workaround; disabling it is logged at startup so it cannot be off by
+    # accident and forgotten.
+    orphan-watchdog-enabled: ${SPIRE_RUN_ORPHAN_WATCHDOG_ENABLED:true}
+    # How long either publish path waits for the broker to acknowledge a result. ONE number: the
+    # dispatcher and the reclamation reporter both read it, so they cannot drift.
+    result-ack-seconds: ${SPIRE_RUN_RESULT_ACK_SECONDS:30}
+    # The corporate environment (FR-F14). Every one of these is OPTIONAL and unset means absent;
+    # none has a default, because a wrong value here is worse than no value. A CA bundle that is
+    # not the operator's replaces the container's trust store, and a proxy nobody asked for makes
+    # every call in a run go somewhere unintended.
+    #
+    # The path is on the WORKER HOST and is mounted read-only into all three containers of every
+    # unit. It must be a COMPLETE bundle -- the corporate root appended to the public roots --
+    # because two of the three variables it sets replace the trust store rather than adding to it.
+    # The worker refuses to start if it is not a readable file: Docker would otherwise create an
+    # empty directory at the mount point and every TLS call would fail against it.
+    ca-bundle-path: ${SPIRE_RUN_CA_BUNDLE_PATH:}
+    http-proxy: ${SPIRE_RUN_HTTP_PROXY:}
+    https-proxy: ${SPIRE_RUN_HTTPS_PROXY:}
+    # Set this whenever a proxy is set. An internal forge or a self-hosted model endpoint is
+    # routinely reachable only directly, and a proxy with no exception list turns those into a
+    # clone that hangs until the init timeout.
+    no-proxy: ${SPIRE_RUN_NO_PROXY:}
+    # A private registry for the agent and publisher images. All three together or none: a host
+    # and username with no secret falls back to an anonymous pull, which reports a private image
+    # as not found and sends the operator to look at the image reference.
+    registry-host: ${SPIRE_RUN_REGISTRY_HOST:}
+    registry-username: ${SPIRE_RUN_REGISTRY_USERNAME:}
+    registry-secret: ${SPIRE_RUN_REGISTRY_SECRET:}
 
 mp:
   messaging:
     incoming:
+      # Control rides its OWN topic, and that is the point rather than tidiness. run-commands-in is
+      # ordered and blocking -- the launcher holds it for the run's whole duration -- so a cancel
+      # delivered there would be read only once the run it cancels had finished.
+      run-control-in:
+        connector: smallrye-kafka
+        topic: cs.run-control
+        group:
+          # PER INSTANCE, so every replica reads every control record. This is a broadcast, not a
+          # work queue, and the difference is the whole feature: a run's handle lives only in the
+          # process holding its containers, so a cancel is actionable on exactly one replica. Under
+          # a shared group Kafka gives the record to ONE member, and the control topic's partition
+          # assignment is independent of the command topic's -- so the cancel lands on a replica
+          # that is not running the run, finds nothing in its registry, and is dropped as a late
+          # cancel. The sandbox keeps its git token and its model key until the wall clock.
+          # ${quarkus.uuid} is fresh per application instance, which also makes the `latest` reset
+          # below exactly right rather than incidentally so: a brand-new group has no committed
+          # offset, and replaying yesterday's cancels at startup is precisely what must not happen.
+          id: spire-run-worker-control-${quarkus.uuid}
+        # No prefetch, like the work channel and for the same reason: SmallRye stamps a record's age
+        # when it is POLLED, so a queued cancel ages behind the one in hand. RunAckBudget checks
+        # these three rather than trusting this file.
+        max:
+          poll:
+            records: 1
+        max-queue-size-factor: 1
+        throttled:
+          # 15 minutes. The handler's work is a docker call with no timeout of its own, and the
+          # moment an operator most needs to cancel runs is when the daemon is wedged -- which is
+          # exactly when the connector's 60s default would age the record out and fail the channel,
+          # taking out cancellation entirely. That is the outage this topic was created to remove,
+          # arriving through a different door.
+          unprocessed-record-max-age:
+            ms: 900000
+        value:
+          deserializer: dev.codespire.runworker.RunCommandDeserializer
+        # A control record nobody can read must not stop the ones behind it: a stuck control channel
+        # means no run can be cancelled at all, which is the outage this task exists to remove.
+        failure-strategy: ignore
+        # Latest, like the other work channels: a new group must not replay yesterday's cancels
+        # against runs that are long finished.
+        auto:
+          offset:
+            reset: latest
       run-commands-in:
         connector: smallrye-kafka
         topic: cs.run-commands
@@ -128,6 +213,22 @@ mp:
         value:
           serializer: dev.codespire.runworker.RunResultSerializer
         waitForWriteCompletion: true
+      # The second event tier (ADR-034): the run's transcript, for the live tail and for debugging.
+      # Nothing derives state from it and it is not replayable.
+      #
+      # waitForWriteCompletion is FALSE here, unlike the results channel above, and that is the whole
+      # difference between the tiers. A result is the run's outcome and its loss is unacceptable, so
+      # that channel blocks on the broker's ack. A transcript event is a convenience: awaiting each
+      # one would put the broker's latency inside the agent's log-reading loop, once per event, on a
+      # stream that can carry thousands per run.
+      run-events-out:
+        connector: smallrye-kafka
+        topic: cs.run-events
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.RunEventSerializer
+        waitForWriteCompletion: false
 
 # Dev: the single repo-root .env supplies POSTGRES_*; the broker is the compose Redpanda.
 "%dev":
@@ -158,6 +259,11 @@ mp:
       # Build-time disable. `tenant-enabled: false` is NOT enough — the tenant still demands an
       # auth-server-url and the app fails to BOOT. Authorization itself stays ON: the suites carry a
       # @TestSecurity identity where they need one, so the real permission policy is exercised.
+      enabled: false
+    scheduler:
+      # The lease heartbeat must not fire on its own timer here. A sweep the test did not call
+      # makes "the heartbeat advanced" true for the wrong reason, so the assertion that matters
+      # most in this module would pass with the production line deleted.
       enabled: false
     http:
       port: 0

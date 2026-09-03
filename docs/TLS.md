@@ -102,7 +102,7 @@ Three things have to be true:
    so verify a login rather than assuming either way.
 3. **Your `https` origin's callbacks are registered.** The shipped realm
    (`deploy/keycloak/realm-spire.json`) registers **only `http://localhost:*`** redirect URIs, for
-   all three clients. A deployment at `https://spire.example.com` must register
+   all four clients. A deployment at `https://spire.example.com` must register
    `https://spire.example.com/api/auth/callback`, `…/gw/auth/callback` and `…/wk/auth/callback`, or
    Keycloak rejects the login with all four other requirements correctly satisfied.
 

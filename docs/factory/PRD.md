@@ -109,20 +109,40 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 
 - **FR-F11 — Harness registry [M0].** The harness driving a run is a runtime registry selection, not
   a build-time dependency. Adding a harness is an adapter plus a registry entry.
-- **FR-F12 — Credential pool with rotation [M1].** An operator may register several credentials for
-  one harness. On quota exhaustion or rate limiting the pool rotates to the least-recently-exhausted
-  member. Exhaustion of the whole pool is a first-class refusal naming when capacity returns.
+- **FR-F12 — Credential pool with rotation [M1].** An operator may register several credentials the
+  factory calls the model with, kept separate from the reviewer's own key and never falling back to
+  it. On exhaustion the pool rotates to the member that has rested longest. Exhaustion of the whole
+  pool is a first-class refusal naming when capacity returns, and how much of the pool will not
+  return without a new key. **As delivered the pool is not scoped per harness** — one pool serves
+  every arm, so a deployment running two arms that need different vendors must keep that in mind;
+  the original wording promised per-harness registration that the shipped table does not have.
+  **And rotation on exhaustion is operator-driven**: nothing in the pipeline reports a credential
+  refusal or a rate limit yet, so a dead key is retired by hand. See
+  `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 - **FR-F13 — Bring-your-own image [M0 / M1].** The agent image is a published contract any image
   may satisfy, verifiable by a conformance command. Shipped images are reference implementations,
   never mandatory. Image references are digest-pinnable for air-gapped mirrors. **Split across two
   milestones, on purpose:** M0 delivers the half the walking skeleton needs — `agentImage` is a
   per-run parameter carried on `ExecuteRun` and honoured by the runtime, a digest reference works,
   and the reference image's entrypoint contract (`deploy/agent/spire-agent-entrypoint.sh`: prompt on
-  stdin, commits to bundles on `/handoff`, `DONE` last) is what any image must provide. The written
-  image contract and `spire agent-image verify` are M1, as ROADMAP.md lists them.
-- **FR-F14 — Enterprise image environment [M1].** The contract requires corporate CA bundles, proxy
-  variables and private registry credentials to be honoured, all injected at run time, never baked
-  into an image.
+  stdin, commits to bundles on `/handoff`, `DONE` last) is what any image must provide. **The M1
+  half is delivered:** the contract is written down in `docs/factory/AGENT-IMAGE-CONTRACT.md` and
+  `spire agent-image verify <image>` checks it. The report has two halves that never mix --
+  **verified** clauses the command proved against the image, and **declared** clauses the image
+  claims through a label and the command cannot prove. The split is structural rather than a flag:
+  a declaration has no pass/fail component, so reporting one as verified is inexpressible. A report
+  that blended them would read as proof, and an image declaring a toolchain it does not carry would
+  pass with the first thing to notice being a run already paid for. `ContractAndCheckerAgreeTest`
+  fails the build when the document and the checker disagree in either direction.
+- **FR-F14 — Enterprise image environment [M1, delivered].** Corporate CA bundles, proxy variables
+  and private registry credentials are honoured, all injected at run time and never baked into an
+  image. The bundle and the proxy live on `RunUnitSpec` rather than on any one container, so
+  "every container of the unit" is structural and no arm can apply them to two parts out of three;
+  the registry credential lives on the RUNTIME instead, because everything on a unit spec reaches a
+  container, where `docker inspect` prints it and the agent can read its own environment. A missing
+  bundle path or a half-supplied registry credential is a startup refusal. Operator guidance in
+  `deploy/agent/CORPORATE-ENVIRONMENT.md`; the no-baking half is build-enforced by
+  `NoCorporateEnvironmentIsBakedIntoAnImageTest`.
 - **FR-F15 — Second harness arm [M5].** At least two harness implementations exist, proving the seam
   rather than asserting it.
 

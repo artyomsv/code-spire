@@ -840,7 +840,7 @@ curl -s -X POST http://<your-keycloak>/admin/realms \
   --data-binary @infra/keycloak/realm-spire.json
 ```
 
-Either way the realm defines three clients (one per service), both roles, the audience mappers the
+Either way the realm defines four clients (one per service, including the run worker), both roles, the audience mappers the
 services require, and two obviously-synthetic users.
 
 #### Dev logins
@@ -1647,9 +1647,37 @@ against a forge, authenticated as a machine account.
    A workspace may hold a `REVIEWER` row and a `FACTORY` row side by side; the role is part of every
    lookup's key, so neither path can be handed the other's token.
 
-5. **The harness credential.** The run's model key comes from the LLM provider registry — the
-   provider named by `llmProviderId`, else the deployment's default. For the codex arm that key must
-   be an OpenAI API key. Settings → LLM, or `POST /api/llm-providers`.
+5. **The harness credential pool.** The run's model key comes from the factory's OWN pool, never
+   from the LLM provider registry the reviewer uses. There is no fallback: with an empty pool the
+   dispatch is refused, naming what to configure.
+
+   That separation is the point rather than an inconvenience. This key goes into a container
+   running an untrusted model on an untrusted work item at full shell access, where a
+   prompt-injected agent can read its own environment — so one exfiltration must not disable
+   reviews as well, and a spend spike from a leaked key must be distinguishable in the ledger.
+
+   ```bash
+   curl -sS -X POST http://localhost:34080/api/harness-credentials \
+     -H 'content-type: application/json' -d '{
+       "label":"codex-primary","type":"openai",
+       "baseUrl":"https://api.openai.com","apiKey":"<sk-...>"}'
+   ```
+
+   Register two or more to see the rotation: the pool hands out the member that has rested
+   longest, so repeated dispatches alternate. For the codex arm the key must be an OpenAI API key.
+
+   `GET /api/harness-credentials` lists the pool — never the keys. A member can be rested
+   (`POST /{id}/rest`), disabled (`DELETE /{id}`), brought back (`POST /{id}/enable`), or returned
+   after a refusal (`POST /{id}/clear-rejection`).
+
+   **`llmProviderId` on a dispatch is now a `400`.** The pool rotates, so a request that pinned a
+   key would defeat it; refusing is deliberate, because honouring it silently would be worse.
+
+   **Known gap, so a rejected key does not surprise you:** nothing in the pipeline reports a
+   credential refusal yet, so a dead key is NOT taken out of rotation automatically. A run using
+   it fails as `MODEL_UNAVAILABLE` or `AGENT_FAILED` and the pool hands it out again. Retire it by
+   hand with `DELETE /{id}`. See
+   `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 
 ### Trigger — exit criterion 1
 
@@ -1711,11 +1739,15 @@ against a forge, authenticated as a machine account.
 | Symptom | Likely cause |
 |---|---|
 | `409` naming `FACTORY` | No FACTORY-role provider for that workspace; a REVIEWER row does not count and is never used as a fallback |
-| `409` naming `LLM provider` | No default LLM provider and no `llmProviderId` — the harness credential has no source |
+| `409` naming `No harness credential is configured` | The pool is empty. Add one at `POST /api/harness-credentials`; the reviewer's LLM provider is deliberately not used as a fallback |
+| `409` naming `Capacity returns at ...` | Every member is exhausted. The message says when the earliest rate limit lifts, and how many were refused outright and will NOT come back without a new key |
+| `409` naming `were refused by their provider` | Every member was refused. Nothing recovers on its own — replace the keys, or `POST /{id}/clear-rejection` on one you have fixed |
+| `400` naming `llmProviderId is no longer accepted` | The request pinned a credential. The pool chooses now; drop the field |
+| `503` naming `could not be read` | A database fault reading the pool, NOT a missing credential. Nothing was dispatched and nothing was spent — do not add keys in response to it |
 | `400` naming `spire.factory.agent-image` | The harness has no image configured in the orchestrator (`spire.factory.agent-image.<harness>`) |
 | `failed` / `SANDBOX_UNREACHABLE`, init exit non-zero | The clone failed: wrong token, wrong base commit (must be reachable from the remote's branches), or `spire-publisher:latest` not built. The unit is left behind on purpose — `docker logs` the init container |
 | `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: branch outside `spire/`, equal to the base, or a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
-| Codex exits immediately, `no output` | `OPENAI_API_KEY` rejected or absent — check the LLM provider's key with its Check button; the key must be OpenAI's for this arm |
+| Codex exits immediately, `no output` | The pool member's key was rejected or absent, and the key must be OpenAI's for this arm. Nothing retires it automatically (see step 5) — `DELETE /api/harness-credentials/{id}` and dispatch again |
 | `succeeded` with `pushedRef: null` | The agent committed nothing — its bundle never existed. Read the agent container's log; the prompt may not have asked for a commit |
 
 ### Cleanup
@@ -1724,3 +1756,195 @@ Delete the branches on the forge, the FACTORY provider (`DELETE /api/providers/{
 images if they are not wanted (`docker rmi spire-agent-codex:latest spire-publisher:latest`).
 Volumes and containers are per run and already gone unless a salvage failed, in which case
 `docker ps -a --filter label=dev.codespire.runId` lists what was preserved and why.
+
+## Mode R — the corporate environment reaches a run unit (FR-F14)
+
+**What this proves.** A run behind a TLS-inspecting proxy works: all three containers of the unit
+trust the operator's CA bundle, all three route through the proxy, the agent and publisher images
+pull from a private registry — and none of that is in an image, none of it is writable by the agent,
+and the registry credential is not readable from any container.
+
+Most of this is covered by tests, including a real-daemon one that mounts a bundle and reads it back
+from the agent and the publisher. What only a live pass can show is the part an operator gets wrong:
+that the bundle must be **complete**, and that a proxy without `NO_PROXY` fails in a way that names
+nothing.
+
+**Prerequisites.** Mode Q working end to end first. This mode changes only the worker's environment.
+
+### 1. Refuse a bad bundle path before anything runs
+
+```bash
+SPIRE_RUN_CA_BUNDLE_PATH=/etc/ssl/certs/does-not-exist.crt \
+  ./gradlew :spire-run-worker:quarkusDev
+```
+
+The worker must **refuse to start**, naming both the path you typed and `ca-bundle-path`. This is the
+check that matters most and is invisible when it works: a missing bind source is not an error in
+every container runtime — it can be created as an empty directory — so without the refusal you get
+three variables pointing at a directory and a TLS failure that mentions neither.
+
+Then try a directory rather than a file. Same refusal: a directory passes an `exists()` check and
+fails every TLS call.
+
+### 2. Refuse half a registry credential
+
+```bash
+SPIRE_RUN_REGISTRY_HOST=registry.acme.example \
+SPIRE_RUN_REGISTRY_USERNAME=spire-factory \
+  ./gradlew :spire-run-worker:quarkusDev
+```
+
+Refused at startup, naming `secret`. A partial credential would fall back to an **anonymous** pull,
+so a private image comes back as *not found* and you go and check the image reference instead of the
+password.
+
+### 3. Run with a real bundle and read it back from every container
+
+Build a complete bundle and start the worker with it:
+
+```bash
+cat /etc/ssl/certs/ca-certificates.crt /path/to/your-root.crt > /tmp/spire-full-bundle.crt
+SPIRE_RUN_CA_BUNDLE_PATH=/tmp/spire-full-bundle.crt ./gradlew :spire-run-worker:quarkusDev
+```
+
+Dispatch a run as in Mode Q. While it is alive, or afterwards on a preserved unit:
+
+```bash
+docker ps -a --filter label=dev.codespire.runId --format '{{.ID}} {{.Label "dev.codespire.role"}}'
+
+# for EACH of init, agent and publisher:
+docker inspect --format '{{json .HostConfig.Binds}}' <id>
+docker inspect --format '{{json .Config.Env}}'       <id>
+```
+
+Every one of the three must show the bundle bound **`:ro`** at `/etc/spire/ca-bundle.crt`, and must
+carry `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` pointing at it. The init container
+is the one worth checking most carefully: without the bundle its clone fails at the forge, and a
+clone failure reads like a bad credential.
+
+### 4. Confirm the registry credential is nowhere in the unit
+
+With `SPIRE_RUN_REGISTRY_*` set, dispatch a run and inspect every container:
+
+```bash
+# The secret goes in a file, never on the command line: an argument lands in shell history and is
+# readable from `ps` by every user on the box, which is a worse leak than the one being checked for.
+printf '%s\n' "$SPIRE_RUN_REGISTRY_SECRET" > /tmp/spire-probe && chmod 600 /tmp/spire-probe
+docker inspect --format '{{json .Config.Env}}{{json .Config.Labels}}' <id> | grep -F -f /tmp/spire-probe
+rm -f /tmp/spire-probe
+```
+
+Must match nothing, on all three. The credential reaches the image pull and nothing else — the agent
+runs untrusted model output at full shell access and can read its own environment, so a credential
+placed on a container is a credential the model output can read.
+
+### 4b. Prove the clone and the push actually TRUST the bundle
+
+This is the step a review had to add, because the first version of this feature passed every check
+above and still did not work. The init clone and the publisher are a JVM running JGit — not a shell
+with `git` in it — so mounting the bundle and setting three variables reached the agent only.
+
+The container test proves it now, but on a live stack the discriminating check is a **real forge
+behind your own CA**. If your internal forge is already served by a certificate your corporate root
+signs, that is the test: dispatch a run against a repository on it.
+
+```bash
+# the clone reached the forge — no certificate error in the init container
+docker logs $(docker ps -a --filter label=dev.codespire.role=init -q | head -1)
+```
+
+A `PKIX path building failed` or `unable to find valid certification path` there means the JVM half
+is not honouring the bundle. Reading the file from the container proves nothing about this — the old
+test did exactly that and passed.
+
+### 5. The two mistakes worth making on purpose
+
+**A corporate-only bundle.** Point `SPIRE_RUN_CA_BUNDLE_PATH` at your root certificate *alone*,
+without the public roots appended. The clone succeeds; the agent's first model call fails. This is
+the failure that reads as an outage at your provider, and it is why the documentation insists on a
+complete bundle rather than merely mentioning it.
+
+**A proxy with no `NO_PROXY`.** Set `SPIRE_RUN_HTTPS_PROXY` to a proxy that cannot reach your forge
+and leave `SPIRE_RUN_NO_PROXY` unset. The clone hangs until the init timeout, and nothing in the log
+says "proxy". Add the forge to `NO_PROXY` and it recovers.
+
+### 6. The proxy password does not reach the transcript
+
+If your proxy URL carries basic auth (`http://user:pass@proxy:3128`), force a failure through it —
+point the proxy at a port nothing listens on — and read the run's transcript and its
+`failure_detail`:
+
+```sql
+SELECT failure_cause, failure_detail FROM orchestrator.factory_run WHERE run_id = '<runId>';
+```
+
+The proxy **host** must appear; the **password** must not. The host is what makes the error legible,
+so it is deliberately kept.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Worker will not start, names `ca-bundle-path` | The path is not a readable file **on the worker host** — not inside a container |
+| Worker will not start, names a registry part | One or two of the three `SPIRE_RUN_REGISTRY_*` values are set; it is all three or none |
+| Init exits non-zero with a certificate error | No bundle, or the bundle does not include your forge's issuer |
+| Clone succeeds, agent's first model call fails | Corporate-only bundle: the public roots were not appended |
+| Clone hangs to the init timeout | A proxy is set and the forge is not in `NO_PROXY` |
+| Image pull reports *not found* for a private image | `SPIRE_RUN_REGISTRY_HOST` does not match the image reference's registry, so the pull went anonymous |
+| A container has the bundle bound `rw` | Not reachable through configuration — `HostMount` cannot express a writable bind. Report it |
+
+## Mode S — the agent image contract (FR-F13)
+
+**What this proves.** `spire agent-image verify` tells an operator whether their own image can run a
+factory job, and — the part that matters — tells them plainly which clauses it *proved* and which it
+only read off a label.
+
+Needs **JDK 25** on `PATH` or `JAVA_HOME` — the installed distribution is built for it, and an older
+`java` dies with `UnsupportedClassVersionError` before printing anything.
+
+```bash
+./gradlew :spire-agent-image:installDist
+./spire-agent-image/build/install/spire-agent-image/bin/spire-agent-image verify spire-agent-codex:latest
+```
+
+### 1. The reference image conforms
+
+Every VERIFIED clause should read `PASS`, and the exit code should be `0`:
+
+```bash
+echo $?
+```
+
+### 2. The two halves are visibly different
+
+Read the output, not just the exit code. The second heading says **the image says so; this command
+did NOT verify it**, and the two declared clauses each carry the reason they cannot be checked.
+
+This is the point of the command. A conformance report that printed `toolchain: OK` would read as
+proof; it would only mean the label was present, so an image declaring a toolchain it does not have
+would pass — and the first thing to notice would be a run that had already been paid for.
+
+### 3. Break one clause and confirm it is named
+
+```bash
+printf 'FROM spire-agent-codex:latest\nUSER 0:0\n' | docker build -t spire-agent-broken:latest -
+./spire-agent-image/build/install/spire-agent-image/bin/spire-agent-image verify spire-agent-broken:latest
+```
+
+`non-root` must read `FAIL` and name what it found (`USER=0:0`), and the exit code must be `1`. A
+report saying only "verification failed" would send you to read the checker's source.
+
+### 4. A label the image is lying about still passes
+
+Tag an image with a toolchain it does not carry and verify it. It **conforms** — because no verified
+clause checked the label, and saying otherwise would be the blend the report shape exists to prevent.
+The declaration appears under the declared heading with what the image claimed.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| exit `2`, "could not verify" | The daemon is unreachable, or the image is not present locally. This is a CHECKER problem — distinguished from `1` on purpose, because "I could not check this" and "this image is wrong" call for opposite actions |
+| A report prints, some clauses read `NOT CHECKED`, and the exit code is `2` | The daemon answered `inspect` but a probe container could not run or finish. The clauses that need no container are still answered above them, and the exit code says "could not check" rather than "wrong image" |
+| `mount-points` FAIL on an image you believe is correct | The directories exist but belong to root. A fresh volume inherits the mount point's ownership, so the agent could not write its own workspace |
+| `handoff-bundles` FAIL with `git` also FAIL | Fix `git` first; the handoff is git bundles, so the second failure is a consequence of the first |

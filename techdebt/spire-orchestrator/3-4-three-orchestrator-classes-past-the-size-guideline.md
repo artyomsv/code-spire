@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Large |
-| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**1,867** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines) |
+| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/RunResource.java` (**~530** lines), `.../factory/FactoryRunProjection.java` (**~450** lines) |
 | Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. |
 | Date | 2026-08-07 (updated 2026-08-09) |
 
@@ -68,6 +68,54 @@ Deliberately *not* recommended: splitting by data source (SQL rows vs in-memory 
 `deadLetterRows` take no `Connection` while the rest do, so that split looks natural and is the wrong
 axis — it groups conditions by an implementation detail that a condition is free to change, and would
 put two rows an operator sees side by side in different files.
+
+## Update — 2026-09-02, M1 Task 4 (the run charge ledger)
+
+**Two factory classes crossed the guideline in one commit**, and neither by much:
+
+| File | Before | Now |
+|---|---|---|
+| `factory/RunResource.java` | 274 | **~530** |
+| `factory/FactoryRunProjection.java` | 294 | **~450** |
+
+**These numbers went stale, which is this entry's own subject arriving one level up.** They read
+302 and 316 through four more M1 tasks that each added to both files, and a review caught the drift
+rather than any check. Approximate now, deliberately: an exact count in a file edited every task is
+a number nobody will maintain, and the entry's argument does not turn on the last ten lines.
+
+**Update (M1 Task 10):** `RunResource` crossed 300 on this entry's OWN preferred measure — 301 code
+lines at `0c06be3`, up from 289 — which is the first time either file has. The Task 10 review round
+then removed the dead `LlmProviderRegistry` injection and four imports the credential-pool change
+left behind, so it is marginally back under; the point is that the crossing happened and the entry
+did not notice, which is this entry's own subject arriving one level up for the second time.
+
+**And measure code lines, not physical ones, when deciding whether to act.** Stripping comments and
+blanks leaves roughly 272 and 203 — neither over the guideline. Both files are around 40% comment,
+and that comment is load-bearing rationale (why a catch is wide, why a row is not deleted, why two
+detail texts differ). A physical-line cap penalises exactly what makes them readable and rewards
+deleting the explanations, which is the wrong incentive. Two independent reviews reached this
+conclusion separately and both recommended NOT splitting mid-milestone; that recommendation is
+recorded here rather than re-litigated each round.
+
+Both were already within a few lines of 300, so the growth that crossed it is small: a
+pre-dispatch pricing refusal (~28 lines) and a single read query (~22 lines). Recorded here rather
+than refactored in the same commit, for the reason this entry already gives about `ReviewProjection`:
+a structural move belongs on its own, and doing one inside a money-path change would hand a reviewer
+a pure move mixed with a behaviour change.
+
+Both have an obvious shape when someone does take them:
+
+- `RunResource` has grown a category of member the sibling review resources solved differently —
+  *refusals before dispatch*. There are now three (`machineAccount`'s two conflicts,
+  `refuseAnUnpriceableModel`, `refuseOverTheSpendCap`), and `SpendGate` is the precedent for where
+  they go: one question, one answer type, no resource state.
+- `FactoryRunProjection` is repeating the read/write mixing this entry already diagnoses in
+  `ReviewProjection`, three orders of magnitude earlier. `AttentionQueries` is the package's own
+  precedent for splitting the reads out, and doing it at 316 lines costs almost nothing compared
+  with doing it at 1,900.
+
+The second point is the one worth acting on soon: the factory read model is at the size the review
+read model was when splitting it would still have been cheap.
 
 ## Issue
 

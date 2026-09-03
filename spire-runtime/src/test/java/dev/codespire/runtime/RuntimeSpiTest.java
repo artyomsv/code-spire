@@ -25,7 +25,7 @@ class RuntimeSpiTest {
 
     @Test
     void aFailedSalvageIsNotASuccessfulRun() {
-        Finalization failed = Finalization.salvageFailed("publisher never reported an outcome");
+        Finalization failed = Finalization.faulted("publisher never reported an outcome");
 
         assertFalse(failed.salvaged(),
                 "destroy must not proceed on a failed salvage — that is the loss salvage prevents");
@@ -33,13 +33,28 @@ class RuntimeSpiTest {
     }
 
     @Test
-    void aFailedSalvageCannotAlsoReportAnExitCode() {
-        // Without this the two halves disagree: new Finalization(0, false, ...) is constructible
-        // and reads as a clean exit that was never observed, which is exactly the claim a failed
-        // salvage is unable to make.
+    void anUnobservedRunCannotAlsoReportAnExitCode() {
+        // Without this the two halves disagree: a finalization that observed nothing is
+        // constructible with exit 0 and reads as a clean exit, which is exactly the claim it is
+        // unable to make. True of both kinds of unobserved, not only a fault.
         assertThrows(IllegalArgumentException.class,
-                () -> new Finalization(0, false, "salvage failed but exit 0?"));
-        assertEquals(Finalization.NOT_OBSERVED, Finalization.salvageFailed("gone").exitCode());
+                () -> new Finalization(0, Finalization.Outcome.FAULTED, "salvage failed but exit 0?"));
+        assertThrows(IllegalArgumentException.class,
+                () -> new Finalization(0, Finalization.Outcome.OVERRAN, "overran but exit 0?"));
+        assertEquals(Finalization.NOT_OBSERVED, Finalization.faulted("gone").exitCode());
+        assertEquals(Finalization.NOT_OBSERVED, Finalization.overran("still running").exitCode());
+    }
+
+    @Test
+    void anOverrunIsNotAFault() {
+        // Both are "no exit code was observed", and an earlier version had only that one bit — so a
+        // timeout and a broken daemon were the same outcome, and the timeout read as broken
+        // infrastructure. They send different people to different places.
+        assertFalse(Finalization.overran("wall clock").salvaged());
+        assertFalse(Finalization.faulted("daemon gone").salvaged());
+        assertTrue(Finalization.overran("wall clock").overran());
+        assertFalse(Finalization.faulted("daemon gone").overran(),
+                "a runtime that could not look must not be reported as an agent that ran too long");
     }
 
     @Test
@@ -158,7 +173,7 @@ class RuntimeSpiTest {
                 Map.of("SPIRE_GIT_SECRET", "ghp-secret"),
                 List.of(Mount.readOnly("handoff", "/handoff")));
         return new RunUnitSpec("run_1", container(), agent, publisher,
-                memoryBytes, nanoCpus, wallClock);
+                EnterpriseEnvironment.NONE, memoryBytes, nanoCpus, wallClock);
     }
 
     // ---- containment is enforced, not described --------------------------------------------
@@ -175,7 +190,7 @@ class RuntimeSpiTest {
 
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> new RunUnitSpec("run_1", container(), agent, badPublisher,
-                        1024, 1024, Duration.ofMinutes(1)));
+                        EnterpriseEnvironment.NONE, 1024, 1024, Duration.ofMinutes(1)));
         assertTrue(refused.getMessage().contains("handoff"), refused.getMessage());
     }
 
@@ -189,7 +204,7 @@ class RuntimeSpiTest {
                 List.of(Mount.readOnly("handoff", "/handoff")));
 
         RunUnitSpec spec = new RunUnitSpec("run_1", container(), agent, publisher,
-                1024, 1024, Duration.ofMinutes(1));
+                EnterpriseEnvironment.NONE, 1024, 1024, Duration.ofMinutes(1));
 
         assertTrue(spec.publisher().mounts().getFirst().readOnly());
     }
@@ -199,7 +214,8 @@ class RuntimeSpiTest {
         // Every container and volume is labelled with it, so a blank one is undiscoverable: the
         // watchdog cannot attribute the unit and destroy targets nothing.
         assertThrows(IllegalArgumentException.class, () -> new RunUnitSpec(" ", container(),
-                container(), container(), 1024, 1024, Duration.ofMinutes(1)));
+                container(), container(), EnterpriseEnvironment.NONE, 1024, 1024,
+                Duration.ofMinutes(1)));
     }
 
     @Test

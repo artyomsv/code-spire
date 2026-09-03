@@ -43,8 +43,9 @@ RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoR
 # RunCommand
 CancelRun(runId: java.lang.String, reason: java.lang.String)
 ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String)
+SteerRun(runId: java.lang.String, instruction: java.lang.String)
 
 # RunResult
-RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean)
-RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blockedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
+RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
+RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blockedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)

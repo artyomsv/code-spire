@@ -13,7 +13,7 @@ quarkus:
     client-id: ${SPIRE_OIDC_CLIENT_ID:spire-orchestrator}
     credentials:
       secret: ${SPIRE_OIDC_CLIENT_SECRET}
-    # Cookie session for the browser AND the three WebSockets (a browser cannot set a header on a
+    # Cookie session for the browser AND every WebSocket (a browser cannot set a header on a
     # handshake); bearer for curl, CI and the SMOKE-TEST runbook.
     application-type: hybrid
     authentication:
@@ -51,7 +51,8 @@ quarkus:
           paths: /q/health,/q/health/*,/api/me
           policy: permit
         operator:
-          # Covers the three sockets too — they moved under /api/ws/* so one policy governs them.
+          # Covers every socket too — they all sit under /api/ws/* so one policy governs them,
+          # including the per-run transcript tail, whose path carries the run id.
           paths: /api/*,/dev/*
           policy: authenticated
     port: ${ORCHESTRATOR_HTTP_PORT:34080}   # host-exposed port lives in the 34xxx project range
@@ -105,7 +106,27 @@ mp:
           serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
       run-commands-out:
         connector: smallrye-kafka
+        # acks=all, because FR-F10 rests on what an acknowledgement MEANS. SmallRye defaults to 1 --
+        # the leader alone -- so an ack can be lost on failover AFTER the 201, leaving the row queued
+        # for ever: not dispatch_uncertain, so the resolution endpoint refuses it, a retry of the same
+        # subject answers 409 for ever, and no attention row fires. That is FR-F10's mirror image with
+        # no operator path out. It also re-enables producer idempotence, which the client disables
+        # whenever acks is not all, so an internal retry can no longer append the same command twice.
+        acks: all
         topic: cs.run-commands
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
+        waitForWriteCompletion: true
+      # Control rides its own topic, read by a listener beside the worker's executor rather than
+      # behind it. Published here so an operator has a way to reach it: the consumer shipped first
+      # and nothing produced to this topic, which made cancel reachable only by hand.
+      run-control-out:
+        connector: smallrye-kafka
+        # acks=all for the reason given on run-commands-out above: a leader-only ack can be lost.
+        acks: all
+        topic: cs.run-control
         key:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
@@ -153,6 +174,26 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
+      # The transcript (ADR-034). Not dead-lettered, because this tier is not replayable and nothing
+      # derives state from it: a dead-letter queue exists for work that must not be lost, and filling
+      # it with lines nobody will ever replay would crowd out the things it is for.
+      #
+      # But "not dead-lettered" is NOT the same as "no failure-strategy". The default is `fail`, so
+      # leaving it out bought a stopped channel rather than a dropped line: one malformed record was
+      # never committed and came back on every restart, and since readiness covers the whole service
+      # that took the dashboard, the REST surface and the review pipeline down over one transcript
+      # event. `ignore` is what the comment above always meant, and dlq-in below already says it.
+      run-events-in:
+        connector: smallrye-kafka
+        topic: cs.run-events
+        group:
+          id: spire-orchestrator-run-events
+        value:
+          deserializer: dev.codespire.orchestrator.factory.RunEventDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: ignore
       events-in:
         connector: smallrye-kafka
         topic: cs.events

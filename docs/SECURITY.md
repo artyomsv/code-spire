@@ -250,6 +250,66 @@ opens/updates a PR triggers a paid LLM call.
   `provider_type`), and bot-authored-PR skip. Draft/WIP-PR skip and the giant-PR guard are no longer
   deferred — both shipped.
 
+## The software factory (ADR-039)
+
+The reviewer reads code and writes comments. The factory RUNS code: an agent executes model output
+at full shell access inside a container, on the operator's own machine. That is a different threat
+model and it belongs here — five places in `docs/factory/` and one javadoc already
+point at this section, and until now it did not exist.
+
+### The boundary is the container, and the unit is three of them
+
+A run is an init clone, an agent, and a publisher sidecar. The split IS the control:
+
+| Container | Holds | Cannot reach |
+|---|---|---|
+| init | the SCM credential | the handoff; it exits before the agent starts |
+| agent | the model key | any git credential — it physically cannot push |
+| publisher | the SCM write credential | the workspace; `/handoff` is mounted read-only |
+
+Work leaves the agent only as a git bundle on `/handoff`. The publisher gates it
+against the protected-path floor and pushes. `RunUnitSpec` refuses at construction any
+unit where the publisher can write something the agent can write, because that is the property
+everything else rests on.
+
+Every container of every unit runs with `cap-drop ALL`, `no-new-privileges`,
+a pids limit, and memory and CPU bounds. `SandboxControlsTest` asserts each of them
+reaches all three containers — until it was written, nothing anywhere did.
+
+### What is NOT mitigated, stated rather than implied
+
+- **Docker socket access is root-equivalent on the host.** The run worker drives the daemon
+  directly, so a compromised worker is a compromised host. The Kubernetes arm removes this; the
+  Docker arm cannot.
+- **Egress is not restricted on the Docker arm.** `docs/factory/PRD.md` says egress
+  defaults to deny; that is the Kubernetes arm's NetworkPolicy. On Docker the agent container sits
+  on the default bridge and reaches whatever the host reaches. Tracked in
+  `techdebt/spire-runtime-docker/4-3-the-agent-container-on-the-default-bridge-reaches-host-published-ports.md`.
+- **One SCM token serves the clone and the push.** The design calls for a read-scoped clone token
+  and a separate write token; the code packs one machine-account secret into both slots. The agent
+  still cannot reach either — JGit persists no credential under `/workspace` and the
+  remote is removed after clone — but the init container holds a token that can write. See
+  `docs/UNVERIFIED.md` §E.
+- **The agent can read the corporate proxy credential.** Every container must route through the
+  proxy, so its URL — basic auth included — is in the agent's environment. Give the proxy a scoped
+  service account. What IS guaranteed is that it never reaches anything stored: the transcript and
+  every failure detail are scrubbed of it in all three forms it takes.
+- **There is no disk bound on a run unit.** Memory, CPU and pids are bounded; disk is not, so one
+  run can fill the daemon's disk and take every other run with it.
+- **Self-reported token usage is trusted.** Nothing inside a run unit can tell an honest small usage
+  report from a dishonest one; only reconciliation against the provider's billing API could. The
+  call-count axis of the spend cap is the partial mitigation, which is why ADR-025 insists on both.
+
+### The push gate is a floor, not a policy engine
+
+It refuses a run that touches CI configuration — the paths that would let an agent edit the pipeline
+reviewing it. Path handling refuses `..`, absolute paths, backslashes and control
+characters before any glob runs; matching is case-insensitive and Unicode-aware; both sides of a
+rename are judged; and the tip tree is compared against the base, so a history-rewriting bundle
+cannot slip a change in behind a rebase. It is deliberately a small closed list rather than a
+configurable policy: a policy engine an operator can widen is one an agent can argue them into
+widening.
+
 ## Not reused (clean-room note)
 
 The private monorepo's `encryption-common` and Keycloak realm configs informed this design but are

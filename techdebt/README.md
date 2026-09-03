@@ -1,6 +1,10 @@
 # Where tech debt lives
 
-Two places, on purpose, split by what the item actually is.
+Two places, on purpose, split by what the item actually is — plus one index across both.
+
+> **The index:** `docs/UNVERIFIED.md` collects the entries that are really *claims nobody has
+> tested* rather than known-wrong lines, and says for each what evidence would settle it. Read it
+> before asserting a feature works; add to it when you ship something you could not test.
 
 ## Files in this directory — code-level debt
 

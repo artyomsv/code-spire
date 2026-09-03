@@ -5,7 +5,9 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.PullImageCmd;
 import com.github.dockerjava.api.command.PullImageResultCallback;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.exception.NotModifiedException;
 import com.github.dockerjava.api.model.AccessMode;
+import com.github.dockerjava.api.model.AuthConfig;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Container;
@@ -21,7 +23,9 @@ import com.github.dockerjava.transport.DockerHttpClient;
 import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
+import dev.codespire.runtime.HostMount;
 import dev.codespire.runtime.Mount;
+import dev.codespire.runtime.RegistryCredential;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.RunUnitSpec;
@@ -39,6 +43,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -66,6 +71,16 @@ import java.util.function.Consumer;
  * the boundary, so the default seccomp profile is KEPT and never relaxed here.
  */
 public final class DockerRunRuntime implements RunRuntime {
+
+    /**
+     * The JDK's own logger, not a framework one.
+     *
+     * <p>This module is Apache-2.0 and carries exactly two dependencies — the runtime SPI and the
+     * Docker client. Pulling a logging framework in for one warning would widen that for every
+     * consumer of a reference adapter, and {@code System.Logger} routes into whichever backend the
+     * host service already has.
+     */
+    private static final System.Logger LOG = System.getLogger(DockerRunRuntime.class.getName());
 
     static final String RUN_ID_LABEL = "dev.codespire.runId";
 
@@ -100,6 +115,29 @@ public final class DockerRunRuntime implements RunRuntime {
     /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
     private static final long PIDS_LIMIT = 512;
 
+    /**
+     * The one spelling every Docker Hub reference is normalised to before matching.
+     *
+     * <p>An internal key, not a claim about what the registry protocol expects -- docker-java
+     * itself declares {@code AuthConfig.DEFAULT_SERVER_ADDRESS} as
+     * {@code https://index.docker.io/v1/}, so an earlier version of this comment was simply wrong.
+     * What matters here is that both sides of the comparison go through
+     * {@link #registryHostOf}, so the value is arbitrary as long as it is used consistently.
+     */
+    static final String DOCKER_HUB = "registry-1.docker.io";
+
+    /**
+     * Every spelling of Docker Hub a reference or an operator can carry.
+     *
+     * <p>Without this, {@code acme/private} and {@code docker.io/acme/private} -- the same image --
+     * matched different registries, so an operator writing the fully qualified form (which is what
+     * registry-agnostic tooling emits, and what a digest pin looks like) got a silent ANONYMOUS
+     * pull and a not-found. Configuring {@code docker.io}, which is what {@code docker login}
+     * accepts, broke the bare form instead. Both are the failure this matching exists to prevent.
+     */
+    private static final java.util.Set<String> DOCKER_HUB_ALIASES =
+            java.util.Set.of("docker.io", "index.docker.io", "registry-1.docker.io");
+
     /** A registry pull of an agent image with a toolchain in it; a stalled one must not hang a run. */
     private static final Duration PULL_TIMEOUT = Duration.ofMinutes(10);
 
@@ -108,7 +146,21 @@ public final class DockerRunRuntime implements RunRuntime {
 
     private final DockerClient client;
 
+    /**
+     * How a private registry is authenticated, or null for an anonymous pull.
+     *
+     * <p>Held by the runtime and never by a spec, so it reaches {@code pullImageCmd} and
+     * nothing else. A container is created with no knowledge of it, which is what makes it
+     * absent from {@code docker inspect} and unreadable by the agent process (FR-F14).
+     */
+    private final RegistryCredential registry;
+
     public DockerRunRuntime() {
+        this(null);
+    }
+
+    public DockerRunRuntime(RegistryCredential registry) {
+        this.registry = registry;
         DefaultDockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
         DockerHttpClient http = new ApacheDockerHttpClient.Builder()
                 .dockerHost(config.getDockerHost())
@@ -204,7 +256,7 @@ public final class DockerRunRuntime implements RunRuntime {
      * only {@code [a-zA-Z0-9][a-zA-Z0-9_.-]}. Naming the volume after the id verbatim failed at
      * {@code create} for every real run — reported as {@code SANDBOX_UNREACHABLE}, retryable, and
      * invisible to the integration tests, whose ids are synthetic and slash-free. The id itself
-     * stays on {@link #RUN_ID_LABEL}, which is what {@link #destroy} and {@link #discoverOrphans}
+     * stays on {@link #RUN_ID_LABEL}, which is what {@link #destroy} and {@link #discoverUnits}
      * already look volumes up by; the name only has to be unique and legal.
      */
     static String volumeName(String runId, String volume) {
@@ -235,11 +287,7 @@ public final class DockerRunRuntime implements RunRuntime {
         } catch (NotFoundException absent) {
             // not held locally: pull it
         }
-        PullImageCmd pull = client.pullImageCmd(image);
-        if (!image.contains("@")) {
-            NameParser.ReposTag parsed = NameParser.parseRepositoryTag(image);
-            pull = client.pullImageCmd(parsed.repos).withTag(parsed.tag.isEmpty() ? "latest" : parsed.tag);
-        }
+        PullImageCmd pull = pullCommandFor(image);
         try {
             if (!pull.exec(new PullImageResultCallback()).awaitCompletion(PULL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Pulling image " + image + " did not complete within " + PULL_TIMEOUT);
@@ -250,7 +298,126 @@ public final class DockerRunRuntime implements RunRuntime {
         }
     }
 
+    /**
+     * The pull command for this image, authenticated when a credential was issued for its registry.
+     *
+     * <p>Extracted so the ATTACHMENT is assertable without a daemon -- building a command opens no
+     * socket. Deleting the {@code withAuthConfig} line used to break no test at all: {@code authFor}
+     * could keep answering correctly for ever while nothing carried its answer to the pull, and the
+     * only thing that would notice was a live private-registry pull nobody performs. The auth line
+     * also sits after BOTH branches here, so "authenticated in one branch only" is inexpressible.
+     */
+    PullImageCmd pullCommandFor(String image) {
+        PullImageCmd pull = client.pullImageCmd(image);
+        if (!image.contains("@")) {
+            NameParser.ReposTag parsed = NameParser.parseRepositoryTag(image);
+            pull = client.pullImageCmd(parsed.repos).withTag(parsed.tag.isEmpty() ? "latest" : parsed.tag);
+        }
+        authFor(image).ifPresent(pull::withAuthConfig);
+        return pull;
+    }
+
+    /** The credential this runtime pulls with, or empty. Exposed so the worker wiring is assertable. */
+    public Optional<RegistryCredential> registryCredential() {
+        return Optional.ofNullable(registry);
+    }
+
+    /**
+     * The credential for this image, or empty.
+     *
+     * <p>Matched on the registry HOST parsed from the reference, so a corporate password is
+     * never presented to a registry it was not issued for. An unqualified reference
+     * ({@code alpine:3.20}) is Docker Hub, so it matches only a credential configured for Hub.
+     * Offering the credential to every pull would be simpler and would send it to whichever
+     * public registry an operator happened to reference.
+     */
+    Optional<AuthConfig> authFor(String image) {
+        if (registry == null) {
+            return Optional.empty();
+        }
+        // Both sides through the same function, so a credential configured as "docker.io" and an
+        // image written "index.docker.io/..." are the one registry they actually are. A raw
+        // string compare here is how the two spellings drifted apart in the first place.
+        String configured = registryHostOf(registry.registry() + "/x");
+        if (!configured.equalsIgnoreCase(registryHostOf(image))) {
+            return Optional.empty();
+        }
+        return Optional.of(new AuthConfig()
+                .withRegistryAddress(registry.registry())
+                .withUsername(registry.username())
+                .withPassword(registry.secret()));
+    }
+
+    /**
+     * The registry host of an image reference, by the rule the daemon itself uses: the first
+     * path segment is a registry only when it carries a dot or a colon, or is "localhost".
+     * Without that rule {@code acme/app} would parse as the registry {@code acme}, and a
+     * credential for a real host would never match anything.
+     */
+    static String registryHostOf(String image) {
+        int slash = image.indexOf("/");
+        if (slash < 0) {
+            return DOCKER_HUB;
+        }
+        String first = image.substring(0, slash);
+        boolean looksLikeHost = first.indexOf(".") >= 0 || first.indexOf(":") >= 0
+                || first.equals("localhost");
+        if (!looksLikeHost || DOCKER_HUB_ALIASES.contains(first.toLowerCase(Locale.ROOT))) {
+            return DOCKER_HUB;
+        }
+        return first;
+    }
+
+    /**
+     * The sandbox controls, extracted so a JVM test can assert them.
+     *
+     * <p>ADR-039 makes the container the security boundary, and until this was extracted NO test
+     * anywhere referenced {@code withCapDrop}, {@code no-new-privileges}, {@code withPidsLimit} or
+     * {@code withMemory} — the daemon-driving IT asserts BEHAVIOURS (a file is readable, an exit
+     * code survives) and never inspects a HostConfig, so a silent removal of any of these would
+     * have left every suite green.
+     */
+    HostConfig hostConfigFor(RunUnitSpec spec, ContainerSpec container) {
+        return HostConfig.newHostConfig()
+                .withBinds(bindsFor(spec, container))
+                .withMemory(spec.memoryBytes())
+                .withNanoCPUs(spec.nanoCpus())
+                // Memory and CPU alone do not bound an unconfined agent. A fork bomb exhausts the
+                // host pid_max; a privilege escalation or a raw socket is available by default.
+                .withPidsLimit(PIDS_LIMIT)
+                .withSecurityOpts(List.of("no-new-privileges"))
+                .withCapDrop(Capability.ALL)
+                // salvage() must be able to read the exit code, and an auto-removed container has
+                // none to read. Teardown is destroy()'s job and nothing else's.
+                .withAutoRemove(false);
+    }
+
     private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
+        HostConfig host = hostConfigFor(spec, container);
+
+        List<String> env = new ArrayList<>();
+        // Through the spec, never container.environment(): the deployment CA and proxy live at
+        // unit level so that no arm can apply them to two containers out of three.
+        spec.environmentFor(container).forEach((name, value) -> env.add(name + "=" + value));
+
+        ensureImage(container.image());
+        return client.createContainerCmd(container.image())
+                .withCmd(container.argv())
+                .withEnv(env)             // credentials live HERE, never in a label
+                .withLabels(labelsFor(spec, role))
+                .withHostConfig(host)
+                .exec()
+                .getId();
+    }
+
+    /**
+     * Every volume and host path this container mounts.
+     *
+     * <p>Both loops in one place because they answer one question and get opposite read-only
+     * treatment for opposite reasons: a unit volume may legitimately be writable, a HOST bind
+     * never may.
+     */
+    private List<Bind> bindsFor(RunUnitSpec spec, ContainerSpec container) {
         List<Bind> binds = new ArrayList<>();
         for (Mount mount : container.mounts()) {
             // AccessMode, NOT the boolean overload. Bind(String, Volume, Boolean) is noCopy — an
@@ -263,31 +430,13 @@ public final class DockerRunRuntime implements RunRuntime {
                     new Volume(mount.path()),
                     mount.readOnly() ? AccessMode.ro : AccessMode.rw));
         }
-
-        List<String> env = new ArrayList<>();
-        container.environment().forEach((name, value) -> env.add(name + "=" + value));
-
-        HostConfig host = HostConfig.newHostConfig()
-                .withBinds(binds)
-                .withMemory(spec.memoryBytes())
-                .withNanoCPUs(spec.nanoCpus())
-                // Memory and CPU alone do not bound an unconfined agent. A fork bomb exhausts the
-                // host pid_max; a privilege escalation or a raw socket is available by default.
-                .withPidsLimit(PIDS_LIMIT)
-                .withSecurityOpts(List.of("no-new-privileges"))
-                .withCapDrop(Capability.ALL)
-                // salvage() must be able to read the exit code, and an auto-removed container has
-                // none to read. Teardown is destroy()'s job and nothing else's.
-                .withAutoRemove(false);
-
-        ensureImage(container.image());
-        return client.createContainerCmd(container.image())
-                .withCmd(container.argv())
-                .withEnv(env)             // credentials live HERE, never in a label
-                .withLabels(labelsFor(spec, role))
-                .withHostConfig(host)
-                .exec()
-                .getId();
+        for (HostMount mount : spec.hostMounts()) {
+            // AccessMode.ro is not a preference here: this bind reaches the worker HOST, and the
+            // agent container runs untrusted model output at full shell access. HostMount cannot
+            // express a writable one, and this is the line that honours that.
+            binds.add(new Bind(mount.hostPath(), new Volume(mount.path()), AccessMode.ro));
+        }
+        return binds;
     }
 
     @Override
@@ -376,6 +525,26 @@ public final class DockerRunRuntime implements RunRuntime {
     }
 
     /**
+     * Not supported by this arm, and saying so is the implementation.
+     *
+     * <p>Reaching a running agent's input needs the container created with an open stdin and an
+     * attach held for the run's life. This arm creates neither, because the prompt is delivered
+     * once at start from a file outside the tree — and opening a stream on EVERY run to serve a
+     * capability no shipped harness declares would change the shape of every run for a path
+     * nothing exercises.
+     *
+     * <p>Throwing rather than returning quietly is the point. The caller is expected to have
+     * refused already on the harness's declared capability; if it did not, an operator must learn
+     * that their instruction went nowhere rather than watch it vanish.
+     */
+    @Override
+    public void steer(RunHandle handle, String instruction) {
+        throw new UnsupportedOperationException("run " + handle.runId() + ": this runtime cannot"
+                + " deliver an instruction to a running agent — its containers are created without"
+                + " an open input stream, and no shipped harness declares the steer capability");
+    }
+
+    /**
      * Waits for the agent within the unit's wall clock, stops it if it overran, then drains the
      * publisher.
      *
@@ -394,27 +563,36 @@ public final class DockerRunRuntime implements RunRuntime {
     public Finalization salvage(RunHandle handle) {
         Optional<String> agent = containerOf(handle.runId(), AGENT);
         if (agent.isEmpty()) {
-            return Finalization.salvageFailed("no agent container for run " + handle.runId());
+            return Finalization.faulted("no agent container for run " + handle.runId());
         }
+        Duration wallClock = wallClockOf(handle);
+        long startedAt = System.nanoTime();
         Integer exit;
         try {
             exit = client.waitContainerCmd(agent.orElseThrow())
                     .exec(new WaitContainerResultCallback())
-                    .awaitStatusCode(wallClockOf(handle).toSeconds(), TimeUnit.SECONDS);
+                    .awaitStatusCode(wallClock.toSeconds(), TimeUnit.SECONDS);
         } catch (RuntimeException e) {
-            // Includes the timeout. Stop the AGENT before reporting, whatever went wrong: an
-            // unreadable exit code does not mean the process is gone. Only the agent — cancel()
-            // kills both roles, and killing the publisher here took away, one line before it, the
-            // drain window it is given next: every overrun lost its last pushed checkpoint's report.
+            // Stop the AGENT before reporting, whatever went wrong: an unreadable exit code does not
+            // mean the process is gone. Only the agent — cancel() kills both roles, and killing the
+            // publisher here would take away, one line before it, the drain window it is given next.
             killAgent(handle);
             drainPublisher(handle);
-            return Finalization.salvageFailed("agent did not exit within the run's wall clock, or its "
-                    + "status could not be read (" + e.getClass().getSimpleName() + "); cancelled");
+            // WHICH failure this was is our fact, not the library's. awaitStatusCode reports the
+            // timeout, an interrupt, a response with no status, and any stream fault as the same
+            // exception type — so trusting it to mean "overran" labelled a dropped daemon connection
+            // as the agent's doing, which is the confusion this split exists to remove, running the
+            // other way. Matching on its message would couple us to a string upstream can change.
+            return elapsed(startedAt).compareTo(wallClock) >= 0
+                    ? Finalization.overran("agent did not exit within the run's wall clock; cancelled")
+                    : Finalization.faulted("the agent's exit status could not be read ("
+                            + e.getClass().getSimpleName() + "); the agent was stopped");
         }
         if (exit == null) {
+            // A response arrived carrying no status code. The clock is not what failed here.
             killAgent(handle);
             drainPublisher(handle);
-            return Finalization.salvageFailed("agent did not exit within the run's wall clock; cancelled");
+            return Finalization.faulted("the agent exited but the daemon reported no status code");
         }
         drainPublisher(handle);
         return Finalization.salvaged(exit, "agent exited " + exit);
@@ -494,7 +672,7 @@ public final class DockerRunRuntime implements RunRuntime {
      * about.
      */
     @Override
-    public List<RunHandle> discoverOrphans() {
+    public List<RunHandle> discoverUnits() {
         List<RunHandle> handles = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (Container container : client.listContainersCmd()
@@ -514,11 +692,31 @@ public final class DockerRunRuntime implements RunRuntime {
         return buffer.indexOf("\n");
     }
 
+    /** How long the wait actually took, so the clock is measured rather than inferred. */
+    private static Duration elapsed(long startedAtNanos) {
+        return Duration.ofNanos(System.nanoTime() - startedAtNanos);
+    }
+
+    /**
+     * Kill a container that may already be gone.
+     *
+     * <p>Quiet about the expected case ONLY. The comment here used to read "already stopped" over a
+     * catch that swallowed everything, so a kill the daemon actually refused left a live agent
+     * running with no log line anywhere — and the caller had just decided the run was over.
+     * {@code NotFoundException} and {@code NotModifiedException} are the two the library raises for
+     * a container that is gone or already stopped; anything else is a real failure and is said out
+     * loud, without changing the outcome, because a best-effort kill that throws would lose the
+     * terminal result and leave the run 'running' forever.
+     */
     private void killQuietly(String containerId) {
         try {
             client.killContainerCmd(containerId).exec();
+        } catch (NotFoundException | NotModifiedException expected) {
+            // Gone, or already stopped. Both are the outcome this call wanted.
         } catch (RuntimeException e) {
-            // already stopped
+            LOG.log(System.Logger.Level.WARNING,
+                    "container " + containerId + " could not be killed (" + e.getClass().getSimpleName()
+                            + "); it may still be running", e);
         }
     }
 

@@ -1,13 +1,20 @@
 package dev.codespire.orchestrator.llm;
 
+import dev.codespire.contract.review.TokenType;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,6 +29,9 @@ class LlmChargeSubjectTest {
 
     @Inject
     DataSource dataSource;
+
+    @Inject
+    ReviewProjection projection;
 
     @Test
     void aRunChargeIsStorableWithoutPretendingToBeAReview() throws Exception {
@@ -93,32 +103,61 @@ class LlmChargeSubjectTest {
     }
 
     @Test
-    void aRunsChargesAreNotSummedIntoAReview() throws Exception {
+    void aRunsChargesAreNotSummedIntoAReview() {
         // The two id spaces are kept apart only by their prefixes, and the review reads used to
-        // filter on subject_id alone. An explicit subject_kind filter is what makes that structural
-        // rather than a property of how ids happen to be spelled today.
-        try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
-            s.executeUpdate("""
-                    INSERT INTO llm_charge (id, subject_id, subject_kind, call_ref, kind, model,
-                                            pricing_mode, token_type, tokens, capability,
-                                            rate_millicents_per_million, cost_millicents)
-                    VALUES (gen_random_uuid(), 'shared-id', 'RUN', 'ref-run', 'BUILD', 'gpt-5.6',
-                            'UNMETERED', 'TOTAL', 999, 'BUILD', 0, 0)
-                    """);
-            s.executeUpdate("""
-                    INSERT INTO llm_charge (id, subject_id, subject_kind, call_ref, kind, model,
-                                            pricing_mode, token_type, tokens, capability,
-                                            rate_millicents_per_million, cost_millicents)
-                    VALUES (gen_random_uuid(), 'shared-id', 'REVIEW', 'ref-review', 'REVIEW',
-                            'gpt-5.6', 'UNMETERED', 'TOTAL', 1, 'REVIEW', 0, 0)
-                    """);
-            try (ResultSet rs = s.executeQuery("""
-                    SELECT SUM(tokens) FROM llm_charge
-                     WHERE subject_kind = 'REVIEW' AND subject_id = 'shared-id'
-                    """)) {
-                assertTrue(rs.next());
-                assertEquals(1, rs.getLong(1), "the run's 999 tokens must not be in a review's total");
+        // filter on subject_id alone. An explicit subject_kind filter is what makes that
+        // structural rather than a property of how ids happen to be spelled today. The id below is
+        // run-shaped BECAUSE ChargeCall now refuses a RUN charge whose subject is not -- so the case
+        // under test is a review charge recorded against that same id, which is the collision the
+        // filter has to survive.
+        //
+        // Asked of the PRODUCTION read, which the first version of this test did not do: it
+        // inserted two rows and then ran its own SELECT carrying the same WHERE clause, so it
+        // asserted that Postgres honours a filter the test itself wrote and stayed green with the
+        // filter deleted from costOf. Until this change nothing wrote a RUN row through the
+        // production writer, so that vacuity was the only thing between a run's spend and some
+        // unrelated pull request's cost card.
+        String sharedId = "run::github:TEST-acme/app:shared-" + UUID.randomUUID() + ":1";
+
+        projection.recordCharges(ChargeCall.forRun(sharedId, "CANARY-RUN-" + sharedId, "TEST-MODEL",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L)), null));
+        projection.recordCharges(ChargeCall.forReview(sharedId, "CANARY-REVIEW-" + sharedId,
+                ChargeKind.REVIEW, "TEST-MODEL",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 1_000L))));
+
+        assertEquals(1_000L, projection.costOf(sharedId).knownCostMillicents(),
+                "the run's spend must not reach a review's cost card, and the filter keeping them"
+                        + " apart has to be the one production actually reads through");
+    }
+
+    @Test
+    void bothChargesReallyReachedTheLedgerUnderTheSameSubjectId() {
+        // The other half. Without it the assertion above would also pass if the run's charge had
+        // simply not been written — which is how a filter test becomes a test of nothing.
+        String sharedId = "run::github:TEST-acme/app:shared-" + UUID.randomUUID() + ":1";
+        projection.recordCharges(ChargeCall.forRun(sharedId, "CANARY-RUN-" + sharedId, "TEST-MODEL",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L)), null));
+        projection.recordCharges(ChargeCall.forReview(sharedId, "CANARY-REVIEW-" + sharedId,
+                ChargeKind.REVIEW, "TEST-MODEL",
+                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 1_000L))));
+
+        assertEquals(List.of("RUN", "REVIEW"), subjectKindsOf(sharedId));
+    }
+
+    /** Every subject kind stored under one id, in insertion order. */
+    private List<String> subjectKindsOf(String subjectId) {
+        String sql = "SELECT subject_kind FROM llm_charge WHERE subject_id = ? ORDER BY priced_at, kind DESC";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, subjectId);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<String> kinds = new ArrayList<>();
+                while (rs.next()) {
+                    kinds.add(rs.getString(1));
+                }
+                return kinds;
             }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the charge rows back", e);
         }
     }
 

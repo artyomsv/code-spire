@@ -33,9 +33,10 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
 | `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
+| `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
-| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0 delivered (2026-09-02), M1–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
@@ -1398,7 +1399,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
   the push gate → a branch on the real remote authored by the machine account; a run touching a
   CI file is refused at the gate and raises `RUN_PUSH_GATE_REFUSED`. Seven new modules
   (`spire-harness`, `spire-harness-codex`, `spire-workspace`, `spire-runtime`,
-  `spire-runtime-docker` Apache; `spire-publisher`, `spire-run-worker` FSL), migrations V42–V45
+  `spire-runtime-docker` Apache; `spire-publisher`, `spire-run-worker` FSL), migrations V42–V49
   (`llm_charge` neutral subject, `factory_run`, `scm_provider.role`, the attention acknowledgement),
   the FACTORY/REVIEWER split on every provider lookup, both credentials Tink-wrapped on the bus
   with AAD bound to run and slot, the neutrality scan widened to harness and runtime names, and
@@ -1436,6 +1437,164 @@ The design is fully specified in `docs/` — **treat those files as the source o
   review-worker 226/27, run-worker 80/12 incl. the M0 walking skeleton, runtime-docker 15/2);
   `spire-ui` untouched. The two images are not on GHCR and `spire-run-worker` is not in
   `deploy/` yet — packaging follows M1, and the runbook builds both locally.
+- **Software factory M1 in progress (2026-09-02, PR #96):** the lifecycle milestone — a run that
+  meets a hostile world behaves correctly. Plan with per-task test scenarios in
+  `docs/superpowers/plans/2026-09-02-factory-m1-lifecycle.md`. Delivered so far:
+  - **Docker-driving test tasks hold a lock, one at a time.** `spire-runtime-docker`,
+    `spire-run-worker` and `spire-e2e` all create and destroy containers on the one daemon, and
+    `org.gradle.parallel=true` let two of them meet there — `DockerRunRuntimeIT` failed two cases
+    whose symptoms ("no such container", a destroy that removed nothing) impersonate the exact
+    defects that runtime exists to prevent, while passing 15/15 alone. A shared build service with
+    `maxParallelUsages = 1` serialises them; the other service modules stay parallel, which is why
+    this is a service and not `org.gradle.parallel=false`. `DockerTestsAreSerialisedTest` **derives**
+    the module list by scanning test sources rather than trusting a declaration.
+  - **A failed run carries a cause from a closed set (FR-F9).** `RunFailureCause` is the wire
+    vocabulary and owns the aliases translating each producer's older words into it — three
+    vocabularies used to reach the wire agreeing only partly, one of them an arbitrary string from
+    the publisher's JSON, landing in an unconstrained `VARCHAR(32)`. Enforced twice: the application
+    normalises on the way in, `V46` refuses whatever escaped, and a test binds the enum to that
+    CHECK so the two cannot drift. Parsing is lenient though the set is closed — an unknown value
+    becomes `UNCLASSIFIED` rather than throwing, because a classification failure must never become
+    a second failure after the model is paid for.
+  - **Retryability is a property of the cause, not the call site.** Every publisher failure was
+    reported retryable, so a run refused for a reason that refuses it identically was retried at the
+    price of another agent run. `RunFailures` is the one collaborator the launcher and the dispatcher
+    both build failures through, which is also what makes the credential scrub unbypassable.
+  - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
+    than `succeeded` with no ref — the same call already made for `push_gate_refused`.
+  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V52.
+  - **The run event stream (`cs.run-events`, `run_event`, V44).** The agent's own output
+    reaches an operator live over `/api/ws/runs/{runId}/transcript`, encrypted at rest with the
+    run as AAD and swept on a TTL — high-volume by design, so it is bounded rather than durable
+    (ADR-034); a run's outcome lives in `factory_run` and `llm_charge` and outlives it.
+  - **Salvage before teardown (V49).** A unit is finalized before it is destroyed, and a failed
+    salvage BLOCKS teardown so the evidence survives. A run that delivered but never finished has
+    its own status rather than being labelled a clean success.
+  - **A run writes to the charge ledger (V42).** `llm_charge` gained a neutral subject, so
+    the ADR-025 spend gate — which reads that table with no subject filter — finally sees factory
+    spend. Before this the cap was structurally inert for runs. Unknown usage stays UNKNOWN and is
+    never coerced to a priced zero.
+  - **`run_lease` with owner, heartbeat and the sandbox's identity (V45).** A restarted
+    worker recovers by discovery, not by memory; the lease is what names the unit a heartbeat
+    belongs to. Taken BEFORE the unit is created, deliberately.
+  - **The orphan watchdog.** A sandbox whose lease has gone stale is reclaimed on a timer, because
+    an abandoned one holds the model key and the SCM token until something removes it. It refuses
+    to destroy a unit it could not report on.
+  - **`cs.run-control`, and a cancel that cancels.** Control rides its OWN topic: the
+    command channel is ordered and blocking for the run's whole duration, so a cancel delivered
+    there would be read only once the run it cancels had finished. Steer is refused where the
+    harness does not declare it, rather than silently dropped.
+  - **Idempotent dispatch (V50, V51).** The intent is journalled before dispatch and ambiguity
+    fails CLOSED: an unacknowledged send says nothing about whether the record landed, so the run
+    enters `dispatch_uncertain` and an operator resolves it, rather than being retried
+    into a second paid agent.
+  - **The harness credential pool (V52).** A run calls the model with the factory's OWN keys, never
+    the reviewer's — one exfiltration must not disable reviews and runs together. Least-rested
+    rotation, and two exhaustion states kept apart because a rate limit is a promise and a
+    rejection is an answer. **Both are entered by an operator: nothing in the pipeline reports
+    either yet**, guarded by `CredentialRefusalHasNoProducerTest` and tracked in
+    `docs/UNVERIFIED.md` §A1–A2.
+  - **The corporate run-unit environment (FR-F14).** A CA bundle and proxy variables injected into
+    every container at run time, and a private-registry credential for the image pull, none of it
+    baked into an image. The bundle and proxy live on `RunUnitSpec` rather than on each
+    `ContainerSpec`, so "every container of the unit" is structural and no arm can apply them to two
+    parts of three; the registry credential goes the other way, onto the RUNTIME, because everything
+    on a spec reaches a container where `docker inspect` prints it and the agent reads its own
+    environment. `HostMount` has no `readOnly` component at all — a host bind reaches the machine the
+    worker runs on, so a writable one is not expressible rather than merely defaulted.
+    **What the first version got wrong is the part worth keeping.** It set `SSL_CERT_FILE`,
+    `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` and stopped — three names covering OpenSSL, the git
+    binary and Node, which is the AGENT's world. The init clone and the publisher are neither: they
+    are a JVM running JGit, which reads the JDK trust store and `ProxySelector` and contains zero
+    references to any of those names (measured against the jar). So behind a TLS-inspecting proxy the
+    clone failed at the forge and the push failed at the forge while three documents said the
+    opposite, and the integration test could not see it because it `cat`s the mounted file — proving
+    the bind and saying nothing about trust. `CorporateTransport` now builds an `SSLContext` from the
+    PEM and a `ProxySelector`/`Authenticator` from the proxy, called by both entry points, and the
+    test stands up a real TLS server behind a private CA and asserts the handshake FAILS before and
+    SUCCEEDS after. Four more of the same shape: a relative bundle path passed the startup refusal
+    and then reached the daemon as a VOLUME NAME (an empty volume where the certificate should be);
+    only the FIRST proxy password was scrubbed; the Basic form was built as
+    `base64(scmUser:proxyPassword)`, a string on no wire; and a bundle holding a PRIVATE KEY — the
+    shape a combined `server.pem` takes — was mounted into the container running untrusted output.
+    Two guards were also proven for one container out of three, which mutation found and the
+    per-role fixtures now close. Operator guidance in `deploy/agent/CORPORATE-ENVIRONMENT.md`,
+    runbook Mode R, and the no-baking half is build-enforced over both run-unit Dockerfiles.
+
+  - **The agent image contract is written down and checkable (FR-F13, M1 half).**
+    `docs/factory/AGENT-IMAGE-CONTRACT.md` is the contract; the new Apache-2.0
+    `spire-agent-image` module checks it. **The report has two halves that never mix** —
+    VERIFIED clauses the command proved by inspecting and RUNNING the image, and DECLARED clauses
+    the image claims through a label and the command cannot prove (its toolchain needs the
+    repository; its harness needs a paid call). A blended report reads as proof, so an image
+    declaring a toolchain it does not carry would pass with a paid run being the first thing to
+    notice. The split is structural: a declaration has no pass/fail component, and the report
+    refuses a verification carrying a declared clause id.
+    **What review found is the part worth keeping.** A checker-side setup failure was reported as
+    three image defects — the seed container accepted a BLANK commit when git refused the
+    workspace as dubiously owned, the entrypoint then aborted on its required variable, and three
+    clauses blamed a conforming entrypoint; reproduced on the reference image using the runbook's
+    own commands. `USER root:root` passed the non-root clause, because the check
+    tested the whole string rather than the uid field. The trust-store test read
+    `A || B || C && D`, which POSIX parses as `((A||B)||C) && D` — so
+    an image whose store is only `/etc/ssl/cert.pem` was told it had none, a false
+    accusation from a checker. A hostile LABEL could forge `PASS` lines and conceal
+    the verdict line, re-blending in the terminal the two halves the data model separates (Docker
+    stores ESC and CR verbatim — measured); every image-controlled string is stripped of control
+    characters now. And the probe containers ran image-chosen code with the default network and
+    full capabilities while the class javadoc promised neither — no probe needs a network, so they
+    have none. The contract itself was incomplete for its stated purpose: three clauses are only
+    passable by an image honouring five `SPIRE_*` variables the document named
+    nowhere, so a third party building from it alone failed three clauses.
+    `ContractAndCheckerAgreeTest` holds the document and the checker to each other in
+    both directions, and now also that the document names every variable the entrypoint requires.
+    Runbook Mode S.
+  - **The whole PR reviewed on four lenses after all thirteen tasks had been (2026-09-03).**
+    32 findings, and almost none is a defect inside a task — they are the three shapes a per-task
+    review structurally cannot see. **A fix that landed on one of two siblings:** an earlier round
+    fixed a swallowed exception on one call and left three, and another removed one of four
+    spellings of an MDC key. **A guard whose input can never satisfy it:** the transcript socket
+    closed on `-1` from a `SELECT count(*)`, which always returns a row, so the close was
+    unreachable while a prior round records it resolved — and the scan protecting the credential
+    pool's documented gap allowlisted the very file that holds the alias map a producer would most
+    likely be written into (measured: adding an alias left the fast tier green). **A claim in
+    module A about the behaviour of module B:** `ChangeKind` is carried across the publisher's
+    wire specifically to be reported and dropped at the worker, six documents describe a read-only
+    clone token that does not exist (one token serves clone and push — corrected in all six rather
+    than invented, since a read scope is forge-specific and a product decision), and five places
+    pointed at a `SECURITY.md` factory section that was never written.
+
+    The worst was a class doing the opposite of its own javadoc: `RunCommandDeserializer` promised
+    it never throws on a poison record and overrode nothing, so the base implementation threw and
+    the messaging layer failed the channel — and `failure-strategy` does not apply to a
+    deserialization fault. It serves BOTH worker channels, so one malformed record on
+    `cs.run-control` was a worker that could not be cancelled: the outage that topic exists to
+    remove. Its four siblings all override; this one was a copy that dropped the only line that
+    mattered.
+
+    **Nothing asserted any sandbox control.** ADR-039 makes the container the security boundary and
+    six settings implement it; a repo-wide grep for `withCapDrop`, `no-new-privileges`,
+    `withPidsLimit`, `withMemory` and `withNetworkMode` across every test source returned
+    nothing. The daemon-driving IT asserts *behaviours* and never inspects a `HostConfig`, so it is
+    blind to these by construction.
+
+    Also the **seventh fake-coverage trap, and the first SILENT one** — every previous instance
+    failed loudly with an NPE from a real `DataSource`, while this one sits under the sweep's own
+    `catch (RuntimeException)`, so a plausible call would have left all 27 tests green with the
+    feature inert. And neither Keycloak realm defined the run worker's OIDC client while four
+    documents told an operator it did; adding it caught a second defect on the way in, since the
+    copied client inherited the review worker's `/wk` prefix and port where the run worker owns
+    `/rw` on 34083.
+
+    Eight findings are filed rather than fixed (`techdebt/`), the sharpest being that **a cancel
+    for a run that has not started is accepted and dropped**: `register` runs only after
+    `create` returns and `create` blocks on the clone, so a queued, cloning or
+    dispatch-uncertain run takes a 202 and then runs anyway. Two task reviews each closed the half
+    they could see and the gap is before either. Dispositions in
+    `.claude/reviews/global/factory-m1.md`; the unproven claims in `docs/UNVERIFIED.md`.
+
+  Measured, not estimated: **2549 Java tests across 299 suites** (`testFast` + `testServices`;
+  the nightly `testE2e` tier is separate). `spire-ui` untouched by M1.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
@@ -1472,9 +1631,9 @@ from a crashed run are `docker ps -a --filter label=dev.codespire.runId`.
 
 ```bash
 ./gradlew testFast                        # 19 Docker-free modules, ~1 min
-./gradlew testServices                    # 5 service modules: the 4 deployables on Dev Services (Postgres +
-                                          # Kafka) plus spire-runtime-docker; it and spire-run-worker
-                                          # also drive a real Docker daemon
+./gradlew testServices                    # 6 service modules: the 4 deployables on Dev Services (Postgres +
+                                          # Kafka) plus spire-runtime-docker and spire-agent-image;
+                                          # those two and spire-run-worker drive a real Docker daemon
 ```
 
 **The packaged stack** (`deploy/`, host ports 347xx — distinct from dev's 34xxx and 392xx):
@@ -1538,3 +1697,14 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   rejected: they spread one registry across every `ObjectMapper` in three services, where a missed
   site is a runtime wire break rather than a compile error. Adding a second exception means
   amending that allowlist, on purpose.
+- **Test tasks that drive the real Docker daemon hold a lock, one at a time.** `spire-runtime-docker`,
+  `spire-run-worker`, `spire-e2e` and `spire-agent-image` create, inspect and destroy containers on the one daemon, and
+  `org.gradle.parallel=true` used to let two of them meet there — `DockerRunRuntimeIT` failed two
+  cases whose symptoms ("no such container", a destroy that removed nothing) impersonate the exact
+  defects the runtime exists to prevent, while passing 15/15 run alone. They now share a build service
+  with `maxParallelUsages = 1`; the other service modules stay parallel, which is why this is a
+  service and not `org.gradle.parallel=false`. `DockerTestsAreSerialisedTest` **derives** the module
+  list by scanning test sources rather than trusting the declaration, so a module that starts driving
+  the daemon and forgets to declare itself fails the build. Two bounds are deliberate: the lock covers
+  one Gradle invocation (a second `./gradlew` or a `quarkusDev` worker still contends), and it is held
+  for a whole `Test` task, since Gradle schedules tasks and not suites.

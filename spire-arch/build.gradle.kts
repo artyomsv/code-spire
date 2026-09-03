@@ -39,6 +39,12 @@ tasks.test {
     inputs.files(
         fileTree(rootProject.projectDir) {
             include("spire-*/src/main/java/**/*.java")
+            // DockerTestsAreSerialisedTest scans TEST sources, because a module starts driving the
+            // daemon by an edit to src/test. Undeclared, that edit changes no input of this task, so
+            // Gradle reports UP-TO-DATE or FROM-CACHE — a cached PASS from the very edit the check
+            // exists to catch. Measured, not assumed: with this line absent, adding a Docker-driving
+            // test to another module left `:spire-arch:test` UP-TO-DATE and the guard silent.
+            include("spire-*/src/test/java/**/*.java")
         }
     ).withPropertyName("scannedSources").withPathSensitivity(PathSensitivity.RELATIVE)
 
@@ -53,8 +59,32 @@ tasks.test {
         rootProject.file("settings.gradle.kts"),
         rootProject.file("build.gradle.kts"),
         rootProject.file("Dockerfile"),
-        rootProject.file("LICENSING.md")
+        rootProject.file("LICENSING.md"),
+        // DockerTestsAreSerialisedTest asserts org.gradle.parallel is still on: the Docker lock is
+        // only worth its cost while the build is parallel. Turning it off is a one-line edit here.
+        rootProject.file("gradle.properties")
     ).withPropertyName("buildDeclarations").withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // NoCorporateEnvironmentIsBakedIntoAnImageTest reads the two RUN-UNIT Dockerfiles as text.
+    // Undeclared they are invisible to the up-to-date check, so adding an ENV HTTPS_PROXY to the
+    // agent image would report a cached PASS from the very edit the check exists to catch --
+    // the same hole the scanned-sources block above was added to close.
+    inputs.files(
+        rootProject.file("deploy/agent/codex/Dockerfile"),
+        rootProject.file("spire-publisher/Dockerfile")
+    ).withPropertyName("runUnitImages").withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // ContractAndCheckerAgreeTest reads the agent-image contract against the checker constants.
+    // Undeclared they are invisible to the up-to-date check, so documenting a clause nothing
+    // checks -- or checking one nothing documents -- would report a cached PASS from the very edit
+    // the guard exists to catch.
+    inputs.files(
+        rootProject.file("docs/factory/AGENT-IMAGE-CONTRACT.md"),
+        // The contract must document the interface this script enforces, so the script is an
+        // input too: adding a required variable to it without documenting it must fail here
+        // rather than report a cached pass.
+        rootProject.file("deploy/agent/spire-agent-entrypoint.sh")
+    ).withPropertyName("agentImageContract").withPathSensitivity(PathSensitivity.RELATIVE)
 
     // ModuleLicensingIsDeclaredTest reads every module LICENSE. Undeclared they are invisible to
     // the up-to-date check, and the check then reports a CACHED PASS over a licence file that was

@@ -8,6 +8,8 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.harness.codex.CodexAdapter;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EnterpriseEnvironment;
+import dev.codespire.runtime.HostMount;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.Test;
@@ -52,7 +54,23 @@ class RunUnitBuilderTest {
         builder.credentials = credentials;
         builder.publisherImage = "spire-publisher:TEST";
         builder.maxWallClockSeconds = 3600;
+        builder.enterprise = unconfigured();
         return builder;
+    }
+
+    /**
+     * A worker with no corporate configuration, which is the ordinary deployment.
+     *
+     * <p>The SHARED fake, which answers every accessor the bean has. A double that answers only
+     * the method used today is the trap this repository has now hit six times; the shared one is
+     * where that lesson lives so it does not have to be relearned per test file.
+     */
+    private static EnterpriseEnvironmentConfig unconfigured() {
+        return RunLauncherTest.noCorporateEnvironment();
+    }
+
+    private static EnterpriseEnvironmentConfig corporate(EnterpriseEnvironment environment) {
+        return RunLauncherTest.corporate(environment);
     }
 
     @Test
@@ -286,5 +304,43 @@ class RunUnitBuilderTest {
 
         assertFalse(scm.toString().contains("ghp-do-not-print"), scm.toString());
         assertTrue(scm.toString().contains("spire-bot"));
+    }
+    /**
+     * The corporate environment reaches the unit, and reaches it ONCE.
+     *
+     * <p>Asserted on the spec rather than on each container, because that placement is the
+     * requirement: held at unit level, "every container" is structural and a future arm cannot
+     * apply it to two of the three. The init container is the one that matters -- without the
+     * bundle its clone fails at the forge, which reads like a bad credential.
+     */
+    @Test
+    void theCorporateEnvironmentReachesEveryContainerOfTheUnit() throws JsonProcessingException {
+        String bundle = "/etc/spire/ca-bundle.crt";
+        RunUnitBuilder builder = builder(encryption);
+        builder.enterprise = corporate(new EnterpriseEnvironment(
+                List.of(new HostMount("/opt/acme/ca.crt", bundle)),
+                java.util.Map.of("SSL_CERT_FILE", bundle, "HTTPS_PROXY", "http://proxy:3128")));
+
+        RunUnitSpec spec = builder.build(command(), new CodexAdapter());
+
+        assertEquals(List.of(new HostMount("/opt/acme/ca.crt", bundle)), spec.hostMounts());
+        for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
+            assertEquals(bundle, spec.environmentFor(container).get("SSL_CERT_FILE"));
+            assertEquals("http://proxy:3128", spec.environmentFor(container).get("HTTPS_PROXY"));
+        }
+    }
+
+    /** And it does not disturb what each role was already handed. */
+    @Test
+    void theCorporateEnvironmentDoesNotDisplaceARolesOwnCredential() throws JsonProcessingException {
+        RunUnitBuilder builder = builder(encryption);
+        builder.enterprise = corporate(new EnterpriseEnvironment(List.of(),
+                java.util.Map.of("HTTPS_PROXY", "http://proxy:3128")));
+
+        RunUnitSpec spec = builder.build(command(), new CodexAdapter());
+
+        assertEquals(SCM_TOKEN, spec.environmentFor(spec.publisher()).get("SPIRE_GIT_SECRET"));
+        assertFalse(spec.environmentFor(spec.agent()).containsKey("SPIRE_GIT_SECRET"),
+                "the agent still holds no write credential");
     }
 }

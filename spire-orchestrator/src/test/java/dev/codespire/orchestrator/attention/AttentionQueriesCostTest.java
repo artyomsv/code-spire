@@ -203,6 +203,61 @@ class AttentionQueriesCostTest {
                 "a mapping defect is a different cause and must not be acknowledged by proxy");
     }
 
+    /**
+     * A run's unpriceable spend is a run's row, not a review's mapping defect.
+     *
+     * <p>The two review rows diagnose a review. Unscoped, a run reporting no usable token split fired
+     * {@code LLM_USAGE_UNRECONCILED}, whose text names a {@code TokenUsageMapper} defect — a class in
+     * another module, on the review path, that cannot be the cause — and which carries no action. The
+     * absence assertion is what discriminates: the run row alone would still pass with the review
+     * rows left unscoped.
+     */
+    @Test
+    void aRunsUnpriceableSpendIsReportedAsARunRatherThanAsAReviewMappingDefect() {
+        insertUnpricedRunCharge("run::github:TEST-acme/app:s:1", "TEST-RUN-MODEL");
+
+        List<AttentionView> rows = queries.collect();
+
+        assertTrue(rows.stream().anyMatch(r -> "RUN_SPEND_UNPRICED".equals(r.code())
+                && r.severity() == AttentionView.Severity.WARNING
+                && "/settings/llm".equals(r.action())
+                && "/api/attention/ack/RUN_SPEND_UNPRICED".equals(r.dismiss())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())),
+                "a run's row must not be reported as a defect in the review path's usage mapper");
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+    }
+
+    /**
+     * The routine case, and the reason the run row is keyed on pricing mode rather than on
+     * reconciliation.
+     *
+     * <p>A harness that reports only a high-water total is behaving exactly as its adapter documents,
+     * and on an unmetered model the cost is an asserted zero — nothing is missing from the cap, so
+     * there is nothing to report. Unscoped, every such run lit a permanent, growing row about a
+     * defect that did not exist, which is the wallpaper this panel exists to keep out.
+     */
+    @Test
+    void anUnmeteredRunAssertsItsZeroAndRaisesNothing() {
+        insertUnreconciledUnmeteredRunCharge("run::github:TEST-acme/app:s:2", "TEST-RUN-MODEL");
+
+        List<AttentionView> rows = queries.collect();
+
+        assertTrue(rows.stream().noneMatch(r -> "RUN_SPEND_UNPRICED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "LLM_COST_UNPRICED".equals(r.code())));
+    }
+
+    /** A review's unpriceable call still reaches the review row, so the scoping cut only one way. */
+    @Test
+    void scopingTheReviewRowsToReviewsLeavesThemFiringForReviews() {
+        insertUnreconciledCharge("review::TEST-WS/TEST-REPO#1", "TEST-MODEL");
+
+        List<AttentionView> rows = queries.collect();
+
+        assertTrue(rows.stream().anyMatch(r -> "LLM_USAGE_UNRECONCILED".equals(r.code())));
+        assertTrue(rows.stream().noneMatch(r -> "RUN_SPEND_UNPRICED".equals(r.code())));
+    }
+
     // ---- fixtures: mirror the ledger writer's own shapes (LlmModelPricer), not arbitrary rows -----
 
     /**
@@ -255,6 +310,24 @@ class AttentionQueriesCostTest {
         insert(reviewId, "CANARY-UNRECONCILED-UNMETERED", model, "UNMETERED", "TOTAL", "0", "0");
     }
 
+    /**
+     * A factory run whose usage could not be priced: {@code RunTokenUsage} answers an unreconciled
+     * {@code ModelUsage} for a harness that reports no usable split, and {@code LlmModelPricer} turns
+     * that into one {@code ChargeLine.unknown(TOTAL, n)} — the shape the run path writes most often.
+     */
+    private void insertUnpricedRunCharge(String runId, String model) {
+        insertRun(runId, "CANARY-RUN-UNPRICED", model, "UNKNOWN", "TOTAL", "NULL", "NULL");
+    }
+
+    /**
+     * The same run on an UNMETERED model. {@code LlmModelPricer} consults the catalog BEFORE the
+     * reconciled check, so an unbilled model records an asserted zero whatever the split turns out to
+     * be — which is what makes marking a model unmetered the action that clears the run row.
+     */
+    private void insertUnreconciledUnmeteredRunCharge(String runId, String model) {
+        insertRun(runId, "CANARY-RUN-UNMETERED", model, "UNMETERED", "TOTAL", "0", "0");
+    }
+
     /** A reconciled call on an unmetered model: {@code ChargeLine.unmetered(type, tokens)} per type. */
     private void insertUnmeteredCharge(String reviewId, String model) {
         insert(reviewId, "CANARY-UNMETERED", model, "UNMETERED", "INPUT", "0", "0");
@@ -262,10 +335,21 @@ class AttentionQueriesCostTest {
 
     private void insert(String reviewId, String callRef, String model, String pricingMode,
                         String tokenType, String rate, String cost) {
+        // subject_kind is left to its V42 default of REVIEW, which is what every row above is.
         sql("INSERT INTO llm_charge (id, subject_id, call_ref, kind, model, pricing_mode, "
                 + "token_type, tokens, rate_millicents_per_million, cost_millicents) VALUES "
                 + "(gen_random_uuid(), '" + reviewId + "', '" + callRef + "', 'REVIEW', '" + model
                 + "', '" + pricingMode + "', '" + tokenType + "', 10, " + rate + ", " + cost + ")");
+    }
+
+    /** As {@link #insert}, naming the subject kind and charge kind a factory run actually writes. */
+    private void insertRun(String runId, String callRef, String model, String pricingMode,
+                           String tokenType, String rate, String cost) {
+        sql("INSERT INTO llm_charge (id, subject_id, subject_kind, call_ref, kind, model, "
+                + "pricing_mode, token_type, tokens, rate_millicents_per_million, cost_millicents) "
+                + "VALUES (gen_random_uuid(), '" + runId + "', 'RUN', '" + callRef + "', 'BUILD', '"
+                + model + "', '" + pricingMode + "', '" + tokenType + "', 10, " + rate + ", "
+                + cost + ")");
     }
 
     private void sql(String statement) {

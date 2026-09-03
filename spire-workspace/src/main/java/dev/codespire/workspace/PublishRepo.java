@@ -255,10 +255,12 @@ public final class PublishRepo implements AutoCloseable {
 
         List<String> refused = new ArrayList<>();
         boolean attempted = false;
+        boolean nonFastForward = false;
         for (PushResult result : results) {
             for (RemoteRefUpdate update : result.getRemoteUpdates()) {
                 attempted = true;
                 if (!accepted(update.getStatus())) {
+                    nonFastForward |= update.getStatus() == RemoteRefUpdate.Status.REJECTED_NONFASTFORWARD;
                     refused.add(update.getRemoteName() + ": " + update.getStatus()
                             + (update.getMessage() == null ? "" : " (" + update.getMessage() + ")"));
                 }
@@ -269,7 +271,7 @@ public final class PublishRepo implements AutoCloseable {
             throw new PushRefusedException(List.of("no ref update was attempted"));
         }
         if (!refused.isEmpty()) {
-            throw new PushRefusedException(refused);
+            throw nonFastForward ? PushRefusedException.branchMoved(refused) : PushRefusedException.refused(refused);
         }
         return "refs/heads/" + branch;
     }

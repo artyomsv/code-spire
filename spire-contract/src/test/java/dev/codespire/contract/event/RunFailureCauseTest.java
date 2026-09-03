@@ -1,0 +1,321 @@
+package dev.codespire.contract.event;
+
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * FR-F9: every failed run carries a discriminated cause from a closed set, recorded as data.
+ *
+ * <p>"Read the logs" is not a failure cause, and neither is a free string. Before this, a cause could
+ * come from three places with no agreement between them: three literals in the launcher, the twelve
+ * values of the harness's own {@code FailureCause}, and — the open one — whatever string the
+ * publisher happened to write into its JSON, defaulted to {@code PUBLISHER_FAILED} when absent. The
+ * read model stored the result in an unconstrained {@code VARCHAR(32)}, so a typo in any writer
+ * became a category no query would ever match and no operator would ever see grouped.
+ *
+ * <p><b>The set is closed, but parsing is lenient, and the two are not in tension.</b> An unknown
+ * value maps to {@link RunFailureCause#UNCLASSIFIED} rather than throwing, because the alternative
+ * has already cost this project a paid run: a value the pipeline could not accept threw inside a
+ * result handler and dead-lettered a review that had already been charged for. A failure to
+ * classify must never become a second failure.
+ */
+class RunFailureCauseTest {
+
+    @Test
+    void anUnknownCauseIsUnclassifiedRatherThanAThrow() {
+        // The lesson from the negative token count that dead-lettered a paid review: a value we
+        // cannot interpret is answered, not thrown, at the boundary that receives it.
+        assertEquals(RunFailureCause.UNCLASSIFIED, RunFailureCause.of("WHATEVER_THE_PUBLISHER_WROTE"));
+        assertEquals(RunFailureCause.UNCLASSIFIED, RunFailureCause.of(null));
+        assertEquals(RunFailureCause.UNCLASSIFIED, RunFailureCause.of(""));
+        assertEquals(RunFailureCause.UNCLASSIFIED, RunFailureCause.of("   "));
+    }
+
+    @Test
+    void aKnownCauseParsesBackToItself() {
+        for (RunFailureCause cause : RunFailureCause.values()) {
+            assertEquals(cause, RunFailureCause.of(cause.name()), cause.name());
+        }
+    }
+
+    @Test
+    void unclassifiedIsNeverWhatAWriterChooses() {
+        // It is the reader's landing spot for a value it did not recognise. A writer selecting it
+        // deliberately would be recording "we did not look", which is the thing FR-F9 forbids.
+        assertFalse(RunFailureCause.UNCLASSIFIED.isChoosable(),
+                "UNCLASSIFIED exists so an unknown wire value has somewhere to land, not so a "
+                        + "writer can decline to classify");
+        for (RunFailureCause cause : RunFailureCause.values()) {
+            if (cause != RunFailureCause.UNCLASSIFIED) {
+                assertTrue(cause.isChoosable(), cause + " must be choosable by a writer");
+            }
+        }
+    }
+
+    @Test
+    void retryabilityIsAPropertyOfTheCauseNotOfTheCaller() {
+        // Before this every publisher failure was reported retryable, so a run refused for a reason
+        // that will refuse it again next time was retried at full cost.
+        assertFalse(RunFailureCause.BAD_COMMAND.isRetryable(),
+                "the same command will be rejected the same way");
+        assertFalse(RunFailureCause.GATE_REFUSED.isRetryable(),
+                "the gate refuses the same tree the same way; retrying spends an agent run to learn it twice");
+        assertFalse(RunFailureCause.NON_FAST_FORWARD.isRetryable(),
+                "the branch moved under the run; a retry pushes the same stale parent again");
+        assertFalse(RunFailureCause.CREDENTIAL_REJECTED.isRetryable(),
+                "a rejected credential is an answer, not a blip — retrying spends a request to be told again");
+        assertTrue(RunFailureCause.IMAGE_UNAVAILABLE.isRetryable(), "a registry blip is transient");
+        assertTrue(RunFailureCause.SANDBOX_LOST.isRetryable(), "an evicted sandbox can be replaced");
+        assertTrue(RunFailureCause.RUNTIME_UNAVAILABLE.isRetryable(), "a daemon comes back");
+    }
+
+    @Test
+    void aProviderOutageAndAnAgentThatFailedGetOppositeAnswers() {
+        // The reason MODEL_UNAVAILABLE exists as its own value. An earlier draft folded the harness's
+        // PROVIDER_ERROR, NO_MODEL_RESPONSE and HARNESS_EXIT_NONZERO into one non-retryable cause,
+        // which quietly took the retry away from the outage that had earned it. Asserted from the
+        // harness's own words, because that is the form the wire actually carries.
+        assertTrue(RunFailureCause.of("PROVIDER_ERROR").isRetryable(),
+                "a provider outage clears, and the run has not had its answer yet");
+        assertTrue(RunFailureCause.of("NO_MODEL_RESPONSE").isRetryable(),
+                "the model returned nothing at all, which is the same outage in another shape");
+        assertFalse(RunFailureCause.of("HARNESS_EXIT_NONZERO").isRetryable(),
+                "the agent ran to completion and failed; the same prompt fails the same way, "
+                        + "and the model has already been paid for");
+
+        assertNotEquals(RunFailureCause.of("PROVIDER_ERROR"), RunFailureCause.of("HARNESS_EXIT_NONZERO"),
+                "collapsing these two is what made the retry decision wrong");
+    }
+
+    @Test
+    void aCauseFitsTheColumnItIsStoredIn() {
+        // factory_run.failure_cause is VARCHAR(32). A longer name would be rejected by Postgres at
+        // the moment a run failed, turning a classified failure into an unrecorded one.
+        for (RunFailureCause cause : RunFailureCause.values()) {
+            assertTrue(cause.name().length() <= 32,
+                    cause + " is " + cause.name().length() + " characters and will not fit failure_cause");
+        }
+    }
+
+    /**
+     * The union of every vocabulary that can reach the wire must be representable.
+     *
+     * <p>Scanned rather than listed, because a list checked against itself passes forever. The three
+     * sources are the harness's own enum, the literals the worker constructs a {@code RunFailed}
+     * with, and the literals the publisher writes into its outcome JSON — which used to arrive as an
+     * arbitrary string and is the reason the set was open at all.
+     */
+    @Test
+    void everyCauseAnyProducerCanEmitMapsIntoTheClosedSet() throws IOException {
+        Set<String> emitted = causesEmittedAcrossTheRepository();
+
+        assertFalse(emitted.isEmpty(),
+                "the scan found no emitted cause, so it is asserting nothing — the producers no "
+                        + "longer write causes in a shape this test recognises");
+
+        Set<String> unmapped = new TreeSet<>();
+        for (String cause : emitted) {
+            if (RunFailureCause.of(cause) == RunFailureCause.UNCLASSIFIED) {
+                unmapped.add(cause);
+            }
+        }
+        assertEquals(Set.of(), unmapped,
+                "every cause a producer can emit must map to a value in the closed set, or it "
+                        + "reaches an operator as UNCLASSIFIED — which is FR-F9's 'read the logs' by "
+                        + "another name. Unmapped: " + unmapped);
+    }
+
+    /**
+     * The second half of the doubled enforcement, which was missing.
+     *
+     * <p>The application normalises on the way in and the database refuses whatever escaped — but
+     * only while both halves know the same values. Add a value to this enum without a migration and
+     * the first run that fails that way violates the CHECK inside a result handler, after the model
+     * has been paid for. That is the failure this class's own javadoc says cannot happen, and the
+     * design defended against an unknown PRODUCER string rather than against the enum drifting
+     * ahead of the schema.
+     *
+     * <p>{@code choosableNames()} was written for this check and had no caller until now.
+     */
+    @Test
+    void everyCauseTheEnumCanProduceIsAcceptedByTheColumn() throws IOException {
+        String check = latestClosedSetConstraint();
+
+        for (String name : RunFailureCause.choosableNames()) {
+            assertTrue(check.contains("'" + name + "'"),
+                    name + " is in the enum but not in the migration's CHECK. The first run that "
+                            + "fails this way violates the constraint inside a result handler, after "
+                            + "the model has been paid for — add a migration replacing the CHECK.");
+        }
+        assertTrue(check.contains("'" + RunFailureCause.UNCLASSIFIED.name() + "'"),
+                "the landing spot for an unrecognised value must itself be storable, or leniency "
+                        + "at the boundary just moves the throw to the database");
+
+        // The other direction. A literal in the CHECK the enum no longer knows is a value no writer
+        // can produce and every reader turns into UNCLASSIFIED.
+        Matcher literals = Pattern.compile("'([A-Z][A-Z0-9_]+)'").matcher(check);
+        while (literals.find()) {
+            String stored = literals.group(1);
+            // UNCLASSIFIED is exempt because it is the landing value itself: it is legitimately in
+            // the CHECK and legitimately maps to itself, so the test below would read it as the one
+            // thing it is looking for.
+            if (stored.equals(RunFailureCause.UNCLASSIFIED.name())) {
+                continue;
+            }
+            assertNotEquals(RunFailureCause.UNCLASSIFIED, RunFailureCause.of(stored),
+                    stored + " is in the migration's CHECK but is not a value the enum knows, so no "
+                            + "writer can produce it and every reader turns it into UNCLASSIFIED");
+        }
+    }
+
+    /** The CHECK from the newest migration that closes the cause set, whichever that is. */
+    private static String latestClosedSetConstraint() throws IOException {
+        Path migrations = repoRoot().resolve("spire-orchestrator/src/main/resources/db/migration");
+        try (Stream<Path> files = Files.list(migrations)) {
+            Path newest = files
+                    .filter(f -> f.getFileName().toString().endsWith(".sql"))
+                    .filter(RunFailureCauseTest::declaresTheClosedSet)
+                    .max(Comparator.comparingInt(RunFailureCauseTest::migrationVersion))
+                    .orElseThrow(() -> new AssertionError(
+                            "no migration constrains failure_cause, so nothing enforces the closed "
+                                    + "set at rest and this check is asserting against nothing"));
+            String sql = Files.readString(newest);
+            return sql.substring(sql.lastIndexOf("ADD CONSTRAINT"));
+        }
+    }
+
+    private static boolean declaresTheClosedSet(Path migration) {
+        try {
+            String sql = Files.readString(migration);
+            return sql.contains("ADD CONSTRAINT") && sql.contains("failure_cause IN (");
+        } catch (IOException unreadable) {
+            return false;
+        }
+    }
+
+    private static int migrationVersion(Path migration) {
+        Matcher version = Pattern.compile("^V(\\d+)__").matcher(migration.getFileName().toString());
+        return version.find() ? Integer.parseInt(version.group(1)) : -1;
+    }
+
+    @Test
+    void theScanSeesTheProducersItClaimsTo() throws IOException {
+        // Guards the guard. The assertion above is satisfied by an empty scan, and the scan reads
+        // source text, so a producer that changes how it names a cause becomes invisible rather
+        // than failing. These three are the shapes that exist today.
+        Set<String> emitted = causesEmittedAcrossTheRepository();
+
+        assertTrue(emitted.contains("BAD_COMMAND"), "the launcher's own literals are not being seen");
+        assertTrue(emitted.contains("PUSH_GATE_REFUSED"), "the harness enum is not being seen");
+        assertTrue(emitted.contains("EVICTED"),
+                "a single-word harness value is not being seen — the enum scan requires an underscore");
+        assertTrue(emitted.contains("PUBLISHER_MISCONFIGURED"),
+                "the publisher's literals are not being seen (BUNDLE_UNREADABLE is NOT a valid "
+                        + "sentinel here: it appears in the worker too, so it holds while the "
+                        + "publisher scan is entirely broken)");
+        assertTrue(emitted.contains("NON_FAST_FORWARD"),
+                "a cause assigned to a local rather than passed inline is not being seen");
+        assertNotEquals(0, emitted.size());
+    }
+
+    /** Every SCREAMING_CASE token a producer pairs with a cause field, across the three sources. */
+    private static Set<String> causesEmittedAcrossTheRepository() throws IOException {
+        Set<String> causes = new TreeSet<>();
+        Path root = repoRoot();
+
+        // 1. The harness's own vocabulary, which the worker forwards by name().
+        Path harnessEnum = root.resolve("spire-harness/src/main/java/dev/codespire/harness/FailureCause.java");
+        if (Files.isRegularFile(harnessEnum)) {
+            causes.addAll(screamingTokensIn(bodyOf(harnessEnum)));
+        }
+
+        // 2 and 3. The worker's RunFailed literals and the publisher's outcome JSON literals.
+        for (String producer : List.of("spire-run-worker", "spire-publisher")) {
+            Path main = root.resolve(producer).resolve("src/main/java");
+            if (!Files.isDirectory(main)) {
+                continue;
+            }
+            try (Stream<Path> sources = Files.walk(main)) {
+                for (Path source : sources.filter(p -> p.toString().endsWith(".java")).toList()) {
+                    causes.addAll(causeLiteralsIn(Files.readString(source)));
+                }
+            }
+        }
+        return causes;
+    }
+
+    private static final Pattern ENUM_CONSTANT =
+            Pattern.compile("\\b([A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+)*)\\b");
+
+    /**
+     * A literal in a CAUSE position, not merely a SCREAMING_CASE string.
+     *
+     * <p>Matching every quoted upper-case token swept in environment-variable names and label keys,
+     * which are not causes and never reach the wire as one. The three shapes below are how a cause
+     * is actually written today: the second argument of a {@code RunFailed}, the first argument of
+     * the publisher's {@code failed(...)}, and the default the worker reads when the publisher's
+     * JSON carries none.
+     */
+    private static final Pattern CAUSE_STATEMENT = Pattern.compile(
+            "(?:RunFailed\\(|\\bfail(?:ed|ure)\\(|\\bof\\(\\s*\\w+\\s*,|asText\\(|NON_TERMINAL_CAUSES"
+                    + "|\\bString\\s+cause\\s*=)[^;]*",
+            Pattern.DOTALL);
+
+    private static final Pattern QUOTED_CAUSE = Pattern.compile("\"([A-Z][A-Z0-9_]{3,})\"");
+
+    private static Set<String> screamingTokensIn(String body) {
+        return tokens(ENUM_CONSTANT.matcher(body));
+    }
+
+    private static Set<String> causeLiteralsIn(String source) {
+        Set<String> found = new TreeSet<>();
+        Matcher statement = CAUSE_STATEMENT.matcher(source);
+        while (statement.find()) {
+            Matcher literal = QUOTED_CAUSE.matcher(statement.group());
+            while (literal.find()) {
+                found.add(literal.group(1));
+            }
+        }
+        return found;
+    }
+
+    private static Set<String> tokens(Matcher matcher) {
+        Set<String> found = new TreeSet<>();
+        while (matcher.find()) {
+            found.add(matcher.group(1));
+        }
+        return found;
+    }
+
+    /** The enum's constants, without its package line, imports or javadoc. */
+    private static String bodyOf(Path enumSource) throws IOException {
+        String src = Files.readString(enumSource);
+        int brace = src.indexOf('{');
+        return brace < 0 ? "" : src.substring(brace);
+    }
+
+    private static Path repoRoot() {
+        Path here = Path.of("").toAbsolutePath();
+        for (Path candidate = here; candidate != null; candidate = candidate.getParent()) {
+            if (Files.isRegularFile(candidate.resolve("settings.gradle.kts"))) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("no repository root above " + here);
+    }
+}

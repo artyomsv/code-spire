@@ -53,7 +53,7 @@ Review output:
 enum   Severity { BLOCKER, MAJOR, MINOR, INFO, NIT }
 record Finding(String path, LineRange range, Severity severity, String message,
                String suggestion)                                   // suggestion = proposed replacement, nullable
-record ModelUsage(String model, int tokensIn, int tokensOut, long costMillicents)  // millicents (money rule)
+record ModelUsage(String model, List<TokenCount> counts, int reportedTotal, boolean reconciled)  // NO money: ADR-023 removed the cost field, pricing is the orchestrator's (ADR-018)
 record ReviewResult(List<Finding> findings, String summary, ModelUsage usage)   // rides inline in events (ADR-011)
 ```
 

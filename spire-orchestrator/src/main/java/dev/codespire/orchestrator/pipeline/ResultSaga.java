@@ -709,7 +709,7 @@ public class ResultSaga {
     /** Price a call and append its lines. */
     private void charge(ChargeRequest request, ModelUsage usage) {
         List<ChargeLine> lines = llmModels.priceCall(usage.model(), usage);
-        projection.recordCharges(new ChargeCall(request.reviewId(),
+        projection.recordCharges(ChargeCall.forReview(request.reviewId(),
                 CallRefs.of(request.reviewId(), request.slot(), request.kind()),
                 request.kind(), usage.model(), lines));
     }

@@ -37,3 +37,4 @@ include("spire-review-worker")
 include("spire-orchestrator")
 
 include("spire-e2e")
+include("spire-agent-image")

@@ -23,17 +23,31 @@ public class RunResultSaga {
     @Inject
     FactoryRunProjection projection;
 
+    @Inject
+    RunCharges charges;
+
+    @Inject
+    RunCredentialFeedback credentials;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {
         if (result == null) {
-            // A poison record: the deserializer already logged it, and it is on cs.dlq.
+            // A poison record. Dropped, not dead-lettered: returning normally ACKS the record,
+            // and cs.dlq is reached by a nack. The deserializer already logged it at ERROR, which
+            // is the only trace there will be — said plainly because "it is on cs.dlq" sent a
+            // reader to a screen that would be empty.
             return;
         }
         MDC.put(MDC_RUN_ID, result.runId());
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
             projection.apply(result);
+            // AFTER the projection, deliberately. The run's outcome is the fact an operator is
+            // waiting on; the ledger write is best-effort and says so if it fails, so ordering it
+            // first would let a ledger outage delay a terminal status that is already known.
+            charges.record(result);
+            credentials.reactTo(result);
         } finally {
             MDC.remove(MDC_RUN_ID);
         }

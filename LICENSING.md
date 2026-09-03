@@ -31,6 +31,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-workspace` | Apache-2.0 | The publisher's git library: bare clone, bundle fetch, diff, gated push. |
 | `spire-runtime` | Apache-2.0 | The run-placement SPI. Every runtime arm implements it (ADR-039). |
 | `spire-runtime-docker` | Apache-2.0 | Reference runtime arm — the three-container unit on a Docker daemon. |
+| `spire-agent-image` | Apache-2.0 | Conformance checker for the published agent-image contract. The contract is published for ANY image to satisfy, and a contract whose checker a third party may not run is not much of a contract. |
 | `spire-arch` | Apache-2.0 | Build-time architecture check (ADR-020). Tooling, not product. |
 | **`spire-gateway`** | **FSL-1.1-ALv2** | Deployable service. |
 | **`spire-orchestrator`** | **FSL-1.1-ALv2** | Deployable service — the deciders, sagas, event store and dashboard. This is the product. |

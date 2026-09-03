@@ -23,6 +23,7 @@ worker and not in `spire-harness` — the same reason the LLM circuit breaker co
 | `spire-runtime-docker` | Apache-2.0 | adapter | M0 |
 | `spire-runtime-k8s` | Apache-2.0 | adapter | M5 |
 | `spire-workspace` | Apache-2.0 | library | M0 |
+| `spire-agent-image` | Apache-2.0 | conformance checker (CLI) | M1 |
 | **`spire-publisher`** | **FSL-1.1-ALv2** | **deployable (sidecar image)** | **M0** |
 | `spire-worksource` | Apache-2.0 | SPI | M3 |
 | `spire-worksource-github` | Apache-2.0 | adapter | M3 |
@@ -116,7 +117,7 @@ push, usage extraction, artefact collection — happens in `finalize`; only then
 Merging them is how completed work gets thrown away, and it was the second most common failure cause
 in the observed prior art.
 
-`discoverOrphans()` exists because a control plane restart must be able to find sandboxes it no
+`discoverUnits()` exists because a control plane restart must be able to find sandboxes it no
 longer remembers. Both arms can implement it; it simply has to be somebody's job.
 
 ---

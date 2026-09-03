@@ -2,6 +2,7 @@ package dev.codespire.runworker;
 
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.docker.DockerRunRuntime;
+import jakarta.inject.Inject;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
@@ -20,9 +21,20 @@ import jakarta.inject.Singleton;
 @ApplicationScoped
 public class WorkerRuntimes {
 
+    /**
+     * The private-registry credential is handed to the RUNTIME, never to a unit spec.
+     *
+     * <p>It authenticates an image pull and nothing else. Everything on a unit spec ends up on
+     * a container, where {@code docker inspect} prints it and the agent process can read its
+     * own environment -- so a registry password routed through the spec would be readable by
+     * the untrusted half of the very unit it was needed to start (FR-F14).
+     */
+    @Inject
+    EnterpriseEnvironmentConfig enterprise;
+
     @Produces
     @Singleton
     public RunRuntime dockerRuntime() {
-        return new DockerRunRuntime();
+        return new DockerRunRuntime(enterprise.registryCredential().orElse(null));
     }
 }

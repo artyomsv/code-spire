@@ -29,7 +29,7 @@ class RunAttentionTest {
 
     private String run() {
         String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
-        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot"));
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null));
         projection.apply(new RunResult.RunStarted(runId, "container-1"));
         return runId;
     }
@@ -39,7 +39,7 @@ class RunAttentionTest {
         String runId = run();
         projection.apply(new RunResult.RunFinished(runId, null,
                 List.of(".github/workflows/ci.yml", "src/App.java"),
-                List.of(".github/workflows/ci.yml"), null));
+                List.of(".github/workflows/ci.yml"), null, false));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)
@@ -60,7 +60,55 @@ class RunAttentionTest {
     void aSucceededRunRaisesNothing() {
         String runId = run();
         projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of("src/App.java"),
-                List.of(), null));
+                List.of(), null, false));
+
+        given().when().get("/api/attention")
+                .then().statusCode(200)
+                .body("subject", not(hasItem(runId)));
+    }
+
+    /**
+     * An unacknowledged dispatch is surfaced, and the row goes away when it is resolved (FR-F10).
+     *
+     * <p>Not dismissable, unlike the gate-refusal row above. That one describes something already
+     * over; this one describes a run that may be executing right now, so silencing it would leave
+     * that untracked. The panel's contract — fixing the cause removes the row — is met by resolving
+     * the dispatch.
+     */
+    @Test
+    void anUncertainDispatchRaisesARowUntilItIsResolved() {
+        String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/x", "spire-bot", null));
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        given().when().get("/api/attention")
+                .then().statusCode(200)
+                .body("subject", hasItem(runId))
+                .body("find { it.subject == '" + runId + "' }.message",
+                        containsString("never acknowledged"));
+
+        given().contentType("application/json").body("{\"neverRan\":true}")
+                .when().post("/api/runs/" + runId + "/dispatch-resolution")
+                .then().statusCode(204);
+
+        given().when().get("/api/attention")
+                .then().statusCode(200)
+                .body("subject", not(hasItem(runId)));
+    }
+
+    /**
+     * The other way the row clears, and the one that happens without anybody being asked: the record
+     * did land after all, and the run's own start says so.
+     */
+    @Test
+    void aRunThatStartsAfterAllClearsItsOwnRow() {
+        String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/x", "spire-bot", null));
+        projection.dispatchUncertain(runId, "TEST-no ack");
+
+        projection.apply(new RunResult.RunStarted(runId, "container-1"));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)
