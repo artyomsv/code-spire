@@ -3,6 +3,7 @@ package dev.codespire.runworker;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.secrets.SecretScrub;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;

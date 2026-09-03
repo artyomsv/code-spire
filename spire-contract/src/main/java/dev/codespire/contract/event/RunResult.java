@@ -26,9 +26,40 @@ public sealed interface RunResult {
     }
 
     /**
+     * One path the push gate refused, and what the run did to it.
+     *
+     * <p><b>The kind is the point.</b> "ci.yml was blocked" does not tell an operator whether the
+     * factory edited that workflow or deleted it, and after M2 dispatches agents at real findings
+     * that distinction is the difference between a bad fix and an attempt to remove what reviews
+     * the fix. The publisher has always emitted it, three modules argued in their javadocs for
+     * carrying it, and the worker parsed it out of the JSON and threw it away.
+     *
+     * <p><b>{@code kind} is a String, not an enum, and that is deliberate.</b> The enum is
+     * {@code ChangeKind} in {@code spire-workspace}, and this module depends on nothing — it is the
+     * base every service builds on. Mirroring the enum here would create two closed sets to keep in
+     * step, which is the drift {@code RunFailureCause} exists to prevent rather than to repeat. The
+     * value is a string on the wire either way, since the publisher writes JSON.
+     *
+     * <p>Null means the producer did not say. That is a real state: a row written before this
+     * change carries a path and no kind, and inventing one would be worse than admitting it.
+     */
+    record BlockedChange(String path, String kind) {
+
+        public BlockedChange {
+            Objects.requireNonNull(path, "path");
+        }
+    }
+
+    /**
      * A finished run.
      *
-     * <p>{@code pushedRef} is null when the gate refused, and {@code blockedPaths} then names why.
+     * <p>{@code pushedRef} is null when the gate refused, and {@code blocked} then names why —
+     * each path with what the run did to it.
+     *
+     * <p><b>{@code changedPaths} deliberately carries no kind.</b> Nothing reads it but a count in
+     * one log line: it is not stored, not projected and not shown. {@code blocked} is the operator
+     * surface, so it is the one that had to grow. Giving both the richer type would be symmetry
+     * for its own sake, and a wire field nothing reads is a field that rots.
      *
      * <p><b>{@code tokenUsage} is nullable, and null IS unknown.</b> The shape this replaces was
      * {@code Long inputTokens, Long outputTokens, boolean usageUnknown} — two representations of one
@@ -58,19 +89,34 @@ public sealed interface RunResult {
      * before this change meant. {@code RunResult} is a bus type under ADR-014 short retention, not a
      * persisted domain event, so nothing replays through it from an event store.
      *
+     * <p><b>{@code blocked} was {@code List<String> blockedPaths}, and that rename is NOT</b>
+     * <b>backward-compatible — which is fine here, for a reason worth stating.</b> The snapshot gate
+     * fired on it, correctly: renaming or retyping a component normally means bumping
+     * {@code eventVersion} and writing an upcaster (ADR-013), because persisted events replay
+     * through these types. {@code RunResult} is not one of those. It is a bus type under ADR-014
+     * short retention, never written to the event store and never replayed — the same argument
+     * {@code agentUnobserved} was appended under, made explicit rather than inherited.
+     *
+     * <p>What it DOES cost is a rolling upgrade: a refused-run result produced by an old worker and
+     * read by a new orchestrator has no {@code blocked} field, so it fails to deserialize and the
+     * never-throwing deserializer routes it to {@code cs.dlq}, where it is visible and replayable
+     * once both sides are new. That is the right failure. Defaulting the field to empty instead
+     * would make {@link #refused()} answer false for a run the gate DID refuse, and the row would
+     * be written as "delivered nothing" — a silent lie in place of a loud stop.
+     *
      * <p>There is deliberately <b>no shorter constructor</b>. Adding a component to a wire record
      * silently drops it at every rebuild site while the convenience constructors stay valid — the
      * trap this repository paid for on {@code ReviewResult}. Rebuild through {@link
      * #withAgentUnobserved(boolean)}, which enumerates the components once, next to the record.
      */
     record RunFinished(String runId, String pushedRef, List<String> changedPaths,
-                       List<String> blockedPaths, Map<String, Long> tokenUsage,
+                       List<BlockedChange> blocked, Map<String, Long> tokenUsage,
                        boolean agentUnobserved) implements RunResult {
 
         public RunFinished {
             Objects.requireNonNull(runId, "runId");
             changedPaths = List.copyOf(Objects.requireNonNull(changedPaths, "changedPaths"));
-            blockedPaths = List.copyOf(Objects.requireNonNull(blockedPaths, "blockedPaths"));
+            blocked = List.copyOf(Objects.requireNonNull(blocked, "blocked"));
             if (tokenUsage != null) {
                 if (tokenUsage.isEmpty()) {
                     // An empty map is not a measurement. Allowing it would make "measured nothing"
@@ -81,9 +127,9 @@ public sealed interface RunResult {
                 }
                 tokenUsage = Map.copyOf(tokenUsage);
             }
-            if (pushedRef != null && !blockedPaths.isEmpty()) {
+            if (pushedRef != null && !blocked.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "a run cannot have both pushed and been refused: " + pushedRef + " / " + blockedPaths);
+                        "a run cannot have both pushed and been refused: " + pushedRef + " / " + blocked);
             }
         }
 
@@ -94,7 +140,7 @@ public sealed interface RunResult {
 
         /** Whether the push gate refused this run. */
         public boolean refused() {
-            return pushedRef == null && !blockedPaths.isEmpty();
+            return pushedRef == null && !blocked.isEmpty();
         }
 
         /** Whether this run both delivered work and left the agent's own outcome unobserved. */
@@ -104,7 +150,7 @@ public sealed interface RunResult {
 
         /** Rebuild carrying a different observation flag, enumerating the components once. */
         public RunFinished withAgentUnobserved(boolean unobserved) {
-            return new RunFinished(runId, pushedRef, changedPaths, blockedPaths, tokenUsage, unobserved);
+            return new RunFinished(runId, pushedRef, changedPaths, blocked, tokenUsage, unobserved);
         }
     }
 

@@ -359,6 +359,28 @@ directories.
    sentinel file to know the agent finished.
 6. **The agent image carries the repository's toolchain**, or `verify` cannot run and back-pressure
    does not exist.
+7. **Give the worker's container runtime a disk the fleet can afford to lose**, because on the
+   Docker arm the unit's shared volumes are not bounded and cannot portably be.
+
+   `RunUnitSpec.diskBytes` is enforced — memory, CPU, process count and now disk are all declared,
+   and "unlimited is not a limit" refuses a spec without one. What differs is how much of it an arm
+   can spend. A size-bounded **tmpfs** is the only enforcement that travels (a write past `size=`
+   gets `ENOSPC`, identically on Docker Desktop for Windows and macOS, native Linux and rootless
+   Docker), and on **Kubernetes** it covers the whole unit: `emptyDir` is a *pod* volume, so it
+   survives an init container exiting, and `medium: Memory` with `sizeLimit` bounds the shared
+   workspace as well as `/tmp`.
+
+   On **Docker** it covers `/tmp` only. Two things were measured rather than assumed:
+   `--storage-opt size=` needs xfs with `pquota` and so fails at container creation on Docker
+   Desktop (overlay2 on ext4); and a tmpfs-backed local volume is dropped when the last container
+   using it stops, so a tmpfs `/workspace` would wipe the clone between `init` exiting and the agent
+   starting — §3's ordering makes those sequential. A broken run in place of an unbounded one.
+
+   So until a keeper container or an overlapped init lands
+   (`techdebt/spire-runtime-docker/2-3-…`), one run can still fill the daemon's disk and take every
+   concurrent run with it. Run that daemon on a dedicated disk, or on an xfs `pquota` root so
+   `--storage-opt size=` becomes available. **This is a deployment property this project cannot
+   enforce in code**, which is what this section is for.
 
 ---
 

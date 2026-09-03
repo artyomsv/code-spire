@@ -10,6 +10,8 @@ import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunHandle;
+import dev.codespire.runtime.RunRuntime;
+import dev.codespire.runtime.RunRuntimeContract;
 import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -36,8 +38,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Docker, which is the thing most likely to be wrong.
  *
  * <p>Pulls {@code alpine:3.20} on first run.
+ *
+ * <p><b>It extends {@link RunRuntimeContract}</b>, which is where the rules every arm must obey
+ * live. What stays here is what needs THIS arm's world to state — a shell, a writable host path,
+ * a private registry, a {@code HostConfig} to inspect. What moved out is what any arm must satisfy,
+ * so a Kubernetes arm inherits the rules instead of being written against three disagreeing fakes.
  */
-class DockerRunRuntimeIT {
+class DockerRunRuntimeIT extends RunRuntimeContract {
 
     private static final String IMAGE = "alpine:3.20";
 
@@ -49,7 +56,18 @@ class DockerRunRuntimeIT {
     void tearDownEveryUnit() {
         // Containers are created withAutoRemove(false) so salvage can read an exit code, which
         // means nothing reclaims them but destroy. A failed assertion must not leak a unit.
-        started.forEach(runtime::destroy);
+        //
+        // Guarded per unit: a test that destroys its own unit makes the second destroy throw, and an
+        // unguarded forEach would then skip every LATER unit in the list -- each one a sandbox
+        // holding a model credential that nothing reclaims. RunRuntimeContract's own teardown says
+        // exactly this, and this one did not.
+        for (RunHandle handle : started) {
+            try {
+                runtime.destroy(handle);
+            } catch (RuntimeException alreadyGone) {
+                // The ordinary case for a test that destroyed its own unit.
+            }
+        }
     }
 
     private RunUnitSpec unit(String id, String agentScript, String publisherScript) {
@@ -76,7 +94,30 @@ class DockerRunRuntimeIT {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", publisherScript),
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
-                enterprise, 256L * 1024 * 1024, 1_000_000_000L, wallClock);
+                enterprise, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024, wallClock);
+    }
+
+    @Override
+    protected RunRuntime runtime() {
+        return runtime;
+    }
+
+    /**
+     * The contract's quiet unit: everything exits 0 promptly.
+     *
+     * <p>{@code sleep 30} in the publisher, not an immediate exit — several contract rules are
+     * about a unit that still EXISTS (discoverable, salvaged but not destroyed, cancelled but not
+     * destroyed), and a unit whose containers have all exited is still held by this arm but gives
+     * cancel nothing to act on.
+     */
+    @Override
+    protected RunUnitSpec quietUnit(String runId) {
+        return unit(runId, "sleep 30", "sleep 30");
+    }
+
+    @Override
+    protected RunUnitSpec echoingUnit(String runId, String marker) {
+        return unit(runId, "echo " + marker, "true");
     }
 
     private RunHandle start(RunUnitSpec spec) {
@@ -100,7 +141,7 @@ class DockerRunRuntimeIT {
         ContainerSpec noop = new ContainerSpec(image, List.of("sh", "-c", "true"), Map.of(), List.of());
         RunHandle handle = start(new RunUnitSpec("pull-1", noop,
                 new ContainerSpec(image, List.of("sh", "-c", "echo pulled"), Map.of(), List.of()),
-                noop, EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L,
+                noop, EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024,
                 Duration.ofMinutes(2)));
 
         Finalization finalization = runtime.salvage(handle);
@@ -293,7 +334,7 @@ class DockerRunRuntimeIT {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(),
                         List.of(Mount.writable("ws", "/workspace"))),
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(), List.of()),
-                EnterpriseEnvironment.NONE, 256L * 1024 * 1024, 1_000_000_000L,
+                EnterpriseEnvironment.NONE, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
                 Duration.ofMinutes(1));
 
         assertThrows(IllegalStateException.class, () -> runtime.create(spec));
@@ -414,6 +455,69 @@ class DockerRunRuntimeIT {
                         .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=run_unit5"))
                         .exec().getVolumes().isEmpty(),
                 "including its volumes, which no map remembered either");
+    }
+
+    /**
+     * The disk bound is a REAL bound, asserted against the kernel rather than against a HostConfig.
+     *
+     * <p>{@code SandboxControlsTest} asserts the option is set, which is the half a JVM can see. It
+     * cannot see whether the daemon honours it, and "the flag is present" is exactly the shape of
+     * assertion this milestone has been caught by three times — the CA bundle test proved the file
+     * was mounted and not that anything trusted it.
+     *
+     * <p>The unit declares 64 MiB, so a 128 MiB write must fail. {@code dd} reports how much it
+     * actually copied, so a bound that silently did nothing shows up as the full write succeeding.
+     *
+     * <p>Written as the AGENT, which is the only container this bound applies to: the publisher
+     * clones into {@code java.io.tmpdir}, so bounding its {@code /tmp} would fail a large
+     * repository after the model had already been paid. See {@code DockerRunRuntime.tmpFsFor}.
+     */
+    @Test
+    void aWritePastTheDiskBoundFailsRatherThanReachingTheHost() {
+        RunHandle handle = start(unit("run_disk_bound",
+                "dd if=/dev/zero of=/tmp/fill bs=1M count=128 2>&1; echo AGENT-DONE", "true"));
+
+        List<String> lines = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, lines::add);
+        String output = String.join(System.lineSeparator(), lines);
+
+        assertTrue(output.contains("AGENT-DONE"), "the agent did not run at all: " + output);
+        assertTrue(output.contains("No space left on device"),
+                "a 128 MiB write into a 64 MiB /tmp must be refused by the kernel. Without the "
+                        + "bound this succeeds and the same command with count=500000 fills the "
+                        + "daemon's disk. Saw: " + output);
+    }
+
+    /**
+     * Cancel actually stops the containers — the half {@link RunRuntimeContract} cannot state.
+     *
+     * <p>The contract asserts only that a cancelled unit is not DESTROYED, because
+     * {@code discoverUnits} answers the same for a running and a stopped container on this arm, so
+     * a {@code cancel} implemented as {@code {}} satisfies it — the contract contains its own
+     * proof of that, since {@code salvageNeverDestroys} makes the identical assertion after a call
+     * that stops nothing. Deciding whether a process really stopped needs this arm's own
+     * vocabulary, which is why it lives here.
+     *
+     * <p>Asserted on the DAEMON's view rather than on a log line: an agent that happened to exit on
+     * its own would produce the same output and prove nothing.
+     */
+    @Test
+    void cancelActuallyStopsTheContainers() {
+        RunHandle handle = start(unit("run_cancel_stops", "sleep 300", "sleep 300"));
+
+        runtime.cancel(handle);
+
+        for (String role : List.of("agent", "publisher")) {
+            String containerId = runtime.client().listContainersCmd().withShowAll(true)
+                    .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, "run_cancel_stops",
+                            DockerRunRuntime.ROLE_LABEL, role))
+                    .exec().getFirst().getId();
+            Boolean running = runtime.client().inspectContainerCmd(containerId).exec()
+                    .getState().getRunning();
+            assertEquals(Boolean.FALSE, running,
+                    "the " + role + " container is still running after cancel; an operator who "
+                            + "stopped this run is still being charged for it");
+        }
     }
 
     @Test

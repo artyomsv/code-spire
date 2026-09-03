@@ -243,6 +243,7 @@ class PushGateTest {
         covered.put("action.yaml", "action.yaml");
         covered.put("**/action.yml", "tools/build/action.yml");
         covered.put("**/action.yaml", "tools/build/action.yaml");
+        covered.put(".tekton/**", ".tekton/pull-request.yaml");
         covered.put(".gitlab-ci.yml", ".gitlab-ci.yml");
         covered.put(".gitlab/**", ".gitlab/agents/x.yaml");
         covered.put("bitbucket-pipelines.yml", "bitbucket-pipelines.yml");
@@ -290,6 +291,87 @@ class PushGateTest {
 
         assertEquals(List.of(new ChangedPath(".github/workflows/ci.yml", ChangeKind.DELETED)),
                 decision.blocked());
+    }
+
+    /**
+     * A link ABOVE a protected directory is refused, though no glob matches its path.
+     *
+     * <p>{@code .github -> payload/} appears in the diff as the single path {@code .github}, which
+     * is not itself a protected directory — every floor glob for it carries the
+     * {@code .github/workflows/} prefix. So the gate saw one unremarkable path while a forge that
+     * follows the link would read its workflows out of agent-authored content. This is the
+     * ancestor branch of the rule.
+     *
+     * <p>The two symlink cases were once named for each other's branch, which is harmless to
+     * coverage and expensive to a reader auditing a security floor.
+     */
+    @Test
+    void aSymlinkAboveAProtectedDirectoryIsRefused() {
+        ChangeSet linked = new ChangeSet(List.of(
+                new ChangedPath(".github", ChangeKind.ADDED, true)));
+
+        assertFalse(PushGate.decide(linked, List.of()).allowed());
+    }
+
+    /** AT one, too: {@code .gitlab} IS a protected directory, so this is the equality branch. */
+    @Test
+    void aSymlinkAtAProtectedDirectoryIsRefused() {
+        ChangeSet linked = new ChangeSet(List.of(
+                new ChangedPath(".gitlab", ChangeKind.RENAMED_TO, true)));
+
+        assertFalse(PushGate.decide(linked, List.of()).allowed());
+    }
+
+    /** A submodule entry redirects a read the same way, and is judged the same way. */
+    @Test
+    void aGitlinkAtAProtectedDirectoryIsRefused() {
+        ChangeSet linked = new ChangeSet(List.of(
+                new ChangedPath(".circleci", ChangeKind.ADDED, true)));
+
+        assertFalse(PushGate.decide(linked, List.of()).allowed());
+    }
+
+    /**
+     * The MODE is what decides, not the path.
+     *
+     * <p>This is the case that separates the rule from a hidden new glob. A repository may hold an
+     * ordinary file called {@code .github} — it is not CI configuration and it redirects nothing,
+     * so refusing it would be the gate growing a rule nobody wrote. Deleting the {@code symlink()}
+     * check makes the case above pass for the wrong reason; deleting the mode makes this one fail.
+     */
+    @Test
+    void anOrdinaryFileNamedLikeAProtectedDirectoryIsAllowed() {
+        ChangeSet plain = new ChangeSet(List.of(
+                new ChangedPath(".github", ChangeKind.ADDED, false)));
+
+        assertTrue(PushGate.decide(plain, List.of()).allowed());
+    }
+
+    /** And a link that redirects nothing protected is ordinary work. */
+    @Test
+    void aSymlinkNowhereNearTheFloorIsAllowed() {
+        ChangeSet linked = new ChangeSet(List.of(
+                new ChangedPath("docs/latest", ChangeKind.ADDED, true)));
+
+        assertTrue(PushGate.decide(linked, List.of()).allowed());
+    }
+
+    /**
+     * The directory list is derived from the floor, so a new floor entry is covered the same day.
+     *
+     * <p>A hand-written second list is the shape this repository has already been bitten by: the
+     * two drift, and the drift is invisible until a symlink walks through the half nobody updated.
+     */
+    @Test
+    void everyDirectoryShapedFloorEntryContributesAProtectedDirectory() {
+        long directoryGlobs = ProtectedPaths.CI_FLOOR.stream()
+                .filter(glob -> glob.endsWith("/**") && !glob.contains("*/"))
+                .count();
+
+        assertEquals(directoryGlobs, ProtectedPaths.CI_DIRECTORIES.size());
+        assertTrue(ProtectedPaths.CI_DIRECTORIES.contains(".tekton"));
+        assertTrue(ProtectedPaths.isAtOrAboveAProtectedDirectory(".GITHUB"),
+                "case-insensitive, like every other match this gate makes");
     }
 
     @Test

@@ -1,5 +1,6 @@
 package dev.codespire.runworker;
 
+import dev.codespire.contract.event.RunResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -46,7 +47,10 @@ class PublisherOutcomeTest {
 
         assertTrue(outcome.refused());
         assertTrue(outcome.pushedRef().isEmpty(), "a refused run reports no pushed ref");
-        assertEquals(List.of("Jenkinsfile"), outcome.blockedPaths());
+        assertEquals(List.of(new RunResult.BlockedChange("Jenkinsfile", "MODIFIED")),
+                outcome.blocked(),
+                "the kind the publisher reported must survive the parse — it is the whole reason"
+                        + " the publisher emits an object rather than a bare path");
     }
 
     @Test

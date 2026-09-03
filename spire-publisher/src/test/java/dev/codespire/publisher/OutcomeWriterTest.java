@@ -1,5 +1,6 @@
 package dev.codespire.publisher;
 
+import dev.codespire.secrets.SecretScrub;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -25,7 +26,7 @@ class OutcomeWriterTest {
         String line = captured.toString(StandardCharsets.UTF_8);
         assertFalse(line.contains(SECRET), line);
         assertTrue(line.contains("\"cause\":\"PUSH_FAILED\""), line);
-        assertTrue(line.contains("https://bot:***@host/x"), line);
+        assertTrue(line.contains("https://bot:" + SecretScrub.REDACTED + "@host/x"), line);
     }
 
     @Test
@@ -44,8 +45,8 @@ class OutcomeWriterTest {
         String line = captured.toString(StandardCharsets.UTF_8);
         assertFalse(line.contains(encoded), line);
         assertFalse(line.contains(basic), line);
-        assertTrue(line.contains("https://bot:***@host/x"), line);
-        assertTrue(line.contains("Basic ***"), line);
+        assertTrue(line.contains("https://bot:" + SecretScrub.REDACTED + "@host/x"), line);
+        assertTrue(line.contains("Basic " + SecretScrub.REDACTED), line);
     }
 
     @Test
@@ -56,5 +57,38 @@ class OutcomeWriterTest {
         writer.failed("BUNDLE_UNREADABLE", "EmptyBundle: nothing to fetch");
 
         assertTrue(captured.toString(StandardCharsets.UTF_8).contains("nothing to fetch"));
+    }
+
+    /**
+     * Below the shared floor nothing is redacted, and that is BOTH the decision and the proof.
+     *
+     * <p><b>The decision.</b> The publisher's own copy had no length floor, so this is the single
+     * behaviour it loses by moving to the shared class. Pinned here so the next reader meets a
+     * decision rather than a surprise: redacting a short string turns every innocent occurrence of
+     * it into the marker and leaves an operator a failure detail they cannot read. No forge issues a
+     * token this short, and where a caller CAN refuse one outright it does — see
+     * {@code EnterpriseEnvironmentConfig}, which fails startup on a proxy password below the floor.
+     *
+     * <p><b>The proof.</b> It is also the one assertion here that separates the shared class from a
+     * local copy. Every other test in this file supplies one long secret and asserts the marker,
+     * which the deleted private method satisfied just as well. This one does not: that method would
+     * have redacted {@code short}, because it had no floor to stop it.
+     *
+     * <p>Ordering — longest form first, so one secret containing another is fully redacted — is a
+     * real difference between the two copies and is NOT asserted here, because it cannot be reached
+     * through this class: {@link OutcomeWriter} holds exactly one credential. It is covered where it
+     * is reachable, in {@code SecretScrubTest}. An earlier version of this test claimed to assert it
+     * and did not.
+     */
+    @Test
+    void aSecretBelowTheSharedFloorIsNotScrubbed() {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8),
+                "bot", "short");
+
+        writer.failed("PUSH_REJECTED", "remote rejected https://bot:short@host/x");
+
+        assertTrue(captured.toString(StandardCharsets.UTF_8).contains("short"),
+                "a secret below SecretScrub.MIN_SECRET_LENGTH is deliberately left alone");
     }
 }

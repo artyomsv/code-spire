@@ -4,6 +4,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -17,6 +18,8 @@ import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -28,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The publisher's own pristine clone of the repository.
@@ -120,6 +124,17 @@ public final class PublishRepo implements AutoCloseable {
      * git repository selects the local transport, which reads agent-authored config and follows
      * {@code objects/info/alternates}, instead of the bundle transport. A symlink points the read at
      * any path the publisher can reach.
+     *
+     * <p><b>The check and the open are not one operation, so the open must not follow links on its
+     * own account.</b> This path lives on {@code /handoff}, which the agent writes, and the two
+     * calls are two syscalls: a rename-over in between made {@code Files.newInputStream} — which
+     * FOLLOWS symlinks — copy an arbitrary file the publisher can read, and its own
+     * {@code /proc/self/environ} carries the git secret. {@link #openWithoutFollowing} closes that
+     * by refusing a link at the open itself, so winning the race gains nothing.
+     *
+     * <p>What remains, stated rather than implied: a FIFO substituted after the attribute check
+     * still opens, and a read from one with no writer blocks. That is a hang bounded by the run's
+     * wall clock, not a disclosure, and NIO cannot express a non-blocking open.
      */
     private Path copyOutOfReach(Path bundle, long maxBytes) throws IOException {
         BasicFileAttributes attributes =
@@ -131,7 +146,7 @@ public final class PublishRepo implements AutoCloseable {
         Path copy = privateStore.resolve("incoming.bundle");
         long copied = 0;
         byte[] buffer = new byte[8192];
-        try (InputStream in = Files.newInputStream(bundle);
+        try (InputStream in = Channels.newInputStream(openWithoutFollowing(bundle));
              OutputStream out = Files.newOutputStream(copy,
                      StandardOpenOption.CREATE,
                      StandardOpenOption.TRUNCATE_EXISTING,
@@ -148,6 +163,23 @@ public final class PublishRepo implements AutoCloseable {
             }
         }
         return copy;
+    }
+
+    /**
+     * Opens a file for reading and refuses a symlink in the SAME operation.
+     *
+     * <p>{@code Set.of}, not {@code EnumSet.of}: {@link StandardOpenOption} and
+     * {@link LinkOption} are two different enums, so the enum-set form does not compile. Both
+     * implement {@code OpenOption}, which is what this set is.
+     *
+     * <p>Package-private so a test can drive the open ALONE. Routing a test through
+     * {@link #fetchBundle} would be satisfied by the attribute check that runs before it, and so
+     * would pass with this open still following links.
+     *
+     * @throws IOException if the path is a symlink, a directory, or unreadable
+     */
+    static SeekableByteChannel openWithoutFollowing(Path file) throws IOException {
+        return Files.newByteChannel(file, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
     }
 
     /**
@@ -208,21 +240,24 @@ public final class PublishRepo implements AutoCloseable {
             for (DiffEntry entry : diff.scan(
                     walk.parseCommit(ObjectId.fromString(baseCommit)).getTree(),
                     walk.parseCommit(ObjectId.fromString(sha)).getTree())) {
+                // The mode of the side the path comes from. A DELETE has no new mode, and a
+                // rename has one on each side — a file renamed onto a symlink and a symlink
+                // renamed onto a file are different facts, and the gate judges both sides.
                 switch (entry.getChangeType()) {
-                    case ADD -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED));
-                    case MODIFY -> paths.add(safe(entry.getNewPath(), ChangeKind.MODIFIED));
-                    case DELETE -> paths.add(safe(entry.getOldPath(), ChangeKind.DELETED));
+                    case ADD -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED, entry.getNewMode()));
+                    case MODIFY -> paths.add(safe(entry.getNewPath(), ChangeKind.MODIFIED, entry.getNewMode()));
+                    case DELETE -> paths.add(safe(entry.getOldPath(), ChangeKind.DELETED, entry.getOldMode()));
                     case RENAME -> {
                         // BOTH sides. A rename INTO a protected path is the obvious evasion, and a
                         // rename OUT of one deletes it.
-                        paths.add(safe(entry.getOldPath(), ChangeKind.RENAMED_FROM));
-                        paths.add(safe(entry.getNewPath(), ChangeKind.RENAMED_TO));
+                        paths.add(safe(entry.getOldPath(), ChangeKind.RENAMED_FROM, entry.getOldMode()));
+                        paths.add(safe(entry.getNewPath(), ChangeKind.RENAMED_TO, entry.getNewMode()));
                     }
                     // A COPY leaves the source untouched, so reporting RENAMED_FROM for it would
                     // assert a move that did not happen — and the gate refuses either side of a
                     // rename, so copying a workflow to docs/example.yml would kill a run that
                     // changed no CI at all. It is an addition, and only the new path is new.
-                    case COPY -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED));
+                    case COPY -> paths.add(safe(entry.getNewPath(), ChangeKind.ADDED, entry.getNewMode()));
                 }
             }
             return new ChangeSet(paths);
@@ -287,7 +322,7 @@ public final class PublishRepo implements AutoCloseable {
      * a glob against something the forge will not write is how a gate comes to disagree with the
      * repository it protects.
      */
-    private static ChangedPath safe(String path, ChangeKind kind) {
+    private static ChangedPath safe(String path, ChangeKind kind, FileMode mode) {
         if (path == null || path.isBlank() || "/dev/null".equals(path)) {
             throw new UnsafeTreePathException(String.valueOf(path));
         }
@@ -302,7 +337,13 @@ public final class PublishRepo implements AutoCloseable {
                 throw new UnsafeTreePathException(path);
             }
         }
-        return new ChangedPath(path, kind);
+        // GITLINK too: a submodule entry at or above a protected directory redirects what a
+        // forge reads there just as a symlink does, and `actions/checkout submodules:true`
+        // fetches it. Adding a NEW submodule needs a .gitmodules edit, which the floor already
+        // refuses, so this is defence in depth rather than a hole -- but the floor exists
+        // precisely because one layer is not enough.
+        return new ChangedPath(path, kind,
+                FileMode.SYMLINK.equals(mode) || FileMode.GITLINK.equals(mode));
     }
 
     /**

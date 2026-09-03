@@ -3,10 +3,13 @@ package dev.codespire.runworker;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.event.RunResult;
 import org.jboss.logging.Logger;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -36,9 +39,19 @@ public final class PublisherOutcome {
 
     private static final Logger LOG = Logger.getLogger(PublisherOutcome.class);
 
+    /** Longer than any real path, short enough that a thousand of them stay readable. */
+    private static final int MAX_PATH_CHARS = 512;
+
+    /** The longest real value is RENAMED_FROM; anything longer is not a kind. */
+    private static final int MAX_KIND_CHARS = 32;
+
     private final Set<String> changedPaths = new LinkedHashSet<>();
 
-    private final Set<String> blockedPaths = new LinkedHashSet<>();
+    /**
+     * Keyed by path, so a path refused twice is listed once — the deduplication the set gave
+     * before, kept now that the value carries the kind alongside it.
+     */
+    private final Map<String, RunResult.BlockedChange> blocked = new LinkedHashMap<>();
 
     private int omittedPaths;
 
@@ -73,7 +86,7 @@ public final class PublisherOutcome {
                 failedAfterPush = false;
             }
             case "gate_refused" -> {
-                collect(node.path("blocked"), blockedPaths);
+                collectBlocked(node.path("blocked"));
                 collect(node.path("changed"), changedPaths);
             }
             case "failed" -> {
@@ -84,6 +97,51 @@ public final class PublisherOutcome {
             default -> {
             }
         }
+    }
+
+    /**
+     * The refused paths, each WITH what the run did to it.
+     *
+     * <p>Separate from {@link #collect} because this is the operator-facing list and the other is
+     * not. The kind used to be read out of this JSON on the very next line and dropped, while
+     * OutcomeWriter, PushDecision and PushGate each carried a javadoc arguing for it: "ci.yml was
+     * blocked" does not say whether the factory edited that workflow or deleted it.
+     *
+     * <p>A legacy publisher wrote a bare string per entry rather than an object. That reads back as
+     * a path with a null kind, which is what it is — the alternative is inventing one.
+     */
+    private void collectBlocked(JsonNode array) {
+        if (!array.isArray()) {
+            return;
+        }
+        for (JsonNode entry : array) {
+            String path = entry.isObject() ? entry.path("path").asText(null) : entry.asText(null);
+            if (path == null || blocked.containsKey(path)) {
+                continue;
+            }
+            if (blocked.size() >= MAX_PATHS) {
+                omittedPaths++;
+                continue;
+            }
+            String kind = entry.isObject() ? entry.path("kind").asText(null) : null;
+            blocked.put(path, new RunResult.BlockedChange(clip(path, MAX_PATH_CHARS),
+                    clip(kind, MAX_KIND_CHARS)));
+        }
+    }
+
+    /**
+     * Bounds one entry, because the count cap alone does not bound the TEXT.
+     *
+     * <p>These reach an operator's attention row as one joined sentence, and both values come from
+     * a branch an agent authored. A thousand paths was already capped; a thousand paths each a
+     * megabyte long was not. Clipped rather than rejected: a truncated path still tells an operator
+     * which file tripped the gate, and dropping the entry would lose that.
+     */
+    private static String clip(String value, int max) {
+        if (value == null || value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, max) + "…";
     }
 
     private void collect(JsonNode array, Set<String> into) {
@@ -104,7 +162,7 @@ public final class PublisherOutcome {
     }
 
     public boolean refused() {
-        return !blockedPaths.isEmpty();
+        return !blocked.isEmpty();
     }
 
     public Optional<String> pushedRef() {
@@ -115,8 +173,8 @@ public final class PublisherOutcome {
         return List.copyOf(changedPaths);
     }
 
-    public List<String> blockedPaths() {
-        return List.copyOf(blockedPaths);
+    public List<RunResult.BlockedChange> blocked() {
+        return List.copyOf(blocked.values());
     }
 
     /** Paths beyond {@link #MAX_PATHS} that the lists do not carry; logged by the launcher, never lost silently. */

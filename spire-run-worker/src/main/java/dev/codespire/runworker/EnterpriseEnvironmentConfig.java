@@ -3,6 +3,7 @@ package dev.codespire.runworker;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.HostMount;
 import dev.codespire.runtime.RegistryCredential;
+import dev.codespire.secrets.SecretScrub;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.event.Observes;

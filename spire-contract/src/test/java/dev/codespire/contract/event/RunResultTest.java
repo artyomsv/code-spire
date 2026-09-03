@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -17,7 +18,17 @@ class RunResultTest {
     private static RunResult.RunFinished finished(String pushedRef, List<String> blocked,
                                                   Map<String, Long> usage) {
         return new RunResult.RunFinished("run::github:a/b:s:1", pushedRef,
-                List.of("src/Foo.java"), blocked, usage, false);
+                List.of("src/Foo.java"),
+                blocked.stream().map(path -> new RunResult.BlockedChange(path, "MODIFIED")).toList(),
+                usage, false);
+    }
+
+    @Test
+    void aBlockedChangeNeedsAPathAndToleratesAnUnknownKind() {
+        // Null kind is a real state, not a gap to fill: a row written before the kind was
+        // carried has a path and nothing else, and inventing one would be worse than saying so.
+        assertDoesNotThrow(() -> new RunResult.BlockedChange("Jenkinsfile", null));
+        assertThrows(NullPointerException.class, () -> new RunResult.BlockedChange(null, "ADDED"));
     }
 
     @Test

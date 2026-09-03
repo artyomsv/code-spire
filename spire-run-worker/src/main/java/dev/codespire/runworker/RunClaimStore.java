@@ -7,6 +7,7 @@ import jakarta.inject.Inject;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
@@ -50,6 +51,34 @@ public class RunClaimStore {
         } catch (SQLException e) {
             LOG.warnf(e, "could not release the %s claim for %s; it stays taken, so the action it "
                     + "guards will not be retried automatically", slot, runId);
+        }
+    }
+
+    /**
+     * Whether a slot is already taken, WITHOUT taking it.
+     *
+     * <p>Reading a claim rather than competing for one is a different question from
+     * {@link #claim}: it asks "has something already happened", not "may I be the one to do it".
+     * The cancel slot is the case — the dispatcher must not consume it, because a cancel
+     * recorded for a run that is redelivered must still stop the second delivery.
+     *
+     * <p><b>Fails CLOSED, in the direction that spends no money.</b> An unreadable claim table
+     * throws, exactly as {@link #claim} does, and the dispatcher turns that into a terminal
+     * failure the operator can retry. Answering "not cancelled" on a database fault would run an
+     * agent an operator had explicitly stopped, which is the more expensive of the two mistakes
+     * and the harder to notice.
+     */
+    public boolean taken(String runId, String slot) {
+        String sql = "SELECT 1 FROM runworker.run_claim WHERE run_id = ? AND slot = ?";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, runId);
+            statement.setString(2, slot);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the " + slot + " claim for " + runId, e);
         }
     }
 

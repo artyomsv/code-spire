@@ -1728,7 +1728,10 @@ against a forge, authenticated as a machine account.
 
 ### Observe — exit criterion 2
 
-11. `GET /api/runs/<runId>` reads `push_gate_refused` with `blockedPaths: [".github/workflows/factory.yml"]`
+11. `GET /api/runs/<runId>` reads `push_gate_refused` with
+    `blocked: [{"path": ".github/workflows/factory.yml", "kind": "ADDED"}]` — the `kind` says
+    whether the factory edited that file or deleted it, which is the difference between a bad fix
+    and an attempt to remove what reviews the fix
     and `pushedRef: null`. The forge has **no** `spire/m0-ci` branch. The attention bell shows
     `RUN_PUSH_GATE_REFUSED` naming the path; `POST /api/runs/<runId>/attention-ack` clears it.
 12. The refusal is not a failure: `failureCause` is null. The run did what it was asked and the

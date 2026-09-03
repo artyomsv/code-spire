@@ -17,6 +17,7 @@ import dev.codespire.contract.event.RunEventRecord;
 import java.util.List;
 import java.util.function.Consumer;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -181,10 +182,45 @@ class RunControlListenerTest {
     /** Collects the transcript lines an operator would see. */
     private final List<RunEventRecord> notes = new ArrayList<>();
 
+    /**
+     * Records what the listener writes durably, and throws from everything else.
+     *
+     * <p>The inherited methods open a real {@code DataSource}. A fake that answered them with a
+     * plausible no-op is how this milestone shipped a feature that was green and inert seven times
+     * over — once silently, under a catch — so anything the listener is not expected to call fails
+     * loudly instead.
+     */
+    private static final class FakeClaims extends RunClaimStore {
+        final List<String> claimed = new ArrayList<>();
+        RuntimeException failWith;
+
+        @Override
+        public boolean claim(String runId, String slot) {
+            if (failWith != null) {
+                throw failWith;
+            }
+            return claimed.add(runId + "/" + slot);
+        }
+
+        @Override
+        public boolean taken(String runId, String slot) {
+            throw new UnsupportedOperationException(
+                    "the listener records a cancel; reading one is the dispatcher's job");
+        }
+
+        @Override
+        public void release(String runId, String slot) {
+            throw new UnsupportedOperationException("the listener releases nothing");
+        }
+    }
+
+    private final FakeClaims claims = new FakeClaims();
+
     private RunControlListener listener() {
         RunControlListener listener = new RunControlListener();
         listener.runtime = runtime;
         listener.registry = registry;
+        listener.claims = claims;
         listener.harnesses = new HarnessRegistry() {
             @Override
             public dev.codespire.harness.HarnessAdapter forName(String name) {
@@ -274,6 +310,45 @@ class RunControlListenerTest {
         listener().onControl(CANCEL);
 
         assertTrue(registry.wasCancelled(RUN_ID));
+    }
+
+    /**
+     * A cancel for a run no replica is executing is RECORDED, not merely logged.
+     *
+     * <p>This is the half that used to be lost. The registry is populated only once {@code create}
+     * returns, and create blocks on the init clone for up to fifteen minutes — so a run queued on
+     * the topic, cloning, or dispatch-uncertain with its record unconsumed reached this branch,
+     * which wrote a debug line and returned. Nothing durable, and the endpoint had already answered
+     * 202. The dispatcher reads this claim before it creates anything.
+     *
+     * <p>The other three cases that reach this branch — late, duplicate, another replica's — write
+     * the same row, and it is harmless for all three: nothing reads it once the run is over, and
+     * every replica racing to write it is an ON CONFLICT DO NOTHING away from being a no-op.
+     */
+    @Test
+    void aCancelForARunThatHasNotStartedIsRecordedDurably() {
+        // Nothing registered: this replica is not executing it, and cannot tell whether ANY is.
+        listener().onControl(CANCEL);
+
+        assertEquals(List.of(RUN_ID + "/" + RunDispatcher.CANCEL_SLOT), claims.claimed,
+                "a cancel that reaches no live run must survive in the claim table, or the run "
+                        + "starts anyway and spends its whole wall clock");
+        assertTrue(runtime.cancelled.isEmpty(), "there is no sandbox to stop yet");
+    }
+
+    /**
+     * A database fault while recording a cancel is reported, never thrown.
+     *
+     * <p>This channel's failure strategy is {@code ignore}, so an exception escaping here drops the
+     * record with no trace at all — the silence this listener exists to remove. The cancel is not
+     * durable in that case, which is worth a WARN and is not worth also losing every later control
+     * command for the same run.
+     */
+    @Test
+    void aClaimStoreFaultDoesNotEscapeTheControlChannel() {
+        claims.failWith = new IllegalStateException("could not read the claim table");
+
+        assertDoesNotThrow(() -> listener().onControl(CANCEL));
     }
 
     @Test

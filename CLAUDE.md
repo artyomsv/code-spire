@@ -1462,7 +1462,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
     both build failures through, which is also what makes the credential scrub unbypassable.
   - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
     than `succeeded` with no ref — the same call already made for `push_gate_refused`.
-  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V52.
+  - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V53.
   - **The run event stream (`cs.run-events`, `run_event`, V44).** The agent's own output
     reaches an operator live over `/api/ws/runs/{runId}/transcript`, encrypted at rest with the
     run as AAD and swept on a TTL — high-volume by design, so it is bounded rather than durable

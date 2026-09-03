@@ -23,6 +23,7 @@ worker and not in `spire-harness` — the same reason the LLM circuit breaker co
 | `spire-runtime-docker` | Apache-2.0 | adapter | M0 |
 | `spire-runtime-k8s` | Apache-2.0 | adapter | M5 |
 | `spire-workspace` | Apache-2.0 | library | M0 |
+| `spire-secrets` | Apache-2.0 | library | M1 (debt round) |
 | `spire-agent-image` | Apache-2.0 | conformance checker (CLI) | M1 |
 | **`spire-publisher`** | **FSL-1.1-ALv2** | **deployable (sidecar image)** | **M0** |
 | `spire-worksource` | Apache-2.0 | SPI | M3 |
@@ -166,6 +167,34 @@ and nothing in Code Spire has ever pushed a commit. Under ADR-038 the credential
 **dedicated machine account**, never the review bot.
 
 ---
+
+## 9b. `spire-secrets` — one credential scrubber, carrying nothing
+
+Removes a run's credentials from text about to be stored or logged, in the three forms a credential
+takes: the literal, percent-encoded inside a URL, and `base64(user:secret)` in a Basic header. The
+worker's `RunFailed` details and every failure line the publisher writes both go through it.
+
+**Why a module and not a class in an existing one.** The worker and the publisher shared no module
+at all, and the obvious home — `spire-workspace`, which the publisher already depended on — turned
+out to be the wrong one for a reason worth recording. That module exposes JGit as `api`, so
+depending on it put `org.eclipse.jgit` on the run worker's compile and runtime classpath: the
+process whose entire claim is that it runs **no git** (§11, ADR-039) suddenly carried a git library.
+A source scan can refuse an import; it cannot refuse a capability that is merely present, so the
+build guard added alongside was green while the invariant was gone.
+
+So this module depends on the JDK and nothing else. That is what lets an FSL service and an Apache
+library both consume it without either inheriting the other's world, and it is the same argument
+`spire-http` was extracted under: one home for a guard, carried by nothing.
+
+**Enforced.** `spire-arch`'s `RunWorkerRunsNoGitTest` fails the build if `spire-run-worker` takes
+anything at all from `dev.codespire.workspace` — the allowlist is empty, and an entry there would be
+a statement that whatever that module drags onto the classpath is acceptable in a process that must
+hold no working copy.
+
+**One behaviour worth knowing.** A secret shorter than `MIN_SECRET_LENGTH` (8) is not scrubbed at
+all, because redacting a short string turns every innocent occurrence of it into the marker and
+leaves an operator a failure detail they cannot read. Where a caller can refuse a too-short secret
+outright it does — `EnterpriseEnvironmentConfig` fails startup on a proxy password below the floor.
 
 ## 9a. `spire-publisher` — the sidecar that gates and pushes
 

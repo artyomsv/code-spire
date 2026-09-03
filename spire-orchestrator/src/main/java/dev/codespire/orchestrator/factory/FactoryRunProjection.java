@@ -149,7 +149,8 @@ public class FactoryRunProjection {
      *               kept for inspection — the container label was the documented workaround
      *               precisely because this used to be discarded.
      */
-    public record RunView(String runId, String status, String pushedRef, List<String> blockedPaths,
+    public record RunView(String runId, String status, String pushedRef,
+                          List<RunResult.BlockedChange> blocked,
                           String failureCause, String failureDetail, String unitId) {
     }
 
@@ -305,9 +306,10 @@ public class FactoryRunProjection {
 
     private void finished(RunResult.RunFinished finished) {
         if (finished.refused()) {
-            update("UPDATE factory_run SET status = ?, blocked_paths = ?, failure_cause = NULL, failure_detail = NULL,"
+            update("UPDATE factory_run SET status = ?, blocked_changes = ?, failure_cause = NULL, failure_detail = NULL,"
                             + " ended_at = now() WHERE run_id = ? AND " + LIVE,
-                    finished.runId(), PUSH_GATE_REFUSED, String.join("\n", finished.blockedPaths()), finished.runId());
+                    finished.runId(), PUSH_GATE_REFUSED, BlockedChanges.toJson(finished.blocked()),
+                    finished.runId());
             return;
         }
         String status;
@@ -495,7 +497,7 @@ public class FactoryRunProjection {
 
     public Optional<RunView> find(String runId) {
         String sql = """
-                SELECT status, pushed_ref, blocked_paths, failure_cause, failure_detail, unit_id
+                SELECT status, pushed_ref, blocked_changes, failure_cause, failure_detail, unit_id
                   FROM factory_run WHERE run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -504,9 +506,8 @@ public class FactoryRunProjection {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
-                String blocked = rs.getString("blocked_paths");
                 return Optional.of(new RunView(runId, rs.getString("status"), rs.getString("pushed_ref"),
-                        blocked == null ? List.of() : List.of(blocked.split("\n")),
+                        BlockedChanges.fromJson(rs.getString("blocked_changes")),
                         rs.getString("failure_cause"), rs.getString("failure_detail"),
                         rs.getString("unit_id")));
             }

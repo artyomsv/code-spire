@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.attention;
 
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
+import dev.codespire.orchestrator.factory.BlockedChanges;
 import dev.codespire.orchestrator.factory.PoolHealth;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -40,7 +41,7 @@ public class RunAttentionRows {
 
     /** One past the cap is fetched, so the summary row knows there is more without counting it all. */
     private static final String REFUSED_SQL = """
-            SELECT run_id, blocked_paths FROM factory_run
+            SELECT run_id, blocked_changes FROM factory_run
              WHERE status = 'push_gate_refused'
                AND (attention_ack_at IS NULL OR ended_at > attention_ack_at)
              ORDER BY ended_at DESC
@@ -122,7 +123,11 @@ public class RunAttentionRows {
                 }
                 listed++;
                 String runId = rs.getString("run_id");
-                String paths = rs.getString("blocked_paths").replace("\n", ", ");
+                // WITH the kind, which is the whole point of the column: "ci.yml was blocked"
+                // does not say whether the factory edited that workflow or deleted it, and after
+                // M2 dispatches agents at real findings that is the difference between a bad fix
+                // and an attempt to remove what reviews the fix.
+                String paths = BlockedChanges.describe(rs.getString("blocked_changes"));
                 // The action is a UI route by the panel's contract; there is no run page yet, so it
                 // is the dashboard root — the message carries the run id and the paths.
                 // The gate judges the branch's cumulative tree, so a refusal can follow checkpoints

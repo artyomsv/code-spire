@@ -36,6 +36,10 @@ public final class ProtectedPaths {
             "action.yaml",
             "**/action.yml",
             "**/action.yaml",
+            // OpenShift Pipelines-as-Code executes .tekton/*.yaml from the PULL REQUEST HEAD, on
+            // a cluster runner holding secrets. Same shape as a workflow file, and it was the
+            // one mainstream system this floor had missed.
+            ".tekton/**",
             // GitLab.
             ".gitlab-ci.yml",
             ".gitlab/**",
@@ -71,6 +75,42 @@ public final class ProtectedPaths {
             // Not CI configuration itself, but it redirects what `actions/checkout submodules:true`
             // fetches and then builds — so editing it changes what runs without changing a workflow.
             ".gitmodules");
+
+    /**
+     * Every directory the floor protects, derived from the floor itself.
+     *
+     * <p>Used to judge a SYMLINK, which the globs cannot reach. A tree entry of mode
+     * {@code 120000} committed at {@code .github} pointing to {@code payload/} is judged as the
+     * path {@code .github}, and no floor glob matches that — the globs all carry the
+     * {@code .github/workflows/} prefix. A forge that follows the link then reads its workflows
+     * out of agent-authored content without a single protected path appearing in the diff.
+     *
+     * <p><b>Derived, never a second hand-written list.</b> A floor entry added above is covered
+     * here the same day; a parallel list would be covered whenever somebody remembered.
+     */
+    public static final List<String> CI_DIRECTORIES = CI_FLOOR.stream()
+            .filter(glob -> glob.endsWith("/**"))
+            .map(glob -> glob.substring(0, glob.length() - "/**".length()))
+            // A leading ** would make every path an ancestor of something protected. None exists
+            // today; this is here so adding one is a no-op rather than a gate that refuses all.
+            .filter(directory -> !directory.contains("*"))
+            .toList();
+
+    /**
+     * Whether {@code path} IS a protected directory or an ancestor of one.
+     *
+     * <p>Case-insensitive, matching {@link PathGlob}: the floor would otherwise refuse
+     * {@code .github/workflows/ci.yml} and wave through a symlink at {@code .GITHUB}.
+     */
+    public static boolean isAtOrAboveAProtectedDirectory(String path) {
+        for (String directory : CI_DIRECTORIES) {
+            if (directory.equalsIgnoreCase(path)
+                    || directory.regionMatches(true, 0, path + "/", 0, path.length() + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private ProtectedPaths() {
     }

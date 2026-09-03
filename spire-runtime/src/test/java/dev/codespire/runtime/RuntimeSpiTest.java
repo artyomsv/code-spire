@@ -173,7 +173,7 @@ class RuntimeSpiTest {
                 Map.of("SPIRE_GIT_SECRET", "ghp-secret"),
                 List.of(Mount.readOnly("handoff", "/handoff")));
         return new RunUnitSpec("run_1", container(), agent, publisher,
-                EnterpriseEnvironment.NONE, memoryBytes, nanoCpus, wallClock);
+                EnterpriseEnvironment.NONE, memoryBytes, nanoCpus, 1024, wallClock);
     }
 
     // ---- containment is enforced, not described --------------------------------------------
@@ -190,7 +190,7 @@ class RuntimeSpiTest {
 
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> new RunUnitSpec("run_1", container(), agent, badPublisher,
-                        EnterpriseEnvironment.NONE, 1024, 1024, Duration.ofMinutes(1)));
+                        EnterpriseEnvironment.NONE, 1024, 1024, 1024, Duration.ofMinutes(1)));
         assertTrue(refused.getMessage().contains("handoff"), refused.getMessage());
     }
 
@@ -204,7 +204,7 @@ class RuntimeSpiTest {
                 List.of(Mount.readOnly("handoff", "/handoff")));
 
         RunUnitSpec spec = new RunUnitSpec("run_1", container(), agent, publisher,
-                EnterpriseEnvironment.NONE, 1024, 1024, Duration.ofMinutes(1));
+                EnterpriseEnvironment.NONE, 1024, 1024, 1024, Duration.ofMinutes(1));
 
         assertTrue(spec.publisher().mounts().getFirst().readOnly());
     }
@@ -214,7 +214,7 @@ class RuntimeSpiTest {
         // Every container and volume is labelled with it, so a blank one is undiscoverable: the
         // watchdog cannot attribute the unit and destroy targets nothing.
         assertThrows(IllegalArgumentException.class, () -> new RunUnitSpec(" ", container(),
-                container(), container(), EnterpriseEnvironment.NONE, 1024, 1024,
+                container(), container(), EnterpriseEnvironment.NONE, 1024, 1024, 1024,
                 Duration.ofMinutes(1)));
     }
 

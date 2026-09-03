@@ -17,6 +17,10 @@ repositories {
 
 dependencies {
     implementation(project(":spire-runtime"))
+
+    // RunRuntimeContract: the rules every arm must obey, extended by DockerRunRuntimeIT. Test
+    // scope only -- an SPI contract is not something a production consumer links against.
+    testImplementation(testFixtures(project(":spire-runtime")))
     // Newest published 3.5.x as of 2026-09-01, verified resolvable on Maven Central. The plan
     // pinned 3.4.1, which also resolves; this arm talks to the daemon that runs untrusted agent
     // code, so it is not a place to carry an avoidable lag.

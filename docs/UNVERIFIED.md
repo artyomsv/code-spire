@@ -33,11 +33,19 @@ evidence would settle it**.
 
 ---
 
-## A. Known not to work — documented, and mostly build-enforced
+## A. Known not to work — documented, and guarded where a guard is possible
 
-These are not suspicions. The gap is proven. Each entry names what guards it, and one names
-nothing — a guard can fail the build when a missing *producer* appears, but not when a behaviour
-quietly starts working.
+These are not suspicions: each gap is proven. **A1 and A2 are build-enforced** — a guard fails the
+build if the gap silently closes, so the register cannot go stale without somebody noticing. **A3
+is not**, and saying so is the point of splitting this sentence: what would close it is a provider
+starting to resolve, which no source scan can see.
+
+> A fourth entry stood here and is gone: a cancel for a run that had not started was accepted and
+> dropped. It is **fixed** (PR #106) rather than merely recorded — twice over, because the first
+> attempt closed only the queued half and left the fifteen-minute clone window open. The entry
+> itself had named the missing half (*"plus registering the run before `create`"*), and deleting
+> it deleted the note that said what had not been done. If an entry here is retired, check the
+> whole of what it specified, not the part that was implemented.
 
 ### A1. The credential pool cannot retire a dead key
 
@@ -66,37 +74,7 @@ Same shape, same fix, same evidence — a provider response that states a retry-
 `SPIRE_RUN_CREDENTIAL_RATE_LIMIT_DEFAULT_SECONDS` applies only when an operator rests a member by
 hand.
 
-### A3. A cancel for a run that has not started yet is accepted and dropped
-
-**The claim.** `POST /api/runs/{id}/cancel` answers 202, and two task reviews each
-concluded the unreachable window was closed.
-
-**Why nothing catches it.** `RunRegistry.register` runs only AFTER
-`runtime.create()` returns, and `create` blocks on the init clone for up to
-fifteen minutes. Before that point the control listener finds nothing live, writes a debug line and
-returns — nothing durable. So a run queued on the topic, or cloning, or dispatch-uncertain with the
-record unconsumed, accepts a cancel and then starts anyway and spends its whole wall clock. Both
-task reviews were right about the window they could see: Task 7 owned the executing case, Task 9 the
-uncertain one, and neither could see that the gap is *before* either.
-
-**Evidence needed.** None — this one is established. What it needs is the fix: a durable cancel slot
-in `run_claim` that the dispatcher takes before it creates anything, plus registering
-the run before `create` so a cancel during the clone stops the unit. Deferred out of
-the review-fix batch deliberately: it changes the dispatch path's ordering and the claim table's
-meaning, and wants its own round with its own tests — including one that fails when the dispatcher's
-claim is deleted.
-
-**Operator-facing consequence, which is why it is here rather than only in a debt file:** a 202 for a
-cancel that will not happen is worse than a refusal. It also compounds — the spend cap cannot see the
-queue either, so a backlog accepted while the window read empty cannot currently be stopped short of
-a consumer-group reset.
-
-**Guarded by** nothing, and that is the honest answer rather than an omission: A1 is guarded
-because its gap closes when a *producer appears*, which a source scan can see. This one closes
-when an ordering changes, which it cannot. **Tracked in**
-`techdebt/spire-run-worker/2-3-a-cancel-before-the-run-starts-is-accepted-and-dropped.md`.
-
-### A4. Code context resolves nothing in the containerised e2e stack
+### A3. Code context resolves nothing in the containerised e2e stack
 
 **The claim.** `spire-context-code` contributes resolved definitions to a review.
 

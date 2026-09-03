@@ -115,6 +115,12 @@ public final class DockerRunRuntime implements RunRuntime {
     /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
     private static final long PIDS_LIMIT = 512;
 
+    /** The one writable path every image has whatever it mounts. */
+    private static final String TMPFS_MOUNT = "/tmp";
+
+    /** No setuid bits and no device nodes on a mount the agent controls; the size is appended. */
+    private static final String TMPFS_OPTIONS = "rw,nosuid,nodev,size=";
+
     /**
      * The one spelling every Docker Hub reference is normalised to before matching.
      *
@@ -378,7 +384,7 @@ public final class DockerRunRuntime implements RunRuntime {
      * have left every suite green.
      */
     HostConfig hostConfigFor(RunUnitSpec spec, ContainerSpec container) {
-        return HostConfig.newHostConfig()
+        HostConfig host = HostConfig.newHostConfig()
                 .withBinds(bindsFor(spec, container))
                 .withMemory(spec.memoryBytes())
                 .withNanoCPUs(spec.nanoCpus())
@@ -390,6 +396,52 @@ public final class DockerRunRuntime implements RunRuntime {
                 // salvage() must be able to read the exit code, and an auto-removed container has
                 // none to read. Teardown is destroy()'s job and nothing else's.
                 .withAutoRemove(false);
+        tmpFsFor(spec, container).ifPresent(host::withTmpFs);
+        return host;
+    }
+
+    /**
+     * A size-bounded {@code /tmp}, for the container that runs untrusted output and no other.
+     *
+     * <p>{@code /tmp} is the one writable path every image has whatever it mounts, so bounding the
+     * volumes without it would leave an agent free to write here instead. A tmpfs {@code size=} is
+     * a kernel bound — a write past it gets {@code ENOSPC} — and it behaves identically on Docker
+     * Desktop for Windows and macOS (both run a real Linux VM), on native Linux and under rootless
+     * Docker, which is why it is the enforcement chosen over {@code --storage-opt size=} (that
+     * needs xfs with pquota, and Docker Desktop is overlay2 on ext4, so it fails at container
+     * CREATION on the machines most developers use).
+     *
+     * <p><b>The AGENT only, and that is a correction rather than an omission.</b> Applying it to
+     * all three containers was the first version and it was a regression: the publisher clones the
+     * repository into {@code java.io.tmpdir}, so a bound {@code /tmp} turns any repository larger
+     * than this budget into an {@code ENOSPC} at publish time — after the agent has been paid, with
+     * nothing delivered — where before it simply worked. tmpfs pages are charged to the container's
+     * memory cgroup too, so a large clone could OOM the publisher before filling the mount.
+     *
+     * <p>The threat model is what settles it. This bound is a containment control against an agent
+     * running untrusted model output at full shell access (ADR-039). The init and publisher
+     * containers run this project's own code and hold the credentials the agent is denied; bounding
+     * them buys no containment and costs a working publish.
+     *
+     * <p>The SHARED VOLUMES are not tmpfs either, and that reason is measured rather than assumed.
+     * A tmpfs-backed local volume is dropped when the last container using it stops, so two
+     * containers that overlap share it and two that do not lose it: {@code docker run A} writing a
+     * file, then {@code docker run B} reading it, sees an empty directory. This unit runs init TO
+     * COMPLETION and only then starts the agent, so a tmpfs {@code /workspace} would wipe the clone
+     * between the two — a broken run in place of an unbounded one.
+     *
+     * <p>So {@code /workspace} stays unbounded on THIS arm; RUN-TOPOLOGY §9 carries it as a
+     * deployment requirement and {@code techdebt/spire-runtime-docker/2-3-…} records the two
+     * candidate designs. The Kubernetes arm has no such gap: {@code emptyDir} is a POD volume, so it
+     * survives an init container exiting, and {@code medium: Memory} with {@code sizeLimit} bounds
+     * the whole unit. Which is why {@code diskBytes} belongs on the spec even though this arm can
+     * only spend part of it.
+     */
+    private static Optional<Map<String, String>> tmpFsFor(RunUnitSpec spec, ContainerSpec container) {
+        if (container != spec.agent()) {
+            return Optional.empty();
+        }
+        return Optional.of(Map.of(TMPFS_MOUNT, TMPFS_OPTIONS + spec.diskBytes()));
     }
 
     private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
