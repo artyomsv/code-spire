@@ -93,7 +93,6 @@ ENV QUARKUS_HTTP_PORT=8080 \
 # package versions. That is the accepted trade — the alternative is pinning each package to a version
 # that itself goes stale, which is the same treadmill with an extra step. The image digest is what
 # deployments pin (deploy/ resolves to sha-<short>), so a given deployed artifact is still exact.
-# spire-ui's base needs none of this: it is scanned by the same job and reports clean.
 #
 # **APK_UPGRADE_BUST is what makes any of the above true, and without it none of it was.** This layer
 # has no input that changes, so BuildKit restored it from the gha cache on every build and the upgrade

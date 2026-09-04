@@ -67,6 +67,7 @@ jobs:
             context: ./spire-ui
             dockerfile: ./spire-ui/Dockerfile
             service: ''
+            apkUpgrade: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -91,9 +92,12 @@ jobs:
           # CACHED for all three services while 102 Trivy alerts stood open on packages the live
           # Alpine index had already fixed. github.run_id is unique per build, so the layer
           # re-executes; the Dockerfile echoes the value because BuildKit keys a RUN on the args it
-          # actually references. spire-ui carries no upgrade and so is not sent one — an unconsumed
-          # build arg warns on every build, and a warning nobody can act on trains people past the
-          # ones they can. ApkUpgradeIsNotCachedTest fails if either half of this drifts.
+          # actually references.
+          #
+          # Every image in this matrix consumes it today, so the flag looks redundant — it is not.
+          # An unconsumed build arg warns on every build, and a warning nobody can act on trains
+          # people past the ones they can, so an image added later must opt in rather than inherit.
+          # ApkUpgradeIsNotCachedTest asserts BOTH directions against the Dockerfiles themselves.
           build-args: |
             ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
             ${{ matrix.apkUpgrade && format('APK_UPGRADE_BUST={0}', github.run_id) || '' }}

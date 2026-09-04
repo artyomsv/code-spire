@@ -22,6 +22,28 @@ LABEL org.opencontainers.image.title="spire-ui" \
       org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
       org.opencontainers.image.licenses="FSL-1.1-ALv2"
 
+# The same build-time upgrade the service images carry, and for the same reason: nginx retags its
+# own tags on its own cadence, which is slower than Alpine's package index moves.
+#
+# **This image was believed not to need it, and the belief was measured wrong.** Three files said
+# "spire-ui's base needs none of this: it is scanned by the same job and reports clean" — true only
+# because docker.yml scans HIGH,CRITICAL and the base happened to be freshly retagged when that was
+# written. Scanned on 2026-09-04, `nginxinc/nginx-unprivileged:1.30-alpine` carried 24 OS
+# vulnerabilities, four of them HIGH, and they were the SAME openssl 3.5.7-r0 and libexpat CVEs the
+# service images were reporting. An image with no upgrade does not stay clean; it waits.
+#
+# The upgrade moves openssl and libexpat only. **nginx itself stays 1.30.4** — Alpine 3.24's index
+# holds that version, so this closes the base's CVE backlog WITHOUT moving off nginx's stable branch,
+# which a `1.31-alpine` bump would have done as a side effect of chasing the same four CVEs.
+#
+# root for the upgrade and straight back to 101: this base runs unprivileged by design, and every
+# layer after this one must land exactly as it did before.
+USER root
+ARG APK_UPGRADE_BUST=local
+RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" && apk --no-cache upgrade
+USER 101
+
+
 # The filter admits only SPIRE_* and NGINX_LOCAL_RESOLVERS, so nginx's own $host, $scheme and
 # $http_* survive. Without it envsubst would blank every nginx variable whose name happens to match
 # an environment variable. NGINX_LOCAL_RESOLVERS is set from /etc/resolv.conf by the image's own
