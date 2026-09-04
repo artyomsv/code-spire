@@ -22,10 +22,10 @@ repositories {
 }
 
 dependencies {
-    testFixturesApi(platform("org.junit:junit-bom:5.11.4"))
+    testFixturesApi(platform("org.junit:junit-bom:6.1.3"))
     testFixturesApi("org.junit.jupiter:junit-jupiter")
 
-    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
