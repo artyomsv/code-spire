@@ -406,17 +406,6 @@ class IntegrationSagaPolicyTest {
     }
 
     /**
-     * Observe mode's contract is "register only, no diff, no LLM, no comments". Every {@code /command}
-     * reached {@code onManualCommand}, which never consulted the policy — so an operator evaluating a
-     * deployment could still be billed for a paid re-review by anyone allowlisted enough to type
-     * {@code /review} in a pull request.
-     *
-     * <p><b>The refusal is silent, and here that is forced rather than chosen.</b> Every other silent
-     * refusal in this saga argues for its silence (a reply confirms to a prober that a command is
-     * wired). This one could not reply even if that reasoning were absent: posting a comment is the
-     * exact thing observe mode forbids, so answering would break the mode in the act of enforcing it.
-     */
-    /**
      * Fork provenance is persisted from EVERY pull-request event, in every mode.
      *
      * <p>Asserted because the write is what a branch-mode gate later trusts, and a row that predates
@@ -435,6 +424,18 @@ class IntegrationSagaPolicyTest {
                 "observe mode registers the header, so it records this too: " + fromForkCalls);
     }
 
+    /**
+     * Observe mode's contract is "register only, no diff, no LLM, no comments". Every
+     * {@code /command} reached {@code onManualCommand}, which never consulted the policy — so an
+     * operator evaluating a deployment could still be billed for a paid re-review by anyone
+     * allowlisted enough to type {@code /review} in a pull request.
+     *
+     * <p><b>The refusal is silent, and here that is forced rather than chosen.</b> Every other
+     * silent refusal in this saga argues for its silence (a reply confirms to a prober that a
+     * command is wired). This one could not reply even if that reasoning were absent: posting a
+     * comment is the exact thing observe mode forbids, so answering would break the mode in the
+     * act of enforcing it.
+     */
     @Test
     void reviewCommandIsRefusedInObserveMode() {
         var saga = sagaWith(policyMode(true), provider(List.of()));

@@ -360,9 +360,9 @@ public class FactoryRunProjection {
          * trap this repository records. Enumerating them once here is what it does instead.
          *
          * <p>V54 refuses a FIX row that names neither, and refuses a non-FIX row that names
-         * either, so a caller cannot half-apply this.
-         */
-        /**
+         * either, so a caller cannot half-apply this. V56 adds the third: a FIX row must name
+         * the comment as well, so a row the cap counts can never be one the claim cannot see.
+         *
          * @param commentId the comment that asked, and the claim that stops it buying twice. Not
          *     optional: without it a redelivered command derives a HIGHER attempt through
          *     {@code nextAttempt} — which counts the row the first delivery wrote — so it derives a

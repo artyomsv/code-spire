@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Large |
-| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../pipeline/IntegrationSaga.java` (**724** physical / **425** code lines, added 2026-09-04), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/RunResource.java` (**~530** lines), `.../factory/FactoryRunProjection.java` (**~450** lines) |
+| Location | `.../readmodel/ReviewProjection.java`, `.../pipeline/ResultSaga.java`, `.../pipeline/IntegrationSaga.java`, `.../attention/AttentionQueries.java`, `.../factory/RunResource.java`, `.../factory/FactoryRunProjection.java` — all under `spire-orchestrator/src/main/java/dev/codespire/orchestrator/`. **Figures live in the 2026-09-04 table below, in one place**, because six counts spread across a header and three updates is how they went stale twice |
 | Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. |
 | Date | 2026-08-07 (updated 2026-08-09) |
 
@@ -82,6 +82,34 @@ put two rows an operator sees side by side in different files.
 302 and 316 through four more M1 tasks that each added to both files, and a review caught the drift
 rather than any check. Approximate now, deliberately: an exact count in a file edited every task is
 a number nobody will maintain, and the entry's argument does not turn on the last ten lines.
+
+## Update — 2026-09-04, M2 (the software factory's orchestrator half)
+
+**Measured at HEAD on this entry's own preferred measure — CODE lines, comments and blanks
+stripped. Guideline is 300.**
+
+| File | Code | Physical | Was (code) | Verdict |
+|---|---|---|---|---|
+| `ReviewProjection.java` | **1,569** | 2,538 | — | unchanged by M2; still the entry's main subject |
+| `IntegrationSaga.java` | **472** | 846 | 425 (2026-09-04, earlier the same day) | `/fix` added a gate and a helper |
+| `ResultSaga.java` | **448** | 759 | — | unchanged by M2 |
+| `FactoryRunProjection.java` | **404** | 803 | 244 | **crossed 300 on this branch, +66%** |
+| `RunResource.java` | **350** | 685 | 309 | over, and further over |
+| `AttentionQueries.java` | **290** | 489 | — | still under |
+| `FixRunDispatcher.java` | **160** | 272 | new | under the CLASS guideline; its `dispatch` method is not — see the sibling entry |
+
+**The `~530` / `~450` figures this entry carried until today were physical-line estimates**, and
+they were wrong in both directions once measured properly: `RunResource` is 350 code lines rather
+than ~530, and `FactoryRunProjection` is 404 rather than ~450. Approximating was a deliberate
+choice ("an exact count in a file edited every task is a number nobody will maintain") and it was
+the wrong one — an approximate number is not maintained either, it is merely harder to check. The
+table above is exact and is the only place figures now live.
+
+**`FactoryRunProjection` is the one that moved.** It gained the run list, the cost join, the
+status set and the fix claim, going 244 → 404. That is the crossing this entry predicted in
+as many words on 2026-09-02 — "the factory read model is at the size the review read model was
+when splitting it would still have been cheap" — and it happened one milestone later, which is
+the argument for acting rather than re-recording it a third time.
 
 **Update (M1 Task 10):** `RunResource` crossed 300 on this entry's OWN preferred measure — 301 code
 lines at `0c06be3`, up from 289 — which is the first time either file has. The Task 10 review round

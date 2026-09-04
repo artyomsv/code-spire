@@ -61,8 +61,7 @@ public sealed interface IntegrationEvent {
      * exact provider by (type, workspace) — a GitHub org and a Bitbucket workspace can
      * share a name. Nullable for backward compatibility with events serialized before
      * this field existed; the saga then falls back to workspace-only resolution.
-     */
-    /**
+     *
      * @param fromFork whether the source branch lives in a DIFFERENT repository than the base.
      *     <p>Carried because a fix run pushes to {@code sourceBranch} in the BASE repository, and for
      *     a fork those two do not belong together — the name would resolve against the wrong

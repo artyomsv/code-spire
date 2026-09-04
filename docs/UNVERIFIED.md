@@ -218,7 +218,7 @@ Not work. Written down because each has been rediscovered at least once.
   cannot resolve the e2e stack's `gitlab` service, because `RunUnitSpec` has no network and
   `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
   security control in `compose.e2e.yml`, so it is not the answer.
-  — `techdebt/spire-runtime-docker/2-3-a-run-unit-cannot-join-a-user-defined-network.md`
+  — `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
 - **The publisher's trunk floor is not exercised end to end, and a container test cannot reach it.**
   `Adr040ExistingBranchTest` drives a run naming `main` as its branch and proves the trunk is
   untouched — but deleting `PublisherConfig.looksLikeATrunk` leaves that test GREEN. A control probe

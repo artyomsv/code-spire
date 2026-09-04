@@ -246,7 +246,7 @@ reviewer reviews the result.
   Missing is everything an operator can see: there is **no `GET /api/runs` list endpoint** (only
   detail and transcript), and `spire-ui` contains no factory screen at all — dispatch resolution and
   the harness credential pool are `curl` today
-  (`techdebt/spire-ui/4-3-the-factory-has-no-screens-at-all.md`).
+  (`techdebt/spire-ui/4-3-three-factory-surfaces-still-have-no-screen.md`).
   **No prompt panel.** V43 leaves the dispatched prompt out of the read model on purpose — it is a
   work item's text, it can quote source, and DATA-MODEL §5 keeps that class of content out of a
   queryable read model. Showing it means storing it encrypted like `run_event.payload`, which is a

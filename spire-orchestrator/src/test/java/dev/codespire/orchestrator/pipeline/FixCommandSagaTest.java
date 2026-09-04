@@ -367,12 +367,6 @@ class FixCommandSagaTest {
     }
 
     /**
-     * An unregistered pull request clears every gate ahead of this one — {@code archived} answers
-     * false for a row that does not exist, and the provider resolves by workspace when the review
-     * has no stored type. {@code /finding} learned this the hard way; {@code /fix} inherits the
-     * check rather than the lesson.
-     */
-    /**
      * A {@code /finding}-filed row carries NULL message and suggestion by design (DATA-MODEL §5),
      * so FR-F27's "complete task specification" would be a severity, a path and a line. Refused
      * here rather than left for the dispatch, which by then has accepted the target and can only
@@ -437,6 +431,12 @@ class FixCommandSagaTest {
         assertTrue(dispatchedFor.isEmpty(), dispatchedFor.toString());
     }
 
+    /**
+     * An unregistered pull request clears every gate ahead of this one — {@code archived} answers
+     * false for a row that does not exist, and the provider resolves by workspace when the review
+     * has no stored type. {@code /finding} learned this the hard way; {@code /fix} inherits the
+     * check rather than the lesson.
+     */
     @Test
     void refusesWhenThePullRequestWasNeverRegistered() {
         registered = false;

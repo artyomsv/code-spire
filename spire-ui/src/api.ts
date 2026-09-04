@@ -860,7 +860,6 @@ export interface DlqEntry {
   createdAt: string;
 }
 
-/** List dead-letter entries, newest first. `pending = false` returns replayed/discarded ones too. */
 /**
  * A factory run's status, matching `factory_run_status_closed` — nine values, not eight.
  *
@@ -938,6 +937,7 @@ export async function getRuns(filter: RunFilter = {}): Promise<RunListEntry[]> {
   if (!res.ok) return throwResponse(res, 'Failed to load runs');
   return res.json();
 }
+/** List dead-letter entries, newest first. `pending = false` returns replayed/discarded ones too. */
 export async function getDlqEntries(pending = true): Promise<DlqEntry[]> {
   const res = await apiFetch(`/api/dlq?pending=${pending}`);
   if (!res.ok) return throwResponse(res, 'Failed to load dead-letter entries');
