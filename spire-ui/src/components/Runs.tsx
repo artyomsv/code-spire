@@ -84,6 +84,24 @@ export function reviewPath(reviewId: string): string | null {
   return match ? `/r/${match[1]}/${match[2]}/${match[3]}` : null;
 }
 
+/**
+ * What a run was FOR: a link to its review, the bare id, or an em dash.
+ *
+ * <p>Its own component because the three cases were a nested ternary, and because the middle one
+ * is easy to read as an accident. A run can carry a review id this build cannot turn into a route
+ * — an id recorded under an SCM the UI does not know a path for — and the id is still the most
+ * useful thing to show, so it is shown unlinked rather than dropped. The em dash is the third
+ * case and a different fact: a BUILD run was never for a review at all.
+ */
+function ReviewCell({ reviewId }: { reviewId: string | null }) {
+  if (!reviewId) {
+    return <span className="prov-sub">—</span>;
+  }
+  // Resolved ONCE. Called twice it was also narrowed twice, which is why the JSX needed the
+  // `as string` cast the rest of this file does without.
+  const path = reviewPath(reviewId);
+  return path ? <Link to={path}>{reviewId}</Link> : <span className="mono">{reviewId}</span>;
+}
 export default function Runs() {
   const [runs, setRuns] = useState<RunListEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,15 +199,7 @@ export default function Runs() {
                     {run.failureCause && <div className="prov-sub">{run.failureCause}</div>}
                   </td>
                   <td>
-                    {run.reviewId ? (
-                      reviewPath(run.reviewId) ? (
-                        <Link to={reviewPath(run.reviewId) as string}>{run.reviewId}</Link>
-                      ) : (
-                        <span className="mono">{run.reviewId}</span>
-                      )
-                    ) : (
-                      <span className="prov-sub">—</span>
-                    )}
+                    <ReviewCell reviewId={run.reviewId} />
                   </td>
                   <td className="mono">{run.pushedRef ?? run.branch}</td>
                   {/*

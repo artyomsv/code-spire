@@ -99,14 +99,27 @@ public class FixRunDispatcher {
         // FIRST, because it is the only gate that can answer "this already happened" -- and every
         // gate below it is a reason to refuse a NEW request, which a redelivery is not. A repeat
         // delivery told about a spend cap would look like a lost request rather than a finished one.
-        Optional<Refused> duplicate = refuseIfAlreadyBought(reviewId, commentId);
-        if (duplicate.isPresent()) {
-            return duplicate.get();
+        Refused duplicate = refuseIfAlreadyBought(reviewId, commentId);
+        if (duplicate != null) {
+            return duplicate;
         }
         SpendGate.Decision cap = spendGate.decide();
         if (cap.refused()) {
             return new Refused(cap.refusal().detail() + " — capacity returns as older usage ages out, "
                     + "or an operator can raise the cap in Settings → General");
+        }
+        if (cap.ledgerUnreadable()) {
+            // FAIL OPEN, like every other enforcement site, and that is the project posture rather
+            // than an oversight here: refusing on a failed READ turns an outage into something that
+            // reads as policy, and SpendGate's own javadoc argues that case. The operator is told
+            // through the attention row, which reaches the same verdict from the same call.
+            //
+            // What is different on THIS arm is the size of what proceeds. A review call is one LLM
+            // call; a fix run is a container with a wall clock and a push credential, startable
+            // again by any allowlisted commenter. So the arm that is about to spend the most says
+            // so in its own log rather than relying on a panel nobody is looking at yet.
+            LOG.warnf("Dispatching /fix on %s with the spend cap NOT enforcing: the usage ledger "
+                    + "could not be read, so this run is allowed on a figure nobody has seen", reviewId);
         }
         // Once: it consults both fix caps and reads the review row, and calling it twice would read
         // a table twice to answer one question.
@@ -118,9 +131,9 @@ public class FixRunDispatcher {
         }
         FixDispatch.Planned planned = (FixDispatch.Planned) plan;
 
-        Optional<Refused> unconfigured = refuseIfUnconfigured();
-        if (unconfigured.isPresent()) {
-            return unconfigured.get();
+        Refused unconfigured = refuseIfUnconfigured();
+        if (unconfigured != null) {
+            return unconfigured;
         }
         String harness = config.fix().harness().orElseThrow();
         String model = config.fix().model().orElseThrow();
@@ -222,16 +235,17 @@ public class FixRunDispatcher {
      * different run id and passes the {@code ON CONFLICT (run_id)} guard that catches every other
      * duplicate.
      */
-    private Optional<Refused> refuseIfAlreadyBought(String reviewId, String commentId) {
+    private Refused refuseIfAlreadyBought(String reviewId, String commentId) {
         if (commentId == null || commentId.isBlank()) {
             LOG.warnf("Refusing /fix on %s: the command carried no comment id to claim against", reviewId);
-            return Optional.of(new Refused("I could not identify the comment this command came from, "
+            return new Refused("I could not identify the comment this command came from, "
                     + "so I cannot tell a repeat delivery from a new request — an operator should "
-                    + "look at the logs"));
+                    + "look at the logs");
         }
         return runs.fixRunFor(reviewId, commentId)
                 .map(runId -> new Refused("this comment already started fix run " + runId
-                        + ", so nothing new was dispatched"));
+                        + ", so nothing new was dispatched"))
+                .orElse(null);
     }
 
     /**
@@ -241,31 +255,36 @@ public class FixRunDispatcher {
      * timeline needs to know which one to set. The agent image is checked alongside them: it is keyed
      * by harness name, so a harness with no image is a half-configured deployment, and the REST
      * endpoint refuses the identical shape at the identical point.
+     *
+     * @return the refusal, or {@code null} when the deployment is configured. Null rather than an
+     *     empty {@code Optional} because the value is a control-flow carrier the caller
+     *     immediately unwraps — the exact shape {@code clean-code-java.md} names, and it read
+     *     worse than the {@code if} it was standing in for
      */
-    private Optional<Refused> refuseIfUnconfigured() {
+    private Refused refuseIfUnconfigured() {
         String harness = config.fix().harness().orElse("");
         if (harness.isBlank()) {
-            return Optional.of(new Refused("this deployment has not enabled /fix — an operator must "
-                    + "set SPIRE_FACTORY_FIX_HARNESS"));
+            return new Refused("this deployment has not enabled /fix — an operator must "
+                    + "set SPIRE_FACTORY_FIX_HARNESS");
         }
         String model = config.fix().model().orElse("");
         if (model.isBlank()) {
-            return Optional.of(new Refused("this deployment has not enabled /fix — an operator must "
-                    + "set SPIRE_FACTORY_FIX_MODEL"));
+            return new Refused("this deployment has not enabled /fix — an operator must "
+                    + "set SPIRE_FACTORY_FIX_MODEL");
         }
         String image = config.agentImage().get(harness);
         if (image == null || image.isBlank()) {
-            return Optional.of(new Refused("no agent image is configured for the '" + harness
-                    + "' harness, so a fix run has nothing to execute in"));
+            return new Refused("no agent image is configured for the '" + harness
+                    + "' harness, so a fix run has nothing to execute in");
         }
         if (!pricer.isPriceable(model)) {
             // Pricing is post-hoc -- the charge lands when the run is over -- so this is the last
             // point at which an unpriceable run can be REFUSED rather than merely noticed. Every such
             // charge records as UNKNOWN, which SUM() skips, so the spend cap would be reading a total
             // that omits precisely the runs it cannot price.
-            return Optional.of(new Refused("the model '" + model + "' has no usable pricing, so a fix "
-                    + "run could not be counted against the spend cap"));
+            return new Refused("the model '" + model + "' has no usable pricing, so a fix "
+                    + "run could not be counted against the spend cap");
         }
-        return Optional.empty();
+        return null;
     }
 }
