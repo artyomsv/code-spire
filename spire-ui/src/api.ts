@@ -861,6 +861,83 @@ export interface DlqEntry {
 }
 
 /** List dead-letter entries, newest first. `pending = false` returns replayed/discarded ones too. */
+/**
+ * A factory run's status, matching `factory_run_status_closed` — nine values, not eight.
+ *
+ * <b>This union is a compile-time claim about runtime JSON, and this project has been bitten by
+ * exactly that before:</b> an unlisted `ReviewStatus` fell into the SUCCESS branch, so `refused`
+ * once rendered as five green segments and a degraded run as "✓ clean". So every consumer here
+ * treats an unrecognised value as UNKNOWN rather than as anything good — see `runStatusLabel` and
+ * `isRunUnfinished`, and the test that drives a value deliberately absent from this union.
+ */
+export type RunStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  // The push gate refused the diff. Not a failure of the run -- the agent finished and produced
+  // work the gate would not publish, which is a different thing an operator acts on differently.
+  | 'push_gate_refused'
+  // Published and never acknowledged. Deliberately NOT retried: the record may be on the topic.
+  | 'dispatch_uncertain'
+  // Finished, pushed nothing. An honest outcome, not an error.
+  | 'delivered_nothing'
+  | 'delivered_unfinished';
+
+/** What a run was dispatched to do. `SPEC` and `PLAN` are M4 and are not produced yet. */
+export type RunKind = 'BUILD' | 'FIX' | 'SPEC' | 'PLAN';
+
+/**
+ * What a run cost, or the honest statement that nobody knows.
+ *
+ * `millicents` is null when unknown — not charged yet, not priceable, or no usage reported. The
+ * server refuses to collapse that into zero (ADR-023) and `formatCost` renders it as an em dash,
+ * so the distinction survives all the way to the screen.
+ */
+export interface RunCost {
+  millicents: number | null;
+}
+
+/** One row of the runs list. `reviewId`/`findingRef` are null for anything that is not a fix. */
+export interface RunListEntry {
+  runId: string;
+  status: RunStatus;
+  kind: RunKind;
+  harness: string;
+  model: string;
+  branch: string;
+  pushedRef: string | null;
+  reviewId: string | null;
+  findingRef: string | null;
+  failureCause: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  cost: RunCost;
+}
+
+export interface RunFilter {
+  status?: string;
+  kind?: string;
+  reviewId?: string;
+  limit?: number;
+}
+
+/**
+ * The runs list. Filters are omitted when blank rather than sent empty — the server treats an
+ * empty parameter as absent, and sending one anyway makes a cleared field look like a filter.
+ */
+export async function getRuns(filter: RunFilter = {}): Promise<RunListEntry[]> {
+  const query = new URLSearchParams();
+  if (filter.status) query.set('status', filter.status);
+  if (filter.kind) query.set('kind', filter.kind);
+  if (filter.reviewId) query.set('reviewId', filter.reviewId);
+  if (filter.limit) query.set('limit', String(filter.limit));
+  const suffix = query.toString();
+  const res = await apiFetch(`/api/runs${suffix ? `?${suffix}` : ''}`);
+  if (!res.ok) return throwResponse(res, 'Failed to load runs');
+  return res.json();
+}
 export async function getDlqEntries(pending = true): Promise<DlqEntry[]> {
   const res = await apiFetch(`/api/dlq?pending=${pending}`);
   if (!res.ok) return throwResponse(res, 'Failed to load dead-letter entries');
