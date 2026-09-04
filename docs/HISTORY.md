@@ -1653,6 +1653,91 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Measured, not estimated: **spire-arch 46 tests across 14 suites** (43/13 before); `testFast` green,
   and `:spire-run-worker:test` green on the paired dependency bump.
 
+- **Software factory M2 delivered (2026-09-04, PR #119) — the review closes its own findings, except
+  that the full loop has never been run end to end in one place.** That qualifier belongs in the same
+  sentence as the claim, because everything below is true and the thing M2 exists to do has been
+  proved only in halves. `/fix` on a finding dispatches a sandboxed run that pushes onto the pull
+  request's own source branch (ADR-040), the factory can open a pull request on all four forges, and
+  runs have a screen and a cost. Twelve tasks, T1–T12.
+  - **`/fix` (T1–T5b).** A comment resolves to the finding its thread belongs to, and the run's task
+    is built from the finding alone — nobody types a prompt, because a commenter authoring
+    instructions for an agent holding a clone and a push token is the threat model, not a feature.
+    Two caps bound it (FR-F32): per finding, and per review, the second because each hop of a runaway
+    raises a *new* finding, so a per-finding counter sees one run each and never fires. The dispatch
+    is linear on purpose — claim, spend cap, plan, configuration, machine account, spec, credential,
+    command, row, launch — with the claim first (the only gate that answers "this already happened")
+    and the credential last (selecting one is a write).
+  - **`PullRequestSink` (T6–T7).** The port nothing in this codebase had: the reviewer only ever
+    commented on pull requests other people opened, so a factory run ended at a pushed branch. Three
+    adapters, each find-first, because a Kafka record is redelivered on every consumer restart and by
+    then the push has happened — GitHub refuses a duplicate with 422, GitLab and Bitbucket do not, so
+    find-first is the only guard on two of three. `NothingToPropose` normalises "the agent changed
+    nothing", which all four forges report as a 4xx that reads like a failure. **No column of
+    `SCM-MAPPING.md` §8 has been measured against a live API**; the tests drive a stub this repository
+    wrote, which establishes what the adapter does and nothing about what the forge does.
+  - **The run↔review join, and a screen (T8–T9).** `factory_run` had carried `review_id` and
+    `finding_ref` since V54 with no query reading them beside anything, so neither the caps' evidence
+    nor "what did this cost" could be shown to a person — and there was no list endpoint at all.
+    `GET /api/runs` **refuses an unrecognised filter value rather than ignoring it**: silently
+    dropping a mistyped `status=faield` returns every run, which reads as "nothing is stuck", the most
+    dangerous possible answer to the question that page is opened to ask. Cost is a type, not a
+    `long` — `RunCost` makes unknown unrepresentable as zero, because `SUM` skips NULL and a run with
+    one unpriced line otherwise reports the priced remainder as a total (ADR-023). `Runs.tsx` lists
+    all nine statuses **and** every reader defaults an unlisted one to unknown, never to green and
+    never to busy; the recorded trap is that `refused` once rendered as five green segments.
+  - **Packaged, behind a profile it must be opted into (T10).** A Docker socket is root-equivalent on
+    the host and the run worker is the one service that executes untrusted model output, so the
+    `factory` profile is a security decision rather than a convenience: 7 services by default, 8 with
+    `--profile factory`. **Kubernetes deliberately does not get it** — a K8s deployment would mount
+    the *node's* socket into a pod, precisely what `SECURITY.md` promises that arm removes.
+  - **What is NOT proved (T11).** `Adr040ExistingBranchTest` runs the real thing — real containers, a
+    real smart-HTTP remote, the real publisher image — and reads the pushed content back from the
+    remote. What it cannot reach is the loop: finding → fix run → push → reconciliation is covered by
+    three tests and joined by none, because a run unit lands on the default bridge and cannot resolve
+    the e2e stack's `gitlab` service. `RunUnitSpec` has no network field. Rebinding GitLab off
+    loopback would undo a deliberate security control, so it is not the answer, and the gap is filed
+    rather than worked around.
+  - **Two of my own tests were wrong before any production code was.** One asserted the publisher
+    refuses a run whose branch equals its destination — it cannot, because `ExecuteRun`'s constructor
+    refuses that outright and the command never exists. The other is the instructive one: the trunk
+    case asserted the publisher's floor refuses `main`, and **deleting `looksLikeATrunk` left it
+    green**. A control probe (refuse every branch) reddened the permitted-push cases, so mutations do
+    reach the container and the survival was real; measuring it showed the run dies as `init container
+    failed with exit 1` before the publisher is consulted, because `WorkspaceClone` calls
+    `setCreateBranch(true)` and a clone has already materialised the default branch. Two independent
+    guards with the outer firing first — defence in depth working, *and* a claim no container test
+    establishes. It is in `UNVERIFIED.md`.
+  - **The whole-PR round (T12) found one Critical and it was on the arm with no user.** `/fix` threw
+    an NPE out of the saga when the FACTORY account had no resolved login. `RunResource` had guarded
+    exactly that and said why; the `/fix` path re-derived the same lookup and dropped the guard. On
+    the REST arm a throw is a 500 the caller reads — on a Kafka consumer it escapes, so the record is
+    redelivered forever and the author who typed `/fix` is told nothing. **The guard moved into the
+    one method that resolves the factory's push identity**, because two callers each remembering the
+    same check is the shape this repository keeps paying for.
+    - **A comment id is the forge's, not the world's.** The fix claim was keyed on a bare comment id,
+      which every ingress passes straight through from the forge. Two providers, or two self-hosted
+      GitLabs whose note ids both start at 1, collide — and unscoped that refuses a legitimate `/fix`
+      while writing *another workspace's* run id into this review's durable history. Keyed on
+      `(review_id, comment_id)` now.
+    - **A username in the allowlist authorises a review, not a push.** The shared author gate accepts
+      a handle or a stable id, which is right for a command costing one model call. `/fix` pushes as
+      the machine account and a forge handle can be released and re-registered, so it matches on
+      `providerUserId` alone — CLAUDE.md's own rule, applied where it had not been.
+    - **Two broker outages retired a finding forever.** Both caps counted rows whose dispatch was
+      never acknowledged: runs that never executed and never spent, which the projection already
+      treats as re-armable. The filter names the CAUSE, not the status — a run that executed and then
+      died still counts, because the cap is about money already gone.
+    - **The prompt fence was closable from inside it.** Writing inside the fence buys nothing the
+      surrounding text does not account for; writing the END marker closes it, and what follows reads
+      as the orchestrator's own voice. Both markers are neutered in any value now, and the three
+      headers above the fence are bounded to one line each.
+    - **A mutation harness produced three false survivals in one run**, which is worth more than the
+      findings. It restored with `git checkout`, so it reverted the fixes under test and left the next
+      mutant uncompilable — and a compile failure looks exactly like "no test failed" to a grep. Its
+      perl patterns then used a bare `\n` against CRLF files, so three mutations never applied at all
+      and were scored as survivals. **A mutant that does not compile or does not apply measures
+      nothing**, and the harness now says INVALID rather than SURVIVED for both.
+  - Nine mutations across the round, each killing exactly its intended test.
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
