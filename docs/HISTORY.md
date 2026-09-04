@@ -472,7 +472,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   inherited from `eclipse-temurin:25-jre-alpine`, which retags more slowly than Alpine's package index
   moves; `apk --no-cache upgrade` in the runtime stage closes them at build time, trading
   build-to-build reproducibility that the deployed digest still pins. `spire-ui` needs none of it —
-  same scan job, clean base. The 24 Java-dependency alerts were mostly closed by the **platform**,
+  same scan job, clean base. (**Both halves of that sentence were later measured wrong** — the
+  upgrade layer cached and so ran once, and `spire-ui`'s base was clean only until its next scan.
+  See the 2026-09-04 entry.) The 24 Java-dependency alerts were mostly closed by the **platform**,
   3.37.1 → 3.38.1: netty, PostgreSQL and OpenTelemetry each ship as a stack whose modules must move
   together, and Quarkus imports its BOM with `enforcedPlatform`, so a `constraints` block loses every
   conflict and hand-forcing means overriding thirty-odd coordinates and hoping the combination was
@@ -1562,6 +1564,81 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
 
   Measured, not estimated: **2549 Java tests across 299 suites** (`testFast` + `testServices`;
   the nightly `testE2e` tier is separate). `spire-ui` untouched by M1.
+- **The base-image upgrade was cached, so it never ran (2026-09-04):** all 102 open code-scanning
+  alerts were one defect with one cause. Every alert was Trivy on the three service images, and all
+  of them named two Alpine packages the base ships and this repository does not use — openssl
+  (`3.5.7-r0`, as `libcrypto3`/`libssl3`/`openssl`) and libexpat (`2.8.3-r0`). `Dockerfile` has run
+  `apk --no-cache upgrade` since 2026-08-05 for exactly this, and three documents said it worked.
+  **It had run once.** The layer has no input that changes, so with `cache-from: type=gha` restoring
+  it BuildKit re-used it on every build — its only cache key being the base image, which means the
+  mitigation refreshed precisely when `eclipse-temurin` retagged, the wait it exists to skip. The
+  same shape as the LLM circuit breaker recording a failed future as a success: installed, described,
+  inert.
+  - **Measured at every step, because each half is separately deniable.** Workflow run 33810550375
+    logged `#48 [stage-1 2/10] RUN apk --no-cache upgrade` followed by `#48 CACHED` for all three
+    services. A throwaway two-line Dockerfile reproduced it in isolation — the same `RUN` re-built
+    with nothing changed is `CACHED`, and with a referenced build arg it re-executes. One fresh
+    `apk --no-cache upgrade` on the very same base installs openssl `3.5.8-r0` and libexpat
+    `2.8.4-r0`, i.e. the fixed versions every alert names. And the real `spire-publisher` image built
+    from the changed Dockerfile scans **0** OS vulnerabilities against the base image's **49** —
+    as does `spire-ui`, **0** against its own base's **24**. The counterfactual matters, since a clean report means nothing without proof the scanner sees the
+    dirty one.
+  - **`APK_UPGRADE_BUST` is echoed inside the `RUN`, not merely declared.** BuildKit keys a `RUN` on
+    the build args it actually references, so an `ARG` the command never mentions changes no cache
+    key — a fix that looks identical to the defect. `docker.yml` passes `github.run_id`, unique per
+    build; a constant would restore the original behaviour with more ceremony.
+  - **`spire-ui` needed it too, and the belief that it did not was measured wrong.** Three files said
+    "spire-ui's base needs none of this: it is scanned by the same job and reports clean" — true only
+    because `docker.yml` scans `HIGH,CRITICAL` and the base happened to be freshly retagged when that
+    was written. Scanned on 2026-09-04, `nginxinc/nginx-unprivileged:1.30-alpine` carried **24** OS
+    vulnerabilities, **four of them HIGH**, and they were the *same* openssl 3.5.7-r0 and libexpat
+    CVEs the service images were reporting. An image with no upgrade does not stay clean; it waits.
+    It now upgrades too — `USER root`, upgrade, straight back to `101`, because that base runs
+    unprivileged by design. Built and measured: **0** OS vulnerabilities, still uid 101, `/healthz`
+    and `/` both 200, no errors in the log.
+  - **That is also what settles Dependabot #97** (`nginx-unprivileged` 1.30-alpine → 1.31-alpine).
+    Checked rather than assumed: `stable-alpine` resolves to 1.30.4 and `mainline-alpine` to 1.31.5,
+    so the bump is a **stable→mainline branch switch**, not a patch — and Dependabot cannot see the
+    difference. Its only real argument was that 1.31-alpine scans 0 while 1.30-alpine scans 24, which
+    is a *retag-cadence artifact* rather than a property of the nginx line. The upgrade closes those
+    four HIGH CVEs while leaving nginx itself at **1.30.4**, since Alpine 3.24's index holds that
+    version. So the stable branch is kept and the CVEs are closed, instead of trading one for the
+    other. Worth keeping: the nginx config is a security control (ADR-022 cookie-path scoping depends
+    on all four services answering on one origin), `deploy/e2e.sh` is the only thing that exercises
+    it, and it runs nightly — never on the PR path. A `nginx -t` against the real template passes on
+    both versions, which proves the config parses and nothing about the behaviour.
+
+  - **The guard derives its file list** by walking the tree for `Dockerfile*` and joining backslash
+    continuations (`spire-publisher` chains its upgrade into an `adduser`), so an image added later
+    inherits the rule instead of escaping it, and it refuses to pass on an empty scan. Five mutations
+    verified — drop the arg reference, freeze the workflow value, remove a service's flag, send the
+    flag to an image that cannot consume it, and remove `spire-ui`'s once it could — each failing
+    exactly one test. `spire-publisher/Dockerfile` is wired the same way although nothing passes it a
+    value yet: it is not in `docker.yml`, and joining that matrix should be a one-line change rather
+    than a rediscovery.
+
+  **The nine open Dependabot pull requests were triaged in the same pass; eight are merged and one is
+  declined.** Routine and covered by the tiers that ran on them: `docker-java` 3.5.1→3.7.1 (#101;
+  #98 carried the byte-identical change set and was closed as superseded), `@types/node`,
+  `@types/react-dom`, `lucide-react`, and `junit-bom` 5.11.4→6.1.3 (#104 — a *major* by Dependabot's
+  classification and by the repo's own auto-merge rule, but in fact the completion of a migration
+  already done: sixteen declarations were on 6.1.3 and nine on 5.11.4, all nine in modules the fast
+  and service tiers cover). #97 is declined for the reason recorded above.
+
+  **#99 and #100 are a matched pair, and merging either alone regresses the publisher.** `jgit` 7.7.1
+  moves to `slf4j-api` **2.0.18** while `slf4j-nop` stays at 1.7.36, and a 1.7 binding does not
+  satisfy a 2.x api. `spire-publisher` pins `slf4j-nop` for one reason, recorded next to the
+  dependency: JGit's three-line "no binding" warning on every run's stderr, which the run worker's
+  log stream then carries for every run. Measured by running `LoggerFactory.getLogger` against each
+  pair rather than inferred — 7.3.0+1.7.36 silent, **7.7.1+1.7.36 six warning lines**, **7.3.0+2.0.18
+  three**, 7.7.1+2.0.18 silent. No test asserts the publisher's stderr, so CI was green for both
+  alone. Merged back to back (different files, no rebase), verified together first: `testFast` green
+  and `:spire-run-worker:test` green including `M0WalkingSkeletonTest` (5 tests, 0 skipped) — a real
+  clone and push through jgit 7.7.1.
+
+  Measured, not estimated: **spire-arch 46 tests across 14 suites** (43/13 before); `testFast` green,
+  and `:spire-run-worker:test` green on the paired dependency bump.
+
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and

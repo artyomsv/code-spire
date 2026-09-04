@@ -188,6 +188,14 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
 - **Dev images bake their source.** `docker compose up -d` without `--build` runs the previous tree;
   a startup check once passed against code that did not contain the guard under test. A hash-route
   navigation does not reload the SPA, so a screenshot after a redeploy can show the old bundle.
+- **A `RUN` with no changing input is cached forever, so a "build-time upgrade" runs once.**
+  `apk --no-cache upgrade` sat in three images keyed only on the base image — i.e. it refreshed
+  exactly when the base retagged, the wait it exists to skip — and 102 Trivy alerts stood open on
+  packages Alpine had already fixed. `docker.yml` now passes `APK_UPGRADE_BUST=${{ github.run_id }}`,
+  and the `RUN` **echoes** it: BuildKit keys a `RUN` on the args it actually references, so a
+  declared-but-unmentioned `ARG` looks exactly like a fix. `ApkUpgradeIsNotCachedTest` holds both
+  halves. The sibling trap: an image reporting clean today is not an image that stays clean —
+  `spire-ui` was documented as needing no upgrade and its base later carried four HIGH CVEs.
 - **A saga test fake with an un-overridden method opens a real database** from a plain unit test.
   Seven instances so far (`setNote`, `recordCharges`, `roundOrUnknown`, `markSuppressed`, …); six
   failed loudly with an NPE, the seventh sat under a `catch (RuntimeException)` and was **silent**.

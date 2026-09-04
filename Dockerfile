@@ -84,8 +84,8 @@ ENV QUARKUS_HTTP_PORT=8080 \
     QUARKUS_PROFILE=prod
 
 # eclipse-temurin retags on its own cadence, which is slower than Alpine's package index moves. The
-# gap is where every OS-level CVE Trivy reports on these three images comes from — libexpat and
-# p11-kit, neither of which this image installs or uses directly, both inherited from the base. An
+# gap is where every OS-level CVE Trivy reports on these three images comes from — libexpat, openssl
+# and p11-kit, none of which this image installs or uses directly, all inherited from the base. An
 # upgrade here closes them at build time instead of waiting for an upstream retag that may never come
 # for a given tag.
 #
@@ -93,8 +93,20 @@ ENV QUARKUS_HTTP_PORT=8080 \
 # package versions. That is the accepted trade — the alternative is pinning each package to a version
 # that itself goes stale, which is the same treadmill with an extra step. The image digest is what
 # deployments pin (deploy/ resolves to sha-<short>), so a given deployed artifact is still exact.
-# spire-ui's base needs none of this: it is scanned by the same job and reports clean.
-RUN apk --no-cache upgrade
+#
+# **APK_UPGRADE_BUST is what makes any of the above true, and without it none of it was.** This layer
+# has no input that changes, so BuildKit restored it from the gha cache on every build and the upgrade
+# ran exactly once — the first time. Its only cache key was the base image, so the mitigation refreshed
+# precisely when the base retagged, which is the event it exists to not wait for. Measured, not
+# inferred: run 33810550375 logged `#48 [stage-1 2/10] RUN apk --no-cache upgrade` followed by
+# `#48 CACHED` for all three services, and the 102 open Trivy alerts were openssl 3.5.7-r0 and
+# libexpat 2.8.3-r0 while the live Alpine index had 3.5.8-r0 and 2.8.4-r0 for both. docker.yml passes
+# github.run_id here so the layer re-executes once per build; ApkUpgradeIsNotCachedTest holds it to
+# that. Echoed rather than merely declared because BuildKit keys a RUN on the args it actually
+# references — an ARG the command never mentions changes no cache key and would leave this inert in a
+# way that looks fixed.
+ARG APK_UPGRADE_BUST=local
+RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" && apk --no-cache upgrade
 
 RUN addgroup -g 1001 spire && adduser -u 1001 -G spire -s /bin/sh -D spire
 WORKDIR /app

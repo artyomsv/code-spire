@@ -95,4 +95,20 @@ tasks.test {
             include("spire-*/LICENSE")
         }
     ).withPropertyName("moduleLicences").withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // ApkUpgradeIsNotCachedTest DERIVES its file list by walking the tree for Dockerfiles, so every
+    // Dockerfile and the docker workflow are real inputs. Undeclared, adding an image that upgrades
+    // its base packages without busting the layer cache -- or dropping the per-build value from the
+    // workflow -- would report a cached PASS from the very edit the check exists to catch. That is
+    // not hypothetical here: the defect this guard was written for survived months of green builds
+    // precisely because nothing looked at whether the layer had actually run.
+    inputs.files(
+        fileTree(rootProject.projectDir) {
+            include("Dockerfile*")
+            include("**/Dockerfile*")
+            exclude("**/build/**")
+            exclude("**/node_modules/**")
+        },
+        rootProject.file(".github/workflows/docker.yml")
+    ).withPropertyName("imageBuilds").withPathSensitivity(PathSensitivity.RELATIVE)
 }

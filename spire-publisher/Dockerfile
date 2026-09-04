@@ -12,7 +12,15 @@ FROM eclipse-temurin:25-jre-alpine
 # as a fixed non-root uid. The uid is the AGENT's (1001) on purpose — the init container populates
 # /workspace and the agent must own what it wrote — and the mount points exist owned by it so a
 # fresh named volume inherits that ownership rather than root's.
-RUN apk --no-cache upgrade \
+#
+# APK_UPGRADE_BUST for the reason the root Dockerfile records at length: with no changing input this
+# layer caches on the base image alone, so the upgrade runs once and then refreshes only when the
+# base retags — the wait it exists to skip. This image is not in docker.yml yet, so nothing passes a
+# per-build value and the default applies; it is wired now so joining that matrix is a one-line
+# change rather than a rediscovery of the same defect.
+ARG APK_UPGRADE_BUST=local
+RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" \
+    && apk --no-cache upgrade \
     && adduser -D -u 1001 -h /home/spire spire \
     && mkdir -p /workspace /handoff \
     && chown 1001:1001 /workspace /handoff
