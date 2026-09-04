@@ -280,6 +280,17 @@ public class IntegrationSaga {
                     e.command(), reviewId, username(e.author()));
             return;
         }
+        // Observe mode, checked AFTER the allowlist and BEFORE the switch. Both positions are load-
+        // bearing. After the allowlist, because that gate answers whether this person's command counts
+        // at all, and telling an operator "the deployment is passive" about someone who was never
+        // authorized reports the wrong cause. Before the switch, because a command added below it would
+        // otherwise arrive ungated — which is exactly how /review and then /finding got in.
+        if (policy.observeOnly()) {
+            timeline.record("integration", "ManualCommandObserveOnly", reviewId,
+                    "/" + e.command() + " refused: the deployment is in observe-only mode");
+            LOG.infof("Refusing /%s on %s — observe-only mode", e.command(), reviewId);
+            return;
+        }
         // Normalized because a switch over null throws where the old equals-test simply fell through
         // to "no handler": a hand-crafted record must not cost a consumer a trip through cs.dlq.
         String command = e.command() == null ? "" : e.command();

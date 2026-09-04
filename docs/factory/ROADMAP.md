@@ -270,14 +270,32 @@ outcome, never a force push — a human owns that branch.
 **Configuration rule enforced here:** the review model and prompt must differ from the build model
 and prompt.
 
-**`/fix` is gated, and does not inherit the observe-mode gap.** It follows `/review` and `/finding` in
-checking the author allowlist ahead of the command switch, so a future command cannot arrive ungated.
-It differs from them in one respect, deliberately: **`/fix` checks `policy.observeOnly()` and
-refuses.** An earlier draft said it "inherits the known gap… and must not widen it from three paths to
-four", which are the same thing said twice with opposite consequences. A reviewer commenting in
-observe mode is a bug
-(`techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`); a factory *writing and pushing code*
-in observe mode is a different order of failure, and it is not inherited here.
+**Every `/command` is gated on observe mode — DELIVERED, and it closed the gap rather than routing
+around it.** The plan first said `/fix` alone would check `policy.observeOnly()` while `/review` and
+`/finding` kept their existing hole as a separate bug. Building it settled the product question the
+debt entry had (correctly) refused to decide unilaterally, and the answer went the other way:
+**one gate, all commands.**
+
+The reading that would have excused the other two is that an *explicit operator command* overrides a
+passive default. It does not survive contact with who can actually type one. The author is gated by
+the **per-provider allowlist**, not by operator role — so on a deployment with an empty allowlist
+(which means "review everyone", deliberately) *any* commenter can force a paid re-review while the
+operator believes the deployment is only watching. The operator's override is the setting they
+already own: turn observe mode off.
+
+The gate sits **after** the allowlist and **before** the command switch, and both positions are
+load-bearing. After the allowlist, because that gate answers whether this person's command counts at
+all, and reporting "the deployment is passive" about someone who was never authorized names the
+wrong cause. Before the switch, because a command added below it arrives ungated — which is exactly
+how `/review` and then `/finding` got in.
+
+**The refusal is silent, and here that is forced rather than chosen.** Every other silent refusal in
+this saga argues for its silence: a reply confirms to a prober that a command is wired, and costs an
+API call per probe. This one could not reply even if that argument were absent — posting a comment is
+the exact thing observe mode forbids, so answering would break the mode in the act of enforcing it.
+The timeline records `ManualCommandObserveOnly`, a distinct type from the authorization refusal's
+`ManualCommandSkipped`, because an operator reading "nothing happened" needs to know which of the two
+it was.
 
 **What M0/M1 added to this milestone that the first draft did not list.** Each is caused by a
 decision taken during the build, not by a change of mind here.
@@ -299,11 +317,10 @@ decision taken during the build, not by a change of mind here.
 1. **Run SMOKE-TEST Mode Q against a real forge.** `docs/UNVERIFIED.md` §B records that cancel,
    steer, the watchdog, the push gate and the charge ledger *"have only ever met a WireMock LLM and a
    local origin"*. M2 puts a real finding through every one of them.
-2. **Close the observe-mode gap for all three commands at once.** M2 promises `/fix` refuses in
-   observe mode. `policy.observeOnly()` is read in `onPullRequestEvent` and never in
-   `onManualCommand`, so `/review` and `/finding` already bypass it
-   (`techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`). One gate at the top of the command
-   path closes three paths; adding `/fix` alone widens the gap to four.
+2. ~~**Close the observe-mode gap for all three commands at once.**~~ **DONE.** One gate in
+   `onManualCommand`, after the allowlist and ahead of the command switch, so `/review`, `/finding`
+   and every future command are refused together. The debt entry is retired; the decision and its
+   reasoning are recorded above.
 
 **One High debt is carried, not closed.** The run unit's shared workspace volume still has no disk
 bound (`techdebt/spire-runtime-docker/2-3-…`, RUN-TOPOLOGY §9.7). M2 **widens its trigger surface**:

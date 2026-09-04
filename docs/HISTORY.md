@@ -780,6 +780,11 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     gap `/review` already had — neither checks `policy.observeOnly()` — widened from one path to
     three rather than fixed here, since whether commands should work at all in observe mode is a
     product decision; filed as `techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`.
+    **(Closed in M2, and the product decision went against the commands: one gate in
+    `onManualCommand` refuses every `/command` in observe mode. The "an explicit command is an
+    override" reading fails because the author is gated by the per-provider allowlist and not by
+    operator role, so on an empty allowlist — which means "review everyone" — any commenter could
+    force a paid re-review while the operator believed the deployment was only watching.)**
     Runbook: SMOKE-TEST **Mode N**.
 
   `docs/REPO-RULES.md` now draws the line this raised: a per-repo prompt is an **operator-owned**

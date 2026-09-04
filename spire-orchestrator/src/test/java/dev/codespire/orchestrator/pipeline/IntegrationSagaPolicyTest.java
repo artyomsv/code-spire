@@ -331,6 +331,85 @@ class IntegrationSagaPolicyTest {
         assertFalse(notes.contains("ManualCommandSkipped"), notes.toString());
     }
 
+    /**
+     * Observe mode's contract is "register only, no diff, no LLM, no comments". Every {@code /command}
+     * reached {@code onManualCommand}, which never consulted the policy — so an operator evaluating a
+     * deployment could still be billed for a paid re-review by anyone allowlisted enough to type
+     * {@code /review} in a pull request.
+     *
+     * <p><b>The refusal is silent, and here that is forced rather than chosen.</b> Every other silent
+     * refusal in this saga argues for its silence (a reply confirms to a prober that a command is
+     * wired). This one could not reply even if that reasoning were absent: posting a comment is the
+     * exact thing observe mode forbids, so answering would break the mode in the act of enforcing it.
+     */
+    @Test
+    void reviewCommandIsRefusedInObserveMode() {
+        var saga = sagaWith(policyMode(true), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertTrue(rerunInvocations.isEmpty(), "observe mode must not spend an LLM call on /review");
+        assertTrue(notes.contains("ManualCommandObserveOnly"), notes.toString());
+    }
+
+    /**
+     * The same gate, proven on the second command rather than assumed from the first. {@code /finding}
+     * spends no model call, so the "it is the operator's own paid command" reading that might excuse
+     * {@code /review} does not reach it — it is a real aggregate write and a real posted confirmation
+     * under a mode whose whole point is look-but-do-not-touch.
+     */
+    @Test
+    void findingCommandIsRefusedInObserveMode() {
+        var saga = sagaWith(policyMode(true), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "finding", "sev=HIGH",
+                Author.of("acc-1", "alice", "Alice")));
+        assertTrue(handledCommands.isEmpty(), "observe mode must not advance the aggregate");
+        assertTrue(appendedEvents.isEmpty(), "observe mode must not write a durable review-history row");
+        assertTrue(notes.contains("ManualCommandObserveOnly"), notes.toString());
+    }
+
+    /**
+     * The gate sits ahead of the command switch, which is the property that matters: a command added
+     * below it must not arrive ungated, which is precisely how {@code /review} and then
+     * {@code /finding} got in. A name with no handler stands in for that future command — under the
+     * gate it is refused by policy and never reaches the switch's default branch at all.
+     */
+    @Test
+    void aCommandWithNoHandlerIsAlsoRefusedInObserveMode() {
+        var saga = sagaWith(policyMode(true), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "fix", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertTrue(notes.contains("ManualCommandObserveOnly"),
+                "the gate must precede the switch, or every future command inherits the hole again");
+    }
+
+    /**
+     * The other half. A gate that refuses everything passes every test above and closes the feature —
+     * so the active-mode path is asserted with the same fixture, differing only in the policy.
+     */
+    @Test
+    void commandsAreNotRefusedWhenTheDeploymentIsActive() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertEquals(List.of("acme/web#412"), rerunInvocations, "an active deployment still re-runs");
+        assertFalse(notes.contains("ManualCommandObserveOnly"), notes.toString());
+    }
+
+    /**
+     * Ordering, asserted rather than left to reading order. An unlisted author in observe mode is
+     * refused as UNAUTHORIZED, not as passive: the allowlist answers whether this person's command
+     * counts at all, and reporting the deployment's mode instead would tell an operator the wrong
+     * thing about why nothing happened.
+     */
+    @Test
+    void anUnlistedAuthorInObserveModeIsRefusedByTheAllowlistNotTheModeGate() {
+        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-9", "bob", "Bob")));
+        assertTrue(notes.contains("ManualCommandSkipped"), notes.toString());
+        assertFalse(notes.contains("ManualCommandObserveOnly"), notes.toString());
+    }
+
     @Test
     void reviewCommandOnUnknownPrIsSkippedNotFatal() {
         var saga = sagaWith(policyMode(false), provider(List.of()));
