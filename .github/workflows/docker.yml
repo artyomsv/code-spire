@@ -52,14 +52,17 @@ jobs:
             context: .
             dockerfile: Dockerfile
             service: gateway
+            apkUpgrade: true
           - name: spire-orchestrator
             context: .
             dockerfile: Dockerfile
             service: orchestrator
+            apkUpgrade: true
           - name: spire-review-worker
             context: .
             dockerfile: Dockerfile
             service: review-worker
+            apkUpgrade: true
           - name: spire-ui
             context: ./spire-ui
             dockerfile: ./spire-ui/Dockerfile
@@ -79,7 +82,21 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
+          # Two lines, each empty for the entry it does not apply to; the action skips empty items.
+          #
+          # **APK_UPGRADE_BUST is a security control, not tidying.** `RUN apk --no-cache upgrade` has
+          # no input that changes, so with cache-from restoring it BuildKit re-used that layer on
+          # every build and the upgrade ran once — its only cache key being the base image, which is
+          # exactly the retag cadence the upgrade exists to not wait for. Run 33810550375 logged it
+          # CACHED for all three services while 102 Trivy alerts stood open on packages the live
+          # Alpine index had already fixed. github.run_id is unique per build, so the layer
+          # re-executes; the Dockerfile echoes the value because BuildKit keys a RUN on the args it
+          # actually references. spire-ui carries no upgrade and so is not sent one — an unconsumed
+          # build arg warns on every build, and a warning nobody can act on trains people past the
+          # ones they can. ApkUpgradeIsNotCachedTest fails if either half of this drifts.
+          build-args: |
+            ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
+            ${{ matrix.apkUpgrade && format('APK_UPGRADE_BUST={0}', github.run_id) || '' }}
           platforms: linux/amd64
           load: true
           tags: ghcr.io/artyomsv/${{ matrix.name }}:edge

@@ -1595,6 +1595,51 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
   Measured, not estimated: **2549 Java tests across 299 suites** (`testFast` + `testServices`;
   the nightly `testE2e` tier is separate). `spire-ui` untouched by M1.
+- **The base-image upgrade was cached, so it never ran (2026-09-04):** all 102 open code-scanning
+  alerts were one defect with one cause. Every alert was Trivy on the three service images, and all
+  of them named two Alpine packages the base ships and this repository does not use — openssl
+  (`3.5.7-r0`, as `libcrypto3`/`libssl3`/`openssl`) and libexpat (`2.8.3-r0`). `Dockerfile` has run
+  `apk --no-cache upgrade` since 2026-08-05 for exactly this, and three documents said it worked.
+  **It had run once.** The layer has no input that changes, so with `cache-from: type=gha` restoring
+  it BuildKit re-used it on every build — its only cache key being the base image, which means the
+  mitigation refreshed precisely when `eclipse-temurin` retagged, the wait it exists to skip. The
+  same shape as the LLM circuit breaker recording a failed future as a success: installed, described,
+  inert.
+  - **Measured at every step, because each half is separately deniable.** Workflow run 33810550375
+    logged `#48 [stage-1 2/10] RUN apk --no-cache upgrade` followed by `#48 CACHED` for all three
+    services. A throwaway two-line Dockerfile reproduced it in isolation — the same `RUN` re-built
+    with nothing changed is `CACHED`, and with a referenced build arg it re-executes. One fresh
+    `apk --no-cache upgrade` on the very same base installs openssl `3.5.8-r0` and libexpat
+    `2.8.4-r0`, i.e. the fixed versions every alert names. And the real `spire-publisher` image built
+    from the changed Dockerfile scans **0** OS vulnerabilities against the base image's **49** — the
+    counterfactual matters, since a clean report means nothing without proof the scanner sees the
+    dirty one.
+  - **`APK_UPGRADE_BUST` is echoed inside the `RUN`, not merely declared.** BuildKit keys a `RUN` on
+    the build args it actually references, so an `ARG` the command never mentions changes no cache
+    key — a fix that looks identical to the defect. `docker.yml` passes `github.run_id`, unique per
+    build; a constant would restore the original behaviour with more ceremony.
+  - **`spire-ui` is deliberately not sent the argument.** Its nginx base carries no upgrade, and an
+    unconsumed build arg warns on every build — a warning nobody can act on trains people past the
+    ones they can. The matrix carries an explicit `apkUpgrade` flag rather than sending it to
+    everything, and `ApkUpgradeIsNotCachedTest` asserts **both** directions.
+  - **The guard derives its file list** by walking the tree for `Dockerfile*` and joining backslash
+    continuations (`spire-publisher` chains its upgrade into an `adduser`), so an image added later
+    inherits the rule instead of escaping it, and it refuses to pass on an empty scan. All four
+    mutations verified — drop the arg reference, freeze the workflow value, remove a service's flag,
+    add the flag to `spire-ui` — each failing exactly one test. `spire-publisher/Dockerfile` is wired
+    the same way although nothing passes it a value yet: it is not in `docker.yml`, and joining that
+    matrix should be a one-line change rather than a rediscovery.
+
+  Also settled while reading the nine open Dependabot pull requests, because the pair would have been
+  merged separately: **`jgit` 7.7.1 moves to `slf4j-api` 2.0.18 while `slf4j-nop` stays at 1.7.36**,
+  and a 1.7 binding does not satisfy a 2.x api. `spire-publisher` pins `slf4j-nop` for one reason —
+  JGit's three-line "no binding" warning on every run's stderr — so merging #100 alone replaces it
+  with a **six**-line warning, and merging #99 alone does the same from the other side. Measured by
+  running `LoggerFactory.getLogger` against each version pair, not inferred. No test asserts the
+  publisher's stderr, so CI is green for both. They must land together.
+
+  Measured, not estimated: **spire-arch 46 tests across 14 suites** (43/13 before); `testFast` green.
+
 - **Still pending from P1 scope:** nothing. Call-level resilience shipped as a hand-rolled retry
   ladder + circuit breaker, **not** SmallRye Fault Tolerance — ADR-016 rejected per-call `@Retry` for
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
