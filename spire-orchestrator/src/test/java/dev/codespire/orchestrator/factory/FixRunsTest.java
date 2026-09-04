@@ -12,6 +12,7 @@ import java.sql.SQLException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -62,11 +63,117 @@ class FixRunsTest {
     void aFixRunWrittenByTheProjectionIsCountedByBothCaps() {
         FactoryRunProjection.QueuedRun row = new FactoryRunProjection.QueuedRun(
                 "run::github:TEST-WS/TEST-REPO:" + FINDING + ":1", "codex", "TEST-MODEL", "main",
-                "TESTSHA0", "feature/login", "machine-account", null).asFixFor(REVIEW, FINDING);
+                "TESTSHA0", "feature/login", "machine-account", null).asFixFor(REVIEW, FINDING, "TEST-comment-1");
 
         assertTrue(projection.queued(row), "the row must be written");
         assertEquals(1, fixRuns.forFinding(REVIEW, FINDING));
         assertEquals(1, fixRuns.forReview(REVIEW));
+    }
+
+    /**
+     * <b>The claim is on the COMMENT, and this is the case that shows why it had to be.</b>
+     *
+     * <p>The run id is derived from the finding's thread plus {@code nextAttempt}, and
+     * {@code nextAttempt} COUNTS the rows already written. So a redelivered command derives a
+     * HIGHER attempt than the first delivery did, produces a different run id, and sails straight
+     * through {@code ON CONFLICT (run_id)} — the one guard that catches every other duplicate. The
+     * numbering defeats it. This drives exactly that sequence and asserts the comment claim sees
+     * what the run id could not.
+     */
+    @Test
+    void aRedeliveredCommandDerivesADifferentRunIdAndIsCaughtByTheCommentClaimAlone() {
+        String comment = "TEST-comment-redelivered";
+        int firstAttempt = fixRuns.nextAttempt(REVIEW, FINDING);
+        assertTrue(projection.queued(fixRow(firstAttempt, comment)), "the first delivery is written");
+
+        int secondAttempt = fixRuns.nextAttempt(REVIEW, FINDING);
+        assertNotEquals(firstAttempt, secondAttempt,
+                "if the attempt did NOT move, this test proves nothing about the claim");
+
+        // The run id guard would have let this through: it is a genuinely new id.
+        assertNotEquals(fixRow(firstAttempt, comment).runId(), fixRow(secondAttempt, comment).runId());
+        // The claim is what sees it, and it names the run already bought so a refusal can say which.
+        assertEquals("run::github:TEST-WS/TEST-REPO:" + FINDING + ":" + firstAttempt,
+                projection.fixRunFor(comment).orElseThrow());
+    }
+
+    /** A comment that has bought nothing reads as empty — seeded first, or this proves nothing. */
+    @Test
+    void aCommentThatHasBoughtNoRunReadsAsEmpty() {
+        assertTrue(projection.queued(fixRow(1, "TEST-comment-a")));
+
+        assertTrue(projection.fixRunFor("TEST-comment-b").isEmpty());
+    }
+
+    /**
+     * A build run is invisible to the claim, however it was written.
+     *
+     * <p>The index is partial on {@code kind = 'FIX'} and the query repeats that condition. Both
+     * halves matter: dropping it from the query would make a build run whose comment column was
+     * somehow set refuse a fix, and dropping it from the index would make every build row compete
+     * for uniqueness on a column that means nothing to it.
+     */
+    @Test
+    void theClaimSeesOnlyFixRuns() {
+        assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(
+                "run::github:TEST-WS/TEST-REPO:build-subject:1", "codex", "TEST-MODEL", "main",
+                "TESTSHA0", "spire/build-subject", "machine-account", null, "BUILD", null, null,
+                "TEST-comment-on-a-build")));
+
+        assertTrue(projection.fixRunFor("TEST-comment-on-a-build").isEmpty());
+    }
+
+    /** A fix row cannot be written without its claim; the throw is the caller's bug, named. */
+    @Test
+    void aFixRowWithoutTheCommentThatAskedIsRefused() {
+        for (String nothing : new String[] {null, "", "   "}) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> fixRow(1, "x").asFixFor(REVIEW, FINDING, nothing), "commentId=" + nothing);
+        }
+    }
+
+    /** And asking the claim about no comment at all is a caller bug too, not an empty answer. */
+    @Test
+    void theClaimRefusesToBeAskedAboutNoComment() {
+        for (String nothing : new String[] {null, "", "   "}) {
+            assertThrows(IllegalArgumentException.class, () -> projection.fixRunFor(nothing),
+                    "commentId=" + nothing);
+        }
+    }
+
+    /**
+     * A re-arm may not MOVE a claim from one comment to another.
+     *
+     * <p>The re-arm exists for a dispatch the broker refused: the same request, sent again. Every
+     * other component of the row's identity is compared before it is allowed, and an earlier round
+     * found three that were not — a BUILD row re-armed as FIX stayed BUILD, so neither cap counted
+     * it. The comment is the fourth, and it is the one the SPEND claim rests on: if a re-arm could
+     * rewrite it, one comment would be released to buy again while the unique index — which is an
+     * index, not a row comparison — saw nothing move.
+     */
+    @Test
+    void aReArmMayNotChangeWhichCommentBoughtTheRun() {
+        String runId = "run::github:TEST-WS/TEST-REPO:" + FINDING + ":1";
+        assertTrue(projection.queued(fixRow(1, "TEST-comment-original")));
+        projection.dispatchFailed(runId, "the broker did not acknowledge the command");
+
+        assertFalse(projection.queued(fixRow(1, "TEST-comment-different")),
+                "a differing retry must match no row here, and be refused by the caller");
+        assertEquals(runId, projection.fixRunFor("TEST-comment-original").orElseThrow(),
+                "the original claim must still hold");
+        assertTrue(projection.fixRunFor("TEST-comment-different").isEmpty(),
+                "and the other comment must not have acquired it");
+
+        // The negative control: the IDENTICAL retry is the one this path exists for, and it works.
+        assertTrue(projection.queued(fixRow(1, "TEST-comment-original")),
+                "an identical retry re-arms, or the comparison above is simply refusing everything");
+    }
+
+    private static FactoryRunProjection.QueuedRun fixRow(int attempt, String commentId) {
+        return new FactoryRunProjection.QueuedRun(
+                "run::github:TEST-WS/TEST-REPO:" + FINDING + ":" + attempt, "codex", "TEST-MODEL",
+                "main", "TESTSHA0", "feature/login", "machine-account", null)
+                .asFixFor(REVIEW, FINDING, commentId);
     }
 
     /** And a build run written the same way is counted by neither. */

@@ -170,14 +170,14 @@ public class FactoryRunProjection {
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
                             String baseCommit, String branch, String pushedAs,
                             UUID harnessCredentialId, String kind, String reviewId,
-                            String findingRef) {
+                            String findingRef, String commentId) {
 
         /** A build run: what every dispatch was before M2, and what the REST endpoint still sends. */
         public QueuedRun(String runId, String harness, String model, String baseBranch,
                          String baseCommit, String branch, String pushedAs,
                          UUID harnessCredentialId) {
             this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, RunKind.BUILD.name(), null, null);
+                    harnessCredentialId, RunKind.BUILD.name(), null, null, null);
         }
 
         /**
@@ -190,7 +190,15 @@ public class FactoryRunProjection {
          * <p>V54 refuses a FIX row that names neither, and refuses a non-FIX row that names
          * either, so a caller cannot half-apply this.
          */
-        public QueuedRun asFixFor(String reviewId, String findingRef) {
+        /**
+         * @param commentId the comment that asked, and the claim that stops it buying twice. Not
+         *     optional: without it a redelivered command derives a HIGHER attempt through
+         *     {@code nextAttempt} — which counts the row the first delivery wrote — so it derives a
+         *     different run id and sails past the {@code ON CONFLICT (run_id)} guard that catches
+         *     every other duplicate. The numbering defeats the one mechanism that would have
+         *     stopped it, which is why the claim is a column of its own
+         */
+        public QueuedRun asFixFor(String reviewId, String findingRef, String commentId) {
             // Refused here rather than one layer away as a constraint violation, which is the same
             // argument ExecuteRun's compact constructor makes. isBlank rather than isEmpty because
             // V54 uses btrim(...) <> '' -- matching it exactly is what keeps the two from drifting.
@@ -198,8 +206,12 @@ public class FactoryRunProjection {
                 throw new IllegalArgumentException("a fix run must name the review and the finding "
                         + "it fixes, or neither cap can count it");
             }
+            if (commentId == null || commentId.isBlank()) {
+                throw new IllegalArgumentException("a fix run must name the comment that asked for "
+                        + "it, or a redelivery of that comment buys a second run with no symptom");
+            }
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef);
+                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId);
         }
     }
 
@@ -259,8 +271,9 @@ public class FactoryRunProjection {
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
-                                         harness_credential_id, kind, review_id, finding_ref)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         harness_credential_id, kind, review_id, finding_ref,
+                                         comment_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -290,6 +303,10 @@ public class FactoryRunProjection {
                    AND factory_run.kind = EXCLUDED.kind
                    AND factory_run.review_id IS NOT DISTINCT FROM EXCLUDED.review_id
                    AND factory_run.finding_ref IS NOT DISTINCT FROM EXCLUDED.finding_ref
+                   -- And the comment, for the same reason as the three above: a re-arm that changed
+                   -- it would move a claim from one request to another while the unique index --
+                   -- which is an INDEX, not a row comparison -- saw nothing move.
+                   AND factory_run.comment_id IS NOT DISTINCT FROM EXCLUDED.comment_id
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);
@@ -311,13 +328,51 @@ public class FactoryRunProjection {
             ps.setString(15, row.kind());
             ps.setString(16, row.reviewId());
             ps.setString(17, row.findingRef());
-            ps.setString(18, FAILED);
-            ps.setString(19, DISPATCH_FAILED);
+            ps.setString(18, row.commentId());
+            ps.setString(19, FAILED);
+            ps.setString(20, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record run " + runId, e);
+        }
+    }
+
+    private static final String FIX_RUN_FOR_COMMENT = """
+            SELECT run_id FROM factory_run
+             WHERE kind = 'FIX' AND comment_id = ?
+            """;
+
+    /**
+     * The fix run a comment already bought, or empty when it has bought none.
+     *
+     * <p>The read half of the claim V56 adds. It exists so a redelivered {@code /fix} produces a
+     * REFUSAL naming the run rather than a constraint violation: the index is the backstop for a
+     * race that should not be reachable (one review keys to one partition and one consumer, in
+     * order), and a dead-lettered record is the right answer to a race and the wrong one to an
+     * ordinary redelivery.
+     *
+     * <p><b>Throws on a read fault rather than answering empty</b>, unlike most of this class.
+     * Empty here means "nothing has been paid for yet", which is the answer that AUTHORISES a paid
+     * run. An unreadable table must not be able to say that — {@code FixRuns} takes the identical
+     * posture for the identical reason, and both are the ADR-023 rule applied to a guard rather
+     * than to a number.
+     */
+    public Optional<String> fixRunFor(String commentId) {
+        if (commentId == null || commentId.isBlank()) {
+            // Not a lookup that can succeed: the index is partial ON comment_id IS NOT NULL, so
+            // every blank would collide in the answer while colliding with nothing in the table.
+            throw new IllegalArgumentException("a fix claim needs the comment that asked for it");
+        }
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(FIX_RUN_FOR_COMMENT)) {
+            ps.setString(1, commentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString("run_id")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the fix claim for comment " + commentId, e);
         }
     }
 
