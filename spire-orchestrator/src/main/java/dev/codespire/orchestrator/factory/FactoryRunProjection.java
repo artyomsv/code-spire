@@ -12,7 +12,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -99,6 +103,21 @@ public class FactoryRunProjection {
     static final String DISPATCH_FAILED = "DISPATCH_FAILED";
 
     /**
+     * Every status a row may hold, for a caller that has to VALIDATE one rather than write one.
+     *
+     * <p>Listed here so the runs endpoint can refuse an unknown filter value instead of silently
+     * returning everything. A mistyped status that answers "all runs" reads as "nothing is stuck",
+     * which is the most dangerous possible answer to the question that page is opened to ask.
+     *
+     * <p>Hand-maintained, and {@code FactoryRunStatusesAreCompleteTest} DERIVES the same set by
+     * reflecting over the constants above rather than trusting this line. A tenth status added
+     * without a tenth entry here would otherwise be unfilterable and nothing would notice.
+     */
+    public static final Set<String> STATUSES = Set.of(QUEUED, RUNNING, SUCCEEDED, FAILED,
+            PUSH_GATE_REFUSED, DISPATCH_UNCERTAIN, CANCELLED, DELIVERED_NOTHING,
+            DELIVERED_UNFINISHED);
+
+    /**
      * The model this run was dispatched with, or empty when the row cannot be read.
      *
      * <p>Read from the run's own row rather than carried on the result, because the result is
@@ -152,6 +171,133 @@ public class FactoryRunProjection {
     public record RunView(String runId, String status, String pushedRef,
                           List<RunResult.BlockedChange> blocked,
                           String failureCause, String failureDetail, String unitId) {
+    }
+
+    /**
+     * One row of the runs list — a LIST shape, deliberately not {@link RunView}.
+     *
+     * <p>That record answers "what happened to this one run" and is the detail endpoint's wire
+     * contract; this answers "what is going on". Adding components to the detail record to serve a
+     * list would change a shipped wire shape for a reader that does not want them, and would drag
+     * the blocked-change list into a page that renders fifty rows.
+     *
+     * @param reviewId and {@code findingRef} — null for anything that is not a fix. V54's CHECK
+     *     already refuses a non-FIX row that names either, and this read must not invent them back:
+     *     a blank here would render as a broken join rather than as "this run had no review"
+     * @param cost unknown until the charge lands, and unknown forever if the model could not be
+     *     priced. Never zero for either — see {@link RunCost}
+     */
+    public record RunListEntry(String runId, String status, String kind, String harness,
+                               String model, String branch, String pushedRef, String reviewId,
+                               String findingRef, String failureCause, Instant startedAt,
+                               Instant endedAt, RunCost cost) {
+    }
+
+    /**
+     * What to list. Every field null means "no filter", which is the default page.
+     *
+     * <p>A record rather than four parameters, because three of the four are Strings and this
+     * repository has already paid for two adjacent same-typed arguments being transposed.
+     *
+     * @param limit how many rows, already validated by the caller against its own bound
+     */
+    public record RunFilter(String status, String kind, String reviewId, int limit) {
+
+        public RunFilter {
+            if (limit <= 0) {
+                throw new IllegalArgumentException("a page of runs needs a positive size: " + limit);
+            }
+        }
+    }
+
+    /**
+     * The runs list, newest first.
+     *
+     * <p><b>The cost is joined in SQL rather than fetched per row.</b> A per-row lookup over a
+     * fifty-row page is fifty round trips for a column, and the aggregate has to be computed
+     * server-side anyway to stay unknown-aware: {@code SUM} skips NULL, so the count of null lines
+     * is what distinguishes "cost nothing" from "nobody knows what it cost".
+     *
+     * <p>Ordered by {@code started_at DESC} with the run id as a tiebreak. Without the tiebreak two
+     * runs dispatched in the same millisecond order arbitrarily between pages, which is how a row
+     * appears twice in one paged read and never in another.
+     */
+    public List<RunListEntry> list(RunFilter filter) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch, r.pushed_as,
+                       r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
+                       r.started_at, r.ended_at,
+                       c.priced_millicents, c.unpriced_lines, c.line_count
+                  FROM factory_run r
+                  LEFT JOIN (
+                        SELECT subject_id,
+                               SUM(cost_millicents) AS priced_millicents,
+                               COUNT(*) FILTER (WHERE cost_millicents IS NULL) AS unpriced_lines,
+                               COUNT(*) AS line_count
+                          FROM llm_charge
+                         WHERE subject_kind = 'RUN'
+                         GROUP BY subject_id
+                  ) c ON c.subject_id = r.run_id
+                 WHERE 1 = 1
+                """);
+        List<String> bound = new ArrayList<>();
+        if (filter.status() != null) {
+            sql.append(" AND r.status = ?");
+            bound.add(filter.status());
+        }
+        if (filter.kind() != null) {
+            sql.append(" AND r.kind = ?");
+            bound.add(filter.kind());
+        }
+        if (filter.reviewId() != null) {
+            sql.append(" AND r.review_id = ?");
+            bound.add(filter.reviewId());
+        }
+        sql.append(" ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?");
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            int i = 1;
+            for (String value : bound) {
+                ps.setString(i++, value);
+            }
+            ps.setInt(i, filter.limit());
+            try (ResultSet rs = ps.executeQuery()) {
+                List<RunListEntry> rows = new ArrayList<>();
+                while (rs.next()) {
+                    rows.add(new RunListEntry(rs.getString("run_id"), rs.getString("status"),
+                            rs.getString("kind"), rs.getString("harness"), rs.getString("model"),
+                            rs.getString("branch"), rs.getString("pushed_ref"),
+                            rs.getString("review_id"), rs.getString("finding_ref"),
+                            rs.getString("failure_cause"), instant(rs, "started_at"),
+                            instant(rs, "ended_at"), costOf(rs)));
+                }
+                return List.copyOf(rows);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not list factory runs", e);
+        }
+    }
+
+    /**
+     * A run costs what its priced lines came to, and only when EVERY line is priced.
+     *
+     * <p>Three ways to be unknown and they all arrive here as the same answer: no charge row at all
+     * (the run has not finished, or reported no usage), or at least one line the pricer could not
+     * value. The last is the one a plain {@code SUM} hides — it skips NULL and returns the priced
+     * remainder, which is a number that looks like a total and is not one.
+     */
+    private static RunCost costOf(ResultSet rs) throws SQLException {
+        long lines = rs.getLong("line_count");
+        if (rs.wasNull() || lines == 0 || rs.getLong("unpriced_lines") > 0) {
+            return RunCost.unknown();
+        }
+        long priced = rs.getLong("priced_millicents");
+        return rs.wasNull() ? RunCost.unknown() : RunCost.of(priced);
+    }
+
+    private static Instant instant(ResultSet rs, String column) throws SQLException {
+        Timestamp at = rs.getTimestamp(column);
+        return at == null ? null : at.toInstant();
     }
 
     @Inject

@@ -31,6 +31,8 @@ import java.util.UUID;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 
@@ -123,6 +125,102 @@ class RunResourceTest {
         providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "factory-bot", null, "FACTORY"));
         return workspace;
+    }
+
+    /** A FIX row this suite owns, so the list's review join has something to join to. */
+    private String registeredFixRun(String reviewId) {
+        String subject = "fixlist-" + UUID.randomUUID();
+        String runId = "run::github:TEST-acme/app:" + subject + ":1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
+                "abc1234", "feature/login", "spire-bot", null)
+                .asFixFor(reviewId, "thread-" + subject, "comment-" + subject));
+        return runId;
+    }
+
+    /**
+     * The runs list, which did not exist: every "which run…" question needed a database.
+     *
+     * <p>Two rows are seeded and the assertion names the one that must be present AND the one that
+     * must not. An endpoint that ignored its filter and returned everything would pass a
+     * merely-non-empty check.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void listsRunsAndNarrowsByKind() {
+        String build = registeredRun();
+        String fix = registeredFixRun("review::TEST-acme/app#900");
+
+        given().when().get("/api/runs?kind=FIX&limit=500")
+                .then().statusCode(200)
+                .body("runId", hasItem(fix))
+                .body("runId", not(hasItem(build)));
+    }
+
+    /** And the review join is what the whole task exists for, so it is asserted by value. */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aFixRunInTheListNamesItsReview() {
+        String reviewId = "review::TEST-acme/app#" + Math.abs(UUID.randomUUID().hashCode());
+        String fix = registeredFixRun(reviewId);
+
+        given().when().get("/api/runs?reviewId=" + reviewId)
+                .then().statusCode(200)
+                .body("runId", hasItem(fix))
+                .body("size()", equalTo(1))
+                .body("[0].reviewId", equalTo(reviewId))
+                .body("[0].kind", equalTo("FIX"));
+    }
+
+    /**
+     * <b>An unrecognised filter value is REFUSED, never ignored.</b>
+     *
+     * <p>Silently dropping a mistyped {@code status=faield} returns every run, which reads as
+     * "nothing is stuck" — the most dangerous possible answer to the question this page is opened
+     * to ask. The message names what IS accepted, because an operator who mistyped one needs the
+     * list rather than a rejection.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anUnknownFilterValueIsRefusedRatherThanReturningEverything() {
+        given().when().get("/api/runs?status=faield")
+                .then().statusCode(400).body(containsString("queued"));
+        given().when().get("/api/runs?kind=REPAIR")
+                .then().statusCode(400).body(containsString("FIX"));
+    }
+
+    /** A cleared UI field sends an empty parameter; that is ABSENT, not a filter matching "". */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aBlankFilterIsAbsentRatherThanAFilterMatchingNothing() {
+        String run = registeredRun();
+
+        given().when().get("/api/runs?status=&kind=&reviewId=&limit=500")
+                .then().statusCode(200).body("runId", hasItem(run));
+    }
+
+    /** A page of nothing can only answer empty, so it is a caller bug rather than a page. */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aNonPositivePageSizeIsRefused() {
+        given().when().get("/api/runs?limit=0").then().statusCode(400);
+        given().when().get("/api/runs?limit=-5").then().statusCode(400);
+    }
+
+    /**
+     * <b>A run with no charge reports null over the wire, and null is not 0.</b>
+     *
+     * <p>The charge lands when the model call completes, so every queued row is in this state. A
+     * zero would render as "free" beside runs that really were. Asserted on the wire rather than
+     * only in the projection, because this is the boundary where a serialiser could invent one.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anUnchargedRunReportsNoCostRatherThanZero() {
+        String run = registeredRun();
+
+        given().when().get("/api/runs?limit=500")
+                .then().statusCode(200)
+                .body("find { it.runId == '" + run + "' }.cost.millicents", nullValue());
     }
 
     /** A run row this suite owns, written straight to the projection rather than dispatched. */
@@ -830,5 +928,60 @@ class RunResourceTest {
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
                 .then().statusCode(201);
+    }
+
+    /**
+     * <b>A viewer may LIST runs, matching the detail endpoint rather than being tighter.</b>
+     *
+     * <p>Reading which runs exist is not the privilege that matters here — dispatching is, and that
+     * stays admin-only on the POST. A list narrower than the detail endpoint beside it would mean a
+     * viewer could open a run they could not find.
+     */
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerMayListRunsJustAsTheyMayReadOne() {
+        String run = registeredRun();
+
+        given().when().get("/api/runs?limit=500")
+                .then().statusCode(200).body("runId", hasItem(run));
+        given().when().get("/api/runs/" + run).then().statusCode(200);
+    }
+
+    /**
+     * <b>An authenticated caller holding neither role is refused — and THIS is the discriminating
+     * case.</b>
+     *
+     * <p>An anonymous request is refused too, but that 401 comes from the deployment's own auth
+     * policy before any annotation is consulted, so it passes whatever this method is annotated
+     * with. Mutating the endpoint to {@code @PermitAll} proved it: every other case here stayed
+     * green, including the anonymous one and the viewer one, because a viewer is permitted either
+     * way. Only a caller who IS authenticated and IS NOT allowed can tell the annotation apart from
+     * the wall behind it.
+     */
+    @Test
+    @TestSecurity(user = "stranger", roles = "some-other-app-role")
+    void anAuthenticatedCallerWithNeitherRoleIsRefused() {
+        given().when().get("/api/runs").then().statusCode(403);
+        given().when().get("/api/runs/run::github:TEST-acme/app:nothing:1").then().statusCode(403);
+    }
+
+    /** And nor is it public — though see above for why this one cannot police the annotation. */
+    @Test
+    void anAnonymousCallerCannotListRuns() {
+        given().when().get("/api/runs").then().statusCode(401);
+    }
+
+    /**
+     * A viewer still may not DISPATCH, which is the privilege that actually matters.
+     *
+     * <p>Asserted beside the read cases so widening the class-level role to admit viewers — the
+     * obvious way to make the list work — fails here rather than shipping.
+     */
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerMayNotDispatchARun() {
+        given().contentType("application/json")
+                .body("{\"workspace\":\"TEST-acme\",\"slug\":\"app\",\"baseCommit\":\"abc1234abc1234abc1234abc1234abc1234abc1\",\"prompt\":\"x\",\"harness\":\"codex\",\"model\":\"TEST-MODEL\"}")
+                .when().post("/api/runs").then().statusCode(403);
     }
 }

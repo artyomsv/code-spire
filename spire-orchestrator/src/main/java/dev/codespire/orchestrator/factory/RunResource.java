@@ -24,6 +24,7 @@ import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -552,6 +553,85 @@ public class RunResource {
     private static int boundedLimit(Integer requested) {
         int asked = requested == null ? DEFAULT_TRANSCRIPT_PAGE : requested;
         return Math.max(1, Math.min(asked, MAX_TRANSCRIPT_PAGE));
+    }
+
+    /** A list page big enough to be useful and small enough that nobody waits for it. */
+    private static final int DEFAULT_RUN_PAGE = 50;
+
+    /** And a ceiling, because an unbounded list over a table that grows per run gets slower forever. */
+    private static final int MAX_RUN_PAGE = 500;
+
+    /**
+     * The runs list — the endpoint an operator reaches without already knowing a run id.
+     *
+     * <p>Until now the factory had only {@code GET /api/runs/{id}} and its transcript, so every
+     * question that starts "which run…" needed a database. That is the gap
+     * {@code techdebt/spire-ui/4-3-the-factory-has-no-screens-at-all.md} records.
+     *
+     * <p><b>Viewer as well as admin, matching the detail endpoint.</b> Reading which runs exist is
+     * not the privilege that matters here — DISPATCHING is, and that stays admin-only on the POST.
+     *
+     * <p><b>An unrecognised filter value is refused, never ignored.</b> Silently dropping a typo'd
+     * {@code status=faield} returns every run, which reads as "nothing is stuck" — the most
+     * dangerous possible answer to the question this page is opened to ask.
+     */
+    @GET
+    @RolesAllowed({"spire-viewer", "spire-admin"})
+    public List<FactoryRunProjection.RunListEntry> list(@QueryParam("status") String status,
+                                                        @QueryParam("kind") String kind,
+                                                        @QueryParam("reviewId") String reviewId,
+                                                        @QueryParam("limit") Integer limit) {
+        return projection.list(new FactoryRunProjection.RunFilter(
+                knownStatus(status), knownKind(kind), blankToNull(reviewId), pageSize(limit)));
+    }
+
+    /**
+     * A status the projection actually writes, or a 400 naming what is accepted.
+     *
+     * <p>Checked against the projection's own constants rather than a list spelled here, so a new
+     * status cannot be filterable in one place and unknown in the other.
+     */
+    private static String knownStatus(String status) {
+        String value = blankToNull(status);
+        if (value == null || FactoryRunProjection.STATUSES.contains(value)) {
+            return value;
+        }
+        throw DispatchRequestParser.badRequest("unknown run status '" + value + "'; one of "
+                + FactoryRunProjection.STATUSES);
+    }
+
+    /** And a kind RunKind names, for the same reason. */
+    private static String knownKind(String kind) {
+        String value = blankToNull(kind);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return RunKind.valueOf(value.toUpperCase(Locale.ROOT)).name();
+        } catch (IllegalArgumentException notAKind) {
+            throw DispatchRequestParser.badRequest("unknown run kind '" + value + "'; one of "
+                    + java.util.Arrays.toString(RunKind.values()));
+        }
+    }
+
+    /**
+     * A blank query parameter is ABSENT, not a filter matching the empty string.
+     *
+     * <p>{@code ?reviewId=} is what a UI sends when its field is cleared, and treating it as a
+     * filter would answer an empty list — indistinguishable from "there are no runs".
+     */
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    private static int pageSize(Integer limit) {
+        if (limit == null) {
+            return DEFAULT_RUN_PAGE;
+        }
+        if (limit <= 0) {
+            throw DispatchRequestParser.badRequest("a page of runs needs a positive size: " + limit);
+        }
+        return Math.min(limit, MAX_RUN_PAGE);
     }
 
     @GET
