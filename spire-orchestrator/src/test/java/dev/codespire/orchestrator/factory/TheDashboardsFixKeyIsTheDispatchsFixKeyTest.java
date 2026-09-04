@@ -19,6 +19,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -95,33 +96,62 @@ class TheDashboardsFixKeyIsTheDispatchsFixKeyTest {
         findings.recordGenerated(REVIEW, 1, COMMIT, List.of(new Finding("src/B.java",
                 new LineRange(20, 20), Severity.NIT, null, "a nit", null)));
 
-        assertEquals(null, threadRefColumn("src/B.java"),
+        assertNull(threadRefColumn("src/B.java"),
                 "generated but never posted, so there is no conversation to fix against");
     }
 
     /**
-     * <b>The row id is NOT the key, and this shows why.</b>
+     * <b>The row id is NOT the key: re-recording a round REPLACES the row the id named.</b>
      *
-     * <p>P4 rewrites a review's findings delete-then-insert per {@code (review_id, round)}, so a
-     * second round replaces the row and its id with it. The thread ref survives that; the id does
-     * not. A dashboard that dispatched by id would aim a paid run at a row that no longer exists.
+     * <p>An earlier version of this test asserted the new id differed from the old one, and a
+     * review showed that assertion could not fail. {@code FIND_BY_THREAD} is
+     * {@code ORDER BY id DESC LIMIT 1} over a monotonic serial, so the id it returns after a second
+     * insert is higher BY CONSTRUCTION — delete the delete-then-insert entirely and both rows would
+     * exist, the newer one would still win the ORDER BY, and the test would still pass. It measured
+     * the sequence, not the replacement.
+     *
+     * <p>What discriminates is that the OLD row is gone. That is what makes an id unusable as a
+     * dispatch key: a dashboard holding one would aim a paid run at a row that no longer exists.
+     *
+     * <p>This re-records the SAME round, which is what {@code deleteRound} is scoped to — the
+     * earlier comment said "round two" while passing {@code round = 1}, and the code was the honest
+     * half. A genuine second round would not delete round one's row at all.
      */
     @Test
-    void theRowIdDoesNotSurviveARoundButTheThreadRefDoes() {
+    void reRecordingARoundReplacesTheRowSoItsIdCannotBeADispatchKey() {
         findings.recordGenerated(REVIEW, 1, COMMIT, List.of(new Finding("src/A.java",
                 new LineRange(10, 14), Severity.BLOCKER, FindingCategory.SECURITY, "m", null)));
         findings.recordThreadRefs(REVIEW, List.of(new PostedInline(THREAD, "src/A.java", 10)));
-        long idInRoundOne = findings.findByThread(REVIEW, THREAD).orElseThrow().id();
+        long idBefore = findings.findByThread(REVIEW, THREAD).orElseThrow().id();
 
-        // Round two re-records the same review's findings, which is a delete-then-insert.
         findings.recordGenerated(REVIEW, 1, COMMIT, List.of(new Finding("src/A.java",
                 new LineRange(10, 14), Severity.BLOCKER, FindingCategory.SECURITY, "m", null)));
         findings.recordThreadRefs(REVIEW, List.of(new PostedInline(THREAD, "src/A.java", 10)));
-        long idAfter = findings.findByThread(REVIEW, THREAD).orElseThrow().id();
 
-        assertTrue(idInRoundOne != idAfter,
-                "if the id survived, this test proves nothing about why the ref is the key");
-        assertEquals(THREAD, threadRefColumn("src/A.java"), "and the ref is the same one throughout");
+        assertEquals(0, rowsWithId(idBefore),
+                "the row a dashboard would have dispatched by is GONE, not merely outranked");
+        assertEquals(1, rowsAtPath("src/A.java"),
+                "and replaced rather than duplicated — ORDER BY id DESC would have hidden a duplicate");
+        assertEquals(THREAD, threadRefColumn("src/A.java"), "while the ref is the same one throughout");
+    }
+
+    private int rowsWithId(long id) {
+        return count("SELECT count(*) FROM review_finding WHERE id = " + id);
+    }
+
+    private int rowsAtPath(String path) {
+        return count("SELECT count(*) FROM review_finding WHERE review_id = '" + REVIEW
+                + "' AND path = '" + path + "'");
+    }
+
+    /** Test-only, over literals this file controls; no caller-supplied value reaches it. */
+    private int count(String sql) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql);
+             var rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : -1;
+        } catch (SQLException e) {
+            throw new IllegalStateException(sql, e);
+        }
     }
 
     private String threadRefColumn(String path) {

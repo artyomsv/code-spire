@@ -23,6 +23,7 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -56,6 +57,12 @@ public class RunResource {
     // the /fix path records the identical row states and two spellings of them would drift. What a
     // failed dispatch SAYS TO AN HTTP CALLER stays here: it is this endpoint's wording, and a saga
     // has no 503 to say it in.
+
+    /** A list page big enough to be useful and small enough that nobody waits for it. */
+    private static final int DEFAULT_RUN_PAGE = 50;
+
+    /** And a ceiling, because an unbounded list over a table that grows per run gets slower forever. */
+    private static final int MAX_RUN_PAGE = 500;
 
     /** A transcript page, never the whole stream: the per-run cap is ten thousand events. */
     private static final int DEFAULT_TRANSCRIPT_PAGE = 200;
@@ -555,11 +562,6 @@ public class RunResource {
         return Math.max(1, Math.min(asked, MAX_TRANSCRIPT_PAGE));
     }
 
-    /** A list page big enough to be useful and small enough that nobody waits for it. */
-    private static final int DEFAULT_RUN_PAGE = 50;
-
-    /** And a ceiling, because an unbounded list over a table that grows per run gets slower forever. */
-    private static final int MAX_RUN_PAGE = 500;
 
     /**
      * The runs list — the endpoint an operator reaches without already knowing a run id.
@@ -580,7 +582,7 @@ public class RunResource {
     public List<FactoryRunProjection.RunListEntry> list(@QueryParam("status") String status,
                                                         @QueryParam("kind") String kind,
                                                         @QueryParam("reviewId") String reviewId,
-                                                        @QueryParam("limit") Integer limit) {
+                                                        @QueryParam("limit") String limit) {
         return projection.list(new FactoryRunProjection.RunFilter(
                 knownStatus(status), knownKind(kind), blankToNull(reviewId), pageSize(limit)));
     }
@@ -593,7 +595,13 @@ public class RunResource {
      */
     private static String knownStatus(String status) {
         String value = blankToNull(status);
-        if (value == null || FactoryRunProjection.STATUSES.contains(value)) {
+        if (value == null) {
+            return null;
+        }
+        // Case-folded like the kind filter beside it. The two used to differ -- ?kind=fix worked
+        // and ?status=QUEUED was a 400 -- which is two conventions in one query string.
+        value = value.toLowerCase(Locale.ROOT);
+        if (FactoryRunProjection.STATUSES.contains(value)) {
             return value;
         }
         throw DispatchRequestParser.badRequest("unknown run status '" + value + "'; one of "
@@ -610,7 +618,7 @@ public class RunResource {
             return RunKind.valueOf(value.toUpperCase(Locale.ROOT)).name();
         } catch (IllegalArgumentException notAKind) {
             throw DispatchRequestParser.badRequest("unknown run kind '" + value + "'; one of "
-                    + java.util.Arrays.toString(RunKind.values()));
+                    + Arrays.toString(RunKind.values()));
         }
     }
 
@@ -624,14 +632,33 @@ public class RunResource {
         return value == null || value.isBlank() ? null : value;
     }
 
-    private static int pageSize(Integer limit) {
-        if (limit == null) {
+    /**
+     * A page size, or a 400 that says what was wrong with the one asked for.
+     *
+     * <p><b>Taken as a String and parsed here rather than as an {@code Integer}.</b> A failed
+     * {@code @QueryParam} conversion is mapped to 404 by JAX-RS, so {@code ?limit=abc} answered
+     * "there is no such endpoint" — about an endpoint that exists, over a typo in a query
+     * parameter.
+     *
+     * <p>A too-large value is clamped and a non-positive one refused, which is deliberate rather
+     * than accidental: asking for more than the ceiling is a client asking for everything, and
+     * giving it the ceiling is the right answer; asking for zero rows is not a request that can be
+     * satisfied at all.
+     */
+    private static int pageSize(String limit) {
+        if (limit == null || limit.isBlank()) {
             return DEFAULT_RUN_PAGE;
         }
-        if (limit <= 0) {
-            throw DispatchRequestParser.badRequest("a page of runs needs a positive size: " + limit);
+        int asked;
+        try {
+            asked = Integer.parseInt(limit.strip());
+        } catch (NumberFormatException notANumber) {
+            throw DispatchRequestParser.badRequest("limit must be a number: '" + limit + "'");
         }
-        return Math.min(limit, MAX_RUN_PAGE);
+        if (asked <= 0) {
+            throw DispatchRequestParser.badRequest("a page of runs needs a positive size: " + asked);
+        }
+        return Math.min(asked, MAX_RUN_PAGE);
     }
 
     @GET

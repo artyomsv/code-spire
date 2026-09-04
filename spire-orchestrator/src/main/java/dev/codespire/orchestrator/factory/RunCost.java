@@ -47,6 +47,18 @@ public record RunCost(Long millicents) {
     }
 
     /**
+     * The identity for {@link #plus} — a total over NO runs is a known zero, not an unknown.
+     *
+     * <p>Named because the obvious seed is wrong and wrong silently. {@code unknown()} is an
+     * ABSORBING element here, not an identity: a fold seeded with it answers unknown for every
+     * input, including a list where every member is priced. That is a footer that reads "cost
+     * unknown" over runs whose costs are all known, and nothing about the code would look wrong.
+     */
+    public static RunCost zero() {
+        return new RunCost(0L);
+    }
+
+    /**
      * @param millicents the summed charge lines. Zero is a legitimate KNOWN value — an UNMETERED
      *     model is priced at zero by definition (V30 requires exactly that), and reporting it as
      *     unknown would hide a self-hosted deployment's real answer
@@ -70,6 +82,9 @@ public record RunCost(Long millicents) {
         if (!isKnown() || !other.isKnown()) {
             return unknown();
         }
-        return of(millicents + other.millicents);
+        // addExact rather than +: an overflowed sum lands negative, and the compact constructor
+        // would then refuse it with "a run cannot cost less than nothing" — a true sentence about
+        // an entirely false diagnosis. Theoretical at these magnitudes; free to say correctly.
+        return of(Math.addExact(millicents, other.millicents));
     }
 }

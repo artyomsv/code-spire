@@ -196,8 +196,13 @@ public class FactoryRunProjection {
     /**
      * What to list. Every field null means "no filter", which is the default page.
      *
-     * <p>A record rather than four parameters, because three of the four are Strings and this
-     * repository has already paid for two adjacent same-typed arguments being transposed.
+     * <p>A record rather than four parameters for the naming and for putting the {@code limit}
+     * invariant in one place. <b>It does NOT remove the transposition hazard</b>, which an earlier
+     * version of this javadoc claimed: a canonical constructor is positional, so the call site can
+     * still swap two Strings. What actually polices that is
+     * {@code FactoryRunListTest.eachFilterNarrowsRatherThanAnsweringEverything}, which asserts each
+     * filter separately against rows differing on the other two — swap two at the call site and it
+     * turns red.
      *
      * @param limit how many rows, already validated by the caller against its own bound
      */
@@ -218,13 +223,12 @@ public class FactoryRunProjection {
      * server-side anyway to stay unknown-aware: {@code SUM} skips NULL, so the count of null lines
      * is what distinguishes "cost nothing" from "nobody knows what it cost".
      *
-     * <p>Ordered by {@code started_at DESC} with the run id as a tiebreak. Without the tiebreak two
-     * runs dispatched in the same millisecond order arbitrarily between pages, which is how a row
-     * appears twice in one paged read and never in another.
+     * <p>Ordered by {@code started_at DESC} with the run id as a tiebreak, so two runs dispatched in
+     * the same millisecond order deterministically rather than arbitrarily.
      */
     public List<RunListEntry> list(RunFilter filter) {
         StringBuilder sql = new StringBuilder("""
-                SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch, r.pushed_as,
+                SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch,
                        r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
                        r.started_at, r.ended_at,
                        c.priced_millicents, c.unpriced_lines, c.line_count
@@ -235,7 +239,13 @@ public class FactoryRunProjection {
                                COUNT(*) FILTER (WHERE cost_millicents IS NULL) AS unpriced_lines,
                                COUNT(*) AS line_count
                           FROM llm_charge
-                         WHERE subject_kind = 'RUN'
+                         -- archived_at filtered like every other llm_charge read
+                         -- (ReviewProjection does it in four places). NOTHING writes the column
+                         -- today -- V32 reserves it for a future purge -- so this predicate is
+                         -- inert right now and looks dead. It is here because the day purge lands,
+                         -- this page would total lines every other cost surface excludes, and the
+                         -- two would disagree about what one run cost.
+                         WHERE subject_kind = 'RUN' AND archived_at IS NULL
                          GROUP BY subject_id
                   ) c ON c.subject_id = r.run_id
                  WHERE 1 = 1
@@ -288,10 +298,26 @@ public class FactoryRunProjection {
      */
     private static RunCost costOf(ResultSet rs) throws SQLException {
         long lines = rs.getLong("line_count");
-        if (rs.wasNull() || lines == 0 || rs.getLong("unpriced_lines") > 0) {
+        // Read IMMEDIATELY, and into a local. wasNull() describes the last column read, so the
+        // previous shape was correct only because it sat to the left of another getLong in the
+        // same short-circuit expression -- a correctness that depends on operand order, which any
+        // reordering-for-readability would have silently broken.
+        boolean noChargeRows = rs.wasNull();
+        if (noChargeRows) {
+            return RunCost.unknown();
+        }
+        // Defensive, and unreachable through this query: GROUP BY emits no group without a row, so
+        // COUNT(*) is never 0 when the join matched. Kept because that is a property of the SQL
+        // above rather than of this method, and a future edit to the join could make it false.
+        if (lines == 0) {
+            return RunCost.unknown();
+        }
+        if (rs.getLong("unpriced_lines") > 0) {
             return RunCost.unknown();
         }
         long priced = rs.getLong("priced_millicents");
+        // Defensive for the same reason: with line_count > 0 and no unpriced lines, every summed
+        // value is non-null, so SUM cannot be. Neither of these two can be tested through list().
         return rs.wasNull() ? RunCost.unknown() : RunCost.of(priced);
     }
 

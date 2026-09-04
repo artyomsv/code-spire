@@ -207,6 +207,46 @@ class RunResourceTest {
     }
 
     /**
+     * <b>A limit that is not a number is a 400, not a 404.</b>
+     *
+     * <p>Taken as an {@code Integer} query parameter, a failed conversion is mapped by JAX-RS to
+     * 404 — so a typo in a query string answered "there is no such endpoint", about an endpoint
+     * that exists. The parameter is a String and parsed by hand for exactly this.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aLimitThatIsNotANumberIsRefusedRatherThanReportedAsAMissingEndpoint() {
+        given().when().get("/api/runs?limit=abc")
+                .then().statusCode(400).body(containsString("must be a number"));
+    }
+
+    /** A limit above the ceiling is CLAMPED, which is a different answer from refusing it. */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void anOversizedPageIsClampedRatherThanRefused() {
+        registeredRun();
+
+        given().when().get("/api/runs?limit=100000").then().statusCode(200);
+    }
+
+    /**
+     * The two filters agree on case, which they did not.
+     *
+     * <p>{@code ?kind=fix} worked and {@code ?status=QUEUED} was a 400 — two conventions in one
+     * query string, in the same endpoint, for parameters a caller types side by side.
+     */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void bothFiltersAcceptEitherCase() {
+        String run = registeredRun();
+
+        given().when().get("/api/runs?status=QUEUED&limit=500")
+                .then().statusCode(200).body("runId", hasItem(run));
+        given().when().get("/api/runs?kind=build&limit=500")
+                .then().statusCode(200).body("runId", hasItem(run));
+    }
+
+    /**
      * <b>A run with no charge reports null over the wire, and null is not 0.</b>
      *
      * <p>The charge lands when the model call completes, so every queued row is in this state. A

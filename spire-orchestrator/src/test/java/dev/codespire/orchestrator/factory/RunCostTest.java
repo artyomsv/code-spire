@@ -2,6 +2,8 @@ package dev.codespire.orchestrator.factory;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.stream.Stream;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -57,6 +59,28 @@ class RunCostTest {
         assertFalse(RunCost.unknown().plus(RunCost.of(100)).isKnown(),
                 "and in both directions, or the answer depends on iteration order");
         assertFalse(RunCost.unknown().plus(RunCost.unknown()).isKnown());
+    }
+
+    /**
+     * <b>{@code unknown()} is an ABSORBING element, not an identity, and that is the trap.</b>
+     *
+     * <p>The obvious fold is {@code reduce(RunCost.unknown(), RunCost::plus)}, and it answers
+     * unknown for EVERY input — including a list where every member is priced. A footer reading
+     * "cost unknown" over runs whose costs are all known, with nothing in the code looking wrong.
+     * {@code zero()} exists to be the seed, and this is the case that says so.
+     */
+    @Test
+    void theSeedForAFoldIsZeroBecauseUnknownAbsorbs() {
+        assertEquals(RunCost.zero(),
+                Stream.<RunCost>of().reduce(RunCost.zero(), RunCost::plus),
+                "a total over NO runs is a known zero, not an unknown");
+        assertEquals(RunCost.of(300),
+                Stream.of(RunCost.of(100), RunCost.of(200)).reduce(RunCost.zero(), RunCost::plus));
+
+        // And the wrong seed is wrong even when every member is known -- the whole point.
+        assertFalse(Stream.of(RunCost.of(100), RunCost.of(200))
+                .reduce(RunCost.unknown(), RunCost::plus).isKnown(),
+                "seeding with unknown absorbs a list of entirely known costs");
     }
 
     /** Adding nothing known to something known changes nothing — the identity a footer relies on. */
