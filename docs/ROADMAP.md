@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## The software factory — design only, not started (2026-09-01)
+## The software factory — M0 and M1 delivered, M2 next (updated 2026-09-04)
 
 The next phase extends Code Spire from a reviewer into an automated software factory: a tracker work
 item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and a pull request that
@@ -15,14 +15,15 @@ bounded by an operator ceiling.
 It has its own document set because it is large enough to need one, and it does not change anything
 above: **[`docs/factory/`](factory/README.md)** — PRD (FR-F1..F32), architecture, module reference,
 execution layer, autonomy model, product packaging, prior art, and the M0–M6 build order. Decisions
-are **ADR-029..ADR-038** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
+are **ADR-029..ADR-039** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
 produced it is
 [`superpowers/specs/2026-09-01-software-factory-design.md`](superpowers/specs/2026-09-01-software-factory-design.md).
 
-**Nothing is implemented.** The first slice is **M0**, a walking skeleton proving sandbox, harness
-event parsing, credential injection and branch push in one vertical cut. **M0–M2 is a shippable
-product on its own** — *the reviewer now fixes what it finds* — needing no tracker, no plan engine
-and no gates.
+**M0 (the walking skeleton, PR #95, 2026-09-02) and M1 (the lifecycle, PR #96, 2026-09-03) are
+delivered** — see [`factory/ROADMAP.md`](factory/ROADMAP.md) for what each shipped and what the build
+taught that the design had wrong, and [`HISTORY.md`](HISTORY.md) for the delivery log. **M2 is next.**
+**M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
+tracker, no plan engine and no gates.
 
 ---
 
