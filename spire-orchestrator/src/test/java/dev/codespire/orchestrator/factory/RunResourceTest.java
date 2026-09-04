@@ -563,7 +563,7 @@ class RunResourceTest {
                 .then().statusCode(200)
                 .body("status", equalTo(FactoryRunProjection.FAILED))
                 .body("failureCause", equalTo(FactoryRunProjection.DISPATCH_FAILED))
-                .body("failureDetail", equalTo(RunResource.DISPATCH_FAILED_DETAIL));
+                .body("failureDetail", equalTo(RunLaunch.DISPATCH_FAILED_DETAIL));
 
         QuarkusMock.installMockForType(new RunCommandEmitter() {
             @Override
@@ -611,7 +611,7 @@ class RunResourceTest {
         given().when().get("/api/runs/" + runId)
                 .then().statusCode(200)
                 .body("status", equalTo(FactoryRunProjection.DISPATCH_UNCERTAIN))
-                .body("failureDetail", equalTo(RunResource.uncertainDetail(runId)));
+                .body("failureDetail", equalTo(RunLaunch.uncertainDetail(runId)));
 
         // The broker is back, and the retry is STILL refused -- this is the fail-closed rule. The
         // certain case above is 201 at exactly this point, which is what makes the two differ.
