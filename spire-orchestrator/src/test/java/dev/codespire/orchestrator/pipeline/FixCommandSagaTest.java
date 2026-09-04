@@ -4,6 +4,7 @@ import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.factory.FixRunDispatcher;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
@@ -64,6 +65,21 @@ class FixCommandSagaTest {
     private List<String> allowlist = List.of("alice");
     /** Thread refs the lookup was asked about — proves the saga normalized before querying. */
     private final List<String> lookedUpRefs = new ArrayList<>();
+
+    /** What the dispatcher answers. Null means it must not be reached at all. */
+    private FixRunDispatcher.Result dispatchResult = new FixRunDispatcher.Dispatched("run::TEST-RUN");
+
+    /**
+     * Every argument the dispatch was handed, so this file can assert WHICH thread and WHICH
+     * comment it was told about.
+     *
+     * <p>The thread must be the conversation ROOT and not the comment the command was typed in:
+     * both caps count on that key, and the finding was looked up by it. The comment must be the
+     * one that typed the command, because it is the idempotency claim — a fake that discarded
+     * both would leave transposing them invisible, which is how an earlier round in this slice
+     * lost seven mutations at once.
+     */
+    private final List<String> dispatchedFor = new ArrayList<>();
 
     private IntegrationSaga saga() {
         IntegrationSaga saga = new IntegrationSaga();
@@ -131,12 +147,29 @@ class FixCommandSagaTest {
                 return false;
             }
         };
+        saga.fixRuns = new FixRunDispatcher() {
+            @Override
+            public Result dispatch(String reviewId, RepoRef repo, String threadRef, String commentId,
+                                   FindingProjection.TargetFinding finding) {
+                dispatchedFor.add(threadRef + "|" + commentId + "|" + finding.id());
+                if (dispatchResult == null) {
+                    throw new AssertionError("the dispatch must not be reached: " + threadRef);
+                }
+                return dispatchResult;
+            }
+        };
         return saga;
     }
 
     private Optional<ScmProvider> provider() {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x", "acme",
                 "bearer", null, "secret", "acct", true, allowlist, null, null));
+    }
+
+    /** No thread at all: a top-level /fix, which names no finding. */
+    private static ManualCommandReceived noThread() {
+        return new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "fix", "",
+                Author.of("acc-1", "alice", "Alice"), null, null, "c-1");
     }
 
     private static ManualCommandReceived fix(String threadRef) {
@@ -153,6 +186,102 @@ class FixCommandSagaTest {
         return new FindingProjection.TargetFinding(77L, 2, "src/Foo.java", 44, 48, "HIGH", verdict, origin);
     }
 
+    /**
+     * A dispatched run is recorded, and the request note survives beside it.
+     *
+     * <p>Both writes, not one. The request is the record of a human asking for money to be spent
+     * and must survive a dispatch that then fails; the outcome is appended rather than replacing
+     * it. A reader of the timeline needs to see that someone asked AND what came of it.
+     */
+    @Test
+    void aDispatchedFixIsRecordedAlongsideTheRequestThatAskedForIt() {
+        target = finding(null);
+
+        saga().on(fix("t-1"));
+
+        assertTrue(notes.contains("FixRequested"), notes.toString());
+        assertTrue(notes.contains("FixDispatched"), notes.toString());
+        assertTrue(appendedEvents.contains(
+                "FixDispatched:fix run run::TEST-RUN started for HIGH at src/Foo.java:44"),
+                appendedEvents.toString());
+    }
+
+    /**
+     * The dispatch is told the conversation ROOT and the comment that typed the command.
+     *
+     * <p>Neither is cosmetic. Both fix caps count on the thread key, so passing the raw comment
+     * ref would count every reply as its own finding and the per-finding cap would never bind.
+     * The comment id is the idempotency claim, so passing the thread instead would make a second
+     * genuine /fix on one finding look like a redelivery and refuse it forever.
+     */
+    @Test
+    void theDispatchIsToldTheConversationRootAndTheCommentThatAsked() {
+        target = finding(null);
+
+        saga().on(fix("t-1"));
+
+        assertEquals(List.of("root-t-1|c-1|77"), dispatchedFor);
+    }
+
+    /**
+     * A refused dispatch reaches the author the same way every earlier gate's refusal does.
+     *
+     * <p>To the person who typed the command it IS the same event: it did not happen. Giving the
+     * dispatch its own note type would put one outcome in two places in the timeline, and an
+     * operator filtering for refused commands would see half of them.
+     */
+    @Test
+    void aRefusedDispatchIsRecordedAsARefusalWithItsOwnReason() {
+        target = finding(null);
+        dispatchResult = new FixRunDispatcher.Refused("this comment already started fix run X");
+
+        saga().on(fix("t-1"));
+
+        assertTrue(notes.contains("refused:/fix"), notes.toString());
+        assertFalse(notes.contains("FixDispatched"), notes.toString());
+        assertTrue(noteDetails.stream().anyMatch(d -> d.contains("already started fix run X")),
+                noteDetails.toString());
+    }
+
+    /**
+     * <b>Every gate ahead of the dispatch really is ahead of it.</b>
+     *
+     * <p>Asserted over the whole set rather than one case at a time. The observe-mode round in
+     * this same milestone found three holes exactly because per-branch tests found them one at a
+     * time, and the second and third survived the round that fixed the first. Here the stake is
+     * higher than a comment: past any of these, a paid agent starts.
+     */
+    @Test
+    void noGateThatRefusesACommandLetsARunBeDispatched() {
+        // Null means the fake throws if it is reached at all.
+        dispatchResult = null;
+
+        allowlist = List.of();
+        target = finding(null);
+        saga().on(fix("t-1"));
+
+        allowlist = List.of("alice");
+        registered = false;
+        saga().on(fix("t-2"));
+
+        registered = true;
+        saga().on(noThread());
+        saga().on(fix(null));
+        saga().on(fix("   "));
+
+        target = null;
+        saga().on(fix("t-3"));
+
+        target = finding("RESOLVED");
+        saga().on(fix("t-4"));
+
+        target = finding(null, "conversation");
+        saga().on(fix("t-5"));
+
+        assertTrue(dispatchedFor.isEmpty(), dispatchedFor.toString());
+        assertFalse(notes.contains("FixDispatched"), notes.toString());
+    }
+
     @Test
     void resolvesTheFindingTheThreadBelongsToAndRecordsTheRequest() {
         target = finding(null);
@@ -165,8 +294,9 @@ class FixCommandSagaTest {
         // so WHO asked is part of it, and a startsWith check asserted none of that.
         assertTrue(appendedEvents.contains("FixRequested:@alice asked for a fix: HIGH at src/Foo.java:44"),
                 appendedEvents.toString());
-        assertEquals(List.of("root-t-1"), appendedRefs,
-                "the durable row is filed under the conversation root, or it groups with nothing");
+        assertEquals(List.of("root-t-1", "root-t-1"), appendedRefs,
+                "BOTH durable rows -- the request and its outcome -- file under the conversation "
+                        + "root, or they group with nothing and with each other least of all");
     }
 
     /**

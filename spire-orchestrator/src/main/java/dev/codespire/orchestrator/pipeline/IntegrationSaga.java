@@ -21,6 +21,7 @@ import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.factory.FixRunDispatcher;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -62,6 +63,9 @@ public class IntegrationSaga {
 
     @Inject
     FindingProjection findings;
+
+    @Inject
+    FixRunDispatcher fixRuns;
 
     @Inject
     dev.codespire.orchestrator.llm.ReviewRuns runs;
@@ -363,10 +367,12 @@ public class IntegrationSaga {
      * {@link ReviewThreadView#rootOf} binds its argument into a statement immediately and a null
      * throws an NPE inside a {@code catch (SQLException)} that cannot see it.
      *
-     * <p>Dispatch itself is the next slice. This one resolves the target and records the request, so
-     * the spend guard and the idempotency claim live with the spend rather than here — the placement
-     * the LLM idempotency claim already uses, and the reason a redelivery is not yet a concern: no
-     * money moves on this path.
+     * <p><b>Dispatch itself is {@link FixRunDispatcher}'s, and the split is where the question
+     * changes.</b> This method decides whether the command is ADMISSIBLE — who asked, is the review
+     * registered, does the thread name an open finding it makes sense to fix — and that class
+     * decides whether it is DISPATCHABLE and does it. Keeping the assembly out of here is not
+     * tidiness: this saga is already past the project's size guideline with a debt entry saying so,
+     * and the spend guard, the idempotency claim and the credential all belong beside the spend.
      */
     private void requestFix(String reviewId, ManualCommandReceived e) {
         // DENY BY DEFAULT, and only for this command. An empty provider allowlist means "review
@@ -386,7 +392,13 @@ public class IntegrationSaga {
             skip(reviewId, "no registered review for this PR — open or update the pull request first");
             return;
         }
-        if (e.threadRef() == null) {
+        // The VALUE, not only the reference. ThreadRef is a bare record over a String with no
+        // validation, and every ingress builds one from Jackson's asText(), which answers "" for a
+        // node that is not there -- so a blank one is reachable and a null-only check misses it.
+        // It was refused four layers down, by findByThread matching nothing, with a message about
+        // not being able to match the thread. That is now the key both fix caps count on and the
+        // subject of the run id, so it is refused here where the reason is still legible.
+        if (e.threadRef() == null || e.threadRef().value() == null || e.threadRef().value().isBlank()) {
             skip(reviewId, "/fix names the finding by the thread it is typed in — reply to the "
                     + "review comment for the finding you want fixed");
             return;
@@ -420,13 +432,28 @@ public class IntegrationSaga {
             return;
         }
         String what = describe(finding);
+        // Recorded BEFORE the dispatch is attempted, and deliberately: this is the record of a human
+        // asking for money to be spent on their behalf, and it must survive a dispatch that then
+        // fails. The dispatch appends its own outcome below rather than replacing this one.
         timeline.record("integration", "FixRequested", reviewId, what);
-        // Durable, because the timeline is a 500-entry in-memory ring lost on restart and this is the
-        // record of a human asking for money to be spent on their behalf. Keyed to the conversation
-        // ROOT, which is what lets the detail projection group this row with the thread it belongs to.
+        // Durable, because the timeline is a 500-entry in-memory ring lost on restart. Keyed to the
+        // conversation ROOT, which is what lets the detail projection group this row with the thread
+        // it belongs to.
         projection.appendEvent(reviewId, "integration", "FixRequested",
                 "@" + username(e.author()) + " asked for a fix: " + what, root.value());
         LOG.infof("/fix on %s targets finding %d (%s)", reviewId, finding.id(), what);
+
+        switch (fixRuns.dispatch(reviewId, e.repo(), root.value(), e.commentId(), finding)) {
+            case FixRunDispatcher.Dispatched dispatched -> {
+                timeline.record("integration", "FixDispatched", reviewId, dispatched.runId());
+                projection.appendEvent(reviewId, "integration", "FixDispatched",
+                        "fix run " + dispatched.runId() + " started for " + what, root.value());
+            }
+            // Recorded with the same two writes as a refusal from the gates above, because to the
+            // author it IS one: they typed a command and it did not happen. The gates above use
+            // refuse(), which is this pair plus the "refused:/fix" note type.
+            case FixRunDispatcher.Refused refused -> refuse(reviewId, refused.why());
+        }
     }
 
     /** Severity may be stored blank when a model omitted it, so it is not concatenated blindly. */

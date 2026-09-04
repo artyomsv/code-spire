@@ -171,9 +171,21 @@ class FixDispatchTest {
         assertEquals(THREAD, askedAttemptFinding);
     }
 
-    /** And the two caps are not the same number, or transposing them would prove nothing. */
+    /**
+     * <b>The cap NUMBERS, not merely that they are passed through.</b>
+     *
+     * <p>The axis test above asserts the dispatch hands each collaborator the right constant, and it
+     * does that by comparing against the constants themselves — so widening either to 999 changes
+     * both sides of its assertion and it stays green. FR-F32 bounds a runaway loop; a bound nothing
+     * pins is a bound that can be raised by a typo, silently, on the guard that stops a fix-review-fix
+     * chain spending without end.
+     *
+     * <p>They must also differ, or transposing them in the call would prove nothing.
+     */
     @Test
-    void theTwoCapsAreDistinctSoTransposingThemIsVisible() {
+    void theCapsAreTheNumbersFrF32Asks() {
+        assertEquals(2, FixDispatch.MAX_PER_FINDING);
+        assertEquals(5, FixDispatch.MAX_PER_REVIEW);
         assertTrue(FixDispatch.MAX_PER_FINDING != FixDispatch.MAX_PER_REVIEW,
                 "equal caps would make the axis assertions above vacuous");
     }
