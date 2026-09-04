@@ -14,6 +14,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The durable per-finding record (P4 / ADR-027) — `review_finding`.
@@ -62,11 +63,78 @@ public class FindingProjection {
                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
                 """;
 
+    /**
+     * Newest row for the thread wins.
+     *
+     * <p>Several rows can share one thread ref across rounds — a finding re-posted at the same
+     * anchor gets a new row each time it is generated — and the live one is the newest. This is the
+     * same rule {@code newerThreadRef} settled for reconciliation, and for the same reason: keeping
+     * an arbitrary older row targets a finding the author has already seen closed.
+     */
+    private static final String FIND_BY_THREAD = """
+                SELECT id, round, path, start_line, end_line, severity, verdict
+                  FROM review_finding
+                 WHERE review_id = ? AND thread_ref = ?
+                 ORDER BY id DESC
+                 LIMIT 1
+                """;
+
     @Inject
     DataSource dataSource;
 
     @Inject
     EncryptionService encryption;
+
+    /**
+     * Enough of a finding to decide whether a fix run may target it, and to name it when refusing.
+     *
+     * <p>Deliberately carries no {@code message} or {@code suggestion}. Those are the encrypted
+     * columns, they are what a fix run's PROMPT needs rather than what this decision needs, and
+     * adding them here would put decrypted finding text on a path that only has to answer "does this
+     * thread name an open finding". The dispatch reads them when it builds the prompt.
+     *
+     * @param verdict the reconciliation verdict, or null for a finding not yet judged — which is a
+     *     different thing from judged-and-unchanged, and only {@code RESOLVED} closes the door
+     */
+    public record TargetFinding(long id, int round, String path, int startLine, int endLine,
+                                String severity, String verdict) {
+
+        /** Reconciliation has already closed this one; a fix run would produce an empty diff. */
+        public boolean isResolved() {
+            return "RESOLVED".equals(verdict);
+        }
+    }
+
+    /**
+     * The open finding a thread names, or empty when the thread names none.
+     *
+     * <p><b>A read fault throws rather than answering empty</b>, and that is the whole reason this
+     * method does not follow the log-and-continue style of its neighbours. Empty is reported to a
+     * human as "no finding on this thread" — a claim about their repository that they will act on by
+     * hunting for a comment that is right in front of them. Unknown is not zero (ADR-023) and here
+     * unknown is not absent, so the record goes to the dead-letter queue where an operator sees it.
+     *
+     * @param threadRef the CONVERSATION ROOT, already normalized by the caller — a raw comment id
+     *     from an SCM that threads by immediate parent names no finding
+     */
+    public Optional<TargetFinding> findByThread(String reviewId, String threadRef) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(FIND_BY_THREAD)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, threadRef);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new TargetFinding(rs.getLong("id"), rs.getInt("round"),
+                        rs.getString("path"), rs.getInt("start_line"), rs.getInt("end_line"),
+                        rs.getString("severity"), rs.getString("verdict")));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the finding on thread " + threadRef
+                    + " of " + reviewId, e);
+        }
+    }
 
     /**
      * Records the findings one round generated, replacing anything already stored for that round.

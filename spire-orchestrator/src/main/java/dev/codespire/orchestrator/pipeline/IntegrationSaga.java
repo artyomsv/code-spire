@@ -21,6 +21,7 @@ import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
+import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
@@ -60,7 +61,7 @@ public class IntegrationSaga {
     ReviewProjection projection;
 
     @Inject
-    dev.codespire.orchestrator.readmodel.FindingProjection findings;
+    FindingProjection findings;
 
     @Inject
     dev.codespire.orchestrator.llm.ReviewRuns runs;
@@ -325,8 +326,73 @@ public class IntegrationSaga {
         switch (command) {
             case CommentCommands.REVIEW -> triggerManualReview(e);
             case CommentCommands.FINDING -> raiseConversationFinding(reviewId, e);
+            case CommentCommands.FIX -> requestFix(reviewId, e);
             default -> LOG.infof("Manual /%s command received — no handler", command);
         }
+    }
+
+    /**
+     * A human asked for a finding to be fixed ({@code /fix}, FR-F27) — the M2 trigger that turns a
+     * review finding into a factory run with no tracker in the loop.
+     *
+     * <p><b>The finding comes from the THREAD, not from the command's arguments.</b> That is what
+     * makes this a complete task specification without anyone typing one: the thread already carries
+     * repository, commit, file, line, severity and the reviewer's own message. It also means a
+     * {@code /fix} with no thread has no target at all, which is refused rather than guessed —
+     * guessing would dispatch a paid agent at whatever finding happened to be newest.
+     *
+     * <p><b>Refusals here SPEAK</b>, like {@code /finding}'s. The author cleared the allowlist, so
+     * they are a colleague who used the command somewhere it cannot work, not a prober; silence
+     * would send them hunting a lost webhook, which this project has already paid for once with the
+     * conversation turn cap.
+     *
+     * <p><b>Ordering is the same lesson {@code /finding} learned.</b> The registration check comes
+     * first because an unregistered pull request clears every gate ahead of it — {@code archived}
+     * answers false for a row that does not exist, and the provider resolves by workspace when the
+     * review carries no stored type. Then the thread is null-checked BEFORE normalization, because
+     * {@link ReviewThreadView#rootOf} binds its argument into a statement immediately and a null
+     * throws an NPE inside a {@code catch (SQLException)} that cannot see it.
+     *
+     * <p>Dispatch itself is the next slice. This one resolves the target and records the request, so
+     * the spend guard and the idempotency claim live with the spend rather than here — the placement
+     * the LLM idempotency claim already uses, and the reason a redelivery is not yet a concern: no
+     * money moves on this path.
+     */
+    private void requestFix(String reviewId, ManualCommandReceived e) {
+        if (!projection.registered(reviewId)) {
+            refuseFix(reviewId, "no registered review for this PR — open or update the pull request first");
+            return;
+        }
+        if (e.threadRef() == null) {
+            refuseFix(reviewId, "/fix names the finding by the thread it is typed in — reply to the "
+                    + "review comment for the finding you want fixed");
+            return;
+        }
+        ThreadRef root = threads.rootOf(reviewId, e.threadRef());
+        Optional<FindingProjection.TargetFinding> target = findings.findByThread(reviewId, root.value());
+        if (target.isEmpty()) {
+            refuseFix(reviewId, "no finding on this thread — /fix works on a thread the reviewer opened "
+                    + "for a finding");
+            return;
+        }
+        FindingProjection.TargetFinding finding = target.get();
+        if (finding.isResolved()) {
+            refuseFix(reviewId, "that finding is already resolved, so a fix run would have nothing to do");
+            return;
+        }
+        String what = finding.severity() + " at " + finding.path() + ":" + finding.startLine();
+        timeline.record("integration", "FixRequested", reviewId, what);
+        // Durable, because the timeline is a 500-entry in-memory ring lost on restart and this is the
+        // record of a human asking for money to be spent on their behalf.
+        projection.appendEvent(reviewId, "integration", "FixRequested",
+                "@" + username(e.author()) + " asked for a fix: " + what, root.value());
+        LOG.infof("/fix on %s targets finding %d (%s)", reviewId, finding.id(), what);
+    }
+
+    /** A refusal the author can act on: what went wrong AND what to do instead. */
+    private void refuseFix(String reviewId, String why) {
+        timeline.record("integration", "skipped:/" + CommentCommands.FIX, reviewId, why);
+        LOG.infof("Skipping /%s on %s — %s", CommentCommands.FIX, reviewId, why);
     }
 
     /**
