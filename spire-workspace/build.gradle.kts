@@ -30,7 +30,7 @@ dependencies {
     // parses a bundle an agent wrote, so it is the last place to carry an avoidable lag.
     api("org.eclipse.jgit:org.eclipse.jgit:7.3.0.202506031305-r")
 
-    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
