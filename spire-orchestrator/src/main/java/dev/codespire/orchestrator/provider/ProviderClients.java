@@ -3,20 +3,24 @@ package dev.codespire.orchestrator.provider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.IdentitySource;
+import dev.codespire.contract.port.PullRequestSink;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.scm.bitbucket.BitbucketCloudClient;
 import dev.codespire.scm.bitbucket.BitbucketCloudCommentSink;
 import dev.codespire.scm.bitbucket.BitbucketCloudConfig;
 import dev.codespire.scm.bitbucket.BitbucketCloudDiffSource;
+import dev.codespire.scm.bitbucket.BitbucketCloudPullRequestSink;
 import dev.codespire.scm.github.GitHubClient;
 import dev.codespire.scm.github.GitHubCommentSink;
 import dev.codespire.scm.github.GitHubConfig;
 import dev.codespire.scm.github.GitHubDiffSource;
+import dev.codespire.scm.github.GitHubPullRequestSink;
 import dev.codespire.scm.gitlab.GitLabClient;
 import dev.codespire.scm.gitlab.GitLabCommentSink;
 import dev.codespire.scm.gitlab.GitLabConfig;
 import dev.codespire.scm.gitlab.GitLabDiffSource;
+import dev.codespire.scm.gitlab.GitLabPullRequestSink;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -70,6 +74,31 @@ public class ProviderClients {
                     new GitLabClient(gitlabConfig(provider), mapper), provider.botUsername());
             default -> throw new UnsupportedOperationException(
                     "Thread re-fetch is not supported for provider type: " + provider.type());
+        };
+    }
+
+    /**
+     * A client that can OPEN a pull request for a resolved provider (M2, SCM-MAPPING §8).
+     *
+     * <p><b>The provider handed in must be the FACTORY-role account</b>, resolved through
+     * {@code MachineAccounts}, never the reviewer. This method cannot check that — an
+     * {@code ScmProvider} carries a decrypted secret and a type, and the role is part of the
+     * lookup KEY rather than of the row that comes back. A branch pushed as one account with a
+     * pull request opened by another is a pull request nobody can attribute, and the reviewer's
+     * own author allowlist would then skip it: work produced and reviewed by no one.
+     *
+     * <p>All three forges are supported, so unlike {@code threadSource} there is no degraded
+     * path — a fourth provider type cannot open a pull request at all, and pretending otherwise
+     * would record a run as delivered with nothing behind it.
+     */
+    public PullRequestSink pullRequestSink(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new GitHubPullRequestSink(new GitHubClient(githubConfig(provider), mapper));
+            case "bitbucket-cloud" -> new BitbucketCloudPullRequestSink(
+                    new BitbucketCloudClient(bitbucketConfig(provider), mapper));
+            case "gitlab" -> new GitLabPullRequestSink(new GitLabClient(gitlabConfig(provider), mapper));
+            default -> throw new IllegalStateException(
+                    "Cannot open a pull request on provider type: " + provider.type());
         };
     }
 
