@@ -176,6 +176,22 @@ class FixRunsTest {
                 rootCause(refused));
     }
 
+    /**
+     * <b>The closed kind set, which nothing asserted until now.</b>
+     *
+     * <p>Deleting the constraint outright left the whole module green — and it is the one V54's
+     * own comment says exists so that "a typo'd literal in a writer would not pass compilation
+     * and produce a row no cap counts and no filter matches". Its sibling constraint had four
+     * tests; this one had none.
+     */
+    @Test
+    void theDatabaseRefusesARunKindItDoesNotKnow() {
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> insert("run::TEST-typo", "BUILDD", null, null));
+
+        assertTrue(rootCause(refused).contains("factory_run_kind_closed"), rootCause(refused));
+    }
+
     /** And the other direction: a fix run must name what it fixes, or the cap cannot see it. */
     @Test
     void theDatabaseRefusesAFixRunThatNamesNoTarget() {
@@ -247,13 +263,41 @@ class FixRunsTest {
         assertTrue(decision.why().contains("this pull request"), decision.why());
     }
 
-    /** Unset means unlimited, matching every other cap in this deployment (ADR-025). */
+    /**
+     * Unset means unlimited, matching every other cap in this deployment (ADR-025).
+     *
+     * <p><b>Negative as well as zero, and only zero was ever tested.</b> The guards read
+     * {@code > 0} and the javadoc says "non-positive", so changing them to {@code != 0} passed —
+     * an operator writing {@code -1}, which is the usual spelling of "unlimited", would have had
+     * every fix refused with the message "this finding has already had -1 fix run(s)".
+     */
     @Test
     void treatsANonPositiveCapAsUnlimited() {
         insertFixRun("run::TEST-1", REVIEW, FINDING);
         insertFixRun("run::TEST-2", REVIEW, FINDING);
 
         assertTrue(fixRuns.decide(REVIEW, FINDING, 0, 0).allowed());
+        assertTrue(fixRuns.decide(REVIEW, FINDING, -1, -1).allowed(), "a negative cap is unlimited too");
+    }
+
+    /**
+     * <b>Each cap binds on its own, and every other case here sets BOTH.</b>
+     *
+     * <p>That shared shape hid a real defect: ANDing the two guards together —
+     * {@code perFinding > 0 && perReview > 0 && ...} — passed every test in this class. An
+     * operator who sets a per-finding cap and leaves the chain unlimited would have had the cap
+     * they set silently disabled by the one they did not, which is the exact failure two axes
+     * exist to prevent.
+     */
+    @Test
+    void eachCapBindsOnItsOwnWhenTheOtherIsUnset() {
+        insertFixRun("run::TEST-1", REVIEW, FINDING);
+        insertFixRun("run::TEST-2", REVIEW, FINDING);
+
+        assertFalse(fixRuns.decide(REVIEW, FINDING, 2, 0).allowed(),
+                "the per-finding cap binds with no review cap set");
+        assertFalse(fixRuns.decide(REVIEW, FINDING, 0, 2).allowed(),
+                "the per-review cap binds with no finding cap set");
     }
 
     /**

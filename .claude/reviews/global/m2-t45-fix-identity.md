@@ -7,9 +7,19 @@ Round 1 over `4fa75e1`, `5ff6d67`, `4acff11` on `feat/factory-m2-deliver` (PR #1
 and 5b(i): the fix run's identity, the caps that bound it, and the branch rules for where its output
 may land. Nothing dispatches yet.
 
-**qa did not deliver a report.** Three lenses reported; a direct request to qa went unanswered. Its
-section is unknown rather than clean, and the mutation work below is the lead's own plus
-code-reviewer's. Recorded rather than glossed, because silence is not a clean result.
+**qa reported late, after this record was first written, and it was worth waiting for.** The record
+said its section was unknown; that was correct at the time and is corrected here rather than
+quietly overwritten. It measured 1057 orchestrator tests and 58 publisher tests on the committed
+bytes, confirmed the revised `kind` filter reading, and found THREE more surviving mutations
+that three other lenses and I had all missed — see below.
+
+It also names two infrastructure failures that impersonate regressions on this machine and that it
+nearly filed as defects: a Testcontainers port timeout (`997 completed, 4 failed, 665 skipped` —
+the skip count is the tell that the suite aborted rather than failed) and a 266-failure run where
+every failure was `PSQLException: I/O error … to the backend`, the Dev Services Postgres dying
+under load. Both went green on re-run with identical bytes. That independently corroborates
+`techdebt/global/3-2-two-dev-services-modules-contend-inside-one-gradle-invocation.md`, which I
+filed from the same symptom reached by a different route.
 
 **The theme of the round: every defect was in a CLAIM.** Three comments asserted a guard the schema
 did not provide, one javadoc asserted a floor that was optional, and four mutations survived. The
@@ -93,6 +103,33 @@ now in the code, with its expiry.
 - [sec/L2] `pr_state` is reset to OPEN by every pull-request event, so a redelivery after a merge
   flips a closed pull request back to pushable. Recorded on the class: the row is the KEY, not the
   proof — round 1
+
+## Found by qa after the round was written, and fixed
+
+All three survived on the COMMITTED bytes, and three other lenses plus my own two mutation sweeps
+had missed every one. Each is now mutation-verified to kill exactly its own test.
+
+- [qa/1] **A negative cap refused every fix.** The guards read `> 0` and the javadoc said
+  "non-positive means unlimited", but the test only ever passed `0`. Changing both guards to
+  `!= 0` passed everything — so an operator writing `-1`, which is the usual spelling of
+  "unlimited", would have had every fix refused with the message "this finding has already had -1
+  fix run(s)" — round 1
+- [qa/5] **The two caps could be cross-coupled and nothing noticed.** ANDing the guards together
+  (`perFinding > 0 && perReview > 0 && …`) passed every case, because every fixture set BOTH
+  caps. An operator who set a per-finding cap and left the chain unlimited would have had the cap
+  they set silently disabled by the one they did not — the exact failure two axes exist to prevent,
+  and the same shared-fixture shape that hid three earlier survivors in this file — round 1
+- [qa/6] **V54's `factory_run_kind_closed` was asserted by nothing.** Deleting the constraint left
+  the full module green. It is the one the migration's own comment says exists so a typo'd literal
+  in a writer cannot "produce a row no cap counts and no filter matches", and its sibling
+  constraint had four tests while it had none — round 1
+
+**The corollary qa raised for the next slice was already closed by the time it landed**, and the
+timing is worth recording rather than claiming foresight: it warned that wiring the dispatcher
+through `queued` unchanged would write every fix run as `kind='BUILD'` with null ids, both caps
+reading zero forever, and that no test would catch it because `FixRunsTest` builds its rows with
+its own INSERT. `2cac818` had added the components and the writer-level cases an hour earlier, for
+the same reason reached independently.
 
 ## Deferred to the dispatch slice (recorded, not forgotten)
 
