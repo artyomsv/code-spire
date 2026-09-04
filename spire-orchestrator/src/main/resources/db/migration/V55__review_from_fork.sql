@@ -1,0 +1,16 @@
+-- Whether a pull request's source branch lives in a different repository than its base.
+--
+-- ADR-040 puts fork pull requests out of scope for the `existing` branch mode, and until now the
+-- deployment could not tell one from a branch pull request -- no ingress parsed the source
+-- repository and no column held the answer. A fix run pushes to source_branch in the repository
+-- workspace/slug names, and for a fork those two do not belong together: either the base repository
+-- has no branch of that name and the push creates a stray one attached to no pull request, or it
+-- does and a machine-authored commit from a different diff lands on someone else's work.
+--
+-- Defaults to false, and that default is a claim worth stating rather than a convenience. Every row
+-- written before this migration came from a deployment that could not distinguish the two, so the
+-- honest reading of an old row is "unknown". Calling it false is the SAFE direction only because
+-- nothing consumes it yet: no caller sets SPIRE_BRANCH_MODE=existing at the point this lands, so no
+-- old row can authorise a push on the strength of it. A row refreshed by the next pull-request event
+-- carries the real answer.
+ALTER TABLE review_status ADD COLUMN from_fork BOOLEAN NOT NULL DEFAULT false;

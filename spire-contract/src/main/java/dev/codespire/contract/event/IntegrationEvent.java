@@ -62,11 +62,48 @@ public sealed interface IntegrationEvent {
      * share a name. Nullable for backward compatibility with events serialized before
      * this field existed; the saga then falls back to workspace-only resolution.
      */
+    /**
+     * @param fromFork whether the source branch lives in a DIFFERENT repository than the base.
+     *     <p>Carried because a fix run pushes to {@code sourceBranch} in the BASE repository, and for
+     *     a fork those two do not belong together — the name would resolve against the wrong
+     *     repository, creating a stray branch or landing a machine-authored commit on an unrelated
+     *     branch of the same name. ADR-040 puts forks out of scope for its {@code existing} branch
+     *     mode, and this is what lets the orchestrator tell.
+     *     <p>Each provider spells it differently (two repository names on GitHub and Bitbucket, two
+     *     numeric project ids on GitLab), which is the shape that has diverged here before — so the
+     *     gateway asserts all three agree rather than trusting each adapter's own test.
+     */
     record PullRequestEventReceived(RepoRef repo, long prId, PrAction action,
                                     String title, String description,
                                     String sourceBranch, String targetBranch,
                                     String headCommit, Author author,
-                                    String htmlUrl, String providerType) implements IntegrationEvent {
+                                    String htmlUrl, String providerType, boolean fromFork)
+            implements IntegrationEvent {
+
+        // Kept so every existing call site and every record already on the wire keeps working — the
+        // additive treatment AuthorReplied took when it grew mentions, then location. A pull request
+        // that predates the component reads as not-from-a-fork, which is what every such record was.
+        public PullRequestEventReceived(RepoRef repo, long prId, PrAction action,
+                                        String title, String description,
+                                        String sourceBranch, String targetBranch,
+                                        String headCommit, Author author,
+                                        String htmlUrl, String providerType) {
+            this(repo, prId, action, title, description, sourceBranch, targetBranch, headCommit,
+                    author, htmlUrl, providerType, false);
+        }
+
+        /**
+         * The wither the shorter constructor makes necessary.
+         *
+         * <p>Adding a component to a wire record silently drops it at every rebuild site, because the
+         * convenience constructors stay valid and everything still compiles. Enumerating the
+         * components once, here, is what this repository does instead — the same reason
+         * {@code RunFinished} has {@code withTruncated} and {@code withFindings}.
+         */
+        public PullRequestEventReceived withFromFork(boolean fromFork) {
+            return new PullRequestEventReceived(repo, prId, action, title, description, sourceBranch,
+                    targetBranch, headCommit, author, htmlUrl, providerType, fromFork);
+        }
     }
 
     /** Triggers the cancel saga (ADR-013). */

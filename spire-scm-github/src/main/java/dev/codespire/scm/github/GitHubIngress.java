@@ -153,6 +153,20 @@ public class GitHubIngress implements ScmIngress {
         };
     }
 
+    /**
+     * Whether the source branch lives in a different repository than the base.
+     *
+     * <p>Compared by repository full name, which is what the payload gives. A MISSING head repo
+     * reads as not-a-fork rather than as a fork: GitHub omits it when the head repository has been
+     * deleted, and that is a pull request nothing can be pushed to anyway — the branch-mode gate
+     * downstream refuses it on the branch, which is a more accurate reason than "fork".
+     */
+    private static boolean fromFork(JsonNode pr) {
+        String head = pr.path("head").path("repo").path("full_name").asText("");
+        String base = pr.path("base").path("repo").path("full_name").asText("");
+        return !head.isBlank() && !base.isBlank() && !head.equals(base);
+    }
+
     private List<IntegrationEvent> prEvent(JsonNode payload, PrAction action) {
         JsonNode pr = payload.path("pull_request");
         return List.of(new PullRequestEventReceived(
@@ -166,7 +180,8 @@ public class GitHubIngress implements ScmIngress {
                 (pr.path("head").path("sha").asText("")),
                 author(pr.path("user")),
                 pr.path("html_url").asText(""),
-                type().providerType()));
+                type().providerType(),
+                fromFork(pr)));
     }
 
     /**

@@ -42,7 +42,7 @@ public class FixTargets {
 
     private static final String FIND = """
                 SELECT provider_type, workspace, slug, pr_id, source_branch, dest_branch,
-                       commit_sha, pr_state
+                       commit_sha, pr_state, from_fork
                   FROM review_status
                  WHERE review_id = ?
                 """;
@@ -69,7 +69,8 @@ public class FixTargets {
                 }
                 return Optional.of(new PushTarget(rs.getString("provider_type"), rs.getString("workspace"),
                         rs.getString("slug"), rs.getLong("pr_id"), rs.getString("source_branch"),
-                        rs.getString("dest_branch"), rs.getString("commit_sha"), rs.getString("pr_state")));
+                        rs.getString("dest_branch"), rs.getString("commit_sha"), rs.getString("pr_state"),
+                        rs.getBoolean("from_fork")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("could not read the fix target for " + reviewId, e);
@@ -86,26 +87,29 @@ public class FixTargets {
      *     and the identical failure, so it is guarded identically
      */
     public record PushTarget(String providerType, String workspace, String slug, long prId,
-                             String sourceBranch, String destBranch, String commit, String prState) {
+                             String sourceBranch, String destBranch, String commit, String prState,
+                             boolean fromFork) {
 
         /**
          * Whether a fix run may push to this branch.
          *
-         * <p><b>Fork pull requests are NOT excluded here, and cannot be.</b> ADR-040 puts them out of
-         * scope for {@code existing} mode, but nothing in this deployment records whether a pull
-         * request came from a fork — a fork's source branch name would resolve here and be pushed
-         * against the BASE repository, creating a stray branch or landing on an unrelated branch of
-         * the same name. That gap is tracked as blocking rather than hidden behind a field that is
-         * always false, which would read as a check and be none. See
-         * {@code techdebt/spire-orchestrator/2-3-a-fork-pull-request-is-indistinguishable-from-a-branch-one.md}.
+         * <p><b>Fork pull requests are excluded, and were not when this class was written.</b> The
+         * deployment could not tell one from a branch pull request until the three ingresses learned
+         * to read it and V55 gave it a column. Until then this javadoc said so plainly rather than
+         * carrying a field that was always false — which would have read as a check and been none.
          */
         public boolean isPushable() {
-            // BOTH columns, because both are NOT NULL DEFAULT '' and both fail the same way: the
-            // publisher's Env.required refuses a blank INSIDE the container, after the agent has
+            // A fork's source branch lives in ANOTHER repository, while the clone URL is built from
+            // this row's workspace and slug — so pushing the name resolves against the wrong
+            // repository. ADR-040 puts forks out of scope for `existing` mode, and this is the
+            // clause that makes that a rule rather than a sentence in a document.
+            //
+            // Both string columns, because both are NOT NULL DEFAULT '' and both fail the same way:
+            // the publisher's Env.required refuses a blank INSIDE the container, after the agent has
             // been paid. Guarding one and not the other was an oversight, not a distinction. And
             // isBlank rather than isEmpty, because a whitespace ref is not empty and still reaches
             // git — a null check is not needed at all, since neither column can be null.
-            return OPEN.equals(prState) && !sourceBranch.isBlank() && !commit.isBlank();
+            return OPEN.equals(prState) && !fromFork && !sourceBranch.isBlank() && !commit.isBlank();
         }
 
         /**

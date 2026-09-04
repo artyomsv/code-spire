@@ -164,6 +164,20 @@ public class GitLabIngress implements ScmIngress {
         return false;
     }
 
+    /**
+     * Whether the merge request comes from a forked project.
+     *
+     * <p>GitLab answers with numeric project ids rather than names, so this compares numbers —
+     * spelling it as a name comparison here is how one provider would quietly disagree with the
+     * other two. Zero means the payload did not say, which reads as not-a-fork for the same reason
+     * GitHub's missing head repo does.
+     */
+    private static boolean fromFork(JsonNode attrs) {
+        long source = attrs.path("source_project_id").asLong(0);
+        long target = attrs.path("target_project_id").asLong(0);
+        return source != 0 && target != 0 && source != target;
+    }
+
     private List<IntegrationEvent> prEvent(JsonNode payload, JsonNode attrs, PrAction action) {
         return List.of(new PullRequestEventReceived(
                 repo(payload),
@@ -176,7 +190,8 @@ public class GitLabIngress implements ScmIngress {
                 (attrs.path("last_commit").path("id").asText("")),
                 author(payload.path("user")),
                 attrs.path("url").asText(""),
-                type().providerType()));
+                type().providerType(),
+                fromFork(attrs)));
     }
 
     /**

@@ -122,6 +122,19 @@ public class BitbucketCloudIngress implements ScmIngress {
         return pullRequestEvent(payload, action);
     }
 
+    /**
+     * Whether the pull request comes from a forked repository.
+     *
+     * <p>Bitbucket nests the repository under {@code source}/{@code destination} rather than
+     * {@code head}/{@code base}, so the field names differ from GitHub's while the comparison is
+     * the same. A blank on either side reads as not-a-fork.
+     */
+    private static boolean fromFork(JsonNode pr) {
+        String source = pr.path("source").path("repository").path("full_name").asText("");
+        String destination = pr.path("destination").path("repository").path("full_name").asText("");
+        return !source.isBlank() && !destination.isBlank() && !source.equals(destination);
+    }
+
     private List<IntegrationEvent> pullRequestEvent(JsonNode payload, PrAction action) {
         JsonNode pr = payload.path("pullrequest");
         return List.of(new PullRequestEventReceived(
@@ -135,7 +148,8 @@ public class BitbucketCloudIngress implements ScmIngress {
                 (pr.path("source").path("commit").path("hash").asText("")),
                 author(pr.path("author")),
                 pr.path("links").path("html").path("href").asText(""),
-                type().providerType()));
+                type().providerType(),
+                fromFork(pr)));
     }
 
     private List<IntegrationEvent> closed(JsonNode payload, CloseReason reason) {

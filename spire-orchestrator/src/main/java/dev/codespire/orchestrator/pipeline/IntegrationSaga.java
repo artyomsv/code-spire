@@ -722,6 +722,12 @@ public class IntegrationSaga {
         projection.appendEvent(reviewId, "integration", "PullRequestEventReceived",
                 e.action().name().toLowerCase(Locale.ROOT) + " · head " + commit);
         projection.setPrState(reviewId, "OPEN");
+        // Written on EVERY event, not only the first, and after all three header branches so it lands
+        // whatever the mode did. A pull request cannot change from a fork to a branch one, so this
+        // never flips in practice — but a row that predates V55 defaults to false, and refreshing it
+        // from the event is what replaces that default with the answer rather than leaving a guess
+        // behind for the branch-mode gate to trust.
+        projection.setFromFork(reviewId, e.fromFork());
 
         if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,

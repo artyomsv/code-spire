@@ -65,6 +65,15 @@ to tell which is true — worse than not shipping the feature.
 - Fork pull requests are **out of scope** for `existing` mode: the machine account cannot be assumed
   to have push rights to a contributor's fork. Those get a `spire/` branch and a new pull request,
   and the documents must say plainly that reconciliation does not join there.
+
+  **Enforced, not merely stated.** When this ADR was written nothing in the deployment recorded fork
+  provenance, so the rule was a sentence a reader had to obey rather than a check — and a fork's
+  source branch NAME would have resolved against the base repository, creating a stray branch or
+  landing a machine-authored commit from a different diff on an unrelated branch of the same name.
+  All three ingresses now read it (two repository full names on GitHub and Bitbucket, two numeric
+  project ids on GitLab), `V55` gives it a column, and `FixTargets.isPushable()` refuses on it.
+  The gateway asserts the three agree, because one provider spelling it backwards would let forks
+  through on that SCM alone while its own per-provider test passed.
 - Findings on a default branch (no pull request) are the same case, for the same reason.
 - The negative half needs tests: `main` and the destination branch must still be refused **in**
   **`existing` mode**. That half passes trivially if a variable is renamed, which is the failure

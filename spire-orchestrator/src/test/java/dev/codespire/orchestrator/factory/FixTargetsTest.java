@@ -126,41 +126,61 @@ class FixTargetsTest {
     }
 
     /**
-     * <b>NOT asserted, because the system cannot answer it.</b> ADR-040 puts fork pull requests out
-     * of scope for {@code existing} mode, and nothing in this deployment records whether a pull
-     * request came from a fork — not {@code review_status}, not {@code PullRequestEventReceived}.
-     * A fork's source branch name would resolve here and be pushed against the BASE repository,
-     * creating a stray branch or, worse, landing on an unrelated branch of the same name.
+     * The one shape ADR-040 puts out of scope, and the deployment could not see it until now.
      *
-     * <p>Tracked as a blocking gap rather than faked with a column that is always false, which would
-     * read as a check and be none. See
-     * {@code techdebt/spire-orchestrator/2-3-a-fork-pull-request-is-indistinguishable-from-a-branch-one.md}.
+     * <p>A fork's source branch lives in ANOTHER repository while the clone URL is built from this
+     * row's workspace and slug, so pushing the name resolves against the wrong repository: either a
+     * stray branch attached to no pull request, or a machine-authored commit from a different diff
+     * landing on an unrelated branch of the same name.
      */
     @Test
-    void aPushableTargetIsOpenAndNamesABranch() {
+    void refusesAPullRequestFromAFork() {
+        insertFork("OPEN", "feature/login", "develop", "TESTSHA1");
+
+        assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable());
+    }
+
+    @Test
+    void aPushableTargetIsOpenSameRepositoryAndNamesABranch() {
         insert("OPEN", "feature/login", "develop", "TESTSHA1");
 
-        assertTrue(targets.forReview(REVIEW).orElseThrow().isPushable());
+        FixTargets.PushTarget target = targets.forReview(REVIEW).orElseThrow();
+        assertFalse(target.fromFork(), "a same-repository pull request is not a fork");
+        assertTrue(target.isPushable());
     }
 
     // --- fixtures ---------------------------------------------------------------------------
 
+    private void insertFork(String prState, String sourceBranch, String destBranch, String commit) {
+        insert(prState, sourceBranch, destBranch, commit, true);
+    }
+
     private void insert(String prState, String sourceBranch, String destBranch, String commit) {
+        insert(prState, sourceBranch, destBranch, commit, false);
+    }
+
+    private void insert(String prState, String sourceBranch, String destBranch, String commit,
+                        boolean fromFork) {
         // Every parameter bound explicitly and in order. The helper used to prepend the review id
         // for anything starting "INSERT", which silently shifted the offset for any other
         // statement that took one — an UPDATE added later would bind wrong and fail confusingly.
         exec("""
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, status, commit_sha,
-                                           source_branch, dest_branch, pr_state, provider_type)
-                VALUES (?, 'TEST-WS', 'TEST-REPO', 8001, 'completed', ?, ?, ?, ?, 'github')
-                """, REVIEW, commit, sourceBranch, destBranch, prState);
+                                           source_branch, dest_branch, pr_state, provider_type,
+                                           from_fork)
+                VALUES (?, 'TEST-WS', 'TEST-REPO', 8001, 'completed', ?, ?, ?, ?, 'github', ?)
+                """, REVIEW, commit, sourceBranch, destBranch, prState, String.valueOf(fromFork));
     }
 
     private void exec(String sql, String... args) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             int i = 1;
             for (String arg : args) {
-                ps.setString(i++, arg);
+                if ("true".equals(arg) || "false".equals(arg)) {
+                    ps.setBoolean(i++, Boolean.parseBoolean(arg));
+                } else {
+                    ps.setString(i++, arg);
+                }
             }
             ps.executeUpdate();
         } catch (SQLException e) {

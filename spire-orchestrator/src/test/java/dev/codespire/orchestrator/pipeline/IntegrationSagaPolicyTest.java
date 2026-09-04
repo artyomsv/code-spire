@@ -50,6 +50,8 @@ class IntegrationSagaPolicyTest {
     private final List<String> rerunInvocations = new ArrayList<>();
     private final List<RecordCommand> handledCommands = new ArrayList<>();
     private final List<String> prStateCalls = new ArrayList<>();
+    /** Fork provenance written per event, as {@code reviewId:fromFork}. */
+    private final List<String> fromForkCalls = new ArrayList<>();
     /** Durable review-history rows, as {@code type:detail} — distinct from the in-memory timeline. */
     private final List<String> appendedEvents = new ArrayList<>();
     private boolean reviewRegistered;
@@ -154,6 +156,19 @@ class IntegrationSagaPolicyTest {
             @Override
             public void setPrState(String reviewId, String prState) {
                 prStateCalls.add(reviewId + ":" + prState);
+            }
+
+            /**
+             * Fork provenance, written on every pull-request event.
+             *
+             * <p>Instance TEN of this project's recorded fake-coverage trap: un-overridden, the real
+             * method opens a {@code DataSource} from a plain unit test. It arrived the same way the
+             * previous nine did — a new production write on a path these fixtures already exercised,
+             * added by someone who did not re-read which methods the path reaches.
+             */
+            @Override
+            public void setFromFork(String reviewId, boolean fromFork) {
+                fromForkCalls.add(reviewId + ":" + fromFork);
             }
 
             /**
@@ -400,6 +415,25 @@ class IntegrationSagaPolicyTest {
      * wired). This one could not reply even if that reasoning were absent: posting a comment is the
      * exact thing observe mode forbids, so answering would break the mode in the act of enforcing it.
      */
+    /**
+     * Fork provenance is persisted from EVERY pull-request event, in every mode.
+     *
+     * <p>Asserted because the write is what a branch-mode gate later trusts, and a row that predates
+     * V55 defaults to false — so a saga that recorded nothing would leave a guess in place of an
+     * answer, and the guess is the permissive one.
+     */
+    @Test
+    void everyPullRequestEventRecordsWhetherItCameFromAFork() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(pr("acc-1", "alice").withFromFork(true));
+        assertTrue(fromForkCalls.contains("review::acme/web#412:true"), fromForkCalls.toString());
+
+        fromForkCalls.clear();
+        sagaWith(policyMode(true), provider(List.of())).on(pr("acc-1", "alice"));
+        assertTrue(fromForkCalls.contains("review::acme/web#412:false"),
+                "observe mode registers the header, so it records this too: " + fromForkCalls);
+    }
+
     @Test
     void reviewCommandIsRefusedInObserveMode() {
         var saga = sagaWith(policyMode(true), provider(List.of()));
