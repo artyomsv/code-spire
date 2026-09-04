@@ -133,6 +133,15 @@ class FixTargetsTest {
                 "an unrecorded provenance is not the same answer as 'this is a fork'");
     }
 
+    /** No forge opens a pull request from a branch onto itself; the guard is against the ROW, not the forge. */
+    @Test
+    void refusesARowWhoseSourceAndDestinationAreTheSameBranch() {
+        insert("OPEN", "feature/login", "feature/login", "TESTSHA1");
+
+        assertEquals(FixTargets.Unpushable.SOURCE_IS_DESTINATION,
+                targets.forReview(REVIEW).orElseThrow().whyNotPushable().orElseThrow());
+    }
+
     /** ADR-040 §3 asks for a repository match, and a row that resolves is not a row that matches. */
     @Test
     void belongsOnlyToTheRepositoryItNames() {

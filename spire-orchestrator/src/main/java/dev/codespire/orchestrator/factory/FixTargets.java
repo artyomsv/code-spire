@@ -73,7 +73,18 @@ public class FixTargets {
          * pull request is a fork. Distinct from {@link #NOT_RECORDED_YET} because that one is
          * about refs and this one is about provenance, and merging them would hide which.
          */
-        PROVENANCE_UNKNOWN
+        PROVENANCE_UNKNOWN,
+        /**
+         * The row says the pull request is open from a branch onto itself.
+         *
+         * <p>No forge produces this, and that is exactly why it is guarded: the row is what the
+         * deployment last SAW, and the failure mode of trusting it is not a wrong answer but an
+         * exception. {@code ExecuteRun} refuses a run whose branch equals its protected branch --
+         * correctly, since a fix pushes to a SOURCE branch and this run would name its own
+         * destination -- and it refuses by throwing. On a Kafka consumer that is a redelivery.
+         * Same shape as the blank destination one column along, so it gets the same treatment.
+         */
+        SOURCE_IS_DESTINATION
     }
 
     @Inject
@@ -156,6 +167,11 @@ public class FixTargets {
             // with a reason belongs — and in a Kafka consumer an exception is a redelivery.
             if (sourceBranch.isBlank() || commit.isBlank() || destBranch.isBlank()) {
                 return Optional.of(Unpushable.NOT_RECORDED_YET);
+            }
+            // strip() on both sides because that is what ExecuteRun compares after: a trailing
+            // space would slip past an exact match here and be caught there, by a throw.
+            if (sourceBranch.strip().equals(destBranch.strip())) {
+                return Optional.of(Unpushable.SOURCE_IS_DESTINATION);
             }
             return Optional.empty();
         }

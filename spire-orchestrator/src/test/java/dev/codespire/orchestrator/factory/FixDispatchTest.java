@@ -1,8 +1,10 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -274,6 +276,54 @@ class FixDispatchTest {
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
                 dispatch().plan(REVIEW, THREAD, REPO));
         assertTrue(refused.why().contains("destination"), refused.why());
+    }
+
+    /**
+     * A branch opened onto itself is a REFUSAL, for the same reason a blank destination is.
+     *
+     * <p>No forge produces this row, which is the argument for guarding it rather than against:
+     * the row is what the deployment last SAW, and trusting it fails by THROWING rather than by
+     * answering wrongly. {@code ExecuteRun} refuses a run whose branch equals its protected branch
+     * — correctly — and refuses by throwing, which on a Kafka consumer is a redelivery.
+     *
+     * <p>Whitespace on one side, because both this class and {@code ExecuteRun} compare stripped:
+     * an exact match here would pass a trailing space through to the throw it exists to prevent.
+     */
+    @Test
+    void refusesAPullRequestRecordedAsOpenedFromABranchOntoItself() {
+        for (String dest : new String[] {"feature/login", "feature/login  "}) {
+            target = new FixTargets.PushTarget("github", "acme", "web", 412L, "feature/login", dest,
+                    "cafe1234", "OPEN", false);
+
+            FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
+                    dispatch().plan(REVIEW, THREAD, REPO), "dest='" + dest + "'");
+            assertTrue(refused.why().contains("onto itself"), refused.why());
+        }
+    }
+
+    /**
+     * <b>And the plan a dispatch produces is one {@code ExecuteRun} accepts.</b>
+     *
+     * <p>The end-to-end property the three guards above exist for, asserted once rather than
+     * inferred from them: every refusal is a wording decision, but the POINT of each is that what
+     * survives can be built. Construction is where the throws live, so building it here is what
+     * makes a fourth unguarded column fail in this class rather than in a consumer.
+     */
+    @Test
+    void aPlannedRunIsOneTheCommandRecordWillAccept() {
+        FixDispatch.Planned planned = assertInstanceOf(FixDispatch.Planned.class,
+                dispatch().plan(REVIEW, THREAD, REPO));
+
+        RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(planned.runId(),
+                new RepoRef(planned.workspace(), planned.slug()), "https://example.invalid/x.git",
+                planned.baseBranch(), planned.baseCommit(), planned.branch(), "TEST-prompt",
+                "codex", "TEST-model", "TEST-image", List.of(), 900,
+                "TEST-scm-credential", "TEST-harness-credential")
+                .onExistingBranch(planned.protectedBranch());
+
+        assertTrue(command.pushesToAnExistingBranch());
+        assertEquals("feature/login", command.branch());
+        assertEquals("develop", command.protectedBranch());
     }
 
     /**

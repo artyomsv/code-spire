@@ -139,6 +139,8 @@ public class FixDispatch {
                     + "yet — push to the pull request once and try again";
             case PROVENANCE_UNKNOWN -> "this review was recorded before this deployment could tell a "
                     + "fork from a branch pull request — push to the pull request once and try again";
+            case SOURCE_IS_DESTINATION -> "this review records a pull request opened from a branch "
+                    + "onto itself, which no forge produces — an operator should look at the review row";
         };
     }
 }
