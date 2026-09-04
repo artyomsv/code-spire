@@ -153,6 +153,39 @@ services:
       SPIRE_OIDC_CLIENT_ID: spire-review-worker
       SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_WORKER_SECRET:?set in .env}
 
+  # The factory. NOT started by `docker compose up` -- it is behind the `factory` profile, and
+  # that is a security decision rather than a convenience.
+  #
+  #   docker compose -f deploy/compose.yml --env-file deploy/.env --profile factory up -d
+  #
+  # This container mounts the host Docker socket, which is ROOT-EQUIVALENT ON THE HOST:
+  # docs/SECURITY.md says so in as many words, under "What is NOT mitigated". A compromised run
+  # worker is a compromised host, and the run worker exists to execute untrusted model output.
+  # Every other service in this file is a normal container; this one is not, so starting it is
+  # an act an operator performs deliberately rather than one that happens because they typed
+  # `up`. The Kubernetes arm removes the socket; the Docker arm cannot (M5).
+  run-worker:
+    profiles: [factory]
+    image: ghcr.io/artyomsv/spire-run-worker:${SPIRE_VERSION:-edge}
+    <<: *service-common
+    environment:
+      <<: *service-env
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER:?set in .env}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      SPIRE_ENCRYPTION_KEYSET: ${SPIRE_ENCRYPTION_KEYSET:?set in .env}
+      SPIRE_OIDC_CLIENT_ID: spire-run-worker
+      SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_RUN_WORKER_SECRET:?set in .env}
+      # Required, no default: the worker refuses to start without it, because a run unit with
+      # no publisher is a run whose work can never leave the sandbox.
+      SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:?set in .env}
+      # The daemon this worker places run units on. Left at the mounted socket below; set it
+      # to a remote daemon and the mount can go, which is the cheapest way to stop this
+      # container being root on THIS host.
+      DOCKER_HOST: ${SPIRE_RUN_DOCKER_HOST:-unix:///var/run/docker.sock}
+    volumes:
+      # See the block comment above before changing this line.
+      - ${SPIRE_RUN_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+
   # The ONLY published application port, which is what makes SPIRE_TRUSTED_PROXIES meaningful: no
   # service port is reachable, so nothing can bypass this proxy to forge a forwarded header.
   ui:
