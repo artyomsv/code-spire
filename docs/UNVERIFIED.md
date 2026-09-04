@@ -210,6 +210,17 @@ Not work. Written down because each has been rediscovered at least once.
   matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
   wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
   and nothing should depend on this arm until then.
+- **The publisher's trunk floor is not exercised end to end, and a container test cannot reach it.**
+  `Adr040ExistingBranchTest` drives a run naming `main` as its branch and proves the trunk is
+  untouched — but deleting `PublisherConfig.looksLikeATrunk` leaves that test GREEN. A control probe
+  confirmed mutations reach the container, so the survival is real: the run dies as
+  `RUNTIME_UNAVAILABLE, init container failed with exit 1` before the publisher is consulted, because
+  `WorkspaceClone.populate` calls `checkout().setCreateBranch(true)` and a clone has already
+  materialised the remote's default branch locally. Two independent guards, the outer firing first —
+  defence in depth working, and simultaneously a claim ("the floor stops this") that nothing at the
+  container level establishes. The floor is unit-tested in `PublisherConfigTest` where it is
+  reachable. Anyone about to lean on "the trunk cannot be pushed, we tested it end to end" should
+  read this first.
 - **`/fix` trusts the pull-request state the deployment last saw, not the one that is true now.**
   `pr_state` is set to `OPEN` by every pull-request event, so a redelivery after a merge flips a
   closed pull request back to pushable in `FixTargets` — the row is the KEY to the target, never
