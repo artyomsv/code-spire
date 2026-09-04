@@ -169,6 +169,83 @@ public class FindingProjection {
     }
 
     /**
+     * Everything a fix run needs to be told, decrypted — the other half of {@link TargetFinding}.
+     *
+     * <p>A separate read rather than more components on that record, for the reason its javadoc
+     * gives: deciding whether a thread names an open finding does not need the finding's text, and
+     * putting decrypted source quotations on that path would widen it for nothing. This one is
+     * reached only after the decision is made and only when a run is about to be paid for.
+     *
+     * @param message the reviewer's own words. <b>Untrusted for prompt purposes</b>: it is model
+     *     output derived from a diff a contributor wrote, so it reaches the agent inside an
+     *     explicit delimiter rather than as instructions — see {@code FixPrompt}
+     * @param suggestion nullable; a review may describe a problem without proposing a patch
+     */
+    public record FixSpec(long id, String path, int startLine, int endLine, String severity,
+                          String category, String message, String suggestion) {
+
+        /** A finding with no message specifies nothing, whatever its coordinates say. */
+        public boolean isEmpty() {
+            return message == null || message.isBlank();
+        }
+    }
+
+    private static final String FIND_SPEC = """
+            SELECT id, path, start_line, end_line, severity, category, message, suggestion
+              FROM review_finding
+             WHERE review_id = ? AND id = ?
+            """;
+
+    /**
+     * The decrypted specification for one finding of one review, or empty when there is no such row.
+     *
+     * <p><b>Keyed on the review as well as the id</b>, though the id alone is a primary key. The
+     * review id is the encryption AAD, so passing it is not optional — and binding it in the WHERE
+     * too means a finding id from another review reads as absent here rather than as a decryption
+     * failure, which is the same answer for a better reason.
+     *
+     * <p><b>Throws on a read OR a decrypt fault, and the decrypt half diverges from every neighbour
+     * on purpose.</b> {@code ReviewProjection} and {@code FindingBackfill} fall back to treating an
+     * undecryptable column as legacy plaintext, which is right for them: they render it, and showing
+     * old text beats showing nothing. Here the value becomes an agent prompt that is paid for, so a
+     * fallback would spend money on ciphertext. There is also nothing to fall back TO — V36 created
+     * this table with both columns encrypted and shipped no backfill, so no plaintext row has ever
+     * existed in it.
+     */
+    public Optional<FixSpec> specFor(String reviewId, long findingId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(FIND_SPEC)) {
+            ps.setString(1, reviewId);
+            ps.setLong(2, findingId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new FixSpec(rs.getLong("id"), rs.getString("path"),
+                        rs.getInt("start_line"), rs.getInt("end_line"), rs.getString("severity"),
+                        rs.getString("category"), decrypt(rs.getString("message"), reviewId),
+                        decrypt(rs.getString("suggestion"), reviewId)));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the specification for finding "
+                    + findingId + " of " + reviewId, e);
+        }
+    }
+
+    /** Null in, null out: {@code suggestion} is nullable and an absent one is not a fault. */
+    private String decrypt(String stored, String reviewId) {
+        if (stored == null || stored.isBlank()) {
+            return null;
+        }
+        try {
+            return encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("could not decrypt a finding of " + reviewId
+                    + "; a fix run must not be paid for on unreadable text", e);
+        }
+    }
+
+    /**
      * Records the findings one round generated, replacing anything already stored for that round.
      *
      * <p><b>Delete-then-insert, in one transaction, is the idempotency mechanism</b> — not a unique
