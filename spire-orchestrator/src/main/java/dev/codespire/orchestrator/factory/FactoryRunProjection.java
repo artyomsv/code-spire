@@ -169,7 +169,31 @@ public class FactoryRunProjection {
      */
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
                             String baseCommit, String branch, String pushedAs,
-                            UUID harnessCredentialId) {
+                            UUID harnessCredentialId, String kind, String reviewId,
+                            String findingRef) {
+
+        /** A build run: what every dispatch was before M2, and what the REST endpoint still sends. */
+        public QueuedRun(String runId, String harness, String model, String baseBranch,
+                         String baseCommit, String branch, String pushedAs,
+                         UUID harnessCredentialId) {
+            this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, "BUILD", null, null);
+        }
+
+        /**
+         * The same row, recorded as a fix for one finding (FR-F32).
+         *
+         * <p>A wither because adding components to a record leaves every shorter constructor
+         * valid — so a rebuild site keeps compiling while silently dropping them, which is the
+         * trap this repository records. Enumerating them once here is what it does instead.
+         *
+         * <p>V54 refuses a FIX row that names neither, and refuses a non-FIX row that names
+         * either, so a caller cannot half-apply this.
+         */
+        public QueuedRun asFixFor(String reviewId, String findingRef) {
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, "FIX", reviewId, findingRef);
+        }
     }
 
     /**
@@ -228,8 +252,8 @@ public class FactoryRunProjection {
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
-                                         harness_credential_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         harness_credential_id, kind, review_id, finding_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -266,8 +290,13 @@ public class FactoryRunProjection {
             ps.setString(12, branch);
             ps.setString(13, pushedAs);
             ps.setObject(14, row.harnessCredentialId());
-            ps.setString(15, FAILED);
-            ps.setString(16, DISPATCH_FAILED);
+            // What the run is FOR, and what it is fixing. V54 refuses a FIX row naming neither and a
+            // non-FIX row naming either, so these three cannot be half-applied by a caller.
+            ps.setString(15, row.kind());
+            ps.setString(16, row.reviewId());
+            ps.setString(17, row.findingRef());
+            ps.setString(18, FAILED);
+            ps.setString(19, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             return ps.executeUpdate() == 1;

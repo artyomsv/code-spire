@@ -37,11 +37,46 @@ class FixRunsTest {
     FixRuns fixRuns;
 
     @Inject
+    FactoryRunProjection projection;
+
+    @Inject
     DataSource dataSource;
 
     @BeforeEach
     void clean() {
-        exec("DELETE FROM factory_run WHERE run_id LIKE 'run::TEST-%'");
+        // By WORKSPACE, not by run-id prefix. The prefix rule missed every id built through RunIds,
+        // which spells the platform first -- so rows leaked between cases and polluted the counts
+        // this class exists to assert. The workspace is in every id these tests create.
+        exec("DELETE FROM factory_run WHERE workspace = 'TEST-WS'");
+    }
+
+    /**
+     * <b>The row the projection actually writes is the row the caps count.</b>
+     *
+     * <p>Every other case here hand-writes its INSERT, which proves the QUERIES and proves nothing
+     * about the writer. A projection that dropped kind, review_id or finding_ref would leave every
+     * one of them green while the cap silently counted nothing — the cap failing open, which is the
+     * direction that matters. So this goes through the real writer.
+     */
+    @Test
+    void aFixRunWrittenByTheProjectionIsCountedByBothCaps() {
+        FactoryRunProjection.QueuedRun row = new FactoryRunProjection.QueuedRun(
+                "run::github:TEST-WS/TEST-REPO:" + FINDING + ":1", "codex", "TEST-MODEL", "main",
+                "TESTSHA0", "feature/login", "machine-account", null).asFixFor(REVIEW, FINDING);
+
+        assertTrue(projection.queued(row), "the row must be written");
+        assertEquals(1, fixRuns.forFinding(REVIEW, FINDING));
+        assertEquals(1, fixRuns.forReview(REVIEW));
+    }
+
+    /** And a build run written the same way is counted by neither. */
+    @Test
+    void aBuildRunWrittenByTheProjectionIsCountedByNeitherCap() {
+        assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(
+                "run::github:TEST-WS/TEST-REPO:subject:1", "codex", "TEST-MODEL", "main",
+                "TESTSHA0", "spire/subject", "machine-account", null)));
+
+        assertEquals(0, fixRuns.forReview(REVIEW));
     }
 
     @Test
