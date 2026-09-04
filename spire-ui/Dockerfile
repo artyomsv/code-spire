@@ -23,21 +23,29 @@ LABEL org.opencontainers.image.title="spire-ui" \
       org.opencontainers.image.licenses="FSL-1.1-ALv2"
 
 # The same build-time upgrade the service images carry, and for the same reason: nginx retags its
-# own tags on its own cadence, which is slower than Alpine's package index moves.
+# own tags on its own cadence, which is slower than Alpine's package index moves. An image with no
+# upgrade does not stay clean; it inherits whatever the index held when its base was last retagged.
 #
-# **This image was believed not to need it, and the belief was measured wrong.** Three files said
-# "spire-ui's base needs none of this: it is scanned by the same job and reports clean" — true only
-# because docker.yml scans HIGH,CRITICAL and the base happened to be freshly retagged when that was
-# written. Scanned on 2026-09-04, `nginxinc/nginx-unprivileged:1.30-alpine` carried 24 OS
-# vulnerabilities, four of them HIGH, and they were the SAME openssl 3.5.7-r0 and libexpat CVEs the
-# service images were reporting. An image with no upgrade does not stay clean; it waits.
+# **This base is clean at the time of writing, and the first CI build with this line upgraded
+# nothing but apk-tools.** That is the honest state and it is not an argument against the line: the
+# two retags visible here are 2026-07-20 and 2026-09-02, six weeks apart, and the 2026-07-20 one
+# carried openssl 3.5.7-r0 and libexpat 2.8.2-r0 — the exact versions the three service images were
+# raising 102 alerts on. This closes that window rather than a present backlog, for about a second
+# of build time.
 #
-# The upgrade moves openssl and libexpat only. **nginx itself stays 1.30.4** — Alpine 3.24's index
-# holds that version, so this closes the base's CVE backlog WITHOUT moving off nginx's stable branch,
-# which a `1.31-alpine` bump would have done as a side effect of chasing the same four CVEs.
+# A correction worth keeping, because it is the trap this whole change is about: an earlier version
+# of this comment claimed the live tag carried 24 vulnerabilities with four HIGH. It did not. That
+# was measured against a **six-week-old local copy** — `docker run` and `docker build` resolve a
+# floating tag from the local store before the registry, so a scan of `:1.30-alpine` reports on
+# whatever was pulled last, not on what the tag points at. Pull first, then measure. Re-measured
+# after a pull, both `1.30-alpine` and `1.31-alpine` score 0.
+#
+# The upgrade moves OS packages only. **nginx itself stays 1.30.4** — Alpine 3.24's index holds that
+# version, so this can never drag the image onto nginx's mainline branch as a side effect.
 #
 # root for the upgrade and straight back to 101: this base runs unprivileged by design, and every
 # layer after this one must land exactly as it did before.
+
 USER root
 ARG APK_UPGRADE_BUST=local
 RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" && apk --no-cache upgrade

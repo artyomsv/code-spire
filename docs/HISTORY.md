@@ -1579,34 +1579,42 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     services. A throwaway two-line Dockerfile reproduced it in isolation — the same `RUN` re-built
     with nothing changed is `CACHED`, and with a referenced build arg it re-executes. One fresh
     `apk --no-cache upgrade` on the very same base installs openssl `3.5.8-r0` and libexpat
-    `2.8.4-r0`, i.e. the fixed versions every alert names. And the real `spire-publisher` image built
-    from the changed Dockerfile scans **0** OS vulnerabilities against the base image's **49** —
-    as does `spire-ui`, **0** against its own base's **24**. The counterfactual matters, since a clean report means nothing without proof the scanner sees the
-    dirty one.
+    `2.8.4-r0`, i.e. the fixed versions every alert names. The real `spire-publisher` image built
+    from the changed Dockerfile scans **0** OS vulnerabilities where its base scores **34** on the
+    digest current that day — the counterfactual matters, since a clean report means nothing without
+    proof the scanner sees the dirty one. And the merge build settled it in production: all four
+    images logged `apk upgrade for build 33847927972` and the three service images upgraded
+    libcrypto3, libssl3, libexpat and openssl to the fixed versions, where the previous run had
+    logged `CACHED`.
   - **`APK_UPGRADE_BUST` is echoed inside the `RUN`, not merely declared.** BuildKit keys a `RUN` on
     the build args it actually references, so an `ARG` the command never mentions changes no cache
     key — a fix that looks identical to the defect. `docker.yml` passes `github.run_id`, unique per
     build; a constant would restore the original behaviour with more ceremony.
-  - **`spire-ui` needed it too, and the belief that it did not was measured wrong.** Three files said
-    "spire-ui's base needs none of this: it is scanned by the same job and reports clean" — true only
-    because `docker.yml` scans `HIGH,CRITICAL` and the base happened to be freshly retagged when that
-    was written. Scanned on 2026-09-04, `nginxinc/nginx-unprivileged:1.30-alpine` carried **24** OS
-    vulnerabilities, **four of them HIGH**, and they were the *same* openssl 3.5.7-r0 and libexpat
-    CVEs the service images were reporting. An image with no upgrade does not stay clean; it waits.
-    It now upgrades too — `USER root`, upgrade, straight back to `101`, because that base runs
-    unprivileged by design. Built and measured: **0** OS vulnerabilities, still uid 101, `/healthz`
-    and `/` both 200, no errors in the log.
-  - **That is also what settles Dependabot #97** (`nginx-unprivileged` 1.30-alpine → 1.31-alpine).
-    Checked rather than assumed: `stable-alpine` resolves to 1.30.4 and `mainline-alpine` to 1.31.5,
-    so the bump is a **stable→mainline branch switch**, not a patch — and Dependabot cannot see the
-    difference. Its only real argument was that 1.31-alpine scans 0 while 1.30-alpine scans 24, which
-    is a *retag-cadence artifact* rather than a property of the nginx line. The upgrade closes those
-    four HIGH CVEs while leaving nginx itself at **1.30.4**, since Alpine 3.24's index holds that
-    version. So the stable branch is kept and the CVEs are closed, instead of trading one for the
-    other. Worth keeping: the nginx config is a security control (ADR-022 cookie-path scoping depends
-    on all four services answering on one origin), `deploy/e2e.sh` is the only thing that exercises
-    it, and it runs nightly — never on the PR path. A `nginx -t` against the real template passes on
-    both versions, which proves the config parses and nothing about the behaviour.
+  - **`spire-ui` upgrades too, and the reasoning first given for it was wrong.** The claim was that
+    its base carried 24 OS vulnerabilities with four HIGH. It did not: that was measured against a
+    **six-week-old local copy** of `nginxinc/nginx-unprivileged:1.30-alpine`, because `docker run`
+    and `docker build` resolve a floating tag from the local store before the registry. Re-measured
+    after an explicit `docker pull`, `1.30-alpine` and `1.31-alpine` both score **0**, and the first
+    CI build with the new line upgraded nothing but `apk-tools`. `eclipse-temurin:25-jre-alpine`, by
+    contrast, is genuinely stale on its *current* digest — 34 OS vulnerabilities, openssl 3.5.7-r0
+    and libexpat 2.8.3-r0, exactly what CI upgraded away on the merge build.
+    The line stays, on the honest argument rather than the wrong one: the two nginx retags visible
+    here are six weeks apart and the older carried openssl 3.5.7-r0, so this closes a *window*, not
+    a present backlog, for about a second of build time. `USER root`, upgrade, straight back to
+    `101`, because that base runs unprivileged by design. Measured on the built image: still uid 101,
+    nginx still 1.30.4, `/healthz` and `/` both 200, no errors in the log.
+  - **Dependabot #97** (`nginx-unprivileged` 1.30-alpine → 1.31-alpine) is declined, and on one
+    reason rather than the two first given. The CVE argument was the stale-image mistake above and
+    is withdrawn — both tags score 0. What stands is checked and independent: `stable-alpine`
+    resolves to 1.30.4 and `mainline-alpine` to 1.31.5, so the bump is a **stable→mainline branch
+    switch**, not a patch, and Dependabot cannot see the difference. With no CVE difference between
+    them there is nothing on the other side of that trade. Worth keeping: the nginx config is a
+    security control (ADR-022 cookie-path scoping depends on all four services answering on one
+    origin), `deploy/e2e.sh` is the only thing that exercises it, and it runs nightly — never on the
+    PR path (`techdebt/global/3-3-nginx-proxy-behaviour-is-unchecked-on-the-pr-path.md`). A
+    `nginx -t` against the real template passes on both versions, which proves the config parses and
+    nothing about the behaviour.
+
 
   - **The guard derives its file list** by walking the tree for `Dockerfile*` and joining backslash
     continuations (`spire-publisher` chains its upgrade into an `adduser`), so an image added later

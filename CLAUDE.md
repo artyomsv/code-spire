@@ -194,8 +194,11 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   packages Alpine had already fixed. `docker.yml` now passes `APK_UPGRADE_BUST=${{ github.run_id }}`,
   and the `RUN` **echoes** it: BuildKit keys a `RUN` on the args it actually references, so a
   declared-but-unmentioned `ARG` looks exactly like a fix. `ApkUpgradeIsNotCachedTest` holds both
-  halves. The sibling trap: an image reporting clean today is not an image that stays clean —
-  `spire-ui` was documented as needing no upgrade and its base later carried four HIGH CVEs.
+  halves.
+- **Scanning a floating tag locally measures your last pull, not the tag.** `docker run` and
+  `docker build` resolve `:1.30-alpine` from the local store before the registry, so a Trivy result
+  can be six weeks stale — which is how `spire-ui`'s base was reported as carrying four HIGH CVEs it
+  did not have. `docker pull` first, then scan, and say which digest was measured.
 - **A saga test fake with an un-overridden method opens a real database** from a plain unit test.
   Seven instances so far (`setNote`, `recordCharges`, `roundOrUnknown`, `markSuppressed`, …); six
   failed loudly with an NPE, the seventh sat under a `catch (RuntimeException)` and was **silent**.
