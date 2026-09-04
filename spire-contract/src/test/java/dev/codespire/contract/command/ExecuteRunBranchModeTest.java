@@ -1,5 +1,6 @@
 package dev.codespire.contract.command;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
@@ -105,6 +106,39 @@ class ExecuteRunBranchModeTest {
     @Test
     void aRunMayNotPushToTheBranchItNamesAsOffLimits() {
         assertThrows(IllegalArgumentException.class, () -> run().onExistingBranch("spire/fix"));
+    }
+
+    /**
+     * <b>A command serialised before ADR-040 still reads as namespace mode.</b>
+     *
+     * <p>The convenience constructor's comment claims exactly this, and nothing asserted it. The
+     * claim is about JSON, not about Java: under ADR-014 the bus keeps short retention, so an
+     * in-flight command written by the previous version is deserialised by the new one during any
+     * rolling upgrade. If {@code existingBranch} defaulted to true, or {@code protectedBranch}
+     * arrived null and reached a caller that reads it, that upgrade window is where it would show.
+     *
+     * <p>The JSON is written out by hand rather than round-tripped, because a round trip asserts the
+     * new version agrees with itself — which it always does. Only an OLD payload can fail this.
+     */
+    @Test
+    void aCommandSerialisedBeforeAdr040ReadsAsNamespaceMode() throws Exception {
+        String legacyJson = """
+                {"type":"ExecuteRun","runId":"run::github:acme/app:subject:1",
+                 "repo":{"workspace":"acme","slug":"app"},
+                 "remoteUri":"https://github.com/acme/app.git","baseBranch":"main",
+                 "baseCommit":"cafe1234","branch":"spire/fix","prompt":"do the thing",
+                 "harness":"codex","model":"gpt-x","agentImage":"img","protectedPaths":[],
+                 "maxWallClockSeconds":900,"scmCredential":"TEST-scm-token-do-not-print",
+                 "harnessCredential":"TEST-harness-key-do-not-print"}
+                """;
+
+        RunCommand.ExecuteRun revived = (RunCommand.ExecuteRun)
+                new ObjectMapper().readValue(legacyJson, RunCommand.class);
+
+        assertFalse(revived.pushesToAnExistingBranch(), "an old run must not acquire the new mode");
+        // Empty, NOT null: the compact constructor normalises it, and callers read it with isBlank.
+        assertEquals("", revived.protectedBranch());
+        assertEquals("spire/fix", revived.branch(), "and nothing else shifted");
     }
 
     /** The credentials stay redacted, and the new components are not secret so they are shown. */

@@ -188,6 +188,15 @@ Not work. Written down because each has been rediscovered at least once.
   the remote is removed after the clone. What is missing is the second line of defence. Closing it
   needs a forge-specific read scope, which is a product decision rather than a code change; the
   six documents now say what the code does.
+- **`/fix` trusts the pull-request state the deployment last saw, not the one that is true now.**
+  `pr_state` is set to `OPEN` by every pull-request event, so a redelivery after a merge flips a
+  closed pull request back to pushable in `FixTargets` — the row is the KEY to the target, never
+  the PROOF of it. The same is true of `from_fork` and of `source_branch`. Closing it needs a
+  dispatch-time re-read from the forge, which the orchestrator may do and the publisher (ADR-039)
+  may not; it is the same re-read the shared-branch gap wants, so the two want one design.
+  Recorded here because it lived only in a javadoc on the class that has it, where nobody
+  planning the next slice would find it.
+  — `techdebt/spire-orchestrator/3-3-a-long-lived-shared-branch-passes-every-fix-check.md`
 - **The spend cap is soft, and softer than this page first said.** Charges land only when a call
   completes, so overshoot is bounded by **queued + in-flight** runs × per-run cost — not by
   in-flight alone, which is what an earlier version of this line claimed. The worker consumes one

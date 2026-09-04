@@ -59,8 +59,7 @@ public sealed interface RunCommand {
      * ciphertext rather than plaintext, so a leak is not immediately usable, but a ciphertext in a
      * log is still a credential in a log: it survives key rotation, it is attacker-collectable, and
      * the whole point of the KEK boundary is that the ciphertext never leaves the paths that need it.
-     */
-    /**
+     *
      * @param existingBranch whether this run pushes to a branch that already exists — a pull
      *     request's own source branch, under ADR-040. False means the M0 rule: the publisher
      *     pushes only inside the factory's {@code spire/} namespace and never to the branch it

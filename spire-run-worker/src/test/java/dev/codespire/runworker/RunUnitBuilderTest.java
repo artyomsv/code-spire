@@ -157,8 +157,38 @@ class RunUnitBuilderTest {
     void aBuildRunTellsThePublisherNothingAboutBranchMode() {
         Map<String, String> env = unit().publisher().environment();
 
-        assertFalse(env.containsKey("SPIRE_BRANCH_MODE"), env.toString());
-        assertFalse(env.containsKey("SPIRE_PROTECTED_BRANCH"), env.toString());
+        // Keys, not the map: the value side holds SPIRE_GIT_SECRET, and an assertion message is
+        // printed on failure. A fake token today is still the wrong habit to leave in place.
+        assertFalse(env.containsKey("SPIRE_BRANCH_MODE"), env.keySet().toString());
+        assertFalse(env.containsKey("SPIRE_PROTECTED_BRANCH"), env.keySet().toString());
+    }
+
+    /**
+     * A protected branch is honoured OUTSIDE existing mode too, because the publisher honours it
+     * there.
+     *
+     * <p>The command can carry a destination without the mode — nothing refuses that pair — and the
+     * builder used to write the variable only in existing mode. So the one direction that matters
+     * was the one that broke: a floor the caller asked for was dropped by the caller's own
+     * plumbing, silently, and the publisher never learned it had been asked for anything.
+     */
+    @Test
+    void aProtectedBranchIsNotDroppedJustBecauseTheModeIsTheDefault() {
+        RunCommand.ExecuteRun original = command();
+        // Spelled out rather than withered: a wither for a pair only this test builds would be
+        // production API existing for a test, and enumerating here fails to COMPILE if a component
+        // is added — which is the signal the rebuild-site trap wants anyway.
+        RunCommand.ExecuteRun withFloorOnly = new RunCommand.ExecuteRun(original.runId(),
+                original.repo(), original.remoteUri(), original.baseBranch(), original.baseCommit(),
+                original.branch(), original.prompt(), original.harness(), original.model(),
+                original.agentImage(), original.protectedPaths(), original.maxWallClockSeconds(),
+                original.scmCredential(), original.harnessCredential(), false, "develop");
+
+        Map<String, String> env = builder.build(withFloorOnly, new CodexAdapter())
+                .publisher().environment();
+
+        assertEquals("develop", env.get("SPIRE_PROTECTED_BRANCH"));
+        assertFalse(env.containsKey("SPIRE_BRANCH_MODE"), env.keySet().toString());
     }
 
     /** A fix run carries both, because the publisher refuses the mode without the destination. */

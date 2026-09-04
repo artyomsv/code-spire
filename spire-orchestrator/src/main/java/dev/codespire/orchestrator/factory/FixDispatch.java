@@ -135,8 +135,10 @@ public class FixDispatch {
                     + "opened from — which lives in the contributor's repository, not this one";
             case NOT_OPEN -> "that pull request is no longer open, so a fix would land on a branch "
                     + "nobody is reviewing and no later round would reconcile it";
-            case NOT_RECORDED_YET -> "this review has no recorded branch or head commit yet — push to "
-                    + "the pull request once and try again";
+            case NOT_RECORDED_YET -> "this review has no recorded branch, head commit or destination "
+                    + "yet — push to the pull request once and try again";
+            case PROVENANCE_UNKNOWN -> "this review was recorded before this deployment could tell a "
+                    + "fork from a branch pull request — push to the pull request once and try again";
         };
     }
 }

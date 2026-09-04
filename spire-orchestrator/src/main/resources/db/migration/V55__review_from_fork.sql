@@ -7,10 +7,16 @@
 -- has no branch of that name and the push creates a stray one attached to no pull request, or it
 -- does and a machine-authored commit from a different diff lands on someone else's work.
 --
--- Defaults to false, and that default is a claim worth stating rather than a convenience. Every row
--- written before this migration came from a deployment that could not distinguish the two, so the
--- honest reading of an old row is "unknown". Calling it false is the SAFE direction only because
--- nothing consumes it yet: no caller sets SPIRE_BRANCH_MODE=existing at the point this lands, so no
--- old row can authorise a push on the strength of it. A row refreshed by the next pull-request event
--- carries the real answer.
-ALTER TABLE review_status ADD COLUMN from_fork BOOLEAN NOT NULL DEFAULT false;
+-- NULLABLE, with no default, because "unknown is never zero" (ADR-023) applies to a boolean too.
+-- An earlier draft of this migration defaulted to false and argued the default was safe because
+-- nothing consumed the column yet. That was true for about a day: FixDispatch now refuses a fork,
+-- and RunUnitBuilder now writes SPIRE_BRANCH_MODE from a chain that starts here. A row written
+-- before this migration came from a deployment that could not distinguish a fork from a branch
+-- pull request, so false would not be a reading of that row -- it would be a guess, made by the
+-- migration, that the gate then treats as an answer. A fork review that never sees another
+-- pull-request event would authorise a push on the strength of it.
+--
+-- So old rows say NULL, FixTargets reads that as PROVENANCE_UNKNOWN and refuses, and the next
+-- pull-request event writes the real answer for every row the deployment still cares about.
+-- The cost is one refused /fix on a stale review, whose message says exactly what to do.
+ALTER TABLE review_status ADD COLUMN from_fork BOOLEAN;

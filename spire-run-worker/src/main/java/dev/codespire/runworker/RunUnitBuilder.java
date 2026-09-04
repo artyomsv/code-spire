@@ -190,6 +190,12 @@ public class RunUnitBuilder {
         env.put("SPIRE_GIT_SECRET", scm.writeSecret());
         if (command.pushesToAnExistingBranch()) {
             env.put("SPIRE_BRANCH_MODE", "existing");
+        }
+        // Written whenever it is known, NOT only in existing mode. The publisher honours it in
+        // every mode, so gating it on the mode meant a pull request targeting a factory branch
+        // (spire/x as a DESTINATION) went unprotected in the default mode — a floor dropped by the
+        // caller rather than by the floor.
+        if (!command.protectedBranch().isBlank()) {
             env.put("SPIRE_PROTECTED_BRANCH", command.protectedBranch());
         }
         return Map.copyOf(env);

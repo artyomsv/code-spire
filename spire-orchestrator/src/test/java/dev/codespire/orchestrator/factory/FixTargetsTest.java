@@ -14,6 +14,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -90,6 +91,46 @@ class FixTargetsTest {
 
         assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable(),
                 "a blank commit fails Env.required inside the container, after the agent is paid");
+    }
+
+    /**
+     * {@code dest_branch} is the THIRD column with {@code NOT NULL DEFAULT ''}, and it was the one
+     * left unguarded while the two beside it were tested twice.
+     *
+     * <p>Not cosmetic: this value becomes the run command's protected branch, and
+     * {@code ExecuteRun}'s compact constructor THROWS on a blank one in existing mode. So the
+     * missing clause turned a refusal-with-a-reason into an exception — and an exception on a Kafka
+     * consumer is a redelivery, i.e. the same review refusing forever with no message to the author.
+     */
+    @Test
+    void refusesARowWhoseDestinationBranchWasNeverRecorded() {
+        for (String blank : new String[] {"", "   "}) {
+            exec("DELETE FROM review_status WHERE review_id LIKE 'review::TEST-%'");
+            insert("OPEN", "feature/login", blank, "TESTSHA1");
+
+            assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable(), "dest='" + blank + "'");
+        }
+    }
+
+    /**
+     * A row written before V55 says NULL, and NULL is not false.
+     *
+     * <p>This is the case {@code rs.getBoolean} silently converts: it maps SQL NULL to false, so a
+     * pre-V55 fork review would read as a branch pull request and be pushable. The whole reason V55
+     * leaves the column nullable is to keep that state distinguishable, and this is the only test
+     * that can tell the two readers apart.
+     */
+    @Test
+    void refusesARowWrittenBeforeTheDeploymentCouldSeeForks() {
+        insert("OPEN", "feature/login", "develop", "TESTSHA1");
+        exec("UPDATE review_status SET from_fork = NULL WHERE review_id = ?", REVIEW);
+
+        FixTargets.PushTarget target = targets.forReview(REVIEW).orElseThrow();
+        assertNull(target.fromFork(), "NULL must survive the read, not arrive as false");
+        assertFalse(target.isPushable());
+        assertEquals(FixTargets.Unpushable.PROVENANCE_UNKNOWN,
+                target.whyNotPushable().orElseThrow(),
+                "an unrecorded provenance is not the same answer as 'this is a fork'");
     }
 
     /** ADR-040 §3 asks for a repository match, and a row that resolves is not a row that matches. */

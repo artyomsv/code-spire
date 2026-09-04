@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -103,20 +104,28 @@ class FixDispatchTest {
     @Test
     void theTwoEncodingsOfPushableNeverDisagree() {
         for (String state : new String[] {"OPEN", "MERGED", "CLOSED"}) {
-            for (boolean fork : new boolean[] {false, true}) {
+            // null is the pre-V55 row, and it is an AXIS rather than a case because it is exactly
+            // the value rs.getBoolean would silently deliver as false.
+            for (Boolean fork : new Boolean[] {false, true, null}) {
                 for (String branch : new String[] {"feature/login", "", "   "}) {
                     // Whitespace on BOTH axes. It was seeded for the branch and not the commit, so
                     // isBlank -> isEmpty on the commit survived here AND in FixTargetsTest — the
                     // same finding as an earlier round, on the axis that round did not cover.
                     for (String commit : new String[] {"cafe1234", "", "   "}) {
-                        var candidate = new FixTargets.PushTarget("github", "acme", "web", 412L,
-                                branch, "develop", commit, state, fork);
-                        target = candidate;
-                        boolean planned = dispatch().plan(REVIEW, THREAD, REPO)
-                                instanceof FixDispatch.Planned;
-                        assertEquals(candidate.isPushable(), planned,
-                                "disagreement on " + state + "/fork=" + fork + "/branch='" + branch
-                                        + "'/commit='" + commit + "'");
+                        // And the destination, which had no axis at all: a fifth cause keyed on it
+                        // survived all 8 original cases, because every one of them named "develop".
+                        // A matrix is blind to any cause outside the axes it varies — worth
+                        // remembering about matrices generally, not about this one.
+                        for (String dest : new String[] {"develop", "", "   "}) {
+                            var candidate = new FixTargets.PushTarget("github", "acme", "web", 412L,
+                                    branch, dest, commit, state, fork);
+                            target = candidate;
+                            boolean planned = dispatch().plan(REVIEW, THREAD, REPO)
+                                    instanceof FixDispatch.Planned;
+                            assertEquals(candidate.isPushable(), planned,
+                                    "disagreement on " + state + "/fork=" + fork + "/branch='" + branch
+                                            + "'/commit='" + commit + "'/dest='" + dest + "'");
+                        }
                     }
                 }
             }
@@ -245,6 +254,64 @@ class FixDispatchTest {
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
                 dispatch().plan(REVIEW, THREAD, REPO));
         assertTrue(refused.why().contains("fork"), refused.why());
+    }
+
+    /**
+     * A blank destination is a REFUSAL, not an exception — and it was an exception.
+     *
+     * <p>{@code dest_branch} becomes {@code Planned.protectedBranch}, and {@code ExecuteRun}'s
+     * compact constructor throws on a blank one in existing mode. So the moment the saga wires this
+     * class up, a review row that never recorded a destination would raise an exception on a Kafka
+     * consumer — a redelivery, refusing forever, with nothing said to the author who typed /fix.
+     * The matrix above cannot be the only cover: it asserts agreement between two readings of one
+     * rule, and a rule missing from both agrees with itself perfectly.
+     */
+    @Test
+    void refusesABlankDestinationRatherThanThrowingLater() {
+        target = new FixTargets.PushTarget("github", "acme", "web", 412L, "feature/login", "",
+                "cafe1234", "OPEN", false);
+
+        FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
+                dispatch().plan(REVIEW, THREAD, REPO));
+        assertTrue(refused.why().contains("destination"), refused.why());
+    }
+
+    /**
+     * A row written before V55 is told to push once, NOT told its pull request is a fork.
+     *
+     * <p>Two distinct causes deliberately, and this asserts the wording keeps them distinct: the row
+     * is very probably an ordinary branch pull request, and sending its author to argue with a claim
+     * about forks would waste the one message they get.
+     */
+    @Test
+    void refusesARowWhoseProvenanceWasNeverRecordedWithoutCallingItAFork() {
+        target = new FixTargets.PushTarget("github", "acme", "web", 412L, "feature/login", "develop",
+                "cafe1234", "OPEN", null);
+
+        FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
+                dispatch().plan(REVIEW, THREAD, REPO));
+        assertTrue(refused.why().contains("before this deployment"), refused.why());
+        assertFalse(refused.why().contains("comes from a fork"), refused.why());
+    }
+
+    /**
+     * The unrecognised-SCM refusal, which every other case here was blind to.
+     *
+     * <p>All of them name {@code "github"}, so deleting that branch entirely left the suite green and
+     * moved the failure into {@code ScmType.fromProviderType(...).get()} — an exception on a Kafka
+     * consumer rather than a refusal, which is the same defect as the blank destination above and
+     * reaches the author the same way: not at all.
+     */
+    @Test
+    void refusesAReviewRecordedUnderAnScmThisBuildDoesNotKnow() {
+        target = new FixTargets.PushTarget("TEST-not-a-real-scm", "acme", "web", 412L,
+                "feature/login", "develop", "cafe1234", "OPEN", false);
+
+        FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
+                dispatch().plan(REVIEW, THREAD, REPO));
+        assertTrue(refused.why().contains("does not recognise"), refused.why());
+        assertTrue(refused.why().contains("TEST-not-a-real-scm"),
+                "the operator needs the value to fix the registration: " + refused.why());
     }
 
     /** The cap's own words reach the author — re-wording them here would make two sources of truth. */

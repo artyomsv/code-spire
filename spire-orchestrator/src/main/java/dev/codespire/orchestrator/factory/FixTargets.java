@@ -63,8 +63,17 @@ public class FixTargets {
         FORK,
         /** Merged or closed: no later round would reconcile the fix. */
         NOT_OPEN,
-        /** No branch or head commit recorded yet — both default to blank, not null. */
-        NOT_RECORDED_YET
+        /** No branch, head commit or destination recorded yet — all default to blank, not null. */
+        NOT_RECORDED_YET,
+        /**
+         * Written before V55, so whether it is a fork was never recorded.
+         *
+         * <p>Distinct from {@link #FORK} on purpose: this row may well be a perfectly ordinary
+         * branch pull request, and the author should be told to push once rather than told their
+         * pull request is a fork. Distinct from {@link #NOT_RECORDED_YET} because that one is
+         * about refs and this one is about provenance, and merging them would hide which.
+         */
+        PROVENANCE_UNKNOWN
     }
 
     @Inject
@@ -87,7 +96,10 @@ public class FixTargets {
                 return Optional.of(new PushTarget(rs.getString("provider_type"), rs.getString("workspace"),
                         rs.getString("slug"), rs.getLong("pr_id"), rs.getString("source_branch"),
                         rs.getString("dest_branch"), rs.getString("commit_sha"), rs.getString("pr_state"),
-                        rs.getBoolean("from_fork")));
+                        // getObject, NOT getBoolean: getBoolean maps SQL NULL to false, which would
+                        // convert the one state V55 exists to preserve straight back into the guess
+                        // it exists to avoid — silently, and with the right type.
+                        rs.getObject("from_fork", Boolean.class)));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("could not read the fix target for " + reviewId, e);
@@ -105,16 +117,8 @@ public class FixTargets {
      */
     public record PushTarget(String providerType, String workspace, String slug, long prId,
                              String sourceBranch, String destBranch, String commit, String prState,
-                             boolean fromFork) {
+                             Boolean fromFork) {
 
-        /**
-         * Whether a fix run may push to this branch.
-         *
-         * <p><b>Fork pull requests are excluded, and were not when this class was written.</b> The
-         * deployment could not tell one from a branch pull request until the three ingresses learned
-         * to read it and V55 gave it a column. Until then this javadoc said so plainly rather than
-         * carrying a field that was always false — which would have read as a check and been none.
-         */
         /**
          * Why a fix may not be pushed here, or empty when it may.
          *
@@ -127,6 +131,9 @@ public class FixTargets {
          * added here without wording fail the BUILD rather than a loop.
          */
         public Optional<Unpushable> whyNotPushable() {
+            if (fromFork == null) {
+                return Optional.of(Unpushable.PROVENANCE_UNKNOWN);
+            }
             if (fromFork) {
                 // A fork's source branch lives in ANOTHER repository, while the clone URL is built
                 // from this row's workspace and slug — so pushing the name resolves against the
@@ -141,12 +148,26 @@ public class FixTargets {
             // the publisher's Env.required refuses a blank INSIDE the container, after the agent has
             // been paid. isBlank rather than isEmpty, because a whitespace ref is not empty and
             // still reaches git — and no null check, since neither column can be null.
-            if (sourceBranch.isBlank() || commit.isBlank()) {
+            // destBranch is the THIRD column with NOT NULL DEFAULT '', and it was the one left
+            // unguarded — the same oversight this comment already records for commit, one column
+            // along. It is not cosmetic: it becomes Planned.protectedBranch, and ExecuteRun's
+            // compact constructor THROWS on a blank one in existing mode. So a row that never
+            // recorded a destination would produce an exception on the /fix path where a refusal
+            // with a reason belongs — and in a Kafka consumer an exception is a redelivery.
+            if (sourceBranch.isBlank() || commit.isBlank() || destBranch.isBlank()) {
                 return Optional.of(Unpushable.NOT_RECORDED_YET);
             }
             return Optional.empty();
         }
 
+        /**
+         * Whether a fix run may push to this branch — {@link #whyNotPushable()} answering nothing.
+         *
+         * <p><b>Fork pull requests are excluded, and were not when this class was written.</b> The
+         * deployment could not tell one from a branch pull request until the three ingresses learned
+         * to read it and V55 gave it a column. Until then this javadoc said so plainly rather than
+         * carrying a field that was always false — which would have read as a check and been none.
+         */
         public boolean isPushable() {
             return whyNotPushable().isEmpty();
         }
