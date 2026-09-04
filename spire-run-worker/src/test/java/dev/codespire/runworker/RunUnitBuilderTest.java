@@ -15,6 +15,7 @@ import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -142,6 +143,32 @@ class RunUnitBuilderTest {
 
     private RunUnitSpec unit() {
         return builder.build(command(), new CodexAdapter());
+    }
+
+    /**
+     * A build run says nothing about branch mode, and that ABSENCE is the M0 rule.
+     *
+     * <p>Asserted rather than assumed: writing the variables unconditionally would be worse than
+     * verbose, because a blank {@code SPIRE_PROTECTED_BRANCH} reads to the publisher as "present but
+     * blank", which its required-in-existing-mode check treats exactly as absent. The distinction
+     * would survive here and be lost there.
+     */
+    @Test
+    void aBuildRunTellsThePublisherNothingAboutBranchMode() {
+        Map<String, String> env = unit().publisher().environment();
+
+        assertFalse(env.containsKey("SPIRE_BRANCH_MODE"), env.toString());
+        assertFalse(env.containsKey("SPIRE_PROTECTED_BRANCH"), env.toString());
+    }
+
+    /** A fix run carries both, because the publisher refuses the mode without the destination. */
+    @Test
+    void aFixRunTellsThePublisherWhichBranchIsOffLimits() {
+        RunUnitSpec unit = builder.build(command().onExistingBranch("develop"), new CodexAdapter());
+        Map<String, String> env = unit.publisher().environment();
+
+        assertEquals("existing", env.get("SPIRE_BRANCH_MODE"));
+        assertEquals("develop", env.get("SPIRE_PROTECTED_BRANCH"));
     }
 
     private static Optional<Mount> mount(ContainerSpec container, String volume) {
