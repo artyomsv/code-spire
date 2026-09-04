@@ -24,8 +24,8 @@ dependencies {
     // Newest published 3.5.x as of 2026-09-01, verified resolvable on Maven Central. The plan
     // pinned 3.4.1, which also resolves; this arm talks to the daemon that runs untrusted agent
     // code, so it is not a place to carry an avoidable lag.
-    implementation("com.github.docker-java:docker-java-core:3.5.1")
-    implementation("com.github.docker-java:docker-java-transport-httpclient5:3.5.1")
+    implementation("com.github.docker-java:docker-java-core:3.7.1")
+    implementation("com.github.docker-java:docker-java-transport-httpclient5:3.7.1")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
