@@ -4,6 +4,65 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-040 — A fix run may push to the branch it forked from, but only an open pull request's own source branch
+
+**Context.** M2's premise is that a fix for a review finding lands where the finding lives, so
+ADR-019 reconciliation closes it on the next round. Reconciliation is keyed **per review**, and a
+new pull request is a new review with no prior run — so a fix delivered as a second pull request
+leaves the finding that caused the work open forever, while the second pull request claims to have
+fixed it.
+
+M0's publisher refuses exactly that push. `PublisherConfig.branch(...)` refuses any branch outside
+`spire/` and any branch equal to the base, and its javadoc calls both **security controls rather
+than hygiene**: the publisher holds the only write credential in the run unit, and the push gate
+judges *paths*, not *refs* — so a command naming `main` as the branch would have fast-forwarded the
+default branch with whatever the agent produced.
+
+So the milestone's exit criterion and the milestone-before-it's security floor are in direct
+conflict. Neither author could see it: M2's wording predates the publisher by a day, and the floor
+was written to stop a *different* caller — an orchestrator naming `main` — not a legitimate one
+naming a human's feature branch.
+
+**Decision.** The publisher gains one additional accepted shape. Nothing else changes.
+
+**1. A second mode, explicitly requested, never inferred.** `SPIRE_BRANCH_MODE=existing`; absent
+means the M0 behaviour, unchanged. In that mode and only in that mode, `branch == base` is permitted
+and the `spire/` namespace requirement is lifted.
+
+The publisher could instead *infer* the intent by noticing `branch == base`. An inference is a
+default, and a default is what an orchestrator bug reaches by accident. An explicit mode means the
+dangerous shape is only reachable by a caller that named it.
+
+**2. The floor survives in both modes.** The pull request's destination branch is passed as its own
+variable and refused as a push target, as is the repository default branch; a branch must still be a
+name git accepts. These are the checks that survive an orchestrator bug, so they do not move.
+
+**3. The proof that a branch is a real pull-request source branch is the ORCHESTRATOR's.** The
+publisher makes no API call — it holds a write credential and under ADR-039 does the least it can.
+The orchestrator resolves the target from `review_status` (the review's own source branch, `pr_state`
+`OPEN`, matching `provider_type` and repository) and refuses to dispatch otherwise. The publisher's
+refusals are a floor, not an identification.
+
+**4. A non-fast-forward is an outcome, never a force push.** The human owns that branch. The
+`NON_FAST_FORWARD` failure cause already exists; a fix run that loses the race reports it and is
+re-dispatchable at the new head. Forcing would discard a person's commits to deliver a machine's.
+
+**Rejected: keep the floor, open a second pull request.** Cheaper, and it defeats the milestone for
+the reason in the context above. An operator would see a green fix and an open finding with no way
+to tell which is true — worse than not shipping the feature.
+
+**Consequences.**
+
+- Fork pull requests are **out of scope** for `existing` mode: the machine account cannot be assumed
+  to have push rights to a contributor's fork. Those get a `spire/` branch and a new pull request,
+  and the documents must say plainly that reconciliation does not join there.
+- Findings on a default branch (no pull request) are the same case, for the same reason.
+- The negative half needs tests: `main` and the destination branch must still be refused **in**
+  **`existing` mode**. That half passes trivially if a variable is renamed, which is the failure
+  shape this repository has paid for repeatedly.
+
+---
+
 ## ADR-039 — The run environment clones itself, checkpoints continuously, and the gate runs in a clean clone
 
 **Context.** The first draft had the run worker clone a repository into its own filesystem and

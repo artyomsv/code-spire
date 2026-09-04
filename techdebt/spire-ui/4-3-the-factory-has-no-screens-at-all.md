@@ -13,7 +13,9 @@
 The factory has grown four operator-facing surfaces and none of them has a screen. `spire-ui`
 contains no reference to `/api/runs`, `factory_run`, or any run status.
 
-- **Runs**: list, detail and the live transcript are REST and WebSocket only.
+- **Runs**: detail and the live transcript are REST and WebSocket only, and there is **no list**
+  **endpoint at all** — `RunResource` exposes `GET /{runId}` and `GET /{runId}/transcript` and
+  nothing that enumerates runs. A runs screen needs `GET /api/runs` built first.
 - **Dispatch resolution** (FR-F10): the attention row instructs the operator to
   `POST {"neverRan": true}` to an API path by hand.
 - **The harness credential pool** (FR-F12): adding a key, clearing a rejection and resting a member

@@ -337,9 +337,19 @@ question every autonomy setting begs, and it comes from data the deployment alre
 **The loop is bounded, and that has to be stated rather than assumed.** A finding on PR-1 spawns a
 fix, whose review raises a finding, which spawns another fix. Each hop sits inside its own caps and
 the *chain* sits inside none of them — and a fix dispatched outside a work item has no item to count
-against. So a fix run records the **finding id** it addresses, and dispatch refuses past N fix runs
-for that finding (FR-F32), checked at the same choke point as `SpendGate`. One column, one check, and
-the difference between a measurement loop and a money loop.
+against.
+
+So a fix run records the **finding it addresses and the review it belongs to**, and dispatch refuses
+past N fix runs for one finding **and** past M for one review (FR-F32), checked at the same choke
+point as `SpendGate`.
+
+**The per-finding axis alone does not bound the chain above, and the first draft of this paragraph
+said it did.** Every hop of that loop raises a *different* finding with a different identity, so a
+per-finding counter sees one fix run per finding and never reaches N — the runaway runs free while
+the cap reports itself satisfied. The per-review axis is the one that bounds the chain; under
+ADR-040 a fix pushes to the reviewed pull request, so the whole chain lives inside one review and
+one counter sees all of it. The per-finding axis stays, for the different job it is actually good
+at: stopping repeated attempts at one stubborn finding.
 
 ## 9. Metrics
 

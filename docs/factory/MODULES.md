@@ -162,9 +162,10 @@ the CI floor. Keeping it as tested Java means `./gradlew test` covers the securi
 one glob dialect serves the whole product.
 
 **Depends on** a git-push credential handed to the publisher container; it never mints one itself.
-**That brokering does not exist yet** — today the provider registry token is used for API calls only,
-and nothing in Code Spire has ever pushed a commit. Under ADR-038 the credential belongs to the
-**dedicated machine account**, never the review bot.
+**That brokering is DELIVERED** (M0): the FACTORY-role registration's token is packed per command,
+unpacked into read and write slots, and used by `PublishRepo.push` against a real remote. Under
+ADR-038 the credential belongs to the **dedicated machine account**, never the review bot. Still
+missing is a read-scoped clone token — one token serves both legs today (`docs/UNVERIFIED.md` §E).
 
 ---
 
@@ -270,14 +271,19 @@ the run pod, streams two log channels (agent events, publisher outcomes), record
 results. The clone, the gate and the push all happen inside the pod. That is what makes it
 **stateless** — and therefore what makes a run recoverable by any replica rather than only by the one
 that started it.
-- Its own `worker` schema, unreachable from the orchestrator's role at the database level — the same
-  separation the existing worker already proves in the packaged end-to-end checks.
+- Its own `runworker` schema — its own, not the review worker's `worker` schema — unreachable from
+  the orchestrator's role at the database level, the same separation the existing worker already
+  proves in the packaged end-to-end checks.
 
 **Explicitly does not own.** Autonomy decisions, gates, budgets or entitlements. Those are read in
 the orchestrator before dispatch. A worker that could decide policy is a worker whose compromise
 grants policy.
 
-**Consumes** `cs.commands`; **produces** `cs.results` and `cs.run-events`; dead-letters to `cs.dlq`.
+**Consumes** `cs.run-commands` and `cs.run-control`; **produces** `cs.run-results` and
+`cs.run-events`; dead-letters to `cs.dlq`. Its own topics, never the reviewer's — `ActionCommand`
+declares `reviewId()` as mandatory and a run has a `runId`. Control rides a SEPARATE topic from
+commands because the command channel is ordered and blocking for a run's whole duration, so a cancel
+delivered there would be read only after the run it cancels had finished.
 
 **FSL-licensed**, like the other three deployables.
 

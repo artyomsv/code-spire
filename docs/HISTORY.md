@@ -1432,8 +1432,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   - **A run that delivered nothing has its own terminal status** (`delivered_nothing`, V47) rather
     than `succeeded` with no ref — the same call already made for `push_gate_refused`.
   - Four migrations' worth of vocabulary lives in `V46`/`V47`; the factory set is now V42–V53.
-  - **The run event stream (`cs.run-events`, `run_event`, V44).** The agent's own output
-    reaches an operator live over `/api/ws/runs/{runId}/transcript`, encrypted at rest with the
+  - **The run event stream (`cs.run-events`, `run_event`, V48).** The agent's own output
+    reaches an operator live over `/api/ws/runs/transcript`, encrypted at rest with the
     run as AAD and swept on a TTL — high-volume by design, so it is bounded rather than durable
     (ADR-034); a run's outcome lives in `factory_run` and `llm_charge` and outlives it.
   - **Salvage before teardown (V49).** A unit is finalized before it is destroyed, and a failed

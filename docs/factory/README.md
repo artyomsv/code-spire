@@ -1,9 +1,12 @@
 # The Software Factory
 
-> **Status: design, not built.** Nothing in this directory is implemented. It is the agreed design
-> for extending Code Spire from a reviewer into an automated software factory, written 2026-09-01
-> after a research pass over the running prior art. The build order is in
-> [ROADMAP.md](./ROADMAP.md); the first slice is **M0**.
+> **Status: M0 and M1 delivered; M2 next.** Written 2026-09-01 as the agreed design for extending
+> Code Spire from a reviewer into an automated software factory, after a research pass over the
+> running prior art. **M0** (the walking skeleton, PR #95, 2026-09-02) and **M1** (the lifecycle,
+> PR #96, 2026-09-03) are built and merged; M3–M6 remain design. The build order and what each
+> milestone actually taught are in [ROADMAP.md](./ROADMAP.md); the delivery log is in
+> [`../HISTORY.md`](../HISTORY.md). **Read a design claim here against the code before relying on**
+> **it** — this directory was written before any of it existed.
 
 ## What this is
 
@@ -77,7 +80,7 @@ closest prior art (Warren's corpus-flywheel record) describes at length and list
 | [RESEARCH.md](./RESEARCH.md) | The prior art this design is built on, with sources |
 | [ROADMAP.md](./ROADMAP.md) | M0–M6 build order, and what is deliberately not built |
 
-Decisions are recorded as **ADR-029 through ADR-038** in [`../DECISIONS.md`](../DECISIONS.md),
+Decisions are recorded as **ADR-029 through ADR-040** in [`../DECISIONS.md`](../DECISIONS.md),
 alongside every earlier decision. The design record for the session that produced this directory is
 [`../superpowers/specs/2026-09-01-software-factory-design.md`](../superpowers/specs/2026-09-01-software-factory-design.md).
 

@@ -153,9 +153,13 @@ public interface PullRequestSink {          // new port, three implementations
 }
 ```
 
-plus **git-push credentials**, which are also new: today the registry token is brokered per command
-for API calls only, and nothing in the system has ever pushed a commit. Whether that token doubles as
-the push credential is decided at M2, per forge.
+The **pull-request half above is still true**; the credential half is not, and was overtaken by M0.
+The FACTORY-role account's single token already clones AND pushes — `RunResource` packs it,
+`Credentials` unpacks it into read and write slots, and `PublishRepo.push` uses it against a real
+remote. The per-forge question ("does one token serve both?") was answered before M0 and is recorded
+in `ROADMAP.md`'s pre-M0 table: **yes on all three**. So M2 does not decide a push credential; it
+reuses the delivered one for the pull-request API call. What is still missing is a **read-scoped**
+clone token, tracked in `docs/UNVERIFIED.md` §E.
 
 ## 4. Identity
 
@@ -172,10 +176,11 @@ reviewer would **silently skip every factory pull request**, defeating M2 entire
 bot to fix that grants it allowed-author authority on `/review`, `/finding` and `/fix` — the bot could
 command itself, which is the widening ADR-036 forbids.
 
-`factory_run` records the identity it pushed as, and the review row carries a **factory-authored
-attribute**. Neither is inferred from an account name: an account can be renamed, reassigned or
-shared, and an attribute written at authorship cannot drift. Same reasoning that made `pr_state` its
-own column and `origin` a field on a conversation-derived finding.
+`factory_run` records the identity it pushed as (`pushed_as`, **delivered** in V43), and the review
+row carries a **factory-authored attribute** (**not built** — no column, no writer, zero hits in
+`.java` or `.sql`; M2 owes it). Neither is inferred from an account name: an account can be renamed,
+reassigned or shared, and an attribute written at authorship cannot drift. Same reasoning that made
+`pr_state` its own column and `origin` a field on a conversation-derived finding.
 
 ### 4.2 Run and work-item ids — derive, never register
 
@@ -250,14 +255,16 @@ response cannot be recovered by redelivery, so an ambiguous outcome must fail cl
 
 ## 6. Command and event vocabulary (sketch)
 
-Full catalogue lands in `../CONTRACT.md` at implementation time. The shape:
+**The run half is DELIVERED and its names are not the ones sketched here.** The catalogue never
+landed in `../CONTRACT.md`, which still carries no factory entry — read the types, not this table.
+The work-item half is still a sketch for M3–M4.
 
-| Kind | Names |
-|---|---|
-| Integration events (gateway) | `WorkItemLabelled`, `WorkItemCommented`, `WorkItemClosed` |
-| Commands (orchestrator → run worker) | `PrepareWorkspace`, `ExecuteRun`, `CancelRun`, `SteerRun`, `FinalizeRun` |
-| Results (run worker → orchestrator) | `RunStarted`, `RunProgressed`, `RunFinished`, `BranchPushed`, `RunFailed` |
-| Domain events (aggregate) | `WorkItemAdmitted`, `SpecDrafted`, `PlanProposed`, `StepDispatched`, `StepVerified`, `GateOpened`, `GateResolved`, `PullRequestOpened`, `WorkItemCompleted`, `WorkItemRefused` |
+| Kind | Names | State |
+|---|---|---|
+| Integration events (gateway) | `WorkItemLabelled`, `WorkItemCommented`, `WorkItemClosed` | sketch (M3) |
+| Commands (orchestrator → run worker) | `ExecuteRun`, `CancelRun`, `SteerRun` | **delivered** — `PrepareWorkspace` and `FinalizeRun` were never built: the unit clones itself and salvage is a runtime call, not a command (ADR-039) |
+| Results (run worker → orchestrator) | `RunStarted`, `RunFinished`, `RunFailed` | **delivered** — `RunProgressed` became the `cs.run-events` transcript (ADR-034) and `BranchPushed` became fields on `RunFinished` |
+| Domain events (aggregate) | `WorkItemAdmitted`, `SpecDrafted`, `PlanProposed`, `StepDispatched`, `StepVerified`, `GateOpened`, `GateResolved`, `PullRequestOpened`, `WorkItemCompleted`, `WorkItemRefused` | sketch (M3–M4). **`DomainEvent` carries no run member today**: `factory_run` is projected straight from `cs.run-results` and the durable record of a run is `factory_run` + `llm_charge`, not the event store. A run aggregate is M3's decision, not something M0/M1 skipped |
 
 `WorkItemRefused` carries a discriminated reason, in the same vocabulary shape as ADR-025's
 `CapRefusal`: ceiling clamp, unlisted labeller, entitlement missing, credentials exhausted, budget
@@ -273,10 +280,11 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 |---|---|---|
 | `work_item` | run bookkeeping per `(work_source, repo, issue_id)` | **not** an issues mirror — no title, no body, no status of the ticket itself |
 | `work_item_gate` | one row per open or resolved approval | expiry timestamp, resolver, channel |
-| `factory_run` | read model: state, phase, harness, runtime, timings, outcome, failure cause | drives the UI |
+| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, timings, failure cause + detail | **delivered** (V43 + V45/V47/V49–V53). No `phase` and no `runtime` column — both were sketched here and neither was built; phases arrive with M4 |
 | `run_event` | bounded transcript | TTL'd; encrypted where it may quote source (ADR-011 boundary) |
 
-**`worker` schema**
+**`runworker` schema** — its own, NOT the review worker's `worker` schema (schema-per-service,
+ADR-011). The two are different services with different database roles.
 
 | Table | Holds |
 |---|---|
