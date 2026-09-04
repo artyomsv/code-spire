@@ -13,7 +13,7 @@ import java.util.Set;
 public final class WebhookCommands {
 
     public static final Set<String> SUPPORTED =
-            Set.of(CommentCommands.REVIEW, CommentCommands.FINDING);
+            Set.of(CommentCommands.REVIEW, CommentCommands.FINDING, CommentCommands.FIX);
 
     private WebhookCommands() {
     }

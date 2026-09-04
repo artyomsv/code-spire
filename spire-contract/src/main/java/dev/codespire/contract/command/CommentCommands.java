@@ -15,6 +15,16 @@ public final class CommentCommands {
     /** File the surrounding thread's issue as a tracked finding. */
     public static final String FINDING = "finding";
 
+    /**
+     * Dispatch a factory run to fix the finding this thread belongs to (FR-F27).
+     *
+     * <p>The only command that spends on an AGENT rather than a review call, and the only one whose
+     * output is a branch pushed to the repository. The finding it targets comes from the thread the
+     * command was typed in, which is why the ingresses carry a thread ref on every command event and
+     * not only on a reply.
+     */
+    public static final String FIX = "fix";
+
     private CommentCommands() {
     }
 }

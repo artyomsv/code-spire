@@ -37,18 +37,19 @@ class IngressCommandParityTest {
     }
 
     /**
-     * Each provider's own payload for: "/finding major shadows the field", typed in an inline
-     * thread on src/Foo.java line 44, by octocat, on PR/MR 7 of acme/widgets.
+     * Each provider's own payload for {@code text}, typed in an inline thread on src/Foo.java line
+     * 44, by octocat, on PR/MR 7 of acme/widgets. Parameterised so a new command is one call rather
+     * than a fourth copy of three fixtures — the copies are what let the providers diverge before.
      */
-    private static List<Case> inlineCommandOnEveryProvider() {
+    private static List<Case> inlineCommandOnEveryProvider(String text) {
         return List.of(
                 new Case("github", githubIngress().translate(webhook(
-                        githubInlineComment("/finding major shadows the field"),
+                        githubInlineComment(text),
                         Map.of("X-GitHub-Event", "pull_request_review_comment")))),
                 new Case("gitlab", gitlabIngress().translate(webhook(
-                        gitlabInlineNote("/finding major shadows the field"), Map.of()))),
+                        gitlabInlineNote(text), Map.of()))),
                 new Case("bitbucket", bitbucketIngress().translate(webhook(
-                        bitbucketInlineComment("/finding major shadows the field"),
+                        bitbucketInlineComment(text),
                         Map.of("X-Event-Key", "pullrequest:comment_created")))));
     }
 
@@ -62,9 +63,32 @@ class IngressCommandParityTest {
                         bitbucketInlineComment(text), Map.of("X-Event-Key", "pullrequest:comment_created")))));
     }
 
+    /**
+     * {@code /fix} is the M2 command, and it is the one that costs the most to get wrong on one
+     * provider: it dispatches a paid agent run that pushes a branch. A provider left out of the
+     * shared command set routes it to the conversation path instead, where it becomes an ordinary
+     * reply — so the operator sees the bot answer a question nobody asked and no run ever starts.
+     *
+     * <p>The thread ref is what makes it dispatchable at all: a fix is dispatched against the
+     * FINDING the thread belongs to, so a provider that dropped the ref would translate a valid
+     * command into one with no target.
+     */
+    @Test
+    void everyProviderTurnsAnInlineFixCommandIntoTheSameCommandEvent() {
+        for (Case c : inlineCommandOnEveryProvider("/fix rename the shadowed field")) {
+            assertEquals(1, c.events().size(), "provider " + c.provider());
+            ManualCommandReceived e = assertInstanceOf(ManualCommandReceived.class, c.events().getFirst(),
+                    "provider " + c.provider());
+            assertEquals("fix", e.command(), c.provider() + " command");
+            assertEquals("rename the shadowed field", e.args(), c.provider() + " args");
+            assertEquals(new ThreadLocation("src/Foo.java", 44), e.location(), c.provider() + " location");
+            assertNotNull(e.threadRef(), c.provider() + " threadRef");
+        }
+    }
+
     @Test
     void everyProviderTurnsAnInlineSlashCommandIntoTheSameCommandEvent() {
-        for (Case c : inlineCommandOnEveryProvider()) {
+        for (Case c : inlineCommandOnEveryProvider("/finding major shadows the field")) {
             assertEquals(1, c.events().size(), "provider " + c.provider());
             ManualCommandReceived e = assertInstanceOf(ManualCommandReceived.class, c.events().getFirst(),
                     "provider " + c.provider());
@@ -91,7 +115,8 @@ class IngressCommandParityTest {
         // Guards the guard: a case list that silently lost a provider would make both tests above
         // pass while covering less. Same shape as spire-arch's own "the scan reached every core
         // module" assertion.
-        List<String> providers = inlineCommandOnEveryProvider().stream().map(Case::provider).sorted().toList();
+        List<String> providers = inlineCommandOnEveryProvider("/finding x").stream()
+                .map(Case::provider).sorted().toList();
         assertEquals(List.of("bitbucket", "github", "gitlab"), providers);
     }
 
