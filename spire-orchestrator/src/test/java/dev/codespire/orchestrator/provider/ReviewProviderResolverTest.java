@@ -23,7 +23,7 @@ class ReviewProviderResolverTest {
 
     private static ScmProvider provider(String type) {
         return new ScmProvider(UUID.randomUUID(), "bot", type, "https://x", "acme", "bearer",
-                null, "secret", "acct", true, List.of(), null, null);
+                null, "secret", "acct", true, List.of(), null, null, ProviderRole.REVIEWER);
     }
 
     private static ReviewProviderResolver resolver(String storedType, ProviderRegistry providers) {

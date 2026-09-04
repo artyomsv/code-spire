@@ -22,12 +22,10 @@ class PullRequestSinkTest {
             assertThrows(IllegalArgumentException.class,
                     () -> new PullRequestSink.NewPullRequest("spire/x", blank, "t", "b"), "base=" + blank);
         }
-        for (String missing : new String[] {null}) {
-            assertThrows(NullPointerException.class,
-                    () -> new PullRequestSink.NewPullRequest(missing, "main", "t", "b"));
-            assertThrows(NullPointerException.class,
-                    () -> new PullRequestSink.NewPullRequest("spire/x", missing, "t", "b"));
-        }
+        assertThrows(NullPointerException.class,
+                () -> new PullRequestSink.NewPullRequest(null, "main", "t", "b"));
+        assertThrows(NullPointerException.class,
+                () -> new PullRequestSink.NewPullRequest("spire/x", null, "t", "b"));
     }
 
     /**
@@ -69,6 +67,30 @@ class PullRequestSinkTest {
     void aPullRequestNumberStartsAtOne() {
         assertThrows(IllegalArgumentException.class, () -> new PullRequestRef(0, "https://x/1"));
         assertThrows(IllegalArgumentException.class, () -> new PullRequestRef(-1, "https://x/1"));
+    }
+
+    /**
+     * <b>A URL that is not http(s) is refused, because it becomes an href.</b>
+     *
+     * <p>This value is read straight out of a forge response and rendered as a link. A scheme
+     * check is the whole guard and it is cheap; the HOST is deliberately not pinned to the API
+     * host, because Bitbucket serves its web pages from a different one and pinning would refuse
+     * every legitimate Bitbucket link.
+     */
+    @Test
+    void aPullRequestUrlMustBeHttpOrHttps() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new PullRequestRef(1, "javascript:alert(1)"));
+        assertThrows(IllegalArgumentException.class, () -> new PullRequestRef(1, "ftp://x/1"));
+        assertThrows(IllegalArgumentException.class, () -> new PullRequestRef(1, "/pulls/1"));
+        assertThrows(IllegalArgumentException.class, () -> new PullRequestRef(1, "not a url"));
+
+        // Both schemes pass, and a self-hosted host is NOT refused -- that is the half a
+        // host-pinning guard would have broken.
+        assertEquals(1, new PullRequestRef(1, "https://gitlab.internal.example/x/-/merge_requests/1")
+                .number());
+        assertEquals(1, new PullRequestRef(1, "http://localhost:8080/x/pulls/1").number());
+        assertEquals(1, new PullRequestRef(1, "HTTPS://bitbucket.org/x/pull-requests/1").number());
     }
 
     /**

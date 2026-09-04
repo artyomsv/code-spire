@@ -6,6 +6,7 @@ import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
 import org.junit.jupiter.api.Test;
 
@@ -195,7 +196,7 @@ class FixRunDispatcherTest {
     private static ScmProvider machineAccount() {
         return new ScmProvider(UUID.randomUUID(), "factory", "github", "https://api.github.com",
                 "acme", "bearer", null, "TEST-machine-secret", "spire-machine", true, List.of(),
-                null, null);
+                null, null, ProviderRole.FACTORY);
     }
 
     private static FindingProjection.TargetFinding finding() {

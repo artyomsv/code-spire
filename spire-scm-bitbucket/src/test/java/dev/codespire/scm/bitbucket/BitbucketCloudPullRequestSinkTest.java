@@ -24,6 +24,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Opening a pull request on Bitbucket Cloud (SCM-MAPPING.md §8).
@@ -112,7 +113,7 @@ class BitbucketCloudPullRequestSinkTest {
         wireMock.stubFor(get(urlPathEqualTo(PRS)).willReturn(json("{\"values\": [" + opened(7) + "]}")));
 
         assertEquals("https://bitbucket.org/acme/app/pull-requests/7",
-                sink.findByHead(REPO, "spire/run_1").orElseThrow().url());
+                sink.findByHead(REPO, "spire/run_1", "main").orElseThrow().url());
     }
 
     /**
@@ -149,7 +150,7 @@ class BitbucketCloudPullRequestSinkTest {
     void aBranchWithNoOpenPullRequestAnswersEmpty() {
         noExistingPullRequest();
 
-        assertEquals(Optional.empty(), sink.findByHead(REPO, "spire/never-opened"));
+        assertEquals(Optional.empty(), sink.findByHead(REPO, "spire/never-opened", "main"));
     }
 
     /** Empty is the answer that authorises opening one, so an unreachable forge must not give it. */
@@ -157,7 +158,7 @@ class BitbucketCloudPullRequestSinkTest {
     void aLookupThatCannotReachTheForgeThrowsRatherThanReportingNone() {
         wireMock.stubFor(get(urlPathEqualTo(PRS)).willReturn(aResponse().withStatus(503)));
 
-        assertThrows(BitbucketApiException.class, () -> sink.findByHead(REPO, "spire/run_1"));
+        assertThrows(BitbucketApiException.class, () -> sink.findByHead(REPO, "spire/run_1", "main"));
         assertThrows(BitbucketApiException.class, () -> sink.open(REPO, request()));
         wireMock.verify(0, postRequestedFor(urlEqualTo(PRS)));
     }
@@ -210,10 +211,85 @@ class BitbucketCloudPullRequestSinkTest {
         assertThrows(BitbucketApiException.class, () -> sink.open(REPO, request()));
     }
 
+    /**
+     * <b>A pull request onto a DIFFERENT destination is not this run's delivery.</b>
+     *
+     * <p>Bitbucket will hold two open from one source onto different destinations, so a lookup
+     * keyed on the source alone records the wrong one as this run's output.
+     */
+    @Test
+    void aPullRequestOntoAnotherDestinationIsNotThisRunsDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(PRS))
+                .withQueryParam("q", containing("destination.branch.name=\"develop\""))
+                .willReturn(json("{\"values\": [" + opened(99) + "]}")));
+        wireMock.stubFor(get(urlPathEqualTo(PRS))
+                .withQueryParam("q", containing("destination.branch.name=\"main\""))
+                .willReturn(json("{\"values\": []}")));
+        wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(json(opened(100))));
+
+        assertEquals(99L, sink.findByHead(REPO, "spire/run_1", "develop").orElseThrow().number());
+        assertEquals(100L, sink.open(REPO, request()).number());
+    }
+
+    /**
+     * <b>A branch name carrying a quote is REFUSED, not escaped.</b>
+     *
+     * <p>This is the one place in the three adapters where a value goes into a query LANGUAGE
+     * rather than a parameter. {@code "} is legal in a git refname, and {@code URLEncoder} protects
+     * the transport, not the parser — the quote arrives decoded and terminates the clause.
+     * {@code x" OR state="OPEN} would widen it to the repository's first open pull request, which
+     * the caller then records as this run's delivery. Reachable: {@code /fix} reads the source
+     * branch from the webhook projection, and a pull-request author controls it.
+     *
+     * <p>Refused rather than escaped, because Bitbucket's escaping rule for this language is not
+     * something this repository has verified and a wrong escape is indistinguishable from none.
+     */
+    @Test
+    void aBranchNameThatWouldAlterTheQueryIsRefused() {
+        for (String hostile : new String[] {"x\" OR state=\"OPEN", "x\\", "spire/a\"b"}) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> sink.findByHead(REPO, hostile, "main"), "head=" + hostile);
+            assertThrows(IllegalArgumentException.class,
+                    () -> sink.findByHead(REPO, "spire/run_1", hostile), "base=" + hostile);
+        }
+        // And nothing reached the forge on any of them.
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo(PRS)));
+    }
+
+    /** The nothing-to-propose message names the branch, so an operator reads which one. */
+    @Test
+    void theNothingToProposeMessageNamesTheBranch() {
+        noExistingPullRequest();
+        wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(aResponse().withStatus(400)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\": {\"message\": \"There are no changes to be pulled\"}}")));
+
+        PullRequestSink.NothingToPropose nothing = assertThrows(
+                PullRequestSink.NothingToPropose.class, () -> sink.open(REPO, request()));
+        assertTrue(nothing.getMessage().contains("spire/run_1"), nothing.getMessage());
+    }
+
+    /**
+     * The FULL phrase is what counts, not its most generic fragment.
+     *
+     * <p>This constant was {@code "no changes"} until a review pointed out that two generic words
+     * matched against a 500-character body snippet will eventually match something else — and a
+     * false match reports a real failure as "the agent changed nothing".
+     */
+    @Test
+    void aDifferentMessageMentioningChangesIsStillAFault() {
+        noExistingPullRequest();
+        wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(aResponse().withStatus(400)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\": {\"message\": \"You have no changes permission on this repo\"}}")));
+
+        assertThrows(BitbucketApiException.class, () -> sink.open(REPO, request()));
+    }
+
     @Test
     void aLookupWithNoBranchIsRefused() {
         for (String nothing : new String[] {null, "", "   "}) {
-            assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing),
+            assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing, "main"),
                     "head=" + nothing);
         }
     }

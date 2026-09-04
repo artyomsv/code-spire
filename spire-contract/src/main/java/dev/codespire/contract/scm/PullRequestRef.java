@@ -1,5 +1,8 @@
 package dev.codespire.contract.scm;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -27,6 +30,21 @@ public record PullRequestRef(long number, String url) {
         Objects.requireNonNull(url, "url");
         if (url.isBlank()) {
             throw new IllegalArgumentException("a pull request needs a URL a human can open");
+        }
+        // This value comes from a forge response and becomes an href. A scheme check is the whole
+        // guard -- the host is NOT pinned to the API host, because Bitbucket serves its web pages
+        // from a different one than its API and pinning would refuse every legitimate link.
+        String scheme;
+        try {
+            scheme = new URI(url).getScheme();
+        } catch (URISyntaxException notAUrl) {
+            throw new IllegalArgumentException("a pull request URL must be a URL: " + url, notAUrl);
+        }
+        if (scheme == null || !("http".equals(scheme.toLowerCase(Locale.ROOT))
+                || "https".equals(scheme.toLowerCase(Locale.ROOT)))) {
+            throw new IllegalArgumentException(
+                    "a pull request URL must be http or https, so it can never become a "
+                            + "javascript: href when it is rendered: " + url);
         }
     }
 }

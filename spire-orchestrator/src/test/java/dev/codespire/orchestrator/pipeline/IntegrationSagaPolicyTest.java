@@ -18,6 +18,7 @@ import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -230,7 +231,7 @@ class IntegrationSagaPolicyTest {
 
     private static Optional<ScmProvider> provider(List<String> authors) {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x", "acme",
-                "bearer", null, "secret", "acct", true, authors, null, null));
+                "bearer", null, "secret", "acct", true, authors, null, null, ProviderRole.REVIEWER));
     }
 
     /** A ReviewPolicy fake with a fixed mode — the saga only reads observeOnly(). */
@@ -266,7 +267,7 @@ class IntegrationSagaPolicyTest {
             @Override
             public Optional<ScmProvider> resolve(String type, String workspace) {
                 return Optional.of(new ScmProvider(UUID.randomUUID(), "BB", type, "https://x", workspace,
-                        "bearer", null, "secret", "acct", true, List.of(), null, null));
+                        "bearer", null, "secret", "acct", true, List.of(), null, null, ProviderRole.REVIEWER));
             }
 
             @Override

@@ -80,18 +80,31 @@ public class ProviderClients {
     /**
      * A client that can OPEN a pull request for a resolved provider (M2, SCM-MAPPING §8).
      *
-     * <p><b>The provider handed in must be the FACTORY-role account</b>, resolved through
-     * {@code MachineAccounts}, never the reviewer. This method cannot check that — an
-     * {@code ScmProvider} carries a decrypted secret and a type, and the role is part of the
-     * lookup KEY rather than of the row that comes back. A branch pushed as one account with a
-     * pull request opened by another is a pull request nobody can attribute, and the reviewer's
-     * own author allowlist would then skip it: work produced and reviewed by no one.
+     * <p><b>The provider must be the FACTORY-role account, and that is now CHECKED.</b> An earlier
+     * version of this javadoc said the check was impossible because the role is part of the lookup
+     * key rather than of the row. A security review showed the row had it all along —
+     * {@code ProviderRegistry.resolve} filters {@code WHERE role = ?} and the mapper simply did not
+     * read the column — so the assertion costs one field.
+     *
+     * <p>The same review corrected WHY it matters. This javadoc used to say the reviewer's author
+     * allowlist would skip a pull request the reviewer itself opened. <b>That was wrong:</b>
+     * nothing gates pull-request authorship — the bot-authored check covers comments and commands
+     * only — and an empty allowlist means everyone, so by default the reviewer WOULD review its
+     * own. The real consequences are narrower and still sufficient: the branch is pushed as the
+     * factory account, so a pull request opened as the reviewer misattributes the work; the
+     * reviewer's token is not provisioned for that write, and its 403 would read as the factory
+     * account failing, sending an operator to the wrong account; and an operator who HAS set an
+     * allowlist does get the skip.
      *
      * <p>All three forges are supported, so unlike {@code threadSource} there is no degraded
      * path — a fourth provider type cannot open a pull request at all, and pretending otherwise
      * would record a run as delivered with nothing behind it.
      */
     public PullRequestSink pullRequestSink(ScmProvider provider) {
+        if (provider.role() != ProviderRole.FACTORY) {
+            throw new IllegalArgumentException("a pull request is opened by the FACTORY account; "
+                    + "this was handed the " + provider.role() + " provider " + provider.id());
+        }
         return switch (provider.type()) {
             case "github" -> new GitHubPullRequestSink(new GitHubClient(githubConfig(provider), mapper));
             case "bitbucket-cloud" -> new BitbucketCloudPullRequestSink(

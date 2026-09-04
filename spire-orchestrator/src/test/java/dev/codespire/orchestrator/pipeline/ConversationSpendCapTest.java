@@ -15,6 +15,7 @@ import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -249,7 +250,7 @@ class ConversationSpendCapTest {
             public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x",
                         "TEST-WS", "bearer", null, "secret", "acct", true, List.of(), "code-spire",
-                        "EXPLAIN"));
+                        "EXPLAIN", ProviderRole.REVIEWER));
             }
         };
         saga.levels = fixedLevel();

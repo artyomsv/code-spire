@@ -98,9 +98,9 @@ The only WRITE in this document that creates a resource rather than commenting o
 the codebase did this before M2 — the reviewer only ever commented on pull requests other people
 opened.
 
-> **What is established, and what is not.** The GitHub column is implemented and covered by
-> `GitHubPullRequestSinkTest` — but those tests drive a WireMock stub that this repository wrote,
-> so they establish what the ADAPTER does, never what GitHub does. **No column here has been
+> **What is established, and what is not.** The three cloud columns are implemented and covered by
+> their `*PullRequestSinkTest`s — but those tests drive WireMock stubs that this repository wrote,
+> so they establish what each ADAPTER does, never what the forge does. **No column here has been
 > measured against a live API.** The endpoints and field names come from each vendor's
 > documentation; the quoted ERROR STRINGS are the least reliable rows in the table, because every
 > forge rewords them without notice and none of them is a code you can switch on. Treat a string
@@ -119,6 +119,14 @@ opened.
 | **"nothing to propose"** | 400, `"There are no changes to be pulled"` | 422, `"No commits between …"` | 409, `"branch conflicts"` / empty-diff 400 | 409, `"the from and to refs are the same"` |
 | **already exists** | 400, names the existing request | 422, `"A pull request already exists for …"` | 409, `"Another open merge request already exists"` | 409, duplicate |
 
+**No adapter matches the already-exists row, and that is deliberate.** It was matched by wording
+until a review pointed out the row itself admits the Bitbucket phrasing is unknown ("names the
+existing request"), so the guard would simply never fire there — and a genuine race would be
+reported as a hard failure. The case is identifiable by BEHAVIOUR instead: on any create refusal
+that is not nothing-to-propose, ask the forge whether one exists now. If it does, a race was the
+cause whatever the forge called it. The row stays in this table as documentation of what each
+forge sends; nothing in the code depends on it.
+
 Four divergences are load-bearing, and each is a trap this repository has paid for in its own form:
 
 1. **GitLab numbers a merge request twice.** `iid` is the per-project number in the URL and in every
@@ -132,8 +140,30 @@ Four divergences are load-bearing, and each is a trap this repository has paid f
    `findByHead` first, in every adapter, and the port says so.
 4. **"Nothing to propose" is a different status on every forge** and on none of them is it an error
    code you can switch on. It is the honest outcome of a run whose agent changed nothing, and each
-   adapter maps its own forge's wording to `PullRequestSink.NothingToPropose` so a caller never has
-   to know which forge it is talking to.
+   adapter maps its own forge's status AND wording to `PullRequestSink.NothingToPropose` so a
+   caller never has to know which forge it is talking to.
+
+   **Both halves, and the asymmetry is why.** An unmatched failure degrades safely — it stays the
+   forge's own fault, which is what the port promises. A falsely matched one reports a run as "the
+   agent changed nothing" when the forge refused for another reason, which is the direction the
+   port exists to prevent. The match runs against a 500-character raw body snippet, so without a
+   status gate an HTML error page from a proxy in front of a self-hosted forge is scanned by the
+   same substring test as a real validation response. For the same reason Bitbucket matches its
+   full phrase rather than the two generic words `no changes`.
+
+5. **A pull request is unique per (head, base) PAIR, not per head.** All four forges permit
+   `spire/x → main` and `spire/x → develop` open at once, and GitHub's duplicate refusal fires only
+   when both match — so a lookup keyed on the head alone is WIDER than the rule the forge enforces.
+   It answers a pull request aimed somewhere else, which the caller records as this run's delivery
+   while the one that should exist never opens. ADR-040's existing-branch mode makes that reachable
+   by design. Every `findByHead` therefore takes both branches and filters on both.
+
+6. **Bitbucket filters through a query LANGUAGE, not named parameters.** A double quote is legal in
+   a git refname and `URLEncoder` protects the transport rather than the parser, so a branch name
+   carrying one would restructure the clause — `x" OR state="OPEN` widens it to the repository's
+   first open pull request. The adapter REFUSES such a name rather than escaping it, because
+   Bitbucket's own escaping rule for this language is not something this repository has verified
+   and a wrong escape is indistinguishable from none.
 
 **No label.** GitHub and GitLab have label APIs for pull requests; Bitbucket Cloud has none. A
 "factory-authored" label would therefore be a mark that exists on two forges out of three — which is

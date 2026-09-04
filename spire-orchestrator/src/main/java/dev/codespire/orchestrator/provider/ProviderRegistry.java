@@ -260,7 +260,10 @@ public class ProviderRegistry {
                 rs.getString("auth_username"),
                 encryption.decryptString(rs.getString("auth_secret"), aad(id)),
                 rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id),
-                rs.getString("bot_username"), rs.getString("conversation_level"));
+                rs.getString("bot_username"), rs.getString("conversation_level"),
+                // The column the lookup already filters on. Read so a consumer can assert what it
+                // was handed rather than trusting the caller asked for the right thing.
+                ProviderRole.valueOf(rs.getString("role")));
     }
 
     // ---- helpers -----------------------------------------------------------

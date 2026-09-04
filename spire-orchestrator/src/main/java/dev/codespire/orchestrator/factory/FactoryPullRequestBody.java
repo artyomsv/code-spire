@@ -5,12 +5,24 @@ import java.util.List;
 /**
  * The title and description of a pull request the factory opened.
  *
- * <p><b>Written entirely by the orchestrator, and that is what makes the mark trustworthy.</b> The
- * agent never authors this text; the only agent-influenced values are the paths it changed, and they
- * arrive fenced.
+ * <p><b>The STRUCTURE is the orchestrator's; two of the values are not.</b> An earlier version of
+ * this javadoc claimed the whole body was orchestrator-authored and that the changed paths were the
+ * only agent-influenced part. A review falsified it: the only run-task text this codebase produces
+ * is {@code ExecuteRun.prompt}, and for a fix run that is {@link FixPrompt}'s output — model-derived,
+ * contributor-steerable, and multi-line. So {@code task} is untrusted in exactly the way the paths
+ * are, and it was being interpolated raw while the title beside it was already bounded to one line.
  *
- * <p>Static and framework-free, like {@link FixPrompt}: a pure function of a finished run, testable
- * without a bean.
+ * <p>Both are normalised structurally now rather than by asking callers to behave: the task is cut
+ * to one bounded line wherever it appears, and the paths are fenced.
+ *
+ * <p><b>Neither is claimed as a security control.</b> A fence does not bound a model that reads
+ * inside it, and this body is read by the reviewer's own model as pull-request context on the next
+ * round — the same way it already reads arbitrary contributor-written descriptions. What bounds the
+ * damage is elsewhere: the agent holds no write credential, the publisher holds the only one, the
+ * push gate judges paths, and ADR-040 bounds the branch. The normalisation is here so the body keeps
+ * its SHAPE, which is what the machine-readable mark depends on.
+ *
+ * <p>Static and framework-free, like {@link FixPrompt}: a pure function of a finished run.
  */
 final class FactoryPullRequestBody {
 
@@ -26,17 +38,42 @@ final class FactoryPullRequestBody {
      *
      * <p>An HTML comment, so it is invisible in every forge's rendered Markdown while surviving the
      * round trip verbatim. It exists for two readers. A human triaging the queue sees the visible
-     * first line; the reviewer's own author-allowlist path needs to know that a pull request opened
-     * by the machine account is one it SHOULD review — AUTONOMY.md names the opposite as a silent
-     * failure, where the factory produces work nobody looks at.
+     * first line; the reviewer's own author gate needs to know that a pull request opened by the
+     * machine account is one it SHOULD review.
+     *
+     * <p><b>Nothing reads it yet, and that is a gap rather than a design.</b> A security review
+     * established that pull-request authorship is not gated at all today — the bot-authored check
+     * covers comments and commands only, and an empty allowlist means everyone — so by default the
+     * reviewer does review these. The silent failure AUTONOMY.md names arrives for any operator who
+     * HAS set an allowlist that omits the factory account. Closing it means the reviewer's gate
+     * consulting either this mark or that account's id, which is the consumer's slice.
      */
     static final String MARK = "<!-- codespire-factory-run -->";
 
-    /** Fences the one part of this body the agent influenced. See {@link FixPrompt} for the mirror. */
-    private static final String FENCE = "```text";
+    /** The default fence. Widened when a path would close it — see {@link #fenceFor}. */
+    private static final String BACKTICKS = "```";
 
-    /** A body longer than this is truncated; every forge caps a description and they disagree on where. */
+    /**
+     * How many changed paths the description lists before it says "and N more".
+     *
+     * <p>A count of PATHS, not a length in characters — an earlier version of this line said the
+     * latter, which described a different field entirely. Bounded for readability: a large refactor
+     * touches hundreds of files and nobody reads that list in a pull request.
+     */
     private static final int MAX_PATHS_SHOWN = 50;
+
+    /** What a forge list view shows before truncating; the ellipsis is counted INSIDE the bound. */
+    private static final int MAX_TITLE_CHARS = 60;
+
+    /**
+     * And the bound on the task line in the body, which had none at all.
+     *
+     * <p>Longer than the title because a description has room, short enough that a model-derived
+     * paragraph cannot become the body. The task is the one genuinely large input here.
+     */
+    private static final int MAX_TASK_CHARS = 200;
+
+    private static final String ELLIPSIS = "…";
 
     private FactoryPullRequestBody() {
     }
@@ -45,7 +82,8 @@ final class FactoryPullRequestBody {
      * @param runId the address the run answers on. The ONLY path from this pull request back to its
      *     transcript, its cost and the work item that caused it — so it is in the body, not merely in
      *     a database somewhere
-     * @param task one line saying what the run was asked to do, orchestrator-authored
+     * @param task what the run was asked to do. Model-derived and multi-line in practice, so it is
+     *     cut to one bounded line here rather than trusted to arrive as one
      * @param changedPaths what the agent wrote. Agent-influenced, therefore fenced
      */
     static String of(String runId, String task, List<String> changedPaths) {
@@ -57,37 +95,10 @@ final class FactoryPullRequestBody {
         body.append(MARK).append('\n');
         body.append("An automated run produced this branch. **Review it as you would any other pull "
                 + "request** — it has not been reviewed by a person.\n\n");
-        body.append("**Task:** ").append(task == null || task.isBlank() ? "not recorded" : task)
-                .append('\n');
+        body.append("**Task:** ").append(oneLine(task, MAX_TASK_CHARS, "not recorded")).append('\n');
         body.append("**Run:** `").append(runId).append("`\n\n");
         body.append(paths(changedPaths));
         return body.toString();
-    }
-
-    /**
-     * The changed paths, fenced.
-     *
-     * <p>They are the agent's output, so they are the mirror image of the finding text {@code
-     * FixPrompt} fences on the way IN: this body is read by humans and, on the next round, by the
-     * reviewer's own model as pull-request context. A path is a poor place to hide an instruction and
-     * a fence is a poor defence, which is why neither is claimed as one — the fence keeps an
-     * accidental line from reading as prose, and nothing here is load-bearing security.
-     */
-    private static String paths(List<String> changedPaths) {
-        if (changedPaths == null || changedPaths.isEmpty()) {
-            // Not an error: a run that changed nothing still pushed a branch in some flows, and
-            // saying so plainly beats an empty heading a reader has to interpret.
-            return "**Changed:** nothing was reported as changed.\n";
-        }
-        StringBuilder out = new StringBuilder();
-        out.append("**Changed ").append(changedPaths.size()).append(" file(s):**\n\n")
-                .append(FENCE).append('\n');
-        changedPaths.stream().limit(MAX_PATHS_SHOWN).forEach(path -> out.append(path).append('\n'));
-        if (changedPaths.size() > MAX_PATHS_SHOWN) {
-            out.append("… and ").append(changedPaths.size() - MAX_PATHS_SHOWN).append(" more\n");
-        }
-        out.append("```\n");
-        return out.toString();
     }
 
     /**
@@ -98,9 +109,85 @@ final class FactoryPullRequestBody {
      * code and invisible, this one is for people and cannot be.
      */
     static String title(String task) {
-        String subject = task == null || task.isBlank() ? "automated change" : task.strip();
-        String oneLine = subject.lines().findFirst().orElse(subject);
-        String trimmed = oneLine.length() <= 60 ? oneLine : oneLine.substring(0, 57) + "…";
-        return "[factory] " + trimmed;
+        return "[factory] " + oneLine(task, MAX_TITLE_CHARS, "automated change");
+    }
+
+    /**
+     * The first line of a model-derived value, bounded, with the cut made visible.
+     *
+     * <p>Shared by the title and the body because they had drifted: the title took
+     * {@code lines().findFirst()} and the body took the whole thing, so a multi-line task — which is
+     * every fix prompt — rewrote the body's structure while leaving the title intact.
+     *
+     * <p>Cut on a code-point boundary, so a task starting with an emoji cannot leave a lone surrogate
+     * in a forge's list view.
+     *
+     * @param whenAbsent what to say instead. The two callers differ on purpose: a TITLE says what the
+     *     pull request is ("automated change"), a BODY line says what was recorded about it ("not
+     *     recorded"). Unifying them made the title read "[factory] not recorded", which describes
+     *     the record rather than the change
+     */
+    private static String oneLine(String task, int max, String whenAbsent) {
+        if (task == null || task.isBlank()) {
+            return whenAbsent;
+        }
+        String line = task.strip().lines().findFirst().orElse("").strip();
+        if (line.isEmpty()) {
+            return whenAbsent;
+        }
+        if (line.codePointCount(0, line.length()) <= max) {
+            return line;
+        }
+        int cut = line.offsetByCodePoints(0, max - ELLIPSIS.length());
+        return line.substring(0, cut) + ELLIPSIS;
+    }
+
+    /**
+     * The changed paths, fenced.
+     *
+     * <p>They are the agent's output, so they are the mirror image of the finding text
+     * {@link FixPrompt} fences on the way IN. See the class javadoc for what the fence is and is not.
+     */
+    private static String paths(List<String> changedPaths) {
+        if (changedPaths == null || changedPaths.isEmpty()) {
+            // Not an error: a run that changed nothing still pushed a branch in some flows, and
+            // saying so plainly beats an empty heading a reader has to interpret.
+            return "**Changed:** nothing was reported as changed.\n";
+        }
+        List<String> shown = changedPaths.stream().limit(MAX_PATHS_SHOWN).toList();
+        String fence = fenceFor(shown);
+        StringBuilder out = new StringBuilder();
+        out.append("**Changed ").append(changedPaths.size()).append(" file(s):**\n\n")
+                .append(fence).append("text\n");
+        shown.forEach(path -> out.append(path).append('\n'));
+        if (changedPaths.size() > MAX_PATHS_SHOWN) {
+            out.append("… and ").append(changedPaths.size() - MAX_PATHS_SHOWN).append(" more\n");
+        }
+        out.append(fence).append('\n');
+        return out.toString();
+    }
+
+    /**
+     * A fence longer than anything inside it can close.
+     *
+     * <p>CommonMark closes a fence on a line that is SOLELY backticks, so a path containing them
+     * mid-string is harmless — but a file named exactly {@code ```} at the repository root is one
+     * line of exactly three backticks, and it would close the fence and render every path after it as
+     * prose. A path cannot contain a newline ({@code PublishRepo.safe} refuses one), so counting the
+     * longest run in the listed paths and going one longer is sufficient and exact.
+     */
+    private static String fenceFor(List<String> shown) {
+        int longest = shown.stream().mapToInt(FactoryPullRequestBody::longestBacktickRun).max().orElse(0);
+        return "`".repeat(Math.max(BACKTICKS.length(), longest + 1));
+    }
+
+    private static int longestBacktickRun(String path) {
+        int longest = 0;
+        int run = 0;
+        for (int i = 0; i < path.length(); i++) {
+            run = path.charAt(i) == '`' ? run + 1 : 0;
+            longest = Math.max(longest, run);
+        }
+        return longest;
     }
 }

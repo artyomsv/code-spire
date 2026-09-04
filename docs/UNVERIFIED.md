@@ -194,7 +194,22 @@ Not work. Written down because each has been rediscovered at least once.
   drives a WireMock stub this repository wrote, so it establishes what the adapter does with a
   given response and nothing about what GitHub actually sends. The adapter is built so a wrong
   guess degrades safely: an unmatched 4xx stays a fault rather than being reported as "the agent
-  changed nothing". The GitLab and Bitbucket rows have no implementation behind them at all yet.
+  changed nothing". **All three cloud columns now have adapters** (83 + 87 + 75 tests) — driven by
+  the same locally-written stubs, so all three are established against this repository's idea of
+  each API and none against the API. The Bitbucket DC column has no implementation at all.
+  *(This line previously said the GitLab and Bitbucket rows had no implementation, which was true
+  for one commit and false for the next — the doc-vs-code drift this page exists to catch, caught
+  by a review rather than by me.)*
+- **`GitLabPullRequestSink`'s nothing-to-propose arm may be unreachable, and the adapter and the
+  mapping table disagree about it.** SCM-MAPPING §8 lists GitLab's "nothing to propose" as
+  `409 "branch conflicts"` or an empty-diff 400; the adapter matches `409` + `"no changes"`, a
+  phrase neither cell contains, and the test that covers it stubs a body this repository invented.
+  Two reviewers flagged the contradiction independently, and one raised the stronger possibility
+  that GitLab CREATES a merge request with no commit difference rather than refusing — in which
+  case the arm never fires. **The failure direction is why it ships anyway:** if the phrase never
+  matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
+  wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
+  and nothing should depend on this arm until then.
 - **`/fix` trusts the pull-request state the deployment last saw, not the one that is true now.**
   `pr_state` is set to `OPEN` by every pull-request event, so a redelivery after a merge flips a
   closed pull request back to pushable in `FixTargets` — the row is the KEY to the target, never

@@ -9,6 +9,7 @@ import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
@@ -163,7 +164,7 @@ class FixCommandSagaTest {
 
     private Optional<ScmProvider> provider() {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x", "acme",
-                "bearer", null, "secret", "acct", true, allowlist, null, null));
+                "bearer", null, "secret", "acct", true, allowlist, null, null, ProviderRole.REVIEWER));
     }
 
     /** No thread at all: a top-level /fix, which names no finding. */

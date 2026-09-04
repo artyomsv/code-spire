@@ -20,10 +20,9 @@ import java.util.Optional;
  * redirect policy in the repository and it lives in that client. A second HTTP client here would
  * fail the build, which is the check working.
  *
- * <p><b>The client this is handed must carry the FACTORY-role account's token, not the reviewer's.</b>
- * That is the caller's choice and cannot be checked from here — the client holds an opaque bearer
- * token and no identity. A branch pushed as one account with a pull request opened by another is a
- * pull request nobody can attribute, so the composition root resolves the machine account explicitly.
+ * <p><b>The client this is handed must carry the FACTORY-role account's token.</b> That is the
+ * composition root's choice and cannot be checked from here — the client holds an opaque bearer
+ * token and no identity.
  */
 public class GitHubPullRequestSink implements PullRequestSink {
 
@@ -37,8 +36,18 @@ public class GitHubPullRequestSink implements PullRequestSink {
      */
     private static final String NO_COMMITS = "no commits between";
 
-    /** And its wording for "you already opened this one", which the find-first path should preempt. */
-    private static final String ALREADY_EXISTS = "a pull request already exists";
+    /**
+     * The status the wording must ALSO carry.
+     *
+     * <p>The wording alone decided this until a review named the asymmetry. An unmatched failure
+     * degrades SAFELY — it stays a fault, which is what the port promises. A falsely matched one
+     * degrades in the direction the port exists to prevent, reporting a run as "the agent changed
+     * nothing" when the forge refused for another reason entirely. Since the match runs against a
+     * 500-character raw body snippet, an HTML error page from a proxy in front of a self-hosted
+     * instance is scanned by the same substring test as a real validation response; requiring the
+     * status too costs nothing and removes that whole class.
+     */
+    private static final int UNPROCESSABLE = 422;
 
     private final GitHubClient client;
 
@@ -57,61 +66,73 @@ public class GitHubPullRequestSink implements PullRequestSink {
         // restart and by then the branch is already pushed. GitHub happens to refuse the duplicate,
         // but the other two forges do not, so the guard belongs here rather than in one forge's
         // behaviour -- and a refusal would be an exception where the caller needs a number.
-        Optional<PullRequestRef> existing = findByHead(repo, request.headBranch());
-        if (existing.isPresent()) {
-            return existing.get();
-        }
+        return findByHead(repo, request.headBranch(), request.baseBranch())
+                .orElseGet(() -> create(repo, request));
+    }
+
+    private PullRequestRef create(RepoRef repo, NewPullRequest request) {
+        String path = pullsPath(repo);
         try {
-            return read(client.postJson(pullsPath(repo), Map.of(
+            return read(client.postJson(path, Map.of(
                     "title", request.title(),
                     "head", request.headBranch(),
                     "base", request.baseBranch(),
-                    "body", request.bodyMd())), pullsPath(repo));
+                    "body", request.bodyMd())), "POST", path);
         } catch (GitHubApiException e) {
             return recover(repo, request, e);
         }
     }
 
     @Override
-    public Optional<PullRequestRef> findByHead(RepoRef repo, String headBranch) {
-        if (headBranch == null || headBranch.isBlank()) {
-            throw new IllegalArgumentException("a head branch is needed to look for its pull request");
-        }
+    public Optional<PullRequestRef> findByHead(RepoRef repo, String headBranch, String baseBranch) {
+        requireBranch(headBranch, "head");
+        requireBranch(baseBranch, "base");
+        // BOTH branches, because an open pull request is unique per (head, base) pair -- GitHub's own
+        // duplicate refusal fires only when both match. Filtering on the head alone is WIDER than the
+        // rule the forge enforces: it would answer a pull request aimed at another base, which the
+        // caller then records as this run's delivery while the one that should exist never opens.
+        //
         // state=open, because a merged pull request for a reused branch name must not suppress a new
-        // one. GitHub's default is `open`, and relying on a default that the API could change is how
-        // a guard stops guarding without anyone editing it.
-        String path = pullsPath(repo) + "?state=open&per_page=1&head="
-                + encode(repo.workspace() + ":" + headBranch);
+        // one. GitHub's default is `open`, and relying on a default the API could change is how a
+        // guard stops guarding without anyone editing it.
+        String path = pullsPath(repo) + "?state=open&per_page=1"
+                + "&base=" + encode(baseBranch)
+                + "&head=" + encode(repo.workspace() + ":" + headBranch);
         JsonNode found = client.getJson(path);
         if (!found.isArray() || found.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(read(found.get(0), path));
+        return Optional.of(read(found.get(0), "GET", path));
     }
 
     /**
      * What a refused create really meant: an outcome, someone else's pull request, or a fault.
      *
-     * <p><b>The already-exists 422 is reachable despite the find-first call above</b>, because two
-     * deliveries can race between the read and the write. The loser must ANSWER the winner's pull
-     * request rather than report a failure — the caller needs a number either way, and a second
-     * delivery is not an error. So it re-reads. If the re-read finds nothing, the original
-     * exception is raised: inventing a success for a pull request nobody can see would be worse
-     * than saying the create failed.
+     * <p><b>Only the nothing-to-propose wording is matched.</b> An earlier version also matched
+     * GitHub's "a pull request already exists" text, which was fragile for no benefit — that case is
+     * identifiable by BEHAVIOUR instead. Any other refusal might be a delivery that raced us between
+     * the lookup and the create, so this asks the forge whether one exists now. If it does, a race
+     * was the cause whatever the forge called it; if it does not, the original failure is what an
+     * operator must read.
      *
-     * <p>Returns rather than throws where it can, so the value travels as a value. An earlier draft
-     * carried the recovered ref INSIDE an exception, which is a return type wearing a disguise.
+     * <p>The lookup's own fault is attached as suppressed rather than thrown. An earlier version let
+     * a 503 on the re-read REPLACE the original 422, so the operator saw a failed GET and never
+     * learned the create had been refused.
      */
     private PullRequestRef recover(RepoRef repo, NewPullRequest request, GitHubApiException e) {
         String detail = e.getMessage() == null ? "" : e.getMessage().toLowerCase(Locale.ROOT);
-        if (detail.contains(NO_COMMITS)) {
+        if (e.status() == UNPROCESSABLE && detail.contains(NO_COMMITS)) {
             throw new NothingToPropose("the branch " + request.headBranch() + " has no commits that "
                     + request.baseBranch() + " does not already have, so there is nothing to review", e);
         }
-        if (detail.contains(ALREADY_EXISTS)) {
-            return findByHead(repo, request.headBranch()).orElseThrow(() -> e);
+        try {
+            return findByHead(repo, request.headBranch(), request.baseBranch()).orElseThrow(() -> e);
+        } catch (GitHubApiException lookupFailed) {
+            if (lookupFailed != e) {
+                e.addSuppressed(lookupFailed);
+            }
+            throw e;
         }
-        throw e;
     }
 
     /**
@@ -119,22 +140,33 @@ public class GitHubPullRequestSink implements PullRequestSink {
      *
      * <p>The same rule this module already applies to comment ids: an absent field reads back as a
      * primitive zero, and {@code factory_run.pr_id} would then hold a row that addresses nothing.
+     *
+     * @param method the verb that produced this node. Named rather than assumed, because both the
+     *     create and the lookup land here and an operator reading "POST" for a malformed GET response
+     *     goes looking for a request that was never made
      */
-    private static PullRequestRef read(JsonNode node, String path) {
+    private static PullRequestRef read(JsonNode node, String method, String path) {
         long number = node.path("number").asLong(0);
         String url = node.path("html_url").asText("");
         if (number <= 0 || url.isBlank()) {
-            throw new GitHubApiException(200, "POST", path,
+            throw new GitHubApiException(200, method, path,
                     "response carried no pull request number or URL");
         }
         return new PullRequestRef(number, url);
+    }
+
+    private static void requireBranch(String branch, String which) {
+        if (branch == null || branch.isBlank()) {
+            throw new IllegalArgumentException(
+                    "a " + which + " branch is needed to look for its pull request");
+        }
     }
 
     private static String pullsPath(RepoRef repo) {
         return "/repos/" + repo.workspace() + "/" + repo.slug() + "/pulls";
     }
 
-    /** The head filter travels in a query string, and a branch name may legitimately contain a slash. */
+    /** The filters travel in a query string, and a branch name may legitimately contain a slash. */
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }

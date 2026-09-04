@@ -123,7 +123,34 @@ class GitHubPullRequestSinkTest {
 
         wireMock.verify(getRequestedFor(urlPathEqualTo(PULLS))
                 .withQueryParam("state", equalTo("open"))
+                .withQueryParam("base", equalTo("main"))
                 .withQueryParam("head", equalTo("acme:spire/run_1")));
+    }
+
+    /**
+     * <b>A pull request from this head onto a DIFFERENT base must not be mistaken for ours.</b>
+     *
+     * <p>An open pull request is unique per (head, base) pair — GitHub's own duplicate refusal
+     * fires only when both match, so a lookup keyed on the head alone is WIDER than the rule the
+     * forge enforces. It would answer the pull request aimed at {@code develop}, the caller would
+     * record that as this run's delivery, and the pull request that should exist would never be
+     * opened. ADR-040's existing-branch mode makes this reachable by design.
+     *
+     * <p>Driven through the SERVER: the stub answers only when the base filter is present and
+     * correct, so a lookup that omits it gets the wrong row and this fails.
+     */
+    @Test
+    void aPullRequestFromThisHeadOntoAnotherBaseIsNotThisRunsDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(PULLS)).withQueryParam("base", equalTo("develop"))
+                .willReturn(json("[{\"number\": 99, \"html_url\": \"https://github.com/acme/app/pull/99\"}]")));
+        wireMock.stubFor(get(urlPathEqualTo(PULLS)).withQueryParam("base", equalTo("main"))
+                .willReturn(json("[]")));
+        wireMock.stubFor(post(urlEqualTo(PULLS)).willReturn(
+                json("{\"number\": 100, \"html_url\": \"https://github.com/acme/app/pull/100\"}")));
+
+        // Asking about develop finds the existing one; asking about main opens a new one.
+        assertEquals(99L, sink.findByHead(REPO, "spire/run_1", "develop").orElseThrow().number());
+        assertEquals(100L, sink.open(REPO, request()).number());
     }
 
     /** A branch with no pull request answers empty, and the stub proves the filter is what decided. */
@@ -131,7 +158,7 @@ class GitHubPullRequestSinkTest {
     void aBranchWithNoOpenPullRequestAnswersEmpty() {
         noExistingPullRequest();
 
-        assertEquals(Optional.empty(), sink.findByHead(REPO, "spire/never-opened"));
+        assertEquals(Optional.empty(), sink.findByHead(REPO, "spire/never-opened", "main"));
     }
 
     /**
@@ -146,7 +173,7 @@ class GitHubPullRequestSinkTest {
     void aLookupThatCannotReachTheForgeThrowsRatherThanReportingNone() {
         wireMock.stubFor(get(urlPathEqualTo(PULLS)).willReturn(aResponse().withStatus(503)));
 
-        assertThrows(GitHubApiException.class, () -> sink.findByHead(REPO, "spire/run_1"));
+        assertThrows(GitHubApiException.class, () -> sink.findByHead(REPO, "spire/run_1", "main"));
     }
 
     /** And the same fault stops an open, rather than the open proceeding on an unknown. */
@@ -182,7 +209,13 @@ class GitHubPullRequestSinkTest {
      * A race between the lookup and the create answers the winner's pull request.
      *
      * <p>Reachable despite finding first: two deliveries can interleave between the read and the
-     * write. The loser must return a number, not a failure — so the already-exists 422 is re-read.
+     * write. The loser must return a number, not a failure.
+     *
+     * <p><b>No wording is matched for this.</b> An earlier version matched GitHub's "a pull request
+     * already exists" text; the case is identifiable by BEHAVIOUR instead — ask the forge whether
+     * one exists now, and if it does, a race was the cause whatever the forge called it. The stub
+     * below deliberately returns a 422 whose body says nothing recognisable, which the wording
+     * version could not have recovered from.
      */
     @Test
     void aRacingSecondDeliveryAnswersThePullRequestTheFirstOpened() {
@@ -194,7 +227,7 @@ class GitHubPullRequestSinkTest {
                 .willReturn(json("[{\"number\": 9, \"html_url\": \"https://github.com/acme/app/pull/9\"}]")));
         wireMock.stubFor(post(urlEqualTo(PULLS)).willReturn(aResponse().withStatus(422)
                 .withHeader("Content-Type", "application/json")
-                .withBody("{\"errors\": [{\"message\": \"A pull request already exists for acme:spire/run_1.\"}]}")));
+                .withBody("{\"message\": \"Validation Failed\"}")));
 
         assertEquals(9L, sink.open(REPO, request()).number());
     }
@@ -210,7 +243,7 @@ class GitHubPullRequestSinkTest {
         noExistingPullRequest();
         wireMock.stubFor(post(urlEqualTo(PULLS)).willReturn(aResponse().withStatus(422)
                 .withHeader("Content-Type", "application/json")
-                .withBody("{\"errors\": [{\"message\": \"A pull request already exists for acme:spire/run_1.\"}]}")));
+                .withBody("{\"message\": \"Validation Failed\"}")));
 
         assertThrows(GitHubApiException.class, () -> sink.open(REPO, request()));
     }
@@ -251,11 +284,54 @@ class GitHubPullRequestSinkTest {
         assertThrows(GitHubApiException.class, () -> sink.open(REPO, request()));
     }
 
+    /**
+     * <b>The nothing-to-propose wording only counts with the status that carries it.</b>
+     *
+     * <p>The match runs against a 500-character raw body snippet, so an HTML error page from a
+     * proxy in front of a self-hosted instance is scanned by the same substring test as a real
+     * validation response. An unmatched failure degrades safely — it stays a fault. A falsely
+     * matched one reports a run as "the agent changed nothing" when the forge refused for another
+     * reason, which is the direction the port exists to prevent.
+     */
+    @Test
+    void thatWordingOnADifferentStatusIsStillAFault() {
+        noExistingPullRequest();
+        wireMock.stubFor(post(urlEqualTo(PULLS)).willReturn(aResponse().withStatus(502)
+                .withHeader("Content-Type", "text/html")
+                .withBody("<html><body>Bad gateway: No commits between here and there</body></html>")));
+
+        assertThrows(GitHubApiException.class, () -> sink.open(REPO, request()),
+                "a 502 quoting the phrase is not a validation failure");
+    }
+
+    /**
+     * <b>A fault on the RE-READ must not replace the refusal that started it.</b>
+     *
+     * <p>An earlier version let the lookup's own exception escape, so an operator saw a failed GET
+     * and never learned the create had been refused — the cause replaced by its own diagnosis.
+     */
+    @Test
+    void aFailedReReadKeepsTheOriginalRefusalAndAttachesItsOwn() {
+        wireMock.stubFor(get(urlPathEqualTo(PULLS)).inScenario("reread")
+                .whenScenarioStateIs("Started").willReturn(json("[]")).willSetStateTo("broken"));
+        wireMock.stubFor(get(urlPathEqualTo(PULLS)).inScenario("reread")
+                .whenScenarioStateIs("broken").willReturn(aResponse().withStatus(503)));
+        wireMock.stubFor(post(urlEqualTo(PULLS)).willReturn(aResponse().withStatus(403)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"message\": \"Resource not accessible by integration\"}")));
+
+        GitHubApiException thrown = assertThrows(GitHubApiException.class,
+                () -> sink.open(REPO, request()));
+
+        assertEquals(403, thrown.status(), "the CREATE's refusal is what an operator must read");
+        assertEquals(1, thrown.getSuppressed().length, "and the lookup fault is kept, not lost");
+    }
+
     /** A blank head is a caller bug; answering empty would let it open a duplicate every time. */
     @Test
     void aLookupWithNoBranchIsRefused() {
         for (String nothing : new String[] {null, "", "   "}) {
-            assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing),
+            assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing, "main"),
                     "head=" + nothing);
         }
     }

@@ -103,7 +103,7 @@ class GitLabPullRequestSinkTest {
         wireMock.stubFor(get(urlPathEqualTo(MRS)).willReturn(json(
                 "[{\"id\": 90210, \"iid\": 42, \"web_url\": \"https://gitlab.com/acme/app/-/merge_requests/42\"}]")));
 
-        assertEquals(42L, sink.findByHead(REPO, "spire/run_1").orElseThrow().number());
+        assertEquals(42L, sink.findByHead(REPO, "spire/run_1", "main").orElseThrow().number());
     }
 
     /**
@@ -148,7 +148,7 @@ class GitLabPullRequestSinkTest {
     void aBranchWithNoOpenMergeRequestAnswersEmpty() {
         noExistingMergeRequest();
 
-        assertEquals(Optional.empty(), sink.findByHead(REPO, "spire/never-opened"));
+        assertEquals(Optional.empty(), sink.findByHead(REPO, "spire/never-opened", "main"));
     }
 
     /** Empty is the answer that authorises opening one, so an unreachable forge must not give it. */
@@ -156,7 +156,7 @@ class GitLabPullRequestSinkTest {
     void aLookupThatCannotReachTheForgeThrowsRatherThanReportingNone() {
         wireMock.stubFor(get(urlPathEqualTo(MRS)).willReturn(aResponse().withStatus(503)));
 
-        assertThrows(GitLabApiException.class, () -> sink.findByHead(REPO, "spire/run_1"));
+        assertThrows(GitLabApiException.class, () -> sink.findByHead(REPO, "spire/run_1", "main"));
         assertThrows(GitLabApiException.class, () -> sink.open(REPO, request()));
         wireMock.verify(0, postRequestedFor(urlEqualTo(MRS)));
     }
@@ -207,10 +207,81 @@ class GitLabPullRequestSinkTest {
         assertThrows(GitLabApiException.class, () -> sink.open(REPO, request()));
     }
 
+    /**
+     * <b>A merge request from this source onto a DIFFERENT target is not this run's delivery.</b>
+     *
+     * <p>A merge request is unique per (source, target) pair, and GitLab will hold
+     * {@code spire/x → main} and {@code spire/x → develop} open at once. A lookup keyed on the
+     * source alone answers whichever came first, and the caller records it as this run's output
+     * while the merge request that should exist never opens.
+     */
+    @Test
+    void aMergeRequestOntoAnotherTargetIsNotThisRunsDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).withQueryParam("target_branch", equalTo("develop"))
+                .willReturn(json("[{\"iid\": 99, \"web_url\": \"https://gitlab.com/acme/app/-/merge_requests/99\"}]")));
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).withQueryParam("target_branch", equalTo("main"))
+                .willReturn(json("[]")));
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(json(
+                "{\"iid\": 100, \"web_url\": \"https://gitlab.com/acme/app/-/merge_requests/100\"}")));
+
+        assertEquals(99L, sink.findByHead(REPO, "spire/run_1", "develop").orElseThrow().number());
+        assertEquals(100L, sink.open(REPO, request()).number());
+    }
+
+    /**
+     * A 2xx carrying no web_url is refused — the half of {@code read} GitLab was not exercising.
+     *
+     * <p>The GitHub and Bitbucket suites both had this and GitLab did not, so deleting
+     * {@code url.isBlank()} from this adapter alone left it green. That is the two-scrubbers trap
+     * arriving in the tests instead of the production code.
+     */
+    @Test
+    void aSuccessResponseWithNoWebUrlIsRefused() {
+        noExistingMergeRequest();
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(json("{\"iid\": 42}")));
+
+        assertThrows(GitLabApiException.class, () -> sink.open(REPO, request()));
+    }
+
+    /** The nothing-to-propose message names the branch, so an operator reads which one. */
+    @Test
+    void theNothingToProposeMessageNamesTheBranch() {
+        noExistingMergeRequest();
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(aResponse().withStatus(409)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"message\": [\"No changes between spire/run_1 and main\"]}")));
+
+        PullRequestSink.NothingToPropose nothing = assertThrows(
+                PullRequestSink.NothingToPropose.class, () -> sink.open(REPO, request()));
+        assertTrue(nothing.getMessage().contains("spire/run_1"), nothing.getMessage());
+    }
+
+    /** That wording on another status is still a fault — see the GitHub suite for the argument. */
+    @Test
+    void thatWordingOnADifferentStatusIsStillAFault() {
+        noExistingMergeRequest();
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(aResponse().withStatus(502)
+                .withHeader("Content-Type", "text/html")
+                .withBody("<html><body>Bad gateway: no changes here</body></html>")));
+
+        assertThrows(GitLabApiException.class, () -> sink.open(REPO, request()));
+    }
+
+    /** And a refusal the re-read cannot confirm stays a failure rather than inventing a success. */
+    @Test
+    void aRefusalTheReReadCannotConfirmStaysAFailure() {
+        noExistingMergeRequest();
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(aResponse().withStatus(409)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"message\": [\"Something else entirely\"]}")));
+
+        assertThrows(GitLabApiException.class, () -> sink.open(REPO, request()));
+    }
+
     @Test
     void aLookupWithNoBranchIsRefused() {
         for (String nothing : new String[] {null, "", "   "}) {
-            assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing),
+            assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing, "main"),
                     "head=" + nothing);
         }
     }
@@ -222,7 +293,7 @@ class GitLabPullRequestSinkTest {
         String path = "/projects/acme%2Fplatform%2Fteam%2Fapp/merge_requests";
         wireMock.stubFor(get(urlPathEqualTo(path)).willReturn(json("[]")));
 
-        assertTrue(sink.findByHead(nested, "spire/run_1").isEmpty());
+        assertTrue(sink.findByHead(nested, "spire/run_1", "main").isEmpty());
         wireMock.verify(getRequestedFor(urlPathEqualTo(path)));
     }
 }
