@@ -383,9 +383,22 @@ public class IntegrationSaga {
         // that the factory's actor list must be its own rather than the SCM review allowlist. This is
         // the minimum shape of that rule; the separate per-provider list is the fuller one. It also
         // closes allowlistFor's other everyone-answer: an unresolvable provider yields List.of().
-        if (allowlistFor(reviewId).isEmpty()) {
+        List<String> allowlist = allowlistFor(reviewId);
+        if (allowlist.isEmpty()) {
             refuse(reviewId, "/fix needs an explicit author allowlist on the provider — an empty list "
                     + "means review everyone, which is not the same as letting everyone push code");
+            return;
+        }
+        // AND on the STABLE ID, not on a username. onManualCommand has already run authorAllowed,
+        // which accepts either -- correct for a command whose blast radius is one paid model call.
+        // This one authorises a commit pushed as the FACTORY machine account, and a forge handle
+        // can be released and re-registered by somebody else, so an operator who listed "alice"
+        // has listed whoever holds that handle next. CLAUDE.md states the rule by name: author
+        // identity is data (stable providerUserId), never a gate.
+        if (!allowedById(allowlist, e.author())) {
+            refuse(reviewId, "/fix matches the allowlist on your provider user id, not on your "
+                    + "username — a handle can change hands and this command pushes code as the "
+                    + "machine account. An operator must list the stable id");
             return;
         }
         if (!projection.registered(reviewId)) {
@@ -771,6 +784,20 @@ public class IntegrationSaga {
 
         commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
                 workerCredentials.pack(provider.get())));
+    }
+
+    /**
+     * The stable id only — the narrower gate {@code /fix} uses.
+     *
+     * <p>{@link #authorAllowed} accepts a username too, which is right for a command that costs one
+     * model call. This guards a push made as the machine account, and a username is not an identity
+     * over time. An empty allowlist is refused before this is reached, so it needs no everyone-arm.
+     */
+    private static boolean allowedById(List<String> allowlist, Author author) {
+        if (author == null || author.providerUserId() == null || author.providerUserId().isBlank()) {
+            return false;
+        }
+        return allowlist.stream().anyMatch(a -> a.equals(author.providerUserId()));
     }
 
     /** An empty provider allowlist reviews everyone; else match by account id or username. */

@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
@@ -146,7 +147,7 @@ class FixDispatchTest {
         assertEquals("develop", planned.protectedBranch());
         assertEquals("cafe1234", planned.baseCommit());
         // Transposing these two was a survivor, and the run id is built from them.
-        assertEquals("github", planned.providerType());
+        assertEquals(ScmType.GITHUB, planned.scmType());
         assertEquals("acme", planned.workspace());
         assertEquals("web", planned.slug());
     }

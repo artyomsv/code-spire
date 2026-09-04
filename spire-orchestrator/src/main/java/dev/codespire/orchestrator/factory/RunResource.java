@@ -164,17 +164,29 @@ public class RunResource {
      * one as null, and packing a null login was a 500 AFTER the row existed — a subject burned.
      */
     private ScmProvider machineAccount(DispatchRequestParser.Parsed in) {
-        ScmProvider account = machineAccounts.resolve(in.scmType(), in.workspace())
-                .orElseThrow(() -> conflict("No FACTORY-role provider is registered for "
-                        + in.scmType().providerType() + "/" + in.workspace() + ". Register the machine "
-                        + "account under Settings -> Providers with role FACTORY (ADR-038). "
-                        + "The factory never pushes as the review bot."));
-        if (account.botUsername() == null || account.botUsername().isBlank()) {
-            throw conflict("The FACTORY-role provider for " + in.scmType().providerType() + "/" + in.workspace()
-                    + " has no resolved login. Re-save it with a token the forge can identify, or set the "
-                    + "bot username by hand: the login is what the push is authenticated as.");
+        return machineAccounts.resolve(in.scmType(), in.workspace())
+                .orElseThrow(() -> conflict(whyNoUsableAccount(in)));
+    }
+
+    /**
+     * Which of the two empty answers this was, because an operator fixes them differently.
+     *
+     * <p>{@code MachineAccounts.resolve} refuses a registration with no login as well as a missing
+     * one, and it does so there rather than here so that the {@code /fix} arm cannot forget the
+     * check — on a Kafka consumer the throw this prevents does not become a 500 anyone reads, it
+     * escapes and the record is redelivered in silence. The cost of moving it is that "empty" no
+     * longer names its cause, so this reads the registration back to name it.
+     */
+    private String whyNoUsableAccount(DispatchRequestParser.Parsed in) {
+        String where = in.scmType().providerType() + "/" + in.workspace();
+        if (machineAccounts.registration(in.scmType(), in.workspace()).isPresent()) {
+            return "The FACTORY-role provider for " + where + " has no resolved login. Re-save it "
+                    + "with a token the forge can identify, or set the bot username by hand: the "
+                    + "login is what the push is authenticated as.";
         }
-        return account;
+        return "No FACTORY-role provider is registered for " + where + ". Register the machine "
+                + "account under Settings -> Providers with role FACTORY (ADR-038). "
+                + "The factory never pushes as the review bot.";
     }
 
     /**

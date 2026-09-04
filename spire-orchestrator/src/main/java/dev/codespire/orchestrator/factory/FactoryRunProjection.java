@@ -513,11 +513,17 @@ public class FactoryRunProjection {
 
     private static final String FIX_RUN_FOR_COMMENT = """
             SELECT run_id FROM factory_run
-             WHERE kind = 'FIX' AND comment_id = ?
+             WHERE kind = 'FIX' AND review_id = ? AND comment_id = ?
             """;
 
     /**
      * The fix run a comment already bought, or empty when it has bought none.
+     *
+     * <p><b>Scoped to the review, because the comment id is the FORGE's.</b> Every ingress passes
+     * the forge's own id through, and it is unique within one forge and nowhere else — two
+     * providers, or two self-hosted GitLabs whose note ids both start at 1, collide. Unscoped, that
+     * collision refuses a legitimate {@code /fix} while naming another workspace's run id in this
+     * review's durable history.
      *
      * <p>The read half of the claim V56 adds. It exists so a redelivered {@code /fix} produces a
      * REFUSAL naming the run rather than a constraint violation: the index is the backstop for a
@@ -531,7 +537,11 @@ public class FactoryRunProjection {
      * posture for the identical reason, and both are the ADR-023 rule applied to a guard rather
      * than to a number.
      */
-    public Optional<String> fixRunFor(String commentId) {
+    public Optional<String> fixRunFor(String reviewId, String commentId) {
+        if (reviewId == null || reviewId.isBlank()) {
+            throw new IllegalArgumentException("a fix claim is scoped to its review: a comment id "
+                    + "is the forge's own and collides across forges");
+        }
         if (commentId == null || commentId.isBlank()) {
             // Not a lookup that can succeed: the index is partial ON comment_id IS NOT NULL, so
             // every blank would collide in the answer while colliding with nothing in the table.
@@ -539,12 +549,14 @@ public class FactoryRunProjection {
         }
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(FIX_RUN_FOR_COMMENT)) {
-            ps.setString(1, commentId);
+            ps.setString(1, reviewId);
+            ps.setString(2, commentId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(rs.getString("run_id")) : Optional.empty();
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("could not read the fix claim for comment " + commentId, e);
+            throw new IllegalStateException("could not read the fix claim for comment " + commentId
+                    + " on " + reviewId, e);
         }
     }
 

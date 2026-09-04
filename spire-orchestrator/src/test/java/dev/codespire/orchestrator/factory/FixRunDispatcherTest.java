@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.caps.SpendGate;
@@ -45,7 +46,7 @@ class FixRunDispatcherTest {
     // --- what the fakes are told to answer -------------------------------------------------
 
     private FixDispatch.Plan plan = new FixDispatch.Planned("run::github:acme/web:" + THREAD + ":1",
-            "feature/login", "feature/login", "cafe1234", "develop", "github", "acme", "web");
+            "feature/login", "feature/login", "cafe1234", "develop", ScmType.GITHUB, "acme", "web");
     private Optional<String> existingClaim = Optional.empty();
     private SpendGate.Decision cap = SpendGate.Decision.of(CapRefusal.allow());
     private boolean rowAccepted = true;
@@ -81,8 +82,10 @@ class FixRunDispatcherTest {
         };
         dispatcher.runs = new FactoryRunProjection() {
             @Override
-            public Optional<String> fixRunFor(String commentId) {
-                claimsChecked.add(commentId);
+            public Optional<String> fixRunFor(String reviewId, String commentId) {
+                // The review is recorded too: the claim is scoped to it, and a fake that dropped
+                // the scope would let the unscoped key pass this suite.
+                claimsChecked.add(reviewId + "|" + commentId);
                 return existingClaim;
             }
 
@@ -468,7 +471,7 @@ class FixRunDispatcherTest {
 
     private void resetToTheHappyPath() {
         plan = new FixDispatch.Planned("run::github:acme/web:" + THREAD + ":1", "feature/login",
-                "feature/login", "cafe1234", "develop", "github", "acme", "web");
+                "feature/login", "cafe1234", "develop", ScmType.GITHUB, "acme", "web");
         existingClaim = Optional.empty();
         cap = SpendGate.Decision.of(CapRefusal.allow());
         rowAccepted = true;

@@ -107,7 +107,8 @@ class RunLaunchTest {
         RunLaunch.Outcome outcome = launch().launch(command());
 
         assertInstanceOf(RunLaunch.DefiniteMiss.class, outcome);
-        assertTrue(outcome.isReArmable(), "a record that never left IS safe to send again");
+        assertInstanceOf(RunLaunch.DefiniteMiss.class, outcome,
+                "a record that never left IS safe to send again, and only this shape says so");
         assertEquals(List.of(RUN_ID + "|" + RunLaunch.DISPATCH_FAILED_DETAIL), failed);
         assertTrue(uncertain.isEmpty(), uncertain.toString());
     }
@@ -128,7 +129,8 @@ class RunLaunchTest {
         RunLaunch.Outcome outcome = launch().launch(command());
 
         assertInstanceOf(RunLaunch.Uncertain.class, outcome);
-        assertFalse(outcome.isReArmable(), "an unread fault must never authorise a second command");
+        assertInstanceOf(RunLaunch.Uncertain.class, outcome,
+                "an unread fault must never authorise a second command");
         assertEquals(List.of(RUN_ID + "|" + RunLaunch.uncertainDetail(RUN_ID)), uncertain);
         assertTrue(failed.isEmpty(), failed.toString());
     }

@@ -23,6 +23,13 @@ import java.util.List;
  * its SHAPE, which is what the machine-readable mark depends on.
  *
  * <p>Static and framework-free, like {@link FixPrompt}: a pure function of a finished run.
+ *
+ * <p><b>Nothing calls this in production yet, and that is stated rather than hidden.</b> It is
+ * the orchestrator half of T7: the {@code PullRequestSink} port and its three adapters can open
+ * a pull request, and this builds what one would say. The step that runs after a fix run pushes
+ * — read the result, choose a sink, open the request — is M3 work and is not in this branch. The
+ * class is covered by its own tests and by nothing downstream, so a change here is not currently
+ * proved end to end.
  */
 final class FactoryPullRequestBody {
 

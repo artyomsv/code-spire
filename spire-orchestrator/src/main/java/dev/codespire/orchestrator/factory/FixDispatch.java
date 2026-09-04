@@ -53,8 +53,16 @@ public class FixDispatch {
      * @param protectedBranch the pull request's destination, which the publisher refuses in every
      *     mode
      */
+    /**
+     * <b>The PARSED type, not the stored string.</b> The plan is where an unrecognised provider
+     * type is refused, so a plan that exists has already answered that question — and carrying the
+     * raw string onward invited the dispatcher to ask it a second time. It did, with a
+     * character-identical message that no input could reach and no test covered: a refusal that
+     * looks maintained and is not. Making the type the plan's output deletes the second copy
+     * rather than asking the next author to remember it is there.
+     */
     public record Planned(String runId, String baseBranch, String branch, String baseCommit,
-                          String protectedBranch, String providerType, String workspace,
+                          String protectedBranch, ScmType scmType, String workspace,
                           String slug) implements Plan {
     }
 
@@ -118,7 +126,7 @@ public class FixDispatch {
                     + cannotAddress.getMessage() + ") — an operator should look at the review row");
         }
         return new Planned(runId, target.sourceBranch(), target.sourceBranch(), target.commit(),
-                target.destBranch(), target.providerType(), target.workspace(), target.slug());
+                target.destBranch(), scmType.get(), target.workspace(), target.slug());
     }
 
     /**

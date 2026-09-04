@@ -40,13 +40,17 @@ public class RunLaunch {
     @Inject
     FactoryRunProjection projection;
 
-    /** What became of a command handed to the broker. */
+    /**
+     * What became of a command handed to the broker.
+     *
+     * <p>Sealed with no predicates on it on purpose. It carried an {@code isReArmable()} default
+     * that nothing in production ever called — both callers switch over the three cases, which is
+     * what sealing buys — while its test asserted the predicate agreed with the type it was
+     * derived from. That is a guard over a restatement, and the next author would have had to read
+     * it before learning it protected nothing. The three javadocs below say which shape is safe to
+     * retry; the exhaustive switch makes the compiler enforce that a fourth case is handled.
+     */
     public sealed interface Outcome permits Dispatched, DefiniteMiss, Uncertain {
-
-        /** Whether the caller may safely offer an identical retry. Only one outcome may. */
-        default boolean isReArmable() {
-            return this instanceof DefiniteMiss;
-        }
     }
 
     /** The broker acknowledged it. The run is the worker's problem now. */

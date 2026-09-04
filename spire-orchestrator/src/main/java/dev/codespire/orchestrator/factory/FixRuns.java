@@ -51,15 +51,29 @@ public class FixRuns {
      * drawn was "the schema must be guarding it" rather than "my fixture cannot build the row".
      * The second reading was the correct one to reach for, even though the first happens to be
      * true now for a reason that had nothing to do with the original argument.
+     *
+     * <p><b>The cap counts runs that HAPPENED.</b> A dispatch the broker never accepted never
+     * executed and never spent, and {@code FactoryRunProjection} already treats exactly that row as
+     * re-armable. Counting it charges the author for an infrastructure fault: with
+     * {@code MAX_PER_FINDING = 2}, two broker outages retire a finding forever while telling its
+     * author it "has already had 2 fix run(s)" about two runs that landed nowhere, and five retire
+     * a whole review through the other axis.
+     *
+     * <p>{@code DISPATCH_UNCERTAIN} is deliberately NOT excluded. That run may be executing, so
+     * counting it is the fail-closed answer, and the two causes differ on precisely the question
+     * this filter asks — whether anything happened.
      */
     private static final String COUNT_FOR_FINDING = """
                 SELECT count(*) FROM factory_run
                  WHERE kind = 'FIX' AND review_id = ? AND finding_ref = ?
+                   AND NOT (status = 'failed' AND failure_cause = 'DISPATCH_FAILED')
                 """;
 
+    /** The same exclusion, for the same reason: see {@link #COUNT_FOR_FINDING}. */
     private static final String COUNT_FOR_REVIEW = """
                 SELECT count(*) FROM factory_run
                  WHERE kind = 'FIX' AND review_id = ?
+                   AND NOT (status = 'failed' AND failure_cause = 'DISPATCH_FAILED')
                 """;
 
     @Inject

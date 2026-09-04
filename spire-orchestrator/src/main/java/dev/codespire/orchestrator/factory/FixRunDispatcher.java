@@ -125,17 +125,21 @@ public class FixRunDispatcher {
         String harness = config.fix().harness().orElseThrow();
         String model = config.fix().model().orElseThrow();
 
-        Optional<ScmType> scmType = ScmType.fromProviderType(planned.providerType());
-        if (scmType.isEmpty()) {
-            return new Refused("this review was recorded under an SCM this build does not recognise ("
-                    + planned.providerType() + ")");
-        }
-        Optional<ScmProvider> account = machineAccounts.resolve(scmType.get(), planned.workspace());
+        // No second unrecognised-SCM refusal here: the plan already made that decision and now
+        // hands over its ANSWER. The copy that used to sit here was word-for-word identical, could
+        // not be reached, and was covered by nothing.
+        Optional<ScmProvider> account = machineAccounts.resolve(planned.scmType(), planned.workspace());
         if (account.isEmpty()) {
-            // Never the reviewer's account: its own author allowlist skips pull requests it opened,
-            // so a fallback would push a branch nobody reviews and nobody is told about.
-            return new Refused("no factory machine account is registered for " + planned.workspace()
-                    + ", and the review bot's own credential is deliberately not used instead");
+            // Two causes, one answer: no FACTORY registration at all, or one with no resolved login.
+            // MachineAccounts refuses both, because packing a null login throws inside
+            // MachineAccountCredential -- which on THIS arm is not a 500 but an escape from the
+            // consumer, so a redelivery and an author told nothing. Never the reviewer's account
+            // either: its own author allowlist skips pull requests it opened, so a fallback would
+            // push a branch nobody reviews and nobody is told about.
+            return new Refused("no usable factory machine account for " + planned.workspace()
+                    + " — either none is registered, or the one that is has no login to "
+                    + "authenticate a push as. The review bot's credential is deliberately not "
+                    + "used instead");
         }
         Optional<FindingProjection.FixSpec> spec = findings.specFor(reviewId, finding.id());
         if (spec.isEmpty() || spec.get().isEmpty()) {
@@ -178,7 +182,7 @@ public class FixRunDispatcher {
         }
 
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(planned.runId(), repo,
-                FactoryCloneUrls.cloneUrl(scmType.get(), account.get().baseUrl(), repo),
+                FactoryCloneUrls.cloneUrl(planned.scmType(), account.get().baseUrl(), repo),
                 planned.baseBranch(), planned.baseCommit(), planned.branch(),
                 FixPrompt.of(spec.get()), harness, model, config.agentImage().get(harness),
                 NO_EXTRA_PROTECTED_PATHS, config.wallClockSeconds(),
@@ -225,7 +229,7 @@ public class FixRunDispatcher {
                     + "so I cannot tell a repeat delivery from a new request — an operator should "
                     + "look at the logs"));
         }
-        return runs.fixRunFor(commentId)
+        return runs.fixRunFor(reviewId, commentId)
                 .map(runId -> new Refused("this comment already started fix run " + runId
                         + ", so nothing new was dispatched"));
     }

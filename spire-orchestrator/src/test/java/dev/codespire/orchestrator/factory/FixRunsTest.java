@@ -10,6 +10,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -94,7 +95,7 @@ class FixRunsTest {
         assertNotEquals(fixRow(firstAttempt, comment).runId(), fixRow(secondAttempt, comment).runId());
         // The claim is what sees it, and it names the run already bought so a refusal can say which.
         assertEquals("run::github:TEST-WS/TEST-REPO:" + FINDING + ":" + firstAttempt,
-                projection.fixRunFor(comment).orElseThrow());
+                projection.fixRunFor(REVIEW, comment).orElseThrow());
     }
 
     /** A comment that has bought nothing reads as empty — seeded first, or this proves nothing. */
@@ -102,7 +103,7 @@ class FixRunsTest {
     void aCommentThatHasBoughtNoRunReadsAsEmpty() {
         assertTrue(projection.queued(fixRow(1, "TEST-comment-a")));
 
-        assertTrue(projection.fixRunFor("TEST-comment-b").isEmpty());
+        assertTrue(projection.fixRunFor(REVIEW, "TEST-comment-b").isEmpty());
     }
 
     /**
@@ -120,7 +121,7 @@ class FixRunsTest {
                 "TESTSHA0", "spire/build-subject", "machine-account", null, "BUILD", null, null,
                 "TEST-comment-on-a-build")));
 
-        assertTrue(projection.fixRunFor("TEST-comment-on-a-build").isEmpty());
+        assertTrue(projection.fixRunFor(REVIEW, "TEST-comment-on-a-build").isEmpty());
     }
 
     /** A fix row cannot be written without its claim; the throw is the caller's bug, named. */
@@ -136,9 +137,43 @@ class FixRunsTest {
     @Test
     void theClaimRefusesToBeAskedAboutNoComment() {
         for (String nothing : new String[] {null, "", "   "}) {
-            assertThrows(IllegalArgumentException.class, () -> projection.fixRunFor(nothing),
+            assertThrows(IllegalArgumentException.class, () -> projection.fixRunFor(REVIEW, nothing),
                     "commentId=" + nothing);
+            assertThrows(IllegalArgumentException.class,
+                    () -> projection.fixRunFor(nothing, "TEST-comment-a"), "reviewId=" + nothing);
         }
+    }
+
+    /**
+     * <b>Two reviews, one comment id, and they must not be the same claim.</b>
+     *
+     * <p>A comment id is the FORGE's own — every ingress passes {@code comment.id} /
+     * {@code noteId} straight through — so it is unique within one forge and nowhere else. A
+     * deployment holding a GitHub and a GitLab provider, or two self-hosted GitLabs whose note ids
+     * both start at 1, produces this exact collision.
+     *
+     * <p>Keyed on the comment alone it does two things, and both are wrong: a legitimate
+     * {@code /fix} is refused while naming ANOTHER workspace's run id in this review's durable
+     * history, and the race the unique index backstops dead-letters after {@code pool.select()}
+     * has already spent a rotation slot. The second half of this test is the discriminating one —
+     * without the scope in the query, the second insert cannot even be written.
+     */
+    @Test
+    void oneCommentIdOnTwoReviewsIsTwoClaims() {
+        String shared = "TEST-comment-42";
+        String other = "review::gitlab:TEST-OTHER/TEST-OTHER:9";
+        assertTrue(projection.queued(fixRow(1, shared)));
+        assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(
+                "run::gitlab:TEST-OTHER/TEST-OTHER:" + FINDING + ":1", "codex", "TEST-MODEL",
+                "main", "TESTSHA0", "spire/other", "machine-account", null, "FIX", other,
+                FINDING, shared)),
+                "the unique index must not treat two reviews' comment 42 as one claim");
+
+        assertEquals("run::github:TEST-WS/TEST-REPO:" + FINDING + ":1",
+                projection.fixRunFor(REVIEW, shared).orElseThrow());
+        assertEquals("run::gitlab:TEST-OTHER/TEST-OTHER:" + FINDING + ":1",
+                projection.fixRunFor(other, shared).orElseThrow(),
+                "each review must read back ITS run, not whichever row the planner yielded first");
     }
 
     /**
@@ -159,9 +194,9 @@ class FixRunsTest {
 
         assertFalse(projection.queued(fixRow(1, "TEST-comment-different")),
                 "a differing retry must match no row here, and be refused by the caller");
-        assertEquals(runId, projection.fixRunFor("TEST-comment-original").orElseThrow(),
+        assertEquals(runId, projection.fixRunFor(REVIEW, "TEST-comment-original").orElseThrow(),
                 "the original claim must still hold");
-        assertTrue(projection.fixRunFor("TEST-comment-different").isEmpty(),
+        assertTrue(projection.fixRunFor(REVIEW, "TEST-comment-different").isEmpty(),
                 "and the other comment must not have acquired it");
 
         // The negative control: the IDENTICAL retry is the one this path exists for, and it works.
@@ -198,6 +233,50 @@ class FixRunsTest {
         insertFixRun("run::TEST-2", REVIEW, FINDING);
 
         assertEquals(2, fixRuns.forFinding(REVIEW, FINDING));
+    }
+
+    /**
+     * <b>A run the broker never accepted is not a run this finding has had.</b>
+     *
+     * <p>Both caps count runs that HAPPENED. A dispatch the broker refused never executed and
+     * never spent — {@code FactoryRunProjection} already treats exactly that row as re-armable, so
+     * the operator's identical retry restarts it. Counting it charges the author for an
+     * infrastructure fault, and with {@code MAX_PER_FINDING = 2} two broker outages retire a
+     * finding forever, while the refusal tells its author it "has already had 2 fix run(s)" about
+     * two runs that landed nowhere. Five retire a whole review through the other axis.
+     *
+     * <p><b>A run that FAILED is not the same thing, and that is the discriminating half.</b> The
+     * cheap simplification is {@code AND status <> 'failed'}: it passes every assertion about the
+     * broker, because a run the broker never accepted really is a failed row. What it also excludes
+     * is every run that started, executed, spent money and then died — a dropped commit, a failed
+     * salvage, a non-zero exit. Those are exactly the runs FR-F32 exists to bound, and under that
+     * filter a finding could be retried without limit as long as each attempt died. So the filter
+     * names the CAUSE and not the status, and the third row here is what says so.
+     *
+     * <p>{@code DISPATCH_UNCERTAIN} is not excluded either: that run may be executing, so counting
+     * it is the fail-closed answer. It writes a status of its own rather than {@code failed}, so it
+     * does not discriminate the simplification above — it is asserted for its own sake.
+     */
+    @Test
+    void aDispatchTheBrokerNeverAcceptedIsCountedByNeitherCap() {
+        insertFixRun("run::TEST-1", REVIEW, FINDING);
+        insertFixRun("run::TEST-2", REVIEW, FINDING);
+        projection.dispatchFailed("run::TEST-2", "the broker did not acknowledge the command");
+
+        assertEquals(1, fixRuns.forFinding(REVIEW, FINDING),
+                "only the run that reached a partition counts");
+        assertEquals(1, fixRuns.forReview(REVIEW), "and the review axis says the same");
+
+        // Ran, spent, died. The cap is about money already gone, so this one counts.
+        insertFailedFixRun("run::TEST-3", REVIEW, FINDING, "SALVAGE_FAILED");
+        assertEquals(2, fixRuns.forFinding(REVIEW, FINDING),
+                "a run that executed and then failed has still had its attempt");
+        assertEquals(2, fixRuns.forReview(REVIEW));
+
+        projection.dispatchUncertain("run::TEST-1", "sent and never acknowledged");
+        assertEquals(2, fixRuns.forFinding(REVIEW, FINDING),
+                "an unresolved dispatch may be executing, so it must still be counted");
+        assertEquals(2, fixRuns.forReview(REVIEW));
     }
 
     /**
@@ -329,6 +408,28 @@ class FixRunsTest {
         }
     }
 
+    /**
+     * <b>And a fix run must name the comment that asked for it.</b>
+     *
+     * <p>The claim V56 adds is the only thing that stops one comment buying two runs, and it is a
+     * partial index on {@code comment_id IS NOT NULL} — so a FIX row without one is counted by the
+     * cap and invisible to the claim. {@code asFixFor} refuses a blank, which is why this is
+     * written as raw SQL: the point is that the SCHEMA holds the rule, not one careful writer.
+     *
+     * <p>One-directional on purpose, and the second half proves it: a BUILD run has no comment and
+     * never will, so the biconditional V54 uses would be wrong here.
+     */
+    @Test
+    void theDatabaseRefusesAFixRunThatNamesNoComment() {
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> insert("run::TEST-unclaimed", "FIX", REVIEW, FINDING, null));
+
+        assertTrue(rootCause(refused).contains("factory_run_fix_names_its_comment"),
+                rootCause(refused));
+        assertDoesNotThrow(() -> insert("run::TEST-build-no-comment", "BUILD", null, null, null),
+                "and a build run must still be writable without one");
+    }
+
     private static String rootCause(Throwable t) {
         Throwable cause = t;
         while (cause.getCause() != null) {
@@ -436,19 +537,43 @@ class FixRunsTest {
         insert(runId, "FIX", reviewId, findingRef);
     }
 
+    /** A fix run that started, spent and then died — written straight in, cause and all. */
+    private void insertFailedFixRun(String runId, String reviewId, String findingRef, String cause) {
+        insert(runId, "FIX", reviewId, findingRef);
+        exec("""
+                UPDATE factory_run
+                   SET status = 'failed', failure_cause = ?, failure_detail = ?,
+                       started_at = now(), ended_at = now()
+                 WHERE run_id = ?
+                """, cause, "TEST-the run executed and then failed", runId);
+    }
+
     private void insertBuildRun(String runId) {
         insert(runId, "BUILD", null, null);
     }
 
+    /**
+     * <b>A FIX row here always carries a comment, so each CHECK is tested in isolation.</b>
+     *
+     * <p>V56 requires one, and without it every fix fixture in this file would fail on that
+     * constraint instead of the one its test names — including the two that exist to prove
+     * {@code factory_run_fix_names_its_target} bites. A test that reports the wrong constraint is
+     * a test that stops noticing when its own is dropped.
+     */
     private void insert(String runId, String kind, String reviewId, String findingRef) {
+        insert(runId, kind, reviewId, findingRef, "FIX".equals(kind) ? runId + "-comment" : null);
+    }
+
+    private void insert(String runId, String kind, String reviewId, String findingRef,
+                        String commentId) {
         exec("""
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt,
                                          status, harness, model, base_branch, base_commit, branch,
-                                         kind, review_id, finding_ref)
+                                         kind, review_id, finding_ref, comment_id)
                 VALUES (?, 'github', 'TEST-WS', 'TEST-REPO', 'TEST-SUBJECT', 1,
                         'queued', 'codex', 'TEST-MODEL', 'main', 'TESTSHA0', 'spire/TEST-SUBJECT',
-                        ?, ?, ?)
-                """, runId, kind, reviewId, findingRef);
+                        ?, ?, ?, ?)
+                """, runId, kind, reviewId, findingRef, commentId);
     }
 
     private void exec(String sql, String... args) {

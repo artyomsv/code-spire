@@ -63,7 +63,9 @@ class FixCommandSagaTest {
      * <p>An empty list is the deployment default and means "review everyone", which is why the two
      * cases that exercise the gate set it explicitly rather than relying on this.
      */
-    private List<String> allowlist = List.of("alice");
+    // The ACCOUNT ID, not the handle. /fix matches on providerUserId alone: a forge handle can be
+    // released and re-registered, and this command pushes code as the machine account.
+    private List<String> allowlist = List.of("acc-1");
     /** Thread refs the lookup was asked about — proves the saga normalized before querying. */
     private final List<String> lookedUpRefs = new ArrayList<>();
 
@@ -406,10 +408,33 @@ class FixCommandSagaTest {
     /** The other half: a configured allowlist still admits the command. */
     @Test
     void allowsFixWhenTheProviderAllowlistIsConfigured() {
-        allowlist = List.of("alice");
+        allowlist = List.of("acc-1");
         target = finding(null);
         saga().on(fix("t-1"));
         assertTrue(notes.contains("FixRequested"), notes.toString());
+    }
+
+    /**
+     * <b>A handle in the allowlist authorises a review, not a push.</b>
+     *
+     * <p>{@code authorAllowed} — the gate every manual command passes — accepts a username as well
+     * as a provider user id, and for {@code /review} that is right: the blast radius is one paid
+     * model call. {@code /fix} authorises a commit pushed as the FACTORY machine account onto a
+     * human's branch. A forge handle can be released and re-registered by somebody else, so an
+     * operator who listed "alice" has listed whoever holds that handle next — and CLAUDE.md states
+     * the rule by name: author identity is data (stable providerUserId), never a gate.
+     *
+     * <p>The author is the SAME person every other test here uses, and only the allowlist's
+     * spelling differs. That is what makes the case discriminating: widen the gate back to
+     * {@code authorAllowed} and this is the one test that reddens.
+     */
+    @Test
+    void refusesFixWhenTheAllowlistNamesOnlyTheHandle() {
+        allowlist = List.of("alice");
+        target = finding(null);
+        saga().on(fix("t-1"));
+        assertTrue(notes.contains("refused:/fix"), notes.toString());
+        assertTrue(dispatchedFor.isEmpty(), dispatchedFor.toString());
     }
 
     @Test
