@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.RecordCommand;
 import dev.codespire.contract.event.DomainEvent;
+import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.event.IntegrationEvent.CloseReason;
 import dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived;
@@ -19,6 +20,7 @@ import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +43,8 @@ class IntegrationSagaPolicyTest {
 
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
+    /** Each timeline note as {@code lane|detail} — the halves the type alone does not pin. */
+    private final List<String> noteDetails = new ArrayList<>();
     private final List<String> headerProviderTypes = new ArrayList<>();
     private final List<String> refreshedProviderTypes = new ArrayList<>();
     private final List<String> rerunInvocations = new ArrayList<>();
@@ -49,6 +53,8 @@ class IntegrationSagaPolicyTest {
     /** Durable review-history rows, as {@code type:detail} — distinct from the in-memory timeline. */
     private final List<String> appendedEvents = new ArrayList<>();
     private boolean reviewRegistered;
+    /** Set by the archived-notice cases; every other case runs against a live review. */
+    private boolean reviewIsArchived;
 
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
         return sagaWith(policy, provider, List.of(new DomainEvent.ReviewRequested("cafe123", "OPENED")));
@@ -79,13 +85,38 @@ class IntegrationSagaPolicyTest {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
                 notes.add(type);
+                // Lane and detail too. Recording only the type left them pinned by nothing, so
+                // moving the note to another lane and blanking its text passed every case — and for
+                // a refusal that is DELIBERATELY silent the note is the operator's only signal, so
+                // its text is the feature rather than decoration.
+                noteDetails.add(lane + "|" + detail);
             }
         };
         saga.projection = new ReviewProjection() {
-            /** Every event now passes the archival gate first; these fixtures are all live reviews. */
+            /** Every event passes the archival gate first; these fixtures are live unless a case says otherwise. */
             @Override
             public boolean archived(String reviewId) {
-                return false;
+                return reviewIsArchived;
+            }
+
+            /**
+             * Registered, so a gated command has a REACHABLE handler behind the gate.
+             *
+             * <p>Without this the mutation that deletes the gate dies on an NPE instead of an
+             * assertion: the real method calls {@code dataSource.getConnection()} on a null field,
+             * and {@code catch (SQLException)} cannot see an NPE. That is this project's recorded
+             * fake-coverage trap for the eighth time, and it made the {@code /finding} case red for
+             * the wrong reason — proving the path was not taken without proving the gate stopped it.
+             */
+            @Override
+            public boolean registered(String reviewId) {
+                return true;
+            }
+
+            /** Nothing posted, so a refusal has no summary thread to fall back to. */
+            @Override
+            public Optional<String> summaryRefOf(String reviewId) {
+                return Optional.empty();
             }
 
             @Override
@@ -124,6 +155,24 @@ class IntegrationSagaPolicyTest {
             public void setPrState(String reviewId, String prState) {
                 prStateCalls.add(reviewId + ":" + prState);
             }
+
+            /**
+             * Reached only once a reply is actually answered, which no case did until the observe
+             * gate needed an active-mode twin. Un-overridden it opens a real {@code DataSource} from
+             * a plain unit test — the trap this project has now hit nine times, and the ninth was
+             * this fixture, in the round that fixed the eighth.
+             */
+            @Override
+            public void setAnswering(String reviewId, boolean answering) {
+            }
+        };
+        // Third un-overridden method on the path a deleted gate would take. Left null it reaches a
+        // null DataSource exactly as the projection fake did, so the NPE would simply move.
+        saga.threads = new ReviewThreadView() {
+            @Override
+            public ThreadRef rootOf(String reviewId, ThreadRef thread) {
+                return thread;
+            }
         };
         saga.providers = new ProviderRegistry() {
             @Override
@@ -142,6 +191,15 @@ class IntegrationSagaPolicyTest {
             @Override
             public String pack(ScmProvider p) {
                 return "packed-cred:" + p.workspace();
+            }
+        };
+        // Always answers, so the reply cases test the GATE rather than the conversation policy.
+        // A fake that declined would make the observe assertion pass for the wrong reason.
+        saga.conversation = new ConversationSaga() {
+            @Override
+            public Optional<ActionCommand> planFollowUp(AuthorReplied e) {
+                return Optional.of(new ActionCommand.AnswerFollowUp(e.reviewId(), e.repo(), e.prId(),
+                        e.threadRef(), e.commentId(), e.text(), "scm-cred", "llm-cred", false, 1, 100L, 2.0));
             }
         };
         saga.policy = policy;
@@ -349,6 +407,33 @@ class IntegrationSagaPolicyTest {
                 Author.of("acc-1", "alice", "Alice")));
         assertTrue(rerunInvocations.isEmpty(), "observe mode must not spend an LLM call on /review");
         assertTrue(notes.contains("ManualCommandObserveOnly"), notes.toString());
+        // The note's lane and text, not only its type. The refusal is deliberately silent, so this
+        // note is the operator's only signal and naming the refused command IS the feature.
+        assertTrue(noteDetails.contains("integration|/review refused: the deployment is in observe-only mode"),
+                noteDetails.toString());
+        // The converse of the ordering case below: an ALLOWED author must not be reported as
+        // unauthorized. Asserted in both directions, or the two refusals may quietly become one.
+        assertFalse(notes.contains("ManualCommandSkipped"), notes.toString());
+        // Durable, so the reason survives the restart that empties the in-memory timeline.
+        assertTrue(appendedEvents.stream().anyMatch(row -> row.startsWith("ManualCommandObserveOnly:")),
+                appendedEvents.toString());
+    }
+
+    /**
+     * The gate is proven on a CONFIGURED allowlist, not only an empty one.
+     *
+     * <p>Every other observe case passes an empty list, so a gate ANDed with "the allowlist is
+     * empty" satisfied all of them — while being inert on every deployment past first contact. The
+     * ordering case below cannot cover it either: its author is refused by the allowlist one branch
+     * earlier and never reaches the mode gate at all.
+     */
+    @Test
+    void anAllowlistedAuthorIsStillRefusedInObserveMode() {
+        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertTrue(rerunInvocations.isEmpty(), "a listed author's /review is still refused in observe mode");
+        assertTrue(notes.contains("ManualCommandObserveOnly"), notes.toString());
     }
 
     /**
@@ -363,15 +448,19 @@ class IntegrationSagaPolicyTest {
         saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "finding", "sev=HIGH",
                 Author.of("acc-1", "alice", "Alice")));
         assertTrue(handledCommands.isEmpty(), "observe mode must not advance the aggregate");
-        assertTrue(appendedEvents.isEmpty(), "observe mode must not write a durable review-history row");
+        // The only durable row is the refusal itself — the finding must not be recorded.
+        assertEquals(List.of("ManualCommandObserveOnly:/finding refused — observe-only mode"),
+                appendedEvents, "observe mode must record the refusal and nothing else");
         assertTrue(notes.contains("ManualCommandObserveOnly"), notes.toString());
     }
 
     /**
-     * The gate sits ahead of the command switch, which is the property that matters: a command added
-     * below it must not arrive ungated, which is precisely how {@code /review} and then
-     * {@code /finding} got in. A name with no handler stands in for that future command — under the
-     * gate it is refused by policy and never reaches the switch's default branch at all.
+     * A command with no handler is refused too — which is what makes the gate cover the
+     * {@code /fix} this milestone has not added yet, rather than the two commands that exist today.
+     *
+     * <p>It does NOT pin "the gate precedes the switch": replicating the gate inside every
+     * {@code case} arm passes this. That placement is structural, argued at the call site, and
+     * contrived to regress; what is worth asserting is that an unenumerated command is covered.
      */
     @Test
     void aCommandWithNoHandlerIsAlsoRefusedInObserveMode() {
@@ -408,6 +497,116 @@ class IntegrationSagaPolicyTest {
                 Author.of("acc-9", "bob", "Bob")));
         assertTrue(notes.contains("ManualCommandSkipped"), notes.toString());
         assertFalse(notes.contains("ManualCommandObserveOnly"), notes.toString());
+    }
+
+    /**
+     * The widest path of the three, and the one the command gate could never reach.
+     *
+     * <p>A reply becomes eligible on an @-mention ALONE, independent of thread ownership, and an
+     * @-mention also removes the per-thread turn cap — so where {@code /review} lost one call, this
+     * loses an unbounded number. The realistic exposure is not a fresh deployment (the conversation
+     * level defaults to report-only) but the operator gesture the mode exists for: running active,
+     * then flipping the slider to observe to pause the bot. Every thread is still bot-owned then.
+     */
+    @Test
+    void aReplyIsNotAnsweredInObserveMode() {
+        var saga = sagaWith(policyMode(true), provider(List.of()));
+        saga.on(reply("acc-1", "alice"));
+        assertTrue(emitted.isEmpty(), "observe mode must not spend an LLM call answering a reply");
+        assertTrue(notes.contains("FollowUpObserveOnly"), notes.toString());
+    }
+
+    /** The other half: the gate must pause the bot, not silence the conversation permanently. */
+    @Test
+    void aReplyIsStillAnsweredWhenTheDeploymentIsActive() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(reply("acc-1", "alice"));
+        assertEquals(1, emitted.size(), "an active deployment still answers");
+        assertInstanceOf(ActionCommand.AnswerFollowUp.class, emitted.getFirst());
+        assertFalse(notes.contains("FollowUpObserveOnly"), notes.toString());
+    }
+
+    /**
+     * The archived notice is a posted comment, so observe mode forbids it — and this path is
+     * upstream of every other gate. {@code handle()} stops an archived review before the switch, so
+     * no gate inside {@code onManualCommand} could reach it however it were placed.
+     */
+    @Test
+    void theArchivedNoticeIsNotPostedInObserveMode() {
+        reviewIsArchived = true;
+        var saga = sagaWith(policyMode(true), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertTrue(emitted.isEmpty(), "observe mode posts no comments, and the notice is a comment");
+    }
+
+    /** The other half, or the gate would simply delete the notice. */
+    @Test
+    void theArchivedNoticeIsStillPostedWhenTheDeploymentIsActive() {
+        reviewIsArchived = true;
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                Author.of("acc-1", "alice", "Alice")));
+        assertEquals(1, emitted.size(), "an active deployment still tells the author the PR is retired");
+        assertInstanceOf(ActionCommand.NotifyArchived.class, emitted.getFirst());
+    }
+
+    /**
+     * The contract, asserted over the EVENT VOCABULARY rather than per branch.
+     *
+     * <p>{@code ReviewPolicy}'s javadoc says observe "emits NO action commands", and three separate
+     * paths broke that while each individual branch looked correct: the command switch, the reply
+     * branch, and the archived notice that runs ahead of both. Per-branch tests found them one at a
+     * time, which is how the second and third survived the round that fixed the first.
+     *
+     * <p>So this asserts the property over every ingress event the saga handles, live and archived.
+     * A branch added later inherits the assertion instead of needing someone to remember it — the
+     * same shape as the guards that fail on a debt's REINTRODUCTION rather than its removal.
+     */
+    @Test
+    void observeModeEmitsNoActionCommandForAnyIngressEvent() {
+        List<IntegrationEvent> everyTrigger = List.of(
+                pr("acc-1", "alice"),
+                new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                        Author.of("acc-1", "alice", "Alice")),
+                new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "finding", "sev=HIGH",
+                        Author.of("acc-1", "alice", "Alice")),
+                reply("acc-1", "alice"),
+                new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.MERGED));
+
+        for (boolean archived : List.of(false, true)) {
+            for (IntegrationEvent event : everyTrigger) {
+                emitted.clear();
+                reviewIsArchived = archived;
+                sagaWith(policyMode(true), provider(List.of())).on(event);
+                assertTrue(emitted.isEmpty(),
+                        "observe mode emitted " + emitted + " for " + event.getClass().getSimpleName()
+                                + " (archived=" + archived + ") — the mode's contract is that it emits none");
+            }
+        }
+    }
+
+    /**
+     * Guards the guard. An event list that silently lost a case would keep the assertion above green
+     * while covering less, which is the failure mode the parity tests in the gateway already name.
+     */
+    @Test
+    void theNoActionCommandCaseCoversEveryHandledEventType() {
+        assertEquals(List.of("AuthorReplied", "ManualCommandReceived", "PullRequestClosed",
+                        "PullRequestEventReceived"),
+                List.of(pr("acc-1", "alice"),
+                                new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
+                                        Author.of("acc-1", "alice", "Alice")),
+                                reply("acc-1", "alice"),
+                                new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.MERGED))
+                        .stream().map(e -> e.getClass().getSimpleName()).distinct().sorted().toList(),
+                "the saga's switch handles four event types; the observe case must cover all four");
+    }
+
+    private static AuthorReplied reply(String accountId, String username) {
+        return new AuthorReplied(new RepoRef("acme", "web"), 412L, "review::acme/web#412",
+                new ThreadRef("t-1"), "c-1", "@bot why is this a bug?",
+                Author.of(accountId, username, username), false, List.of("bot"));
     }
 
     @Test
@@ -501,6 +700,10 @@ class IntegrationSagaPolicyTest {
                 return Optional.empty(); // no provider resolved -> isBotAuthored() is false, not a self-loop
             }
         };
+        // Active: the reply path now consults the policy before planning a follow-up, so a fixture
+        // that omits it no longer reaches the conversation at all. Left null this test NPE'd — which
+        // is the honest signal that the gate genuinely covers this branch.
+        saga.policy = policyMode(false);
         saga.conversation = new ConversationSaga() {
             @Override
             public Optional<ActionCommand> planFollowUp(AuthorReplied e) {

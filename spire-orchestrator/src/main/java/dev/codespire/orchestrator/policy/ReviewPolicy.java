@@ -16,6 +16,19 @@ import java.time.Duration;
  * fetch, no LLM call, no comments. {@code active} runs the full pipeline. The
  * per-provider author allowlist lives in the provider registry, not here.
  *
+ * <p><b>The scope is every SCM-originated trigger</b>, not only a pull-request event: a
+ * {@code /command} comment, an author's reply, and the archived-review notice are all refused
+ * while observing. They were not, once, and the reason they had to be is that their author is
+ * gated by the per-provider ALLOWLIST rather than by operator role — and an empty allowlist
+ * means "everyone" by design, so any commenter could force paid work while the operator
+ * believed the deployment was only watching.
+ *
+ * <p><b>An operator's own authenticated REST action is NOT gated</b> — the dashboard Re-run
+ * button and {@code POST /api/runs} are {@code spire-admin} only, which makes them the
+ * operator exercising a posture they themselves own. Removing them would leave "go globally
+ * active" as the only way to review a single pull request while evaluating, which is the
+ * workflow observe mode exists to serve.
+ *
  * <p>The mode is stored in {@code app_setting} and read fresh on every event, so
  * the Settings slider flips it WITHOUT a restart — that stored value is the sole
  * live control. The seed default is {@code observe} (first-contact safety: a
@@ -65,7 +78,7 @@ public class ReviewPolicy {
     // Eager (observes StartupEvent, fired after Flyway) so the posture is visible at boot.
     void onStart(@Observes StartupEvent ev) {
         LOG.infof("Review policy: mode=%s (stored=%s, seed default=%s)",
-                observeOnly() ? "OBSERVE (register only, no diff/LLM/comments)" : "active",
+                observeOnly() ? "OBSERVE (register only; no diff/LLM/comments, commands and replies refused)" : "active",
                 settings.get(MODE_KEY).orElse("<unset>"), normalize(defaultMode));
     }
 
@@ -74,7 +87,11 @@ public class ReviewPolicy {
         return normalize(settings.get(MODE_KEY).orElse(defaultMode));
     }
 
-    /** True when a run must be registered but emit no action commands. */
+    /**
+     * True when an SCM-originated trigger must be recorded but emit no action command — a pull
+     * request event, a {@code /command}, a reply, or the archived notice. An operator's own
+     * authenticated REST action is outside this; see the class javadoc for why.
+     */
     public boolean observeOnly() {
         return OBSERVE.equals(currentMode());
     }

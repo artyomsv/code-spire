@@ -133,6 +133,18 @@ public class IntegrationSaga {
                         threads.markThreadLocation(e.reviewId(), e.threadRef(),
                                 e.location().path(), e.location().line());
                     }
+                    // The third observe read, and the reason all three live in this one file: the
+                    // gap this closes existed because enforcement was scattered and one site was
+                    // missed. A reply is the WIDEST of the paths — an @-mention makes it eligible
+                    // regardless of thread ownership AND removes the turn cap, so the loss is
+                    // unbounded where /review's was one call. It sits after markThreadLocation
+                    // because where a thread sits is a fact about the thread, not an action taken.
+                    if (policy.observeOnly()) {
+                        timeline.record("integration", "FollowUpObserveOnly", e.reviewId(),
+                                "reply not answered: the deployment is in observe-only mode");
+                        LOG.infof("Not answering a reply on %s — observe-only mode", e.reviewId());
+                        return;
+                    }
                     conversation.planFollowUp(e).ifPresent(cmd -> {
                         String author = e.author() == null ? "unknown" : e.author().username();
                         // The COMMAND's threadRef, not the event's: the saga normalized it to the
@@ -226,6 +238,15 @@ public class IntegrationSaga {
      * real, spending the notice permanently and invisibly.
      */
     private Optional<ActionCommand> archivedNotice(String reviewId, NoticeTrigger trigger) {
+        // Observe mode forbids comments outright and the notice IS a comment. Refused here rather
+        // than at each trigger because all three converge on this one builder — and the archived
+        // gate runs in handle() ahead of the whole switch, so no gate inside onManualCommand could
+        // ever reach this path. Declining early does not burn the once-ever notice: the claim is
+        // taken by the WORKER on posting, so it stays available for when the deployment goes active.
+        if (policy.observeOnly()) {
+            LOG.infof("No archived notice on %s — observe-only mode posts no comments", reviewId);
+            return Optional.empty();
+        }
         if (isBotAuthored(reviewId, trigger.author())) {
             LOG.debugf("No archived notice on %s — the trigger is the bot's own comment", reviewId);
             return Optional.empty();
@@ -288,6 +309,13 @@ public class IntegrationSaga {
         if (policy.observeOnly()) {
             timeline.record("integration", "ManualCommandObserveOnly", reviewId,
                     "/" + e.command() + " refused: the deployment is in observe-only mode");
+            // A DURABLE row too, unlike the authorization refusal above. That one stays in-memory
+            // because a prober could grow the history without bound — an argument that cannot reach
+            // here, since this gate is downstream of the allowlist and only a listed colleague
+            // arrives. The timeline is a 500-entry in-memory ring lost on restart, so without this
+            // an operator asking "why did nothing happen" after a restart has no record at all.
+            projection.appendEvent(reviewId, "integration", "ManualCommandObserveOnly",
+                    "/" + e.command() + " refused — observe-only mode");
             LOG.infof("Refusing /%s on %s — observe-only mode", e.command(), reviewId);
             return;
         }

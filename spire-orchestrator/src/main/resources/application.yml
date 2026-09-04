@@ -230,8 +230,10 @@ mp:
             reset: earliest
         failure-strategy: ignore
 
-# Global review mode (see ReviewPolicy). observe = register PR events, emit no
-# work (no diff/LLM/comments). The live value lives in the DB (app_setting, key
+# Global review mode (see ReviewPolicy). observe = register SCM-originated triggers
+# (PR events, /commands, replies), emit no work (no diff/LLM/comments). An operator's own
+# admin REST action — the Re-run button, POST /api/runs — is the deliberate exception.
+# The live value lives in the DB (app_setting, key
 # review.mode) and is flipped from the Settings slider without a restart — that
 # stored value is the sole control. The seed default (fresh DB, before the slider
 # is ever used) is "observe" in code — safe first contact. The per-provider author

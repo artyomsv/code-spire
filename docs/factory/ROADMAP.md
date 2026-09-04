@@ -283,6 +283,26 @@ the **per-provider allowlist**, not by operator role — so on a deployment with
 operator believes the deployment is only watching. The operator's override is the setting they
 already own: turn observe mode off.
 
+**It closed three paths, not one, and the other two were found by review rather than by the
+plan.** A `/command` was the obvious one. An author **reply** is the widest — an @-mention makes
+it eligible regardless of thread ownership AND removes the per-thread turn cap, so where
+`/review` lost one paid call this loses an unbounded number; the realistic exposure is not a
+fresh deployment but the operator gesture the slider exists for, flipping an ACTIVE deployment
+to observe to pause the bot, at which point every thread is still bot-owned. The third is the
+**archived-review notice**, which posts a fixed-text comment and runs in `handle()` ahead of the
+whole switch — so no gate inside `onManualCommand` could ever have reached it. All three are
+now gated in `IntegrationSaga`, deliberately in one file: the defect was enforcement scattered
+across classes with one site missed, so "where is observe enforced?" has a single answer.
+
+**One thing is deliberately NOT gated: the operator's own authenticated REST action.** The
+dashboard Re-run button and `POST /api/runs` are `spire-admin`, which makes them the operator
+exercising a posture they themselves own — the exact actor the allowlist argument above does
+not describe. Gating them would leave "go globally active" as the only way to review a single
+pull request while evaluating, which is the workflow observe mode exists to serve. So the line
+is **SCM-originated triggers are refused; operator REST actions are the override**, and it is
+written into `ReviewPolicy`'s javadoc, `application.yml`, `.env.example`, the mode toggle's
+own tooltip and SMOKE-TEST Mode B rather than left to be re-derived.
+
 The gate sits **after** the allowlist and **before** the command switch, and both positions are
 load-bearing. After the allowlist, because that gate answers whether this person's command counts at
 all, and reporting "the deployment is passive" about someone who was never authorized names the
