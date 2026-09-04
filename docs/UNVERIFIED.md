@@ -210,6 +210,15 @@ Not work. Written down because each has been rediscovered at least once.
   matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
   wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
   and nothing should depend on this arm until then.
+- **The M2 loop is covered in three places and joined in none.** Finding → fix run → push →
+  reconciliation is what M2 exists to close. `FixRunDispatcherTest` proves the dispatch,
+  `Adr040ExistingBranchTest` proves the push against a real remote with real containers, and
+  `ReviewChainTest` proves review and reconciliation against a real GitLab. **Nothing proves the
+  halves meet**, and it is not a matter of effort: a run unit lands on the default bridge and
+  cannot resolve the e2e stack's `gitlab` service, because `RunUnitSpec` has no network and
+  `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
+  security control in `compose.e2e.yml`, so it is not the answer.
+  — `techdebt/spire-runtime-docker/2-3-a-run-unit-cannot-join-a-user-defined-network.md`
 - **The publisher's trunk floor is not exercised end to end, and a container test cannot reach it.**
   `Adr040ExistingBranchTest` drives a run naming `main` as its branch and proves the trunk is
   untouched — but deleting `PublisherConfig.looksLikeATrunk` leaves that test GREEN. A control probe
