@@ -341,10 +341,20 @@ public class IntegrationSaga {
      * {@code /fix} with no thread has no target at all, which is refused rather than guessed —
      * guessing would dispatch a paid agent at whatever finding happened to be newest.
      *
-     * <p><b>Refusals here SPEAK</b>, like {@code /finding}'s. The author cleared the allowlist, so
-     * they are a colleague who used the command somewhere it cannot work, not a prober; silence
-     * would send them hunting a lost webhook, which this project has already paid for once with the
-     * conversation turn cap.
+     * <p><b>Refusals here are recorded, not yet spoken, and that is a gap rather than a design.</b>
+     * {@code /finding}'s refusal emits {@link ActionCommand.RefuseFinding} and reaches the author;
+     * there is no {@code RefuseFix} anywhere in the tree, so today a refused {@code /fix} produces a
+     * timeline note, a durable review-history row and a log line — and silence on the pull request.
+     * That silence is the symptom this project has already paid for twice (the conversation turn
+     * cap, the archived notice), so it is not acceptable as an end state. The reply needs a new
+     * {@code ActionCommand} member, a contract-snapshot update and a worker handler, all of which
+     * are the dispatch slice's surface; it lands there. An earlier draft of this javadoc claimed the
+     * refusals already spoke, which was the "a claim in module A about the behaviour of module B"
+     * defect this project's own review notes name as one of the two most expensive to rediscover.
+     *
+     * <p>Note types follow {@code /finding}'s split rather than flattening it: {@code skipped:} when
+     * a precondition means the command could not be evaluated at all, {@code refused:} when it was
+     * understood and declined.
      *
      * <p><b>Ordering is the same lesson {@code /finding} learned.</b> The registration check comes
      * first because an unregistered pull request clears every gate ahead of it — {@code archived}
@@ -359,40 +369,91 @@ public class IntegrationSaga {
      * money moves on this path.
      */
     private void requestFix(String reviewId, ManualCommandReceived e) {
+        // DENY BY DEFAULT, and only for this command. An empty provider allowlist means "review
+        // everyone" by deliberate design, which is the right default for one spend-capped model call
+        // and the wrong one for a command whose output is a branch pushed as the machine account.
+        // AUTONOMY.md Rule 3 already names this threat in as many words -- "a drive-by contributor
+        // ... the factory writes and merges their code using the operator's credentials" -- and rules
+        // that the factory's actor list must be its own rather than the SCM review allowlist. This is
+        // the minimum shape of that rule; the separate per-provider list is the fuller one. It also
+        // closes allowlistFor's other everyone-answer: an unresolvable provider yields List.of().
+        if (allowlistFor(reviewId).isEmpty()) {
+            refuse(reviewId, "/fix needs an explicit author allowlist on the provider — an empty list "
+                    + "means review everyone, which is not the same as letting everyone push code");
+            return;
+        }
         if (!projection.registered(reviewId)) {
-            refuseFix(reviewId, "no registered review for this PR — open or update the pull request first");
+            skip(reviewId, "no registered review for this PR — open or update the pull request first");
             return;
         }
         if (e.threadRef() == null) {
-            refuseFix(reviewId, "/fix names the finding by the thread it is typed in — reply to the "
+            skip(reviewId, "/fix names the finding by the thread it is typed in — reply to the "
                     + "review comment for the finding you want fixed");
             return;
         }
         ThreadRef root = threads.rootOf(reviewId, e.threadRef());
         Optional<FindingProjection.TargetFinding> target = findings.findByThread(reviewId, root.value());
         if (target.isEmpty()) {
-            refuseFix(reviewId, "no finding on this thread — /fix works on a thread the reviewer opened "
-                    + "for a finding");
+            // Deliberately does NOT say "there is no finding here", which would be false on Bitbucket.
+            // That SCM threads by immediate parent and only the bot's own comments get a review_thread
+            // row, so a /fix typed as a reply to another HUMAN's reply resolves to that reply's id and
+            // matches nothing -- while the finding comment sits visibly a few comments up. rootOf's own
+            // javadoc documents the gap and calls it "harmless for the anchor"; it is not harmless for
+            // a message that asserts something about the reader's repository. Tracked in techdebt.
+            refuse(reviewId, "I could not match this thread to a finding — reply directly to the review "
+                    + "comment the finding was posted on");
             return;
         }
         FindingProjection.TargetFinding finding = target.get();
         if (finding.isResolved()) {
-            refuseFix(reviewId, "that finding is already resolved, so a fix run would have nothing to do");
+            refuse(reviewId, "that finding is already resolved, so a fix run would have nothing to do");
             return;
         }
-        String what = finding.severity() + " at " + finding.path() + ":" + finding.startLine();
+        if (finding.isFromConversation()) {
+            // FR-F27's premise is that a finding IS a complete task specification. A human-filed one
+            // is not: its message and suggestion are NULL by design, so an agent would be handed a
+            // severity, a path and a line. Refused here rather than left for the dispatch to discover,
+            // because by then the target has been accepted and the only remaining options are paying
+            // for a run on an empty spec or retracting an acceptance.
+            refuse(reviewId, "that finding was filed from a discussion, so it carries no description a "
+                    + "fix run could work from — describe it in a review comment instead");
+            return;
+        }
+        String what = describe(finding);
         timeline.record("integration", "FixRequested", reviewId, what);
         // Durable, because the timeline is a 500-entry in-memory ring lost on restart and this is the
-        // record of a human asking for money to be spent on their behalf.
+        // record of a human asking for money to be spent on their behalf. Keyed to the conversation
+        // ROOT, which is what lets the detail projection group this row with the thread it belongs to.
         projection.appendEvent(reviewId, "integration", "FixRequested",
                 "@" + username(e.author()) + " asked for a fix: " + what, root.value());
         LOG.infof("/fix on %s targets finding %d (%s)", reviewId, finding.id(), what);
     }
 
-    /** A refusal the author can act on: what went wrong AND what to do instead. */
-    private void refuseFix(String reviewId, String why) {
-        timeline.record("integration", "skipped:/" + CommentCommands.FIX, reviewId, why);
-        LOG.infof("Skipping /%s on %s — %s", CommentCommands.FIX, reviewId, why);
+    /** Severity may be stored blank when a model omitted it, so it is not concatenated blindly. */
+    private static String describe(FindingProjection.TargetFinding finding) {
+        String severity = finding.severity() == null || finding.severity().isBlank()
+                ? "finding" : finding.severity();
+        return severity + " at " + finding.path() + ":" + finding.startLine();
+    }
+
+    /** A precondition means the command could not be evaluated at all. */
+    private void skip(String reviewId, String why) {
+        recordFixOutcome(reviewId, "skipped:/" + CommentCommands.FIX, why);
+    }
+
+    /** The command was understood and declined — what went wrong AND what to do instead. */
+    private void refuse(String reviewId, String why) {
+        recordFixOutcome(reviewId, "refused:/" + CommentCommands.FIX, why);
+    }
+
+    private void recordFixOutcome(String reviewId, String type, String why) {
+        timeline.record("integration", type, reviewId, why);
+        // Durable for the same reason the success path and the observe-mode gate are: the timeline is
+        // in-memory and lost on restart, and this gate is downstream of the allowlist, so the "a
+        // prober could grow the history without bound" argument that keeps the authorization refusal
+        // in memory cannot reach here.
+        projection.appendEvent(reviewId, "integration", type, why);
+        LOG.infof("%s on %s — %s", type, reviewId, why);
     }
 
     /**

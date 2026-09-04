@@ -91,6 +91,40 @@ class FindingProjectionTest {
         assertEquals(0, findings.countFor(REVIEW));
     }
 
+    /**
+     * The rule {@code /fix} dispatches on, and it is NOT "the newest row wins".
+     *
+     * <p>Writing this test corrected the production comment. A finding re-posted at the same anchor
+     * does get a new row each round, but {@code ATTACH_THREAD_REF} orders by
+     * {@code (thread_ref = ?) DESC}, so a row already carrying the ref beats the newest unattached
+     * one — deliberately, so a redelivery lands where it landed the first time. The consequence is
+     * that AT MOST ONE row ever carries a ref, and it is the round that first posted the thread.
+     *
+     * <p>That is the right target: it is the finding actually posted in the thread the author is
+     * replying to. It also explains why flipping the query to {@code ASC} changed nothing — the
+     * match set has one element. The claim that it was a newest-wins rule was the defect.
+     */
+    @Test
+    void findByThreadAnswersTheFindingTheThreadWasAttachedTo() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 10, Severity.MINOR, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-live", "src/A.java", 10)));
+        findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/A.java", 10, Severity.BLOCKER, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-live", "src/A.java", 10)));
+
+        FindingProjection.TargetFinding target = findings.findByThread(REVIEW, "thread-live").orElseThrow();
+        assertEquals(1, target.round(), "the ref stays on the round that first posted the thread");
+        assertEquals(Severity.MINOR.name(), target.severity(), "round 1's row, not round 2's");
+        assertEquals("review", target.origin(), "a model-generated finding carries a description");
+    }
+
+    /** Empty means the thread names no finding — the one answer this method may give for that. */
+    @Test
+    void findByThreadAnswersEmptyForAThreadThatNamesNoFinding() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 10, Severity.MINOR, null)));
+
+        assertTrue(findings.findByThread(REVIEW, "thread-nothing").isEmpty());
+    }
+
     @Test
     void attachesTheThreadEachPostedFindingLandedIn() {
         findings.recordGenerated(REVIEW, 1, COMMIT, List.of(

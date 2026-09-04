@@ -455,8 +455,14 @@ class IntegrationSagaPolicyTest {
     }
 
     /**
-     * A command with no handler is refused too — which is what makes the gate cover the
-     * {@code /fix} this milestone has not added yet, rather than the two commands that exist today.
+     * A command with no handler is refused too, so the gate covers commands this milestone has not
+     * added yet rather than only the three that exist today.
+     *
+     * <p><b>The command name must be one the switch does NOT handle, and this test lost that once
+     * already.</b> It was written driving {@code "fix"} while {@code /fix} had no handler; two
+     * commits later {@code /fix} gained one, and the case silently became a test of an ENUMERATED
+     * command — its stated guarantee asserted by nothing, while staying green. Verified by
+     * narrowing the gate to the enumerated set: with {@code "fix"} the suite still passed.
      *
      * <p>It does NOT pin "the gate precedes the switch": replicating the gate inside every
      * {@code case} arm passes this. That placement is structural, argued at the call site, and
@@ -465,7 +471,7 @@ class IntegrationSagaPolicyTest {
     @Test
     void aCommandWithNoHandlerIsAlsoRefusedInObserveMode() {
         var saga = sagaWith(policyMode(true), provider(List.of()));
-        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "fix", "",
+        saga.on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "nonesuch", "",
                 Author.of("acc-1", "alice", "Alice")));
         assertTrue(notes.contains("ManualCommandObserveOnly"),
                 "the gate must precede the switch, or every future command inherits the hole again");

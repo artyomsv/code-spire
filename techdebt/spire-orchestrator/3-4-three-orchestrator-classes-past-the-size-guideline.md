@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Large |
-| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/RunResource.java` (**~530** lines), `.../factory/FactoryRunProjection.java` (**~450** lines) |
+| Location | `spire-orchestrator/src/main/java/dev/codespire/orchestrator/readmodel/ReviewProjection.java` (**2,503** lines), `.../pipeline/ResultSaga.java` (**598** lines), `.../pipeline/IntegrationSaga.java` (**724** physical / **425** code lines, added 2026-09-04), `.../attention/AttentionQueries.java` (**432** lines), `.../factory/RunResource.java` (**~530** lines), `.../factory/FactoryRunProjection.java` (**~450** lines) |
 | Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. |
 | Date | 2026-08-07 (updated 2026-08-09) |
 

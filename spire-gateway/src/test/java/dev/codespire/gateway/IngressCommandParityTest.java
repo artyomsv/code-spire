@@ -81,6 +81,7 @@ class IngressCommandParityTest {
                     "provider " + c.provider());
             assertEquals("fix", e.command(), c.provider() + " command");
             assertEquals("rename the shadowed field", e.args(), c.provider() + " args");
+            assertEquals(7, e.prId(), c.provider() + " prId");
             assertEquals(new ThreadLocation("src/Foo.java", 44), e.location(), c.provider() + " location");
             assertNotNull(e.threadRef(), c.provider() + " threadRef");
         }
