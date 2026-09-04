@@ -27,7 +27,7 @@ dependencies {
     // JGit logs through SLF4J 1.7. With no binding it prints a three-line warning to stderr at
     // every start, which the worker's log stream then carries for every run. The publisher's
     // reporting channel is its stdout JSON lines by design (ADR-039); a logger adds nothing.
-    runtimeOnly("org.slf4j:slf4j-nop:1.7.36")
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
