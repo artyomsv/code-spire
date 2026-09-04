@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.scm.RepoRef;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,6 +75,14 @@ class FixTargetsTest {
         assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable());
     }
 
+    /** Whitespace on the commit too — it was seeded for the branch only, and the asymmetry hid a bug. */
+    @Test
+    void refusesARowWhoseCommitIsOnlyWhitespace() {
+        insert("OPEN", "feature/login", "develop", "   ");
+
+        assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable());
+    }
+
     /** {@code commit_sha} carries the same blank default and the same in-container failure. */
     @Test
     void refusesARowWhoseCommitWasNeverRecorded() {
@@ -89,10 +98,10 @@ class FixTargetsTest {
         insert("OPEN", "feature/login", "develop", "TESTSHA1");
         FixTargets.PushTarget target = targets.forReview(REVIEW).orElseThrow();
 
-        assertTrue(target.belongsTo("github", "TEST-WS", "TEST-REPO"));
-        assertFalse(target.belongsTo("gitlab", "TEST-WS", "TEST-REPO"), "provider must match");
-        assertFalse(target.belongsTo("github", "OTHER-WS", "TEST-REPO"), "workspace must match");
-        assertFalse(target.belongsTo("github", "TEST-WS", "OTHER-REPO"), "slug must match");
+        assertTrue(target.belongsTo(new RepoRef("TEST-WS", "TEST-REPO")));
+
+        assertFalse(target.belongsTo(new RepoRef("OTHER-WS", "TEST-REPO")), "workspace must match");
+        assertFalse(target.belongsTo(new RepoRef("TEST-WS", "OTHER-REPO")), "slug must match");
     }
 
     /**

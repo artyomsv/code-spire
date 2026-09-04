@@ -177,7 +177,7 @@ public class FactoryRunProjection {
                          String baseCommit, String branch, String pushedAs,
                          UUID harnessCredentialId) {
             this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, "BUILD", null, null);
+                    harnessCredentialId, RunKind.BUILD.name(), null, null);
         }
 
         /**
@@ -191,8 +191,15 @@ public class FactoryRunProjection {
          * either, so a caller cannot half-apply this.
          */
         public QueuedRun asFixFor(String reviewId, String findingRef) {
+            // Refused here rather than one layer away as a constraint violation, which is the same
+            // argument ExecuteRun's compact constructor makes. isBlank rather than isEmpty because
+            // V54 uses btrim(...) <> '' -- matching it exactly is what keeps the two from drifting.
+            if (reviewId == null || reviewId.isBlank() || findingRef == null || findingRef.isBlank()) {
+                throw new IllegalArgumentException("a fix run must name the review and the finding "
+                        + "it fixes, or neither cap can count it");
+            }
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, "FIX", reviewId, findingRef);
+                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef);
         }
     }
 
@@ -274,6 +281,15 @@ public class FactoryRunProjection {
                    AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit
                    AND factory_run.branch = EXCLUDED.branch
                    AND factory_run.pushed_as IS NOT DISTINCT FROM EXCLUDED.pushed_as
+                   -- What the run is FOR and what it fixes, compared like every other component of
+                   -- its identity. Without these three the method's own stated property -- "a
+                   -- differing retry matches no row here and is refused by the caller" -- was
+                   -- silently false for them: a BUILD row re-armed as FIX would stay BUILD, so
+                   -- NEITHER cap would count it, which is the cap failing open in the direction
+                   -- V54 exists to prevent.
+                   AND factory_run.kind = EXCLUDED.kind
+                   AND factory_run.review_id IS NOT DISTINCT FROM EXCLUDED.review_id
+                   AND factory_run.finding_ref IS NOT DISTINCT FROM EXCLUDED.finding_ref
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);

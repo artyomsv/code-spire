@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.scm.RepoRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -50,6 +51,22 @@ public class FixTargets {
     /** The one pull-request state a fix may be pushed to. */
     private static final String OPEN = "OPEN";
 
+    /**
+     * Why a fix may not be pushed to a pull request.
+     *
+     * <p>An enum rather than a boolean plus prose elsewhere, so a caller that renders reasons must
+     * handle every cause — exhaustively, at compile time. Adding a cause here without wording it
+     * breaks the build, which is the guarantee a test over a fixed matrix cannot give.
+     */
+    public enum Unpushable {
+        /** The source branch lives in the contributor's repository, not this one. */
+        FORK,
+        /** Merged or closed: no later round would reconcile the fix. */
+        NOT_OPEN,
+        /** No branch or head commit recorded yet — both default to blank, not null. */
+        NOT_RECORDED_YET
+    }
+
     @Inject
     DataSource dataSource;
 
@@ -98,18 +115,40 @@ public class FixTargets {
          * to read it and V55 gave it a column. Until then this javadoc said so plainly rather than
          * carrying a field that was always false — which would have read as a check and been none.
          */
-        public boolean isPushable() {
-            // A fork's source branch lives in ANOTHER repository, while the clone URL is built from
-            // this row's workspace and slug — so pushing the name resolves against the wrong
-            // repository. ADR-040 puts forks out of scope for `existing` mode, and this is the
-            // clause that makes that a rule rather than a sentence in a document.
-            //
+        /**
+         * Why a fix may not be pushed here, or empty when it may.
+         *
+         * <p><b>ONE encoding of this rule, and the boolean derives from it.</b> An earlier shape had
+         * this class answer a boolean and the dispatch answer a cause, which is two encodings of one
+         * rule — the exact shape that produced two credential scrubbers here whose rules quietly
+         * diverged. A 36-case test asserted they agreed, and that test could only ever check
+         * WHETHER, never WHICH: swapping two causes passed it, and so did a fourth cause the
+         * boolean did not model at all. Deriving makes the agreement structural, and makes a cause
+         * added here without wording fail the BUILD rather than a loop.
+         */
+        public Optional<Unpushable> whyNotPushable() {
+            if (fromFork) {
+                // A fork's source branch lives in ANOTHER repository, while the clone URL is built
+                // from this row's workspace and slug — so pushing the name resolves against the
+                // wrong repository. ADR-040 puts forks out of scope for `existing` mode, and this
+                // is the clause that makes that a rule rather than a sentence in a document.
+                return Optional.of(Unpushable.FORK);
+            }
+            if (!OPEN.equals(prState)) {
+                return Optional.of(Unpushable.NOT_OPEN);
+            }
             // Both string columns, because both are NOT NULL DEFAULT '' and both fail the same way:
             // the publisher's Env.required refuses a blank INSIDE the container, after the agent has
-            // been paid. Guarding one and not the other was an oversight, not a distinction. And
-            // isBlank rather than isEmpty, because a whitespace ref is not empty and still reaches
-            // git — a null check is not needed at all, since neither column can be null.
-            return OPEN.equals(prState) && !fromFork && !sourceBranch.isBlank() && !commit.isBlank();
+            // been paid. isBlank rather than isEmpty, because a whitespace ref is not empty and
+            // still reaches git — and no null check, since neither column can be null.
+            if (sourceBranch.isBlank() || commit.isBlank()) {
+                return Optional.of(Unpushable.NOT_RECORDED_YET);
+            }
+            return Optional.empty();
+        }
+
+        public boolean isPushable() {
+            return whyNotPushable().isEmpty();
         }
 
         /**
@@ -120,10 +159,8 @@ public class FixTargets {
          * one step less exotic than the fork gap this slice filed: a branch name resolved against
          * one repository and pushed against another.
          */
-        public boolean belongsTo(String providerType, String workspace, String slug) {
-            return this.providerType.equals(providerType)
-                    && this.workspace.equals(workspace)
-                    && this.slug.equals(slug);
+        public boolean belongsTo(RepoRef repo) {
+            return workspace.equals(repo.workspace()) && slug.equals(repo.slug());
         }
     }
 }

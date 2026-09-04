@@ -1,6 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
-import dev.codespire.orchestrator.readmodel.FindingProjection;
+import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -22,12 +22,29 @@ class FixDispatchTest {
 
     private static final String REVIEW = "review::acme/web#412";
     private static final String THREAD = "thread-aaa";
+    private static final RepoRef REPO = new RepoRef("acme", "web");
 
     private FixTargets.PushTarget target =
             new FixTargets.PushTarget("github", "acme", "web", 412L, "feature/login", "develop",
                     "cafe1234", "OPEN", false);
     private FixRuns.Decision cap = FixRuns.Decision.ALLOWED;
     private int attempt = 1;
+
+    /**
+     * What the dispatch ASKED FOR, not just what it did with the answer.
+     *
+     * <p>Both fakes used to discard every parameter and return a field, which left a whole family
+     * of argument-identity mutations green: transposing {@code reviewId} and {@code threadRef} in
+     * the cap call makes both caps count on keys that match nothing and fail open FOREVER; doing it
+     * in the attempt call makes every fix attempt 1, so the second collides on a run id and is
+     * dropped by the worker's claim as a redelivery. Silently, both of them.
+     */
+    private String askedCapReview;
+    private String askedCapFinding;
+    private int askedPerFinding;
+    private int askedPerReview;
+    private String askedAttemptReview;
+    private String askedAttemptFinding;
 
     private FixDispatch dispatch() {
         FixDispatch dispatch = new FixDispatch();
@@ -40,20 +57,36 @@ class FixDispatchTest {
         dispatch.fixRuns = new FixRuns() {
             @Override
             public Decision decide(String reviewId, String findingRef, int perFinding, int perReview) {
+                askedCapReview = reviewId;
+                askedCapFinding = findingRef;
+                askedPerFinding = perFinding;
+                askedPerReview = perReview;
                 return cap;
             }
 
             @Override
             public int nextAttempt(String reviewId, String findingRef) {
+                askedAttemptReview = reviewId;
+                askedAttemptFinding = findingRef;
                 return attempt;
+            }
+
+            // The recorded trap: an un-overridden method on a fake opens a real DataSource from a
+            // plain unit test. These two are not on this path, and saying so loudly is cheaper
+            // than discovering it as an NPE.
+            @Override
+            public int forFinding(String reviewId, String findingRef) {
+                throw new AssertionError("the dispatch must go through decide(), not count directly");
+            }
+
+            @Override
+            public int forReview(String reviewId) {
+                throw new AssertionError("the dispatch must go through decide(), not count directly");
             }
         };
         return dispatch;
     }
 
-    private static FindingProjection.TargetFinding finding() {
-        return new FindingProjection.TargetFinding(77L, 2, "src/Foo.java", 44, 48, "HIGH", null, "review");
-    }
 
     /**
      * <b>The two copies of this rule must agree, and nothing else makes them.</b>
@@ -72,11 +105,14 @@ class FixDispatchTest {
         for (String state : new String[] {"OPEN", "MERGED", "CLOSED"}) {
             for (boolean fork : new boolean[] {false, true}) {
                 for (String branch : new String[] {"feature/login", "", "   "}) {
-                    for (String commit : new String[] {"cafe1234", ""}) {
+                    // Whitespace on BOTH axes. It was seeded for the branch and not the commit, so
+                    // isBlank -> isEmpty on the commit survived here AND in FixTargetsTest — the
+                    // same finding as an earlier round, on the axis that round did not cover.
+                    for (String commit : new String[] {"cafe1234", "", "   "}) {
                         var candidate = new FixTargets.PushTarget("github", "acme", "web", 412L,
                                 branch, "develop", commit, state, fork);
                         target = candidate;
-                        boolean planned = dispatch().plan(REVIEW, THREAD, finding())
+                        boolean planned = dispatch().plan(REVIEW, THREAD, REPO)
                                 instanceof FixDispatch.Planned;
                         assertEquals(candidate.isPushable(), planned,
                                 "disagreement on " + state + "/fork=" + fork + "/branch='" + branch
@@ -90,7 +126,7 @@ class FixDispatchTest {
     @Test
     void plansARunThatPushesToThePullRequestsOwnSourceBranch() {
         FixDispatch.Planned planned = assertInstanceOf(FixDispatch.Planned.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
 
         // base and branch are the SAME branch, which is the whole point of ADR-040's existing mode:
         // the fix is committed onto the branch the review already watches.
@@ -98,6 +134,37 @@ class FixDispatchTest {
         assertEquals("feature/login", planned.branch());
         assertEquals("develop", planned.protectedBranch());
         assertEquals("cafe1234", planned.baseCommit());
+        // Transposing these two was a survivor, and the run id is built from them.
+        assertEquals("github", planned.providerType());
+        assertEquals("acme", planned.workspace());
+        assertEquals("web", planned.slug());
+    }
+
+    /**
+     * <b>Which axis each collaborator was asked about, and with which numbers.</b>
+     *
+     * <p>Nothing asserted this, so transposing the two keys in either call passed 8/8 — and the cap
+     * transposition makes both caps count on keys that match nothing, which is FR-F32 failing open
+     * with no symptom at all. The cap NUMBERS were pinned by nothing either, so widening
+     * {@code MAX_PER_FINDING} to 200 was equally invisible.
+     */
+    @Test
+    void asksEachCollaboratorAboutTheRightAxis() {
+        dispatch().plan(REVIEW, THREAD, REPO);
+
+        assertEquals(REVIEW, askedCapReview);
+        assertEquals(THREAD, askedCapFinding);
+        assertEquals(FixDispatch.MAX_PER_FINDING, askedPerFinding);
+        assertEquals(FixDispatch.MAX_PER_REVIEW, askedPerReview);
+        assertEquals(REVIEW, askedAttemptReview);
+        assertEquals(THREAD, askedAttemptFinding);
+    }
+
+    /** And the two caps are not the same number, or transposing them would prove nothing. */
+    @Test
+    void theTwoCapsAreDistinctSoTransposingThemIsVisible() {
+        assertTrue(FixDispatch.MAX_PER_FINDING != FixDispatch.MAX_PER_REVIEW,
+                "equal caps would make the axis assertions above vacuous");
     }
 
     /**
@@ -109,10 +176,45 @@ class FixDispatchTest {
         attempt = 3;
 
         FixDispatch.Planned planned = assertInstanceOf(FixDispatch.Planned.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
 
-        assertTrue(planned.runId().contains(THREAD), planned.runId());
-        assertTrue(planned.runId().endsWith(":3"), planned.runId());
+        // Exact, because the run id IS the address: FactoryRunProjection parses it straight back
+        // into provider_type/workspace/slug. A substring check accepts a transposed id that files
+        // every row and every charge line under a repository that does not exist.
+        assertEquals("run::github:acme/web:" + THREAD + ":3", planned.runId());
+    }
+
+    /**
+     * ADR-040 §3's repository match, which existed as a tested method nothing called.
+     *
+     * <p>The hazard is one step less exotic than the fork gap: a branch name resolved against one
+     * repository and pushed against another. The shape was inside-out — {@code plan} resolved the
+     * coordinates from the review and REPORTED them, rather than being told the ones the comment
+     * arrived on and PROVING they match.
+     */
+    @Test
+    void refusesWhenTheReviewBelongsToADifferentRepository() {
+        FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
+                dispatch().plan(REVIEW, THREAD, new RepoRef("acme", "other-repo")));
+
+        assertTrue(refused.why().contains("different repository"), refused.why());
+    }
+
+    /**
+     * The cap outranks a MISSING pull request too, not only a merged one.
+     *
+     * <p>The sibling case covers cap-versus-state; moving the cap check below the "no such review"
+     * branch survived it, because that case runs with the cap allowing. Same argument: a capped
+     * finding should hear about the cap rather than be sent to investigate a review row.
+     */
+    @Test
+    void reportsTheCapRatherThanTheMissingPullRequest() {
+        cap = FixRuns.Decision.refused("this pull request has already had 3 fix run(s)");
+        target = null;
+
+        FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
+                dispatch().plan(REVIEW, THREAD, REPO));
+        assertTrue(refused.why().contains("already had 3"), refused.why());
     }
 
     @Test
@@ -120,7 +222,7 @@ class FixDispatchTest {
         target = null;
 
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
         assertTrue(refused.why().contains("no pull request"), refused.why());
     }
 
@@ -131,7 +233,7 @@ class FixDispatchTest {
                 "cafe1234", "MERGED", false);
 
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
         assertTrue(refused.why().contains("no longer open"), refused.why());
     }
 
@@ -141,7 +243,7 @@ class FixDispatchTest {
                 "cafe1234", "OPEN", true);
 
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
         assertTrue(refused.why().contains("fork"), refused.why());
     }
 
@@ -151,7 +253,7 @@ class FixDispatchTest {
         cap = FixRuns.Decision.refused("this finding has already had 2 fix run(s)");
 
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
         assertEquals("this finding has already had 2 fix run(s)", refused.why());
     }
 
@@ -169,7 +271,7 @@ class FixDispatchTest {
                 "cafe1234", "MERGED", false);
 
         FixDispatch.Refused refused = assertInstanceOf(FixDispatch.Refused.class,
-                dispatch().plan(REVIEW, THREAD, finding()));
+                dispatch().plan(REVIEW, THREAD, REPO));
         assertTrue(refused.why().contains("already had 3"), refused.why());
     }
 }

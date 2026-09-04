@@ -24,7 +24,8 @@ class ExecuteRunBranchModeTest {
     private static RunCommand.ExecuteRun run() {
         return new RunCommand.ExecuteRun("run::github:acme/app:subject:1", new RepoRef("acme", "app"),
                 "https://github.com/acme/app.git", "main", "cafe1234", "spire/fix", "do the thing",
-                "codex", "gpt-x", "img", List.of(), 900, "scm", "harness");
+                "codex", "gpt-x", "img", List.of(), 900,
+                "TEST-scm-token-do-not-print", "TEST-harness-key-do-not-print");
     }
 
     /**
@@ -93,6 +94,19 @@ class ExecuteRunBranchModeTest {
         }
     }
 
+    /**
+     * A fix pushes to a pull request's SOURCE branch, so naming its destination is a caller bug.
+     *
+     * <p>The publisher refuses exactly this, and that refusal is the floor — but it fires inside a
+     * container after an image pull and a clone. The compact constructor already refuses a blank
+     * destination on that argument; refusing this one is the same argument applied to the other
+     * half of what the publisher checks.
+     */
+    @Test
+    void aRunMayNotPushToTheBranchItNamesAsOffLimits() {
+        assertThrows(IllegalArgumentException.class, () -> run().onExistingBranch("spire/fix"));
+    }
+
     /** The credentials stay redacted, and the new components are not secret so they are shown. */
     @Test
     void theStringFormShowsTheModeAndStillHidesTheCredentials() {
@@ -100,7 +114,11 @@ class ExecuteRunBranchModeTest {
 
         assertTrue(shown.contains("existingBranch=true"), shown);
         assertTrue(shown.contains("protectedBranch=develop"), shown);
-        assertFalse(shown.contains("scm\""), shown);
+        // Assert the VALUE is absent, not a string that could never appear. The previous check was
+        // `contains("scm\"")`, and toString emits no quote character anywhere — so it could not
+        // fail, and the redaction was carried entirely by the line below it.
+        assertFalse(shown.contains("TEST-scm-token-do-not-print"), shown);
+        assertFalse(shown.contains("TEST-harness-key-do-not-print"), shown);
         assertTrue(shown.contains("scmCredential=***"), shown);
     }
 }

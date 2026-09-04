@@ -123,6 +123,13 @@ public sealed interface RunCommand {
                 throw new IllegalArgumentException("a run pushing to an existing branch must name "
                         + "the pull request's destination branch, which it may never push to");
             }
+            // The other half of what the publisher checks, refused for the same reason: catching it
+            // in the container after an image pull and a clone is too late, and reports as a
+            // misconfigured publisher rather than as a command that should never have been sent.
+            if (existingBranch && branch.equals(protectedBranch.strip())) {
+                throw new IllegalArgumentException("a fix is pushed to a pull request's SOURCE "
+                        + "branch, and this run names its destination: " + branch);
+            }
         }
 
         /** Whether this run pushes to a branch that already exists (ADR-040). */

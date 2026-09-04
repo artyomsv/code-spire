@@ -280,7 +280,7 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 |---|---|---|
 | `work_item` | run bookkeeping per `(work_source, repo, issue_id)` | **not** an issues mirror — no title, no body, no status of the ticket itself |
 | `work_item_gate` | one row per open or resolved approval | expiry timestamp, resolver, channel |
-| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, timings, failure cause + detail | **delivered** (V43 + V45/V47/V49–V53). No `phase` and no `runtime` column — both were sketched here and neither was built; phases arrive with M4 |
+| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, timings, failure cause + detail, and what the run is FOR (kind, review_id, finding_ref — V54, which FR-F32 counts) | **delivered** (V43 + V45/V47/V49–V54). No `phase` and no `runtime` column — both were sketched here and neither was built; phases arrive with M4 |
 | `run_event` | bounded transcript | TTL'd; encrypted where it may quote source (ADR-011 boundary) |
 
 **`runworker` schema** — its own, NOT the review worker's `worker` schema (schema-per-service,
