@@ -148,10 +148,27 @@ So M2 owns real work, not wiring:
 
 ```java
 public interface PullRequestSink {          // new port, three implementations
-    PullRequestRef open(RepoRef repo, String head, String base, PrBody body);
-    Optional<PullRequestRef> findByHead(RepoRef repo, String head);   // idempotency
+    ScmType type();
+    PullRequestRef open(RepoRef repo, NewPullRequest request);
+    Optional<PullRequestRef> findByHead(RepoRef repo, String headBranch);   // idempotency
+
+    record NewPullRequest(String headBranch, String baseBranch, String title, String bodyMd) { }
+    class NothingToPropose extends RuntimeException { }   // the agent changed nothing
 }
 ```
+
+Built in M2 and this is the shipped shape, not a sketch. Three differences from the draft above it
+are worth naming because each was forced by a forge rather than chosen:
+
+- **`type()`**, like every other port, so a composition root can assert it selected the adapter it
+  meant to.
+- **A `NewPullRequest` record rather than four positional arguments.** Two adjacent `String`
+  branches in a signature is the transposition this repository has already paid for elsewhere, and
+  the record's compact constructor is where head-equals-base is refused — every forge rejects that
+  with an opaque message about "no commits", which sends an operator to the wrong problem.
+- **`NothingToPropose`**, because "the agent changed nothing" arrives as a 4xx on all four forges
+  and reads like a failure on all four. Naming it in the PORT is what lets a caller tell it apart
+  from a permission fault without knowing which forge answered. See SCM-MAPPING.md §8.
 
 The **pull-request half above is still true**; the credential half is not, and was overtaken by M0.
 The FACTORY-role account's single token already clones AND pushes — `RunResource` packs it,

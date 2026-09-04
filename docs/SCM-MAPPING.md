@@ -92,6 +92,55 @@ Replies inherit the parent's anchor on every provider — never resend the ancho
 Note the GitLab divergence: `ScmIngress.verifySignature` is per-provider — HMAC for GitHub/Bitbucket, a
 constant-time token compare for GitLab.
 
+## 8. Open a pull request → `PullRequestSink` (M2)
+
+The only WRITE in this document that creates a resource rather than commenting on one. Nothing in
+the codebase did this before M2 — the reviewer only ever commented on pull requests other people
+opened.
+
+> **What is established, and what is not.** The GitHub column is implemented and covered by
+> `GitHubPullRequestSinkTest` — but those tests drive a WireMock stub that this repository wrote,
+> so they establish what the ADAPTER does, never what GitHub does. **No column here has been
+> measured against a live API.** The endpoints and field names come from each vendor's
+> documentation; the quoted ERROR STRINGS are the least reliable rows in the table, because every
+> forge rewords them without notice and none of them is a code you can switch on. Treat a string
+> match as a heuristic with a fallback, which is what `GitHubPullRequestSink` does — an unmatched
+> 4xx stays a fault rather than being guessed into an outcome. `docs/UNVERIFIED.md` carries this.
+
+| neutral operation | Bitbucket Cloud | GitHub | GitLab | Bitbucket DC |
+|---|---|---|---|---|
+| **open** | `POST /repositories/{ws}/{slug}/pullrequests` | `POST /repos/{owner}/{repo}/pulls` | `POST /projects/{id}/merge_requests` | `POST /projects/{k}/repos/{slug}/pull-requests` |
+| source branch field | `source.branch.name` | `head` | `source_branch` | `fromRef.id` (full ref) |
+| target branch field | `destination.branch.name` | `base` | `target_branch` | `toRef.id` (full ref) |
+| description field | `description` | `body` | `description` | `description` |
+| **number in the response** | `id` | `number` | `iid` (NOT `id`) | `id` |
+| **web URL in the response** | `links.html.href` | `html_url` | `web_url` | `links.self[0].href` |
+| **find by source branch** | `GET …/pullrequests?q=source.branch.name="X" AND state="OPEN"` | `GET …/pulls?state=open&head={owner}:{X}` | `GET …/merge_requests?source_branch=X&state=opened` | `GET …/pull-requests?at=refs/heads/X&direction=OUTGOING&state=OPEN` |
+| **"nothing to propose"** | 400, `"There are no changes to be pulled"` | 422, `"No commits between …"` | 409, `"branch conflicts"` / empty-diff 400 | 409, `"the from and to refs are the same"` |
+| **already exists** | 400, names the existing request | 422, `"A pull request already exists for …"` | 409, `"Another open merge request already exists"` | 409, duplicate |
+
+Four divergences are load-bearing, and each is a trap this repository has paid for in its own form:
+
+1. **GitLab numbers a merge request twice.** `iid` is the per-project number in the URL and in every
+   API path; `id` is a global identifier that addresses nothing a human sees. Reading `id` produces a
+   number that looks entirely valid and points at another project's merge request. This is why
+   `PullRequestRef` names the component `number` rather than `id`.
+2. **Bitbucket DC takes FULL REFS, not branch names.** `refs/heads/x`, where the other three take
+   `x`. An adapter that passes a bare name gets a 400 that names neither field.
+3. **Only GitHub refuses a duplicate.** Bitbucket and GitLab will happily open a second pull request
+   from the same source branch. So idempotency cannot be "let the forge decide" — it is
+   `findByHead` first, in every adapter, and the port says so.
+4. **"Nothing to propose" is a different status on every forge** and on none of them is it an error
+   code you can switch on. It is the honest outcome of a run whose agent changed nothing, and each
+   adapter maps its own forge's wording to `PullRequestSink.NothingToPropose` so a caller never has
+   to know which forge it is talking to.
+
+**No label.** GitHub and GitLab have label APIs for pull requests; Bitbucket Cloud has none. A
+"factory-authored" label would therefore be a mark that exists on two forges out of three — which is
+worse than no mark, because a consumer learns to trust it and is then silently wrong on the third.
+The mark is a fixed marker at the top of the description instead, written by the orchestrator, and
+it is identical on all four.
+
 ## Sources
 Bitbucket Cloud: developer.atlassian.com/cloud/bitbucket/rest + support.atlassian.com event-payloads ·
 GitHub: docs.github.com/rest/pulls · GitLab: docs.gitlab.com/api/merge_requests, /discussions ·

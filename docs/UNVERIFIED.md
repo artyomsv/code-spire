@@ -188,6 +188,13 @@ Not work. Written down because each has been rediscovered at least once.
   the remote is removed after the clone. What is missing is the second line of defence. Closing it
   needs a forge-specific read scope, which is a product decision rather than a code change; the
   six documents now say what the code does.
+- **Every per-forge string in SCM-MAPPING §8 is read from vendor documentation, not measured.**
+  The pull-request-open mapping — endpoints, field names, and especially the quoted error wordings
+  for "nothing to propose" and "already exists" — has met no live API. `GitHubPullRequestSinkTest`
+  drives a WireMock stub this repository wrote, so it establishes what the adapter does with a
+  given response and nothing about what GitHub actually sends. The adapter is built so a wrong
+  guess degrades safely: an unmatched 4xx stays a fault rather than being reported as "the agent
+  changed nothing". The GitLab and Bitbucket rows have no implementation behind them at all yet.
 - **`/fix` trusts the pull-request state the deployment last saw, not the one that is true now.**
   `pr_state` is set to `OPEN` by every pull-request event, so a redelivery after a merge flips a
   closed pull request back to pushable in `FixTargets` — the row is the KEY to the target, never
