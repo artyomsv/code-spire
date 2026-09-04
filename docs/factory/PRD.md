@@ -221,10 +221,16 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   model's good zone), but the repository carries *what* was done and never *why*, so without this a
   later step re-derives or contradicts an earlier choice and the completion gate has no record to
   judge against.
-- **FR-F32 — Bounded fix chains [M2].** A fix run records the finding id it addresses, and dispatch
-  refuses when that finding already has N fix runs. Otherwise a finding on PR-1 spawns PR-2, whose
-  review raises a finding that spawns PR-3, indefinitely — each hop individually within its caps,
-  and a fix dispatched outside a work item having no item to count against.
+- **FR-F32 — Bounded fix chains [M2], on two axes.** A fix run records **both** the finding it
+  addresses and the review it belongs to; dispatch refuses past N fix runs for one finding **and**
+  past M for one review. Two axes because one does not bound the loop this requirement is about:
+  each hop of "a finding spawns a fix, whose review raises a finding, which spawns a fix" raises a
+  **new** finding with a new identity, so a per-finding counter never reaches N. The per-review axis
+  is what bounds the chain — and under ADR-040 a fix stays on the reviewed pull request, so one
+  review IS the chain. The per-finding axis still earns its place: it stops repeated attempts at one
+  stubborn finding. The finding reference must be stable across rounds, which `review_finding.id` is
+  not (P4 rewrites those rows delete-then-insert per round); use `(review_id, thread_ref)`, which is
+  what ADR-019 reconciliation already keys on.
 
 ### 4.4 Autonomy, gates and policy
 
@@ -330,8 +336,9 @@ attention row. Both halves are required: the first alone celebrates the ungated 
 killing the sandbox mid-run yields a classified failure, not a stall; exhausting one credential
 rotates to the next without re-charging the call.
 
-**M2** — a work item produces a pull request that the existing reviewer reviews, and round two
-reconciles the findings from round one.
+**M2** — a review FINDING (no work item; those are M3) is dispatched as a fix run, the fix pushes to
+the open pull request's own source branch under ADR-040, the existing reviewer reviews the result,
+and round two reconciles the original finding as resolved.
 
 **M3** — a ticket labelled at each of three profiles produces three visibly different journeys; a
 label above the ceiling is clamped and says so; a label applied by an unlisted actor is ignored.

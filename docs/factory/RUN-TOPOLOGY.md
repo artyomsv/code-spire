@@ -331,8 +331,8 @@ Two tokens, different scopes, different containers — **the design. Not what sh
 >
 > Closing it needs a forge-specific read scope (a GitHub fine-grained PAT with `contents:read`,
 > a GitLab `read_repository` token) packed as a second envelope. Tracked in
-> `docs/UNVERIFIED.md` §E; `ROADMAP.md` already records
-> `separatePushCredential` as false everywhere.
+> `docs/UNVERIFIED.md` §E. A separate push credential is reserved by the design and is a field in
+> no type today — the name appears in these documents and in zero Java files.
 
 | Credential | Container | Scope | Notes |
 |---|---|---|---|

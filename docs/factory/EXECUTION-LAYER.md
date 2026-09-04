@@ -209,9 +209,11 @@ one day splits them.** On all three shipped forges a single credential already c
 | GitLab | PAT with `api` + `write_repository` | yes | yes |
 | Bitbucket | API token / app password | yes | yes |
 
-So `separatePushCredential` is a declared capability that is **false everywhere today**. It exists so
-that a forge which splits them later is an adapter change, not a redesign — the same reason
-`RepoRef.forge` and the other unused-but-shaped fields exist in the SCM contract.
+So a **separate push credential is reserved by this design and is not a field in any type** — it was
+described here as "a declared capability" before M0 and no such capability was ever declared
+(`HarnessCapabilities` and `RuntimeCapabilities` carry no such component; the name appears in these
+documents and in zero Java files). The reservation still holds: a forge that splits the two later is
+an adapter change, not a redesign. Adding the field is the work at that point.
 
 Two rules that are not optional:
 

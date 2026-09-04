@@ -74,7 +74,7 @@ fail the build on the project's own name.
 2. A second run whose agent modifies a CI-configuration file is **refused at the push gate**,
    preserves its workspace, and raises an attention row naming the paths.
 
-**Delivered (2026-09-01, PR #95).** Both criteria are proven by `M0WalkingSkeletonTest`
+**Delivered (2026-09-02, PR #95).** Both criteria are proven by `M0WalkingSkeletonTest`
 (`spire-run-worker`, `testServices` tier) against real containers — the publisher image built from
 this repository, the reference agent entrypoint with a shell script standing in for the model, and a
 self-built smart-HTTP git origin on the Docker network behind basic auth — and by runbook
@@ -226,21 +226,46 @@ reviewer reviews the result.
   codebase — that name came from prior art. The real ports are `ScmIngress` / `DiffSource` /
   `CommentSink`, and **none can open a pull request**; nothing here ever has. This is real work, not
   wiring, and the "M0–M2 is mostly plumbing" argument was too cheap before it was listed.
-- **Git-push credentials**, also new: the registry token is brokered today for API calls only, and
-  under ADR-038 the push credential belongs to the machine account. Whether one token serves both is
-  decided here, per forge.
+- **Git-push credentials are DELIVERED, not new work.** M0 shipped them: the FACTORY-role account's
+  one token clones and pushes (`RunResource` packs it, `Credentials` unpacks it into read and write
+  slots, `PublishRepo` pushes with it, `V44__scm_provider_role.sql` keys the lookup). The per-forge
+  question this bullet used to ask was already answered before M0 — see the pre-M0 table below.
+  What M2 adds is the **API** call that opens a pull request with the same token.
 - The reviewer reviews the result; ADR-019 reconciliation handles round two unchanged. Run cost posted
   on the pull request.
-- **Fix-chain accounting (FR-F32)** — a fix run records the finding id it addresses, and dispatch
-  refuses past N fix runs for that finding.
-- `factory_run` read model and the Runs screen: lifecycle strip, live event stream, budget panel,
-  prompt.
+- **Fix-chain accounting (FR-F32), on TWO axes.** The original single axis does not bound the loop
+  it names. Counting per **finding** stops retry thrash on one finding, but the runaway the
+  requirement describes — a finding spawns a fix, whose review raises a finding, which spawns a fix —
+  gives every hop a NEW finding id, so a per-finding counter never reaches N. The chain is bounded
+  per **review**, which under ADR-040 is exactly one pull request because a fix pushes to the branch
+  the review already watches. Both axes, checked at the same choke point as `SpendGate`.
+  Needs a stable finding reference, which `review_finding.id` is NOT — P4 rewrites those rows
+  delete-then-insert per `(review_id, round)`. Use `(review_id, thread_ref)`, which is what ADR-019
+  reconciliation already keys on.
+- **The Runs screen.** The `factory_run` read model is DELIVERED (V43, plus V45/V47/V49–V53).
+  Missing is everything an operator can see: there is **no `GET /api/runs` list endpoint** (only
+  detail and transcript), and `spire-ui` contains no factory screen at all — dispatch resolution and
+  the harness credential pool are `curl` today
+  (`techdebt/spire-ui/4-3-the-factory-has-no-screens-at-all.md`).
+  **No prompt panel.** V43 leaves the dispatched prompt out of the read model on purpose — it is a
+  work item's text, it can quote source, and DATA-MODEL §5 keeps that class of content out of a
+  queryable read model. Showing it means storing it encrypted like `run_event.payload`, which is a
+  decision, not a panel. Deferred unless someone makes that decision explicitly.
 
-**The fix target is not always a new pull request.** A fix for a finding on an open same-repository
-pull request pushes to **that pull request's source branch**, because reconciliation is keyed per
-review and a new pull request is a new review with no prior run — the original finding could never
-resolve. Fork pull requests and default-branch findings get a new branch and a new pull request, and
-the documents say plainly that reconciliation does not join there.
+**The fix target is not always a new pull request, and this is a SECURITY-FLOOR change (ADR-040).**
+A fix for a finding on an open same-repository pull request pushes to **that pull request's source**
+**branch**, because reconciliation is keyed per review and a new pull request is a new review with no
+prior run — the original finding could never resolve. Fork pull requests and default-branch findings
+get a `spire/` branch and a new pull request, and reconciliation does not join there.
+
+The first draft of this line read as a routing rule. It is not. **M0's publisher refuses that push**
+— `PublisherConfig.branch(...)` refuses any branch outside `spire/` and any branch equal to its base,
+and its javadoc calls both security controls rather than hygiene, because the publisher holds the
+only write credential in the run unit and the push gate judges paths, not refs. Permitting the push
+is **ADR-040**: an explicit `existing` mode, never inferred; the destination branch and the default
+branch still refused; the proof that a branch really is an open pull request's source branch made by
+the ORCHESTRATOR from `review_status`, never by the publisher. A non-fast-forward is a reportable
+outcome, never a force push — a human owns that branch.
 
 **Configuration rule enforced here:** the review model and prompt must differ from the build model
 and prompt.
@@ -254,14 +279,48 @@ observe mode is a bug
 (`techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`); a factory *writing and pushing code*
 in observe mode is a different order of failure, and it is not inherited here.
 
+**What M0/M1 added to this milestone that the first draft did not list.** Each is caused by a
+decision taken during the build, not by a change of mind here.
+
+| Work | The M0/M1 decision that causes it |
+|---|---|
+| The `existing` branch mode and its refusals | M0's `BRANCH_NAMESPACE` floor and branch≠base rule |
+| A "branch moved" outcome that is re-dispatchable at the new head | M1's `NON_FAST_FORWARD` cause; the publisher clones the base branch and never rebases |
+| `attempt > 1` per subject | `RunResource.FIRST_ATTEMPT = 1` and a 409 on any repeat — "M0 runs each subject once". FR-F32's N is unreachable until this moves |
+| `review_id` + `finding_ref` + `kind` on `factory_run` (V54) | Nothing today joins a run to a review, so neither the cap nor "run cost on the pull request" can be computed |
+| A finding reference on `ReviewDetail.FindingView`, and `GET /api/runs` | The dashboard has no id to dispatch with, and no list to render |
+| `ChargeKind.FIX` | `ChargeCall.forRun` hard-codes `BUILD`; V42 already admits `FIX` |
+| The **factory-authored attribute** on the review row | ADR-038 requires it and nothing writes it — zero hits in `.java` or `.sql` |
+| Allowing the machine account as a pull-request AUTHOR | ADR-038's role split covers the push identity only. Same-branch fixes are fine (the author stays the human); a NEW factory pull request is skipped by `IntegrationSaga`'s allowlist unless the operator lists the account |
+| **`spire-run-worker` in `deploy/`** | It is in no compose file, no GHCR compose and no Helm chart. M2 is the shippable boundary and there is currently no way to ship the factory at all |
+
+**Two prerequisites, before M2 code.**
+
+1. **Run SMOKE-TEST Mode Q against a real forge.** `docs/UNVERIFIED.md` §B records that cancel,
+   steer, the watchdog, the push gate and the charge ledger *"have only ever met a WireMock LLM and a
+   local origin"*. M2 puts a real finding through every one of them.
+2. **Close the observe-mode gap for all three commands at once.** M2 promises `/fix` refuses in
+   observe mode. `policy.observeOnly()` is read in `onPullRequestEvent` and never in
+   `onManualCommand`, so `/review` and `/finding` already bypass it
+   (`techdebt/global/3-2-slash-finding-bypasses-observe-mode.md`). One gate at the top of the command
+   path closes three paths; adding `/fix` alone widens the gap to four.
+
+**One High debt is carried, not closed.** The run unit's shared workspace volume still has no disk
+bound (`techdebt/spire-runtime-docker/2-3-…`, RUN-TOPOLOGY §9.7). M2 **widens its trigger surface**:
+today a run starts from an authenticated `POST /api/runs`; after `/fix` it starts from a pull-request
+comment by any allowlisted author. Carried deliberately, with §9.7 stated as a deployment
+prerequisite.
+
 **Exit criterion.** A finding raised on an open pull request is dispatched as a fix run without a
-tracker, pushes to that pull request's source branch, and the next review round reconciles the
-original finding as resolved.
+tracker, pushes to that pull request's source branch under ADR-040's `existing` mode, and the next
+review round reconciles the original finding as resolved — with `main` and the pull request's
+destination branch proven still refused in that same mode.
 
 **FRs:** FR-F21, F27, F32.
 
 **This is the shippable boundary.** Everything before it is infrastructure; everything after it is
-scope.
+scope. It is not shippable while `spire-run-worker` is absent from `deploy/`, which is why that row
+is in the table above.
 
 ---
 
@@ -376,7 +435,7 @@ decided; the sixth needs a fact only the operator holds.
 |---|---|---|---|
 | 1 | Does Codex's sandbox initialize inside a container? | **Measured: NO.** Codex ships **bubblewrap**, and Docker's default seccomp refuses the user namespace it needs. (An earlier probe measured Landlock and said yes — wrong primitive.) Decision: keep default seccomp, run `--sandbox danger-full-access`, **the container is the boundary**. And Codex is confirmed to *work* in a container: it answered a prompt and completed a real agentic edit-and-commit on subscription auth. | [RUN-TOPOLOGY §1](./RUN-TOPOLOGY.md) |
 | 1b | Where does the workspace live, across replicas and nodes? | **In the run pod, nowhere else** (ADR-039). The pod clones itself, checkpoints continuously to the branch, and is destroyed; the forge is the durable state. The bind-mounted-workspace design made the worker stateful and broke run recovery. | [RUN-TOPOLOGY §2–3](./RUN-TOPOLOGY.md) |
-| 2 | Does one token serve both forge API and git push? | **Yes on all three forges** — GitHub App installation token, GitHub PAT, GitLab PAT with `write_repository`, Bitbucket API token. One credential per (machine account, provider); `separatePushCredential` is a declared capability, false everywhere today, so a forge that splits them later is an adapter change. Never the review bot's credential; injected per run; never URL-embedded. | [EXECUTION-LAYER §3.4](./EXECUTION-LAYER.md) |
+| 2 | Does one token serve both forge API and git push? | **Yes on all three forges** — GitHub App installation token, GitHub PAT, GitLab PAT with `write_repository`, Bitbucket API token. One credential per (machine account, provider); A separate push credential is **reserved by the design and declared in no type** (the name is in these documents and in zero Java files), so a forge that splits them later is an adapter change. Never the review bot's credential; injected per run; never URL-embedded. | [EXECUTION-LAYER §3.4](./EXECUTION-LAYER.md) |
 | 3 | The protected-path matcher and refusal surface | **The JDK's `PathMatcher` with `glob:` syntax** — no new dialect, no dependency. (`PathGlobs` was named in a first draft and is the wrong tool: it maps a path *to* a group glob, it does not match one *against* a glob.) Match the changed-path set against base, **both sides of a rename**, **deletions included**; the CI floor matches **case-insensitively**. Refusal is `push_gate_refused`, naming every blocked path. | [AUTONOMY §5](./AUTONOMY.md) |
 | 4 | The run charge row's shape | `review_id` → **`subject_id` + `subject_kind`** (`REVIEW`\|`RUN`); `kind` CHECK extended with `SPEC`, `PLAN`, `BUILD`, `FIX`; `CallRefs` gains `run:{runId}:{seq}` (the attempt already lives in the run id, so a second `{attempt}` segment would restate it). Ten existing reads updated in the same migration. A run id in a column named `review_id` was rejected outright. | [ARCHITECTURE §7](./ARCHITECTURE.md) |
 | 5 | The run worker's channel semantics | **Its own topics** — `cs.run-commands` / `cs.run-control` / `cs.run-results` — because `ActionCommand` declares `reviewId()` as mandatory and a run has a `runId`; a run id behind a method named `reviewId()` is a name that lies. The worker **writes `run_claim` then acks** (that order — the reverse loses the command on a crash); concurrency is a bounded executor, not consumer parallelism. | [ARCHITECTURE §5.1](./ARCHITECTURE.md) |
