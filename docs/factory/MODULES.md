@@ -191,10 +191,19 @@ anything at all from `dev.codespire.workspace` — the allowlist is empty, and a
 a statement that whatever that module drags onto the classpath is acceptable in a process that must
 hold no working copy.
 
-**One behaviour worth knowing.** A secret shorter than `MIN_SECRET_LENGTH` (8) is not scrubbed at
-all, because redacting a short string turns every innocent occurrence of it into the marker and
-leaves an operator a failure detail they cannot read. Where a caller can refuse a too-short secret
-outright it does — `EnterpriseEnvironmentConfig` fails startup on a proxy password below the floor.
+**One behaviour worth knowing.** Every secret is scrubbed, whatever its length.
+
+A floor once skipped anything under eight characters, on the reasoning that redacting a short string
+turns every innocent occurrence of it into the marker and leaves an operator a failure detail they
+cannot read. That reasoning about readability is right and the trade was wrong: it spent a security
+property to buy a legibility one, at the instant the value IS a live credential. Gitea and Forgejo
+issue six-character git-over-HTTP passwords, and one was reaching `factory_run.failure_detail`
+verbatim.
+
+`MIN_PLAUSIBLE_SECRET_LENGTH` survives only as the threshold for a warning that redacting a short
+secret will also hide innocent text — one an operator can act on, where the old silence was not.
+There is deliberately no refusal anywhere: "a credential must be eight characters" is a rule about
+what an operator may configure, and it would block a working Gitea deployment.
 
 ## 9a. `spire-publisher` — the sidecar that gates and pushes
 

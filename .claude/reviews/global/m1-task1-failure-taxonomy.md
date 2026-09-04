@@ -32,7 +32,12 @@ Rounds completed: 1
 - [sec-L6 / qa-F10] Three control-plane causes are accepted from the worker's channel, and the orchestrator is a fourth producer the scan does not cover — `techdebt/spire-run-worker/4-1-the-orchestrator-writes-a-cause-outside-the-taxonomy.md`
 - [qa-F9 / sec-L4] Both migrations' row rewrites are exercised by no test; two lenses verified them by hand on a real Postgres — `techdebt/spire-orchestrator/4-3-migration-row-rewrites-are-verified-by-hand-only.md`
 - [sec-L7] The viewer-readable failure detail stays an accepted posture with its condition now met; the entry records two content classes the first version did not weigh and is marked for re-decision — `techdebt/spire-orchestrator/4-1-a-runs-failure-detail-is-readable-by-a-viewer.md`
-- [sec-L2] The Basic-auth pair uses only the read username, the length floor drops that form too, and `URLEncoder` is form-encoding rather than RFC 3986 — latent while a deployment carries one alphanumeric token
+- [sec-L2] **CLOSED in PR #107**, all three halves. This entry named the read-username pairing, the
+  length floor and `URLEncoder`'s form-encoding together, and correctly called them "latent while a
+  deployment carries one alphanumeric token" — so it sat Open while every half stayed reachable.
+  Two later rounds found them one at a time without noticing the entry that already named all
+  three. Worth reading before opening another: an Open entry naming several defects is not a
+  single item, and the one that goes latent last is the one nobody re-reads.
 - [sec-L5 / cr-S1] `V47` drops an auto-named constraint by a guessed name; the guess is correct (verified on Postgres 18 by two lenses) and a projection test proves it landed, but `V44`'s `pg_constraint` lookup is the better pattern
 - [rules-1, NFR-F9] `spire-ui` has no factory-run surface, so `delivered_nothing` has no UI half. This project has shipped that gap twice, both times defaulting into the success branch — belongs to the M1 UI work
 

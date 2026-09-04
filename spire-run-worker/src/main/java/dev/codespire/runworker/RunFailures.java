@@ -84,19 +84,25 @@ public class RunFailures {
      * degradation is reported once, below, without either.
      */
     SecretScrub scrubFor(RunCommand.ExecuteRun command) {
-        List<String> secrets = new ArrayList<>();
-        String username = null;
+        List<SecretScrub.Credential> forms = new ArrayList<>();
         try {
             Credentials.Scm scm = credentials.scm(command.runId(), command.scmCredential());
-            username = scm.readUsername();
-            secrets.add(scm.readSecret());
-            secrets.add(scm.writeSecret());
+            // EACH secret with ITS OWN username. The comment below has always said this, and the
+            // code paired both secrets with readUsername -- so on a deployment that issues two
+            // accounts the write token's base64 form was base64(readUser:writeSecret), a string
+            // that appears on no wire. Exactly the defect this class already records for the
+            // proxy credential, in the same method, two credentials apart.
+            forms.add(new SecretScrub.Credential(scm.readUsername(), scm.readSecret()));
+            forms.add(new SecretScrub.Credential(scm.writeUsername(), scm.writeSecret()));
         } catch (RuntimeException undecryptable) {
             LOG.warnf("run %s: the machine account's credentials could not be decrypted to redact "
                     + "them; this run's failure details are unscrubbed for it", command.runId());
         }
         try {
-            secrets.addAll(credentials.harnessEnv(command.runId(), command.harnessCredential()).values());
+            // No username: an API key rides a Bearer header, not a Basic pair, so a base64 form
+            // built for it would match nothing.
+            credentials.harnessEnv(command.runId(), command.harnessCredential()).values()
+                    .forEach(secret -> forms.add(new SecretScrub.Credential(null, secret)));
         } catch (RuntimeException undecryptable) {
             LOG.warnf("run %s: the harness credential could not be decrypted to redact it; this "
                     + "run's failure details are unscrubbed for it", command.runId());
@@ -106,14 +112,22 @@ public class RunFailures {
         // rather than at each call site so the transcript and the failure detail are covered by
         // the one scrub that already covers both.
         //
-        // Each carries its OWN username, because the base64 form is base64(user:secret) and the
-        // proxy credential paired with the SCM username produced a string that appears on no wire.
-        List<SecretScrub.Credential> credentials = new ArrayList<>();
-        for (String secret : secrets) {
-            credentials.add(new SecretScrub.Credential(username, secret));
+        // GUARDED like the two above it, and that symmetry was missing. This call reaches a URL
+        // an operator typed, so it is the likeliest of the three to fault -- and unguarded, one
+        // bad proxy value disarmed the SCM and harness scrub too, which is the opposite of the
+        // per-credential degradation this method documents.
+        try {
+            forms.addAll(enterprise.proxyCredentials());
+        } catch (RuntimeException underivable) {
+            LOG.warnf("run %s: the proxy credential could not be derived to redact it; this run's "
+                    + "failure details are unscrubbed for it", command.runId());
         }
-        credentials.addAll(enterprise.proxyCredentials());
-        return credentials.isEmpty() ? SecretScrub.none() : SecretScrub.of(credentials);
+        // Defence in depth: nothing places this on a container and no daemon pull error echoes
+        // it, so it reaches no surface today. It is a credential this deployment holds, and the
+        // cost of covering it is one entry.
+        enterprise.registryCredential().ifPresent(registry ->
+                forms.add(new SecretScrub.Credential(registry.username(), registry.secret())));
+        return forms.isEmpty() ? SecretScrub.none() : SecretScrub.of(forms);
     }
 
     /**
