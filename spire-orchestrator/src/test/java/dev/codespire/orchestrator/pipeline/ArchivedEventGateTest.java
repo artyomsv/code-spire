@@ -18,6 +18,7 @@ import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ArchiveOutcome;
 import dev.codespire.orchestrator.readmodel.ReviewFixtures;
@@ -269,7 +270,7 @@ class ArchivedEventGateTest {
     private static Optional<ScmProvider> provider(List<String> authors) {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "TEST-PROVIDER", "github",
                 "https://example.invalid", WS, "bearer", null, "TEST-SECRET", BOT_ACCOUNT_ID, true,
-                authors, null, null));
+                authors, null, null, ProviderRole.REVIEWER));
     }
 
     private IntegrationSaga sagaAnsweringEveryone() {

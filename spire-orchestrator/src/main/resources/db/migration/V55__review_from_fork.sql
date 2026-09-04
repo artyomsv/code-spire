@@ -1,0 +1,22 @@
+-- Whether a pull request's source branch lives in a different repository than its base.
+--
+-- ADR-040 puts fork pull requests out of scope for the `existing` branch mode, and until now the
+-- deployment could not tell one from a branch pull request -- no ingress parsed the source
+-- repository and no column held the answer. A fix run pushes to source_branch in the repository
+-- workspace/slug names, and for a fork those two do not belong together: either the base repository
+-- has no branch of that name and the push creates a stray one attached to no pull request, or it
+-- does and a machine-authored commit from a different diff lands on someone else's work.
+--
+-- NULLABLE, with no default, because "unknown is never zero" (ADR-023) applies to a boolean too.
+-- An earlier draft of this migration defaulted to false and argued the default was safe because
+-- nothing consumed the column yet. That was true for about a day: FixDispatch now refuses a fork,
+-- and RunUnitBuilder now writes SPIRE_BRANCH_MODE from a chain that starts here. A row written
+-- before this migration came from a deployment that could not distinguish a fork from a branch
+-- pull request, so false would not be a reading of that row -- it would be a guess, made by the
+-- migration, that the gate then treats as an answer. A fork review that never sees another
+-- pull-request event would authorise a push on the strength of it.
+--
+-- So old rows say NULL, FixTargets reads that as PROVENANCE_UNKNOWN and refuses, and the next
+-- pull-request event writes the real answer for every row the deployment still cares about.
+-- The cost is one refused /fix on a stale review, whose message says exactly what to do.
+ALTER TABLE review_status ADD COLUMN from_fork BOOLEAN;

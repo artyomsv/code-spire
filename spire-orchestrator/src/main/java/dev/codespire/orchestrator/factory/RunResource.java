@@ -6,7 +6,6 @@ import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
-import dev.codespire.orchestrator.pipeline.BrokerAckFailure;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -24,7 +23,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -52,34 +53,16 @@ public class RunResource {
     /** M0: one attempt per subject. A re-run is a later milestone's decision, not a default. */
     private static final int FIRST_ATTEMPT = 1;
 
-    /** Stored on the row, which a viewer reads; the broker's own exception text goes to the log. */
-    static final String DISPATCH_FAILED_DETAIL = "the broker did not acknowledge the command; retry the same request";
+    // What a failed dispatch WRITES ON THE ROW moved to RunLaunch with the publish itself, because
+    // the /fix path records the identical row states and two spellings of them would drift. What a
+    // failed dispatch SAYS TO AN HTTP CALLER stays here: it is this endpoint's wording, and a saga
+    // has no 503 to say it in.
 
-    /**
-     * Stored on the row for an uncertain dispatch, and deliberately not the phrasing above.
-     *
-     * <p>"Retry the same request" is the wrong instruction here and the expensive one: the record may
-     * already be on the topic, so a retry is how a second agent ends up on the branch.
-     *
-     * <p>Per-run rather than a constant, because it names the endpoint. There is no factory UI, so
-     * {@code GET /api/runs/{id}} is the operator's actual surface, and this is the only one of the
-     * four messages about this condition that survives a page reload — the 503, the 409 and the
-     * attention row are all transient. A detail ending "resolve it explicitly" with no address left
-     * the durable one as the least useful.
-     *
-     * <p>Phrased as the consequence rather than as an order. "Do NOT retry" is an imperative on a
-     * state row, and it stops being true the day a resolution UI or a reconciler exists.
-     */
-    static String uncertainDetail(String runId) {
-        return "the command was dispatched and never acknowledged; whether it is running is unknown."
-                + " A retry would publish a second command. If it started, its result will resolve this"
-                + " row; otherwise POST {\"neverRan\": true} to " + resolutionPath(runId);
-    }
+    /** A list page big enough to be useful and small enough that nobody waits for it. */
+    private static final int DEFAULT_RUN_PAGE = 50;
 
-    /** Named once, so the four messages about this condition cannot address it differently. */
-    static String resolutionPath(String runId) {
-        return "/api/runs/" + runId + "/dispatch-resolution";
-    }
+    /** And a ceiling, because an unbounded list over a table that grows per run gets slower forever. */
+    private static final int MAX_RUN_PAGE = 500;
 
     /** A transcript page, never the whole stream: the per-run cap is ten thousand events. */
     private static final int DEFAULT_TRANSCRIPT_PAGE = 200;
@@ -95,6 +78,13 @@ public class RunResource {
     @Inject
     RunEventProjection transcripts;
 
+    @Inject
+    RunLaunch launch;
+
+    /**
+     * Still injected for CONTROL. Cancel and steer publish to a different topic and record no row
+     * state on failure, so they have nothing to share with the dispatch leg and did not move.
+     */
     @Inject
     RunCommandEmitter emitter;
 
@@ -174,17 +164,29 @@ public class RunResource {
      * one as null, and packing a null login was a 500 AFTER the row existed — a subject burned.
      */
     private ScmProvider machineAccount(DispatchRequestParser.Parsed in) {
-        ScmProvider account = machineAccounts.resolve(in.scmType(), in.workspace())
-                .orElseThrow(() -> conflict("No FACTORY-role provider is registered for "
-                        + in.scmType().providerType() + "/" + in.workspace() + ". Register the machine "
-                        + "account under Settings -> Providers with role FACTORY (ADR-038). "
-                        + "The factory never pushes as the review bot."));
-        if (account.botUsername() == null || account.botUsername().isBlank()) {
-            throw conflict("The FACTORY-role provider for " + in.scmType().providerType() + "/" + in.workspace()
-                    + " has no resolved login. Re-save it with a token the forge can identify, or set the "
-                    + "bot username by hand: the login is what the push is authenticated as.");
+        return machineAccounts.resolve(in.scmType(), in.workspace())
+                .orElseThrow(() -> conflict(whyNoUsableAccount(in)));
+    }
+
+    /**
+     * Which of the two empty answers this was, because an operator fixes them differently.
+     *
+     * <p>{@code MachineAccounts.resolve} refuses a registration with no login as well as a missing
+     * one, and it does so there rather than here so that the {@code /fix} arm cannot forget the
+     * check — on a Kafka consumer the throw this prevents does not become a 500 anyone reads, it
+     * escapes and the record is redelivered in silence. The cost of moving it is that "empty" no
+     * longer names its cause, so this reads the registration back to name it.
+     */
+    private String whyNoUsableAccount(DispatchRequestParser.Parsed in) {
+        String where = in.scmType().providerType() + "/" + in.workspace();
+        if (machineAccounts.registration(in.scmType(), in.workspace()).isPresent()) {
+            return "The FACTORY-role provider for " + where + " has no resolved login. Re-save it "
+                    + "with a token the forge can identify, or set the bot username by hand: the "
+                    + "login is what the push is authenticated as.";
         }
-        return account;
+        return "No FACTORY-role provider is registered for " + where + ". Register the machine "
+                + "account under Settings -> Providers with role FACTORY (ADR-038). "
+                + "The factory never pushes as the review bot.";
     }
 
     /**
@@ -240,18 +242,13 @@ public class RunResource {
      * first, because a record that did land produces a {@code RunStarted} that reopens the row.
      */
     private void dispatch(String runId, RunCommand.ExecuteRun command) {
-        try {
-            emitter.dispatch(command);
-        } catch (IllegalStateException e) {
-            // Caught at IllegalStateException, not at BrokerAckFailure, and the difference matters:
-            // narrowing it let any other publish fault escape as a 500 with the row left `queued`,
-            // so a run nobody will start would sit looking as though it were about to. Anything that
-            // is not a classified ack failure counts as AMBIGUOUS, because a fault we cannot read
-            // tells us nothing about whether the record left — which is the whole rule here.
-            if (e instanceof BrokerAckFailure ack && !ack.mayHaveLanded()) {
-                throw recordDefiniteMiss(runId, e);
-            }
-            throw recordUncertainDispatch(runId, e);
+        // The classification and the row write are RunLaunch's; only the HTTP wording is this
+        // endpoint's. An exhaustive switch, so a fourth outcome added there fails the build here
+        // rather than falling into whichever branch happened to be last.
+        switch (launch.launch(command)) {
+            case RunLaunch.Dispatched ignored -> { }
+            case RunLaunch.DefiniteMiss miss -> throw definiteMiss(runId, miss.cause());
+            case RunLaunch.Uncertain uncertain -> throw uncertainDispatch(runId, uncertain.cause());
         }
     }
 
@@ -261,9 +258,7 @@ public class RunResource {
      * <p>The row stays and says why — deleting it would leave no record of the attempt at all — and
      * this shape IS re-armable, so the operator's identical retry starts the run.
      */
-    private ServerErrorException recordDefiniteMiss(String runId, IllegalStateException cause) {
-        LOG.errorf(cause, "run %s was recorded but the broker refused its dispatch outright", runId);
-        projection.dispatchFailed(runId, DISPATCH_FAILED_DETAIL);
+    private ServerErrorException definiteMiss(String runId, IllegalStateException cause) {
         return new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
                 .entity("Run " + runId + " was recorded but not dispatched: " + cause.getMessage()
                         + ". Retry the same request once the broker is reachable; it re-arms this run.")
@@ -279,15 +274,12 @@ public class RunResource {
      * an operator to grep for a record that may never have been serialized. The wording has to be
      * true of every input to the branch, which is the property the branch was built on.
      */
-    private ServerErrorException recordUncertainDispatch(String runId, IllegalStateException cause) {
-        LOG.errorf(cause, "run %s was recorded and its dispatch attempted, but no acknowledgement came"
-                + " back; whether it is running is unknown until its result arrives or an operator says", runId);
-        projection.dispatchUncertain(runId, uncertainDetail(runId));
+    private ServerErrorException uncertainDispatch(String runId, IllegalStateException cause) {
         return new ServerErrorException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
                 .entity("Run " + runId + " was dispatched and never acknowledged: " + cause.getMessage()
                         + ". It may or may not be running, so it is NOT retried automatically."
                         + " If it started, its own result will resolve this; otherwise resolve it"
-                        + " at " + resolutionPath(runId) + ".")
+                        + " at " + RunLaunch.resolutionPath(runId) + ".")
                 .build(), cause);
     }
 
@@ -428,7 +420,7 @@ public class RunResource {
             // agent on the same branch and pay for the model twice.
             return "Run " + runId + " was published but never acknowledged, so whether it is running is "
                     + "unknown. It is deliberately NOT retried. If it started, its own result will "
-                    + "resolve this row; otherwise resolve it at POST " + resolutionPath(runId)
+                    + "resolve this row; otherwise resolve it at POST " + RunLaunch.resolutionPath(runId)
                     + " and then retry.";
         }
         if (existing != null && FactoryRunProjection.FAILED.equals(existing.status())
@@ -580,6 +572,105 @@ public class RunResource {
     private static int boundedLimit(Integer requested) {
         int asked = requested == null ? DEFAULT_TRANSCRIPT_PAGE : requested;
         return Math.max(1, Math.min(asked, MAX_TRANSCRIPT_PAGE));
+    }
+
+
+    /**
+     * The runs list — the endpoint an operator reaches without already knowing a run id.
+     *
+     * <p>Until now the factory had only {@code GET /api/runs/{id}} and its transcript, so every
+     * question that starts "which run…" needed a database. That is the gap
+     * {@code techdebt/spire-ui/4-3-the-factory-has-no-screens-at-all.md} records.
+     *
+     * <p><b>Viewer as well as admin, matching the detail endpoint.</b> Reading which runs exist is
+     * not the privilege that matters here — DISPATCHING is, and that stays admin-only on the POST.
+     *
+     * <p><b>An unrecognised filter value is refused, never ignored.</b> Silently dropping a typo'd
+     * {@code status=faield} returns every run, which reads as "nothing is stuck" — the most
+     * dangerous possible answer to the question this page is opened to ask.
+     */
+    @GET
+    @RolesAllowed({"spire-viewer", "spire-admin"})
+    public List<FactoryRunProjection.RunListEntry> list(@QueryParam("status") String status,
+                                                        @QueryParam("kind") String kind,
+                                                        @QueryParam("reviewId") String reviewId,
+                                                        @QueryParam("limit") String limit) {
+        return projection.list(new FactoryRunProjection.RunFilter(
+                knownStatus(status), knownKind(kind), blankToNull(reviewId), pageSize(limit)));
+    }
+
+    /**
+     * A status the projection actually writes, or a 400 naming what is accepted.
+     *
+     * <p>Checked against the projection's own constants rather than a list spelled here, so a new
+     * status cannot be filterable in one place and unknown in the other.
+     */
+    private static String knownStatus(String status) {
+        String value = blankToNull(status);
+        if (value == null) {
+            return null;
+        }
+        // Case-folded like the kind filter beside it. The two used to differ -- ?kind=fix worked
+        // and ?status=QUEUED was a 400 -- which is two conventions in one query string.
+        value = value.toLowerCase(Locale.ROOT);
+        if (FactoryRunProjection.STATUSES.contains(value)) {
+            return value;
+        }
+        throw DispatchRequestParser.badRequest("unknown run status '" + value + "'; one of "
+                + FactoryRunProjection.STATUSES);
+    }
+
+    /** And a kind RunKind names, for the same reason. */
+    private static String knownKind(String kind) {
+        String value = blankToNull(kind);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return RunKind.valueOf(value.toUpperCase(Locale.ROOT)).name();
+        } catch (IllegalArgumentException notAKind) {
+            throw DispatchRequestParser.badRequest("unknown run kind '" + value + "'; one of "
+                    + Arrays.toString(RunKind.values()));
+        }
+    }
+
+    /**
+     * A blank query parameter is ABSENT, not a filter matching the empty string.
+     *
+     * <p>{@code ?reviewId=} is what a UI sends when its field is cleared, and treating it as a
+     * filter would answer an empty list — indistinguishable from "there are no runs".
+     */
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    /**
+     * A page size, or a 400 that says what was wrong with the one asked for.
+     *
+     * <p><b>Taken as a String and parsed here rather than as an {@code Integer}.</b> A failed
+     * {@code @QueryParam} conversion is mapped to 404 by JAX-RS, so {@code ?limit=abc} answered
+     * "there is no such endpoint" — about an endpoint that exists, over a typo in a query
+     * parameter.
+     *
+     * <p>A too-large value is clamped and a non-positive one refused, which is deliberate rather
+     * than accidental: asking for more than the ceiling is a client asking for everything, and
+     * giving it the ceiling is the right answer; asking for zero rows is not a request that can be
+     * satisfied at all.
+     */
+    private static int pageSize(String limit) {
+        if (limit == null || limit.isBlank()) {
+            return DEFAULT_RUN_PAGE;
+        }
+        int asked;
+        try {
+            asked = Integer.parseInt(limit.strip());
+        } catch (NumberFormatException notANumber) {
+            throw DispatchRequestParser.badRequest("limit must be a number: '" + limit + "'");
+        }
+        if (asked <= 0) {
+            throw DispatchRequestParser.badRequest("a page of runs needs a positive size: " + asked);
+        }
+        return Math.min(asked, MAX_RUN_PAGE);
     }
 
     @GET

@@ -14,6 +14,7 @@ import jakarta.inject.Inject;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -155,19 +156,48 @@ public class RunUnitBuilder {
         ContainerSpec publisher = new ContainerSpec(
                 publisherImage,
                 List.of("spire-publish"),
-                Map.of("SPIRE_REMOTE_URI", command.remoteUri(),
-                        "SPIRE_BRANCH", command.branch(),
-                        "SPIRE_BRANCH_BASE", command.baseBranch(),
-                        "SPIRE_BASE_COMMIT", command.baseCommit(),
-                        "SPIRE_PROTECTED_PATHS", String.join(",", command.protectedPaths()),
-                        "SPIRE_BUNDLE_MAX_BYTES", Long.toString(BUNDLE_MAX_BYTES),
-                        "SPIRE_GIT_USERNAME", scm.writeUsername(),
-                        "SPIRE_GIT_SECRET", scm.writeSecret()),
+                publisherEnvironment(command, scm),
                 // Read-only, and the ONLY volume it sees. Not the workspace.
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
 
         return new RunUnitSpec(command.runId(), init, agent, publisher,
                 enterprise.environment(),
                 MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
+    }
+
+    /**
+     * What the publisher is told, including where ADR-040 lets it push.
+     *
+     * <p>A {@code HashMap} rather than {@code Map.of}, because the two branch-mode variables are
+     * CONDITIONAL and {@code Map.of} cannot express that. Writing them unconditionally would be
+     * worse than verbose: {@code SPIRE_PROTECTED_BRANCH} set to an empty string reads to the
+     * publisher as "present but blank", which its own required-in-existing-mode check treats
+     * exactly as absent — so the distinction would survive here and be lost there.
+     *
+     * <p>The mode is written only when it is {@code existing}. An absent variable is the M0 rule,
+     * which is the safe direction and the one every run before ADR-040 used.
+     */
+    private static Map<String, String> publisherEnvironment(RunCommand.ExecuteRun command,
+                                                            Credentials.Scm scm) {
+        Map<String, String> env = new HashMap<>();
+        env.put("SPIRE_REMOTE_URI", command.remoteUri());
+        env.put("SPIRE_BRANCH", command.branch());
+        env.put("SPIRE_BRANCH_BASE", command.baseBranch());
+        env.put("SPIRE_BASE_COMMIT", command.baseCommit());
+        env.put("SPIRE_PROTECTED_PATHS", String.join(",", command.protectedPaths()));
+        env.put("SPIRE_BUNDLE_MAX_BYTES", Long.toString(BUNDLE_MAX_BYTES));
+        env.put("SPIRE_GIT_USERNAME", scm.writeUsername());
+        env.put("SPIRE_GIT_SECRET", scm.writeSecret());
+        if (command.pushesToAnExistingBranch()) {
+            env.put("SPIRE_BRANCH_MODE", "existing");
+        }
+        // Written whenever it is known, NOT only in existing mode. The publisher honours it in
+        // every mode, so gating it on the mode meant a pull request targeting a factory branch
+        // (spire/x as a DESTINATION) went unprotected in the default mode — a floor dropped by the
+        // caller rather than by the floor.
+        if (!command.protectedBranch().isBlank()) {
+            env.put("SPIRE_PROTECTED_BRANCH", command.protectedBranch());
+        }
+        return Map.copyOf(env);
     }
 }

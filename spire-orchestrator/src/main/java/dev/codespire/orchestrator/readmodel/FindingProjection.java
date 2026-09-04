@@ -14,6 +14,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The durable per-finding record (P4 / ADR-027) — `review_finding`.
@@ -24,9 +25,13 @@ import java.util.List;
  * overwriting {@code review_status} does is exactly what makes "did this finding ever get fixed"
  * unanswerable.
  *
- * <p><b>Nothing here is a source of truth.</b> Every write is best-effort in the sense that matters:
+ * <p><b>No WRITE here is a source of truth.</b> Every write is best-effort in the sense that matters:
  * a failure is logged and the review continues. The corpus losing a row costs recall in a dashboard;
  * a review failing because a projection could not write would cost an operator their review.
+ *
+ * <p><b>A read that a decision keys on is the exception</b>, and there is one — {@link #findByThread}
+ * throws rather than answering empty, because empty reaches a human as a claim about their
+ * repository. The two postures are genuinely different and the divergence is deliberate.
  */
 @ApplicationScoped
 public class FindingProjection {
@@ -62,11 +67,183 @@ public class FindingProjection {
                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
                 """;
 
+    /**
+     * The row a thread ref is attached to.
+     *
+     * <p><b>At most one row ever carries a given ref</b>, and an earlier draft of this comment had
+     * that wrong — it claimed several rows share one ref across rounds and the newest is live.
+     * {@link #ATTACH_THREAD_REF} orders by {@code (thread_ref = ?) DESC}, so a row already carrying
+     * the ref beats the newest unattached one; that stickiness is deliberate (it makes a redelivery
+     * land where it landed the first time) and its consequence is that a finding re-posted at the
+     * same anchor leaves the ref on the round that first posted it. Which is the right target: that
+     * row is the finding actually posted in the thread the author is replying to.
+     *
+     * <p>So the {@code ORDER BY} is belt-and-braces over a set of one, not the rule. That is why
+     * flipping it to {@code ASC} changes no behaviour — a mutation survived on exactly this point,
+     * and the honest answer was to correct the reasoning rather than invent an assertion for it.
+     *
+     * <p>Suppressed findings are unreachable here for free: the suppression filter runs before
+     * posting, so their {@code thread_ref} stays NULL and {@code WHERE thread_ref = ?} never matches.
+     */
+    private static final String FIND_BY_THREAD = """
+                SELECT id, round, path, start_line, end_line, severity, verdict, origin
+                  FROM review_finding
+                 WHERE review_id = ? AND thread_ref = ?
+                 ORDER BY id DESC
+                 LIMIT 1
+                """;
+
     @Inject
     DataSource dataSource;
 
     @Inject
     EncryptionService encryption;
+
+    /**
+     * Enough of a finding to decide whether a fix run may target it, and to name it when refusing.
+     *
+     * <p>Deliberately carries no {@code message} or {@code suggestion}. Those are the encrypted
+     * columns, they are what a fix run's PROMPT needs rather than what this decision needs, and
+     * adding them here would put decrypted finding text on a path that only has to answer "does this
+     * thread name an open finding". The dispatch reads them when it builds the prompt.
+     *
+     * @param verdict the reconciliation verdict, or null for a finding not yet judged — which is a
+     *     different thing from judged-and-unchanged, and only {@code RESOLVED} closes the door
+     * @param origin {@code review} or {@code conversation}. Carried because it decides whether the
+     *     row can specify a fix AT ALL: a {@code /finding}-filed row is written with {@code message}
+     *     and {@code suggestion} NULL by design (DATA-MODEL §5 keeps quoted text out of the
+     *     replayable log), so FR-F27's "complete task specification" is severity, path and line and
+     *     nothing else. Without this component the dispatch could not even tell, and would either
+     *     pay for a run on an empty spec or refuse a target it had already accepted.
+     */
+    public record TargetFinding(long id, int round, String path, int startLine, int endLine,
+                                String severity, String verdict, String origin) {
+
+        /**
+         * Reconciliation has already closed this one; a fix run would produce an empty diff.
+         *
+         * <p>Bound to the enum rather than a literal. The write side spells this column
+         * {@code verdict.status().name()} and {@code review_finding.verdict} carries no CHECK
+         * constraint, so a literal here would keep compiling and silently stop matching after a
+         * rename — on the guard that decides whether a paid agent run is dispatched.
+         */
+        public boolean isResolved() {
+            return FindingVerdict.Status.RESOLVED.name().equals(verdict);
+        }
+
+        /** A human filed this from a discussion, so it carries no description to work from. */
+        public boolean isFromConversation() {
+            return ORIGIN_CONVERSATION.equals(origin);
+        }
+    }
+
+    /**
+     * The open finding a thread names, or empty when the thread names none.
+     *
+     * <p><b>A read fault throws rather than answering empty</b>, and that is the whole reason this
+     * method does not follow the log-and-continue style of its neighbours. Empty is reported to a
+     * human as "no finding on this thread" — a claim about their repository that they will act on by
+     * hunting for a comment that is right in front of them. Unknown is not zero (ADR-023) and here
+     * unknown is not absent, so the record goes to the dead-letter queue where an operator sees it.
+     *
+     * @param threadRef the CONVERSATION ROOT, already normalized by the caller — a raw comment id
+     *     from an SCM that threads by immediate parent names no finding
+     */
+    public Optional<TargetFinding> findByThread(String reviewId, String threadRef) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(FIND_BY_THREAD)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, threadRef);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new TargetFinding(rs.getLong("id"), rs.getInt("round"),
+                        rs.getString("path"), rs.getInt("start_line"), rs.getInt("end_line"),
+                        rs.getString("severity"), rs.getString("verdict"), rs.getString("origin")));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the finding on thread " + threadRef
+                    + " of " + reviewId, e);
+        }
+    }
+
+    /**
+     * Everything a fix run needs to be told, decrypted — the other half of {@link TargetFinding}.
+     *
+     * <p>A separate read rather than more components on that record, for the reason its javadoc
+     * gives: deciding whether a thread names an open finding does not need the finding's text, and
+     * putting decrypted source quotations on that path would widen it for nothing. This one is
+     * reached only after the decision is made and only when a run is about to be paid for.
+     *
+     * @param message the reviewer's own words. <b>Untrusted for prompt purposes</b>: it is model
+     *     output derived from a diff a contributor wrote, so it reaches the agent inside an
+     *     explicit delimiter rather than as instructions — see {@code FixPrompt}
+     * @param suggestion nullable; a review may describe a problem without proposing a patch
+     */
+    public record FixSpec(long id, String path, int startLine, int endLine, String severity,
+                          String category, String message, String suggestion) {
+
+        /** A finding with no message specifies nothing, whatever its coordinates say. */
+        public boolean isEmpty() {
+            return message == null || message.isBlank();
+        }
+    }
+
+    private static final String FIND_SPEC = """
+            SELECT id, path, start_line, end_line, severity, category, message, suggestion
+              FROM review_finding
+             WHERE review_id = ? AND id = ?
+            """;
+
+    /**
+     * The decrypted specification for one finding of one review, or empty when there is no such row.
+     *
+     * <p><b>Keyed on the review as well as the id</b>, though the id alone is a primary key. The
+     * review id is the encryption AAD, so passing it is not optional — and binding it in the WHERE
+     * too means a finding id from another review reads as absent here rather than as a decryption
+     * failure, which is the same answer for a better reason.
+     *
+     * <p><b>Throws on a read OR a decrypt fault, and the decrypt half diverges from every neighbour
+     * on purpose.</b> {@code ReviewProjection} and {@code FindingBackfill} fall back to treating an
+     * undecryptable column as legacy plaintext, which is right for them: they render it, and showing
+     * old text beats showing nothing. Here the value becomes an agent prompt that is paid for, so a
+     * fallback would spend money on ciphertext. There is also nothing to fall back TO — V36 created
+     * this table with both columns encrypted and shipped no backfill, so no plaintext row has ever
+     * existed in it.
+     */
+    public Optional<FixSpec> specFor(String reviewId, long findingId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(FIND_SPEC)) {
+            ps.setString(1, reviewId);
+            ps.setLong(2, findingId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new FixSpec(rs.getLong("id"), rs.getString("path"),
+                        rs.getInt("start_line"), rs.getInt("end_line"), rs.getString("severity"),
+                        rs.getString("category"), decrypt(rs.getString("message"), reviewId),
+                        decrypt(rs.getString("suggestion"), reviewId)));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the specification for finding "
+                    + findingId + " of " + reviewId, e);
+        }
+    }
+
+    /** Null in, null out: {@code suggestion} is nullable and an absent one is not a fault. */
+    private String decrypt(String stored, String reviewId) {
+        if (stored == null || stored.isBlank()) {
+            return null;
+        }
+        try {
+            return encryption.decryptString(stored, reviewId);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("could not decrypt a finding of " + reviewId
+                    + "; a fix run must not be paid for on unreadable text", e);
+        }
+    }
 
     /**
      * Records the findings one round generated, replacing anything already stored for that round.

@@ -59,12 +59,38 @@ public sealed interface RunCommand {
      * ciphertext rather than plaintext, so a leak is not immediately usable, but a ciphertext in a
      * log is still a credential in a log: it survives key rotation, it is attacker-collectable, and
      * the whole point of the KEK boundary is that the ciphertext never leaves the paths that need it.
+     *
+     * @param existingBranch whether this run pushes to a branch that already exists — a pull
+     *     request's own source branch, under ADR-040. False means the M0 rule: the publisher
+     *     pushes only inside the factory's {@code spire/} namespace and never to the branch it
+     *     forked from. The flag is explicit rather than inferred from {@code branch.equals}
+     *     {@code (baseBranch)}, because an inference is a default and a default is what a bug
+     *     reaches by accident.
+     * @param protectedBranch the pull request's DESTINATION branch, which the publisher refuses
+     *     as a push target in every mode. A name rather than a rule, because the publisher holds
+     *     a write credential and under ADR-039 may make no API call to discover it — and a
+     *     deployment whose trunk is {@code develop} is covered by no convention list it could
+     *     hold. Empty when the run is not pushing to an existing branch.
      */
     record ExecuteRun(String runId, RepoRef repo, String remoteUri,
                       String baseBranch, String baseCommit, String branch,
                       String prompt, String harness, String model, String agentImage,
                       List<String> protectedPaths, long maxWallClockSeconds,
-                      String scmCredential, String harnessCredential) implements RunCommand {
+                      String scmCredential, String harnessCredential,
+                      boolean existingBranch, String protectedBranch) implements RunCommand {
+
+        // Every call site that predates ADR-040 keeps working and keeps the M0 rule — the
+        // additive treatment the other wire records take. A run already on the bus reads as
+        // namespace-mode, which is what every such run was.
+        public ExecuteRun(String runId, RepoRef repo, String remoteUri,
+                          String baseBranch, String baseCommit, String branch,
+                          String prompt, String harness, String model, String agentImage,
+                          List<String> protectedPaths, long maxWallClockSeconds,
+                          String scmCredential, String harnessCredential) {
+            this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
+                    agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, false, "");
+        }
 
         public ExecuteRun {
             Objects.requireNonNull(runId, "runId");
@@ -87,6 +113,41 @@ public sealed interface RunCommand {
                 throw new IllegalArgumentException(
                         "a run needs a wall clock; unlimited is not a limit: " + maxWallClockSeconds);
             }
+            protectedBranch = protectedBranch == null ? "" : protectedBranch;
+            // Refused HERE rather than left to the publisher. The publisher does refuse it, and
+            // that refusal is the floor -- but it fires inside a container after an image pull
+            // and a clone, and reports as a misconfigured publisher rather than as a command that
+            // should never have been sent.
+            if (existingBranch && protectedBranch.isBlank()) {
+                throw new IllegalArgumentException("a run pushing to an existing branch must name "
+                        + "the pull request's destination branch, which it may never push to");
+            }
+            // The other half of what the publisher checks, refused for the same reason: catching it
+            // in the container after an image pull and a clone is too late, and reports as a
+            // misconfigured publisher rather than as a command that should never have been sent.
+            if (existingBranch && branch.equals(protectedBranch.strip())) {
+                throw new IllegalArgumentException("a fix is pushed to a pull request's SOURCE "
+                        + "branch, and this run names its destination: " + branch);
+            }
+        }
+
+        /** Whether this run pushes to a branch that already exists (ADR-040). */
+        public boolean pushesToAnExistingBranch() {
+            return existingBranch;
+        }
+
+        /**
+         * The same run, pushing to an existing branch whose pull request targets {@code destination}.
+         *
+         * <p>A wither rather than a longer constructor at each call site, because adding a component
+         * to a wire record keeps every shorter constructor valid — so a rebuild site still compiles
+         * while quietly losing the new value. Enumerating the components once, here, is what this
+         * repository does instead.
+         */
+        public ExecuteRun onExistingBranch(String destination) {
+            return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
+                    harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, true, destination);
         }
 
         @Override
@@ -102,6 +163,8 @@ public sealed interface RunCommand {
                     + ", agentImage=" + agentImage
                     + ", protectedPaths=" + protectedPaths
                     + ", maxWallClockSeconds=" + maxWallClockSeconds
+                    + ", existingBranch=" + existingBranch
+                    + ", protectedBranch=" + protectedBranch
                     + ", promptChars=" + prompt.length()
                     + ", scmCredential=" + (scmCredential == null ? "absent" : "***")
                     + ", harnessCredential=" + (harnessCredential == null ? "absent" : "***") + "]";

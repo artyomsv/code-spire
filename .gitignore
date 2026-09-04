@@ -32,3 +32,10 @@ Thumbs.db
 
 # Local debugging scratch, repeatedly swept in by `git add -A`.
 oidcutils.txt
+
+# Mutation-probe scratch. Probes belong on a copy, never in the worktree — but if one
+# ever runs here again, a git add -A must not be able to commit the backup.
+*.orig
+
+# Local tooling scratch state. Not project content: review dispositions live in .claude/reviews/.
+.claude/agent-memory/

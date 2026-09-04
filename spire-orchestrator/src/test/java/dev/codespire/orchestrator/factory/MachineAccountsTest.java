@@ -27,8 +27,13 @@ class MachineAccountsTest {
     ProviderRegistry providers;
 
     private static ProviderInput input(String workspace, String name, String secret, String role) {
+        return login(workspace, name, secret, role, name);
+    }
+
+    private static ProviderInput login(String workspace, String name, String secret, String role,
+                                       String botUsername) {
         return new ProviderInput(name, "github", "https://api.github.com", workspace, "bearer",
-                null, secret, "", true, List.of(), name, null, role);
+                null, secret, "", true, List.of(), botUsername, null, role);
     }
 
     @Test
@@ -69,6 +74,38 @@ class MachineAccountsTest {
                 "and so must the saga path, which resolves by workspace alone");
         assertEquals("factory-bot",
                 providers.resolve("github", workspace, ProviderRole.FACTORY).orElseThrow().name());
+    }
+
+    /**
+     * A registration with no login is not a usable account, and the ONE resolve says so.
+     *
+     * <p>The login is what the forge authenticates the push as; packing a null one throws inside
+     * {@code MachineAccountCredential}. {@code RunResource} guarded that on the REST arm, where a
+     * throw is a 500 the caller reads. The {@code /fix} path re-derived the same lookup and
+     * dropped the guard, and there a throw escapes the Kafka consumer: the record is redelivered
+     * forever and the author who typed {@code /fix} is told nothing at all.
+     *
+     * <p>So the check is asserted HERE, on the one method both arms go through, rather than once
+     * per caller. Blank and absent are tested separately because they take different paths into
+     * the row — {@code ProviderRegistry} stores a blank as SQL null, and a test that only covered
+     * one would pass with half the guard deleted.
+     */
+    @Test
+    void anAccountWithNoLoginCannotAuthenticateAPushSoItIsNotResolved() {
+        String blank = "TEST-blank-login-" + UUID.randomUUID();
+        providers.create(login(blank, "factory-bot", "TEST-factory-token", "FACTORY", ""));
+        assertTrue(accounts.resolve(ScmType.GITHUB, blank).isEmpty(),
+                "a blank login is stored as SQL null and would be packed as a null push identity");
+
+        String absent = "TEST-null-login-" + UUID.randomUUID();
+        providers.create(login(absent, "factory-bot", "TEST-factory-token", "FACTORY", null));
+        assertTrue(accounts.resolve(ScmType.GITHUB, absent).isEmpty(),
+                "and an absent one is the same account with the same missing push identity");
+
+        // The discriminating half: the filter must not swallow a usable account.
+        String usable = "TEST-has-login-" + UUID.randomUUID();
+        providers.create(login(usable, "factory-bot", "TEST-factory-token", "FACTORY", "factory-bot"));
+        assertEquals("factory-bot", accounts.resolve(ScmType.GITHUB, usable).orElseThrow().botUsername());
     }
 
     @Test

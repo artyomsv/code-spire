@@ -19,6 +19,8 @@ import java.sql.SQLException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -89,6 +91,40 @@ class FindingProjectionTest {
                 List.of(finding("src/A.java", 10, Severity.MAJOR, null)));
 
         assertEquals(0, findings.countFor(REVIEW));
+    }
+
+    /**
+     * The rule {@code /fix} dispatches on, and it is NOT "the newest row wins".
+     *
+     * <p>Writing this test corrected the production comment. A finding re-posted at the same anchor
+     * does get a new row each round, but {@code ATTACH_THREAD_REF} orders by
+     * {@code (thread_ref = ?) DESC}, so a row already carrying the ref beats the newest unattached
+     * one — deliberately, so a redelivery lands where it landed the first time. The consequence is
+     * that AT MOST ONE row ever carries a ref, and it is the round that first posted the thread.
+     *
+     * <p>That is the right target: it is the finding actually posted in the thread the author is
+     * replying to. It also explains why flipping the query to {@code ASC} changed nothing — the
+     * match set has one element. The claim that it was a newest-wins rule was the defect.
+     */
+    @Test
+    void findByThreadAnswersTheFindingTheThreadWasAttachedTo() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 10, Severity.MINOR, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-live", "src/A.java", 10)));
+        findings.recordGenerated(REVIEW, 2, COMMIT, List.of(finding("src/A.java", 10, Severity.BLOCKER, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-live", "src/A.java", 10)));
+
+        FindingProjection.TargetFinding target = findings.findByThread(REVIEW, "thread-live").orElseThrow();
+        assertEquals(1, target.round(), "the ref stays on the round that first posted the thread");
+        assertEquals(Severity.MINOR.name(), target.severity(), "round 1's row, not round 2's");
+        assertEquals("review", target.origin(), "a model-generated finding carries a description");
+    }
+
+    /** Empty means the thread names no finding — the one answer this method may give for that. */
+    @Test
+    void findByThreadAnswersEmptyForAThreadThatNamesNoFinding() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 10, Severity.MINOR, null)));
+
+        assertTrue(findings.findByThread(REVIEW, "thread-nothing").isEmpty());
     }
 
     @Test
@@ -261,6 +297,81 @@ class FindingProjectionTest {
         assertTrue(!stored.contains("TEST-CANARY-SECRET-STRING"),
                 "the finding message must not be readable in the column");
         assertEquals("src/A.java", column("src/A.java", "path"), "coordinates stay in clear to be grouped");
+    }
+
+    /**
+     * The fix specification comes back DECRYPTED, which is the whole reason it is a second read.
+     *
+     * <p>{@code TargetFinding} deliberately carries no message: deciding whether a thread names an
+     * open finding does not need the finding's text. This read is reached only when a run is about
+     * to be paid for, and what it returns becomes the agent's task.
+     */
+    @Test
+    void theFixSpecificationComesBackDecrypted() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(new Finding("src/A.java",
+                new LineRange(10, 14), Severity.BLOCKER, FindingCategory.SECURITY,
+                "the lock is taken in the opposite order here", "take them in the declared order")));
+        long id = findingId("src/A.java");
+
+        FindingProjection.FixSpec spec = findings.specFor(REVIEW, id).orElseThrow();
+
+        assertEquals("src/A.java", spec.path());
+        assertEquals(10, spec.startLine());
+        assertEquals(14, spec.endLine());
+        assertEquals("the lock is taken in the opposite order here", spec.message());
+        assertEquals("take them in the declared order", spec.suggestion());
+        // Read back from the raw column too: equal plaintext proves the READ decrypts only if the
+        // WRITE encrypted. Without this the same assertion would pass on a projection that stored
+        // the message in clear -- which is the DATA-MODEL rule this table exists under.
+        assertNotEquals(spec.message(), column("src/A.java", "message"),
+                "the stored column must be ciphertext, or the decryption asserted above is a no-op");
+    }
+
+    /** A nullable column stays null rather than becoming an empty string a prompt would print. */
+    @Test
+    void aFindingWithNoSuggestionCarriesNullRatherThanBlank() {
+        findings.recordGenerated(REVIEW, 1, COMMIT,
+                List.of(finding("src/A.java", 10, Severity.NIT, null)));
+
+        FindingProjection.FixSpec spec = findings.specFor(REVIEW, findingId("src/A.java")).orElseThrow();
+        assertNull(spec.suggestion());
+        assertNull(spec.category());
+        assertFalse(spec.isEmpty(), "it has a message, so it specifies something");
+    }
+
+    /**
+     * A finding id belonging to ANOTHER review reads as absent, not as a decryption failure.
+     *
+     * <p>The id alone is a primary key, so binding the review in the WHERE looks redundant. It is
+     * not: the review id is the encryption AAD, so without the clause the row would be found and
+     * then fail to decrypt — the same refusal for a much worse reason, and one an operator would
+     * read as a broken key.
+     */
+    @Test
+    void aFindingFromAnotherReviewIsNotReadableHere() {
+        findings.recordGenerated(REVIEW, 1, COMMIT,
+                List.of(finding("src/A.java", 10, Severity.NIT, null)));
+        long id = findingId("src/A.java");
+
+        assertTrue(findings.specFor("review::TEST-WS/TEST-REPO#4002", id).isEmpty());
+    }
+
+    /** Seeded first, or this cannot tell a working WHERE clause from an empty table. */
+    @Test
+    void answersEmptyForAFindingIdThatDoesNotExist() {
+        findings.recordGenerated(REVIEW, 1, COMMIT,
+                List.of(finding("src/A.java", 10, Severity.NIT, null)));
+
+        assertTrue(findings.specFor(REVIEW, -1L).isEmpty());
+    }
+
+    /** Its own query rather than column(): that helper allowlists the columns a test may read. */
+    private long findingId(String path) {
+        return Long.parseLong(queryOne("SELECT id FROM review_finding WHERE review_id = ? AND path = ?"
+                + " ORDER BY id DESC LIMIT 1", ps -> {
+            ps.setString(1, REVIEW);
+            ps.setString(2, path);
+        }));
     }
 
     private static Finding finding(String path, int line, Severity severity, FindingCategory category) {

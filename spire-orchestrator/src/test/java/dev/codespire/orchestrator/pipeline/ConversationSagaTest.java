@@ -16,6 +16,7 @@ import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.llm.WorkerLlmCredentials;
@@ -95,7 +96,8 @@ class ConversationSagaTest {
 
     private static ScmProvider githubProvider() {
         return new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "acme",
-                "bearer", null, "secret", "acct", true, List.of(), "code-spire", "EXPLAIN");
+                "bearer", null, "secret", "acct", true, List.of(), "code-spire", "EXPLAIN",
+                ProviderRole.REVIEWER);
     }
 
     /**
@@ -695,7 +697,8 @@ class ConversationSagaTest {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "acme",
-                        "bearer", null, "secret", "", true, List.of(), "code-spire", "EXPLAIN"));
+                        "bearer", null, "secret", "", true, List.of(), "code-spire", "EXPLAIN",
+                        ProviderRole.REVIEWER));
             }
         };
         saga.timeline = new TimelineBroadcaster() {

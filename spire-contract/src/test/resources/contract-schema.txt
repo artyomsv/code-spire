@@ -12,7 +12,7 @@ FollowUpGenerated(reviewId: java.lang.String, threadRef: dev.codespire.contract.
 FollowUpPosted(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 ManualCommandReceived(repo: dev.codespire.contract.scm.RepoRef, prId: long, command: java.lang.String, args: java.lang.String, author: dev.codespire.contract.scm.Author, threadRef: dev.codespire.contract.scm.ThreadRef, location: dev.codespire.contract.scm.ThreadLocation, commentId: java.lang.String)
 PullRequestClosed(repo: dev.codespire.contract.scm.RepoRef, prId: long, reason: dev.codespire.contract.event.IntegrationEvent$CloseReason)
-PullRequestEventReceived(repo: dev.codespire.contract.scm.RepoRef, prId: long, action: dev.codespire.contract.event.IntegrationEvent$PrAction, title: java.lang.String, description: java.lang.String, sourceBranch: java.lang.String, targetBranch: java.lang.String, headCommit: java.lang.String, author: dev.codespire.contract.scm.Author, htmlUrl: java.lang.String, providerType: java.lang.String)
+PullRequestEventReceived(repo: dev.codespire.contract.scm.RepoRef, prId: long, action: dev.codespire.contract.event.IntegrationEvent$PrAction, title: java.lang.String, description: java.lang.String, sourceBranch: java.lang.String, targetBranch: java.lang.String, headCommit: java.lang.String, author: dev.codespire.contract.scm.Author, htmlUrl: java.lang.String, providerType: java.lang.String, fromFork: boolean)
 PushReceived(repo: dev.codespire.contract.scm.RepoRef, ref: java.lang.String, commits: java.util.List<java.lang.String>)
 ReviewFailed(reviewId: java.lang.String, commit: java.lang.String, phase: java.lang.String, error: java.lang.String, retryable: boolean, attempt: int, credentialRejected: boolean)
 ReviewGenerated(reviewId: java.lang.String, prId: long, commit: java.lang.String, result: dev.codespire.contract.review.ReviewResult, verdicts: java.util.List<dev.codespire.contract.review.FindingVerdict>, reconcileUsage: dev.codespire.contract.review.ModelUsage)
@@ -42,7 +42,7 @@ RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoR
 
 # RunCommand
 CancelRun(runId: java.lang.String, reason: java.lang.String)
-ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String)
+ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String, existingBranch: boolean, protectedBranch: java.lang.String)
 SteerRun(runId: java.lang.String, instruction: java.lang.String)
 
 # RunResult

@@ -188,6 +188,57 @@ Not work. Written down because each has been rediscovered at least once.
   the remote is removed after the clone. What is missing is the second line of defence. Closing it
   needs a forge-specific read scope, which is a product decision rather than a code change; the
   six documents now say what the code does.
+- **Every per-forge string in SCM-MAPPING §8 is read from vendor documentation, not measured.**
+  The pull-request-open mapping — endpoints, field names, and especially the quoted error wordings
+  for "nothing to propose" and "already exists" — has met no live API. `GitHubPullRequestSinkTest`
+  drives a WireMock stub this repository wrote, so it establishes what the adapter does with a
+  given response and nothing about what GitHub actually sends. The adapter is built so a wrong
+  guess degrades safely: an unmatched 4xx stays a fault rather than being reported as "the agent
+  changed nothing". **All three cloud columns now have adapters** (83 + 87 + 75 tests) — driven by
+  the same locally-written stubs, so all three are established against this repository's idea of
+  each API and none against the API. The Bitbucket DC column has no implementation at all.
+  *(This line previously said the GitLab and Bitbucket rows had no implementation, which was true
+  for one commit and false for the next — the doc-vs-code drift this page exists to catch, caught
+  by a review rather than by me.)*
+- **`GitLabPullRequestSink`'s nothing-to-propose arm may be unreachable, and the adapter and the
+  mapping table disagree about it.** SCM-MAPPING §8 lists GitLab's "nothing to propose" as
+  `409 "branch conflicts"` or an empty-diff 400; the adapter matches `409` + `"no changes"`, a
+  phrase neither cell contains, and the test that covers it stubs a body this repository invented.
+  Two reviewers flagged the contradiction independently, and one raised the stronger possibility
+  that GitLab CREATES a merge request with no commit difference rather than refusing — in which
+  case the arm never fires. **The failure direction is why it ships anyway:** if the phrase never
+  matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
+  wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
+  and nothing should depend on this arm until then.
+- **The M2 loop is covered in three places and joined in none.** Finding → fix run → push →
+  reconciliation is what M2 exists to close. `FixRunDispatcherTest` proves the dispatch,
+  `Adr040ExistingBranchTest` proves the push against a real remote with real containers, and
+  `ReviewChainTest` proves review and reconciliation against a real GitLab. **Nothing proves the
+  halves meet**, and it is not a matter of effort: a run unit lands on the default bridge and
+  cannot resolve the e2e stack's `gitlab` service, because `RunUnitSpec` has no network and
+  `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
+  security control in `compose.e2e.yml`, so it is not the answer.
+  — `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
+- **The publisher's trunk floor is not exercised end to end, and a container test cannot reach it.**
+  `Adr040ExistingBranchTest` drives a run naming `main` as its branch and proves the trunk is
+  untouched — but deleting `PublisherConfig.looksLikeATrunk` leaves that test GREEN. A control probe
+  confirmed mutations reach the container, so the survival is real: the run dies as
+  `RUNTIME_UNAVAILABLE, init container failed with exit 1` before the publisher is consulted, because
+  `WorkspaceClone.populate` calls `checkout().setCreateBranch(true)` and a clone has already
+  materialised the remote's default branch locally. Two independent guards, the outer firing first —
+  defence in depth working, and simultaneously a claim ("the floor stops this") that nothing at the
+  container level establishes. The floor is unit-tested in `PublisherConfigTest` where it is
+  reachable. Anyone about to lean on "the trunk cannot be pushed, we tested it end to end" should
+  read this first.
+- **`/fix` trusts the pull-request state the deployment last saw, not the one that is true now.**
+  `pr_state` is set to `OPEN` by every pull-request event, so a redelivery after a merge flips a
+  closed pull request back to pushable in `FixTargets` — the row is the KEY to the target, never
+  the PROOF of it. The same is true of `from_fork` and of `source_branch`. Closing it needs a
+  dispatch-time re-read from the forge, which the orchestrator may do and the publisher (ADR-039)
+  may not; it is the same re-read the shared-branch gap wants, so the two want one design.
+  Recorded here because it lived only in a javadoc on the class that has it, where nobody
+  planning the next slice would find it.
+  — `techdebt/spire-orchestrator/3-3-a-long-lived-shared-branch-passes-every-fix-check.md`
 - **The spend cap is soft, and softer than this page first said.** Charges land only when a call
   completes, so overshoot is bounded by **queued + in-flight** runs × per-run cost — not by
   in-flight alone, which is what an earlier version of this line claimed. The worker consumes one

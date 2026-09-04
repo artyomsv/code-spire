@@ -33,9 +33,18 @@ The publisher could instead *infer* the intent by noticing `branch == base`. An 
 default, and a default is what an orchestrator bug reaches by accident. An explicit mode means the
 dangerous shape is only reachable by a caller that named it.
 
-**2. The floor survives in both modes.** The pull request's destination branch is passed as its own
-variable and refused as a push target, as is the repository default branch; a branch must still be a
-name git accepts. These are the checks that survive an orchestrator bug, so they do not move.
+**2. The floor survives in both modes.** The pull request's destination branch is passed as
+`SPIRE_PROTECTED_BRANCH` and refused as a push target, as are the conventional trunk names `main`
+and `master`; a branch must still be a name git accepts. These are the checks that survive an
+orchestrator bug, so they do not move.
+
+**The trunk half is a convention list, not a truth, and saying so is the point.** A deployment
+whose trunk is `develop` or `release/2026.1` is not in it. That is exactly why the destination
+branch arrives as its own variable: the orchestrator READ the pull request and knows the real
+answer, while the publisher must not be able to make an API call to find out. The list is what
+survives an orchestrator that forgets to pass one; the variable is the truth. An earlier draft of
+this point claimed the refusal covered "the repository default branch", which promised more than
+the code delivers.
 
 **3. The proof that a branch is a real pull-request source branch is the ORCHESTRATOR's.** The
 publisher makes no API call — it holds a write credential and under ADR-039 does the least it can.
@@ -56,6 +65,35 @@ to tell which is true — worse than not shipping the feature.
 - Fork pull requests are **out of scope** for `existing` mode: the machine account cannot be assumed
   to have push rights to a contributor's fork. Those get a `spire/` branch and a new pull request,
   and the documents must say plainly that reconciliation does not join there.
+
+  **Enforced, not merely stated.** When this ADR was written nothing in the deployment recorded fork
+  provenance, so the rule was a sentence a reader had to obey rather than a check — and a fork's
+  source branch NAME would have resolved against the base repository, creating a stray branch or
+  landing a machine-authored commit from a different diff on an unrelated branch of the same name.
+  All three ingresses now read it (two repository full names on GitHub and Bitbucket, two numeric
+  project ids on GitLab), `V55` gives it a column, and `FixTargets.isPushable()` refuses on it.
+  The gateway asserts the three agree, because one provider spelling it backwards would let forks
+  through on that SCM alone while its own per-provider test passed.
+
+  **The column is nullable, and that is the same decision as ADR-023's "unknown is never zero".**
+  V55's first draft defaulted it to `false` and argued the default was safe because nothing read
+  the column yet. That was true for one day. A row written before V55 came from a deployment that
+  could not tell a fork from a branch pull request, so `false` would not be a reading of that row —
+  it would be a guess the migration made and the gate then treated as an answer. Old rows say
+  NULL, `FixTargets` refuses them with a cause of their own (`PROVENANCE_UNKNOWN`, worded as "push
+  once and try again" rather than "your pull request is a fork"), and the next pull-request event
+  writes the real value. The cost is one refused `/fix` on a stale review.
+
+- **What the review row says is what the deployment last SAW, not what is true now.** `pr_state`
+  is written `OPEN` by every pull-request event, so a redelivery after a merge flips a closed pull
+  request back to pushable; `source_branch` and `from_fork` age the same way. Point 3 makes the
+  orchestrator the identification, and this is the bound on how good that identification can be
+  without a dispatch-time re-read from the forge — which the orchestrator may do and the publisher
+  may not. The same re-read would close the shared-long-lived-branch gap (a `develop → main`
+  release pull request is a truthful row whose SOURCE is a branch several people share, and this
+  ADR's "the destination is the truth" covers `develop` only as a destination). Both are recorded
+  in `docs/UNVERIFIED.md` and `techdebt/spire-orchestrator/3-3-a-long-lived-shared-branch-passes-`
+  `every-fix-check.md`; they want one design, not two.
 - Findings on a default branch (no pull request) are the same case, for the same reason.
 - The negative half needs tests: `main` and the destination branch must still be refused **in**
   **`existing` mode**. That half passes trivially if a variable is renamed, which is the failure

@@ -148,10 +148,27 @@ So M2 owns real work, not wiring:
 
 ```java
 public interface PullRequestSink {          // new port, three implementations
-    PullRequestRef open(RepoRef repo, String head, String base, PrBody body);
-    Optional<PullRequestRef> findByHead(RepoRef repo, String head);   // idempotency
+    ScmType type();
+    PullRequestRef open(RepoRef repo, NewPullRequest request);
+    Optional<PullRequestRef> findByHead(RepoRef repo, String headBranch);   // idempotency
+
+    record NewPullRequest(String headBranch, String baseBranch, String title, String bodyMd) { }
+    class NothingToPropose extends RuntimeException { }   // the agent changed nothing
 }
 ```
+
+Built in M2 and this is the shipped shape, not a sketch. Three differences from the draft above it
+are worth naming because each was forced by a forge rather than chosen:
+
+- **`type()`**, like every other port, so a composition root can assert it selected the adapter it
+  meant to.
+- **A `NewPullRequest` record rather than four positional arguments.** Two adjacent `String`
+  branches in a signature is the transposition this repository has already paid for elsewhere, and
+  the record's compact constructor is where head-equals-base is refused — every forge rejects that
+  with an opaque message about "no commits", which sends an operator to the wrong problem.
+- **`NothingToPropose`**, because "the agent changed nothing" arrives as a 4xx on all four forges
+  and reads like a failure on all four. Naming it in the PORT is what lets a caller tell it apart
+  from a permission fault without knowing which forge answered. See SCM-MAPPING.md §8.
 
 The **pull-request half above is still true**; the credential half is not, and was overtaken by M0.
 The FACTORY-role account's single token already clones AND pushes — `RunResource` packs it,
@@ -280,7 +297,7 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 |---|---|---|
 | `work_item` | run bookkeeping per `(work_source, repo, issue_id)` | **not** an issues mirror — no title, no body, no status of the ticket itself |
 | `work_item_gate` | one row per open or resolved approval | expiry timestamp, resolver, channel |
-| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, timings, failure cause + detail | **delivered** (V43 + V45/V47/V49–V53). No `phase` and no `runtime` column — both were sketched here and neither was built; phases arrive with M4 |
+| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, timings, failure cause + detail, and what the run is FOR (kind, review_id, finding_ref — V54, which FR-F32 counts) | **delivered** (V43 + V45/V47/V49–V54). No `phase` and no `runtime` column — both were sketched here and neither was built; phases arrive with M4 |
 | `run_event` | bounded transcript | TTL'd; encrypted where it may quote source (ADR-011 boundary) |
 
 **`runworker` schema** — its own, NOT the review worker's `worker` schema (schema-per-service,

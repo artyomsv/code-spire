@@ -32,12 +32,12 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | ADR-001..020 — every locked decision with its why |
+| `docs/DECISIONS.md` | ADR-001..040 — every locked decision with its why. ADR-029..040 are the software factory's; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0 and M1 delivered (PRs #95/#96, 2026-09-02/03), M2–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-039. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0, M1 and M2 delivered (PRs #95/#96/#119, 2026-09-02/03/04), M3–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
@@ -62,18 +62,27 @@ describe the new current state. Everything below is true as of **2026-09-04**.
   (ADR-020); split licensing (ADR-021). CI/CD: nine GitHub Actions workflows, four production images
   on GHCR, Compose + Helm + kustomize under `deploy/`, and the nightly `spire-e2e` tier against a
   real containerised GitLab.
-- **Software factory M0 + M1 are delivered (ADR-029..039; PR #95 2026-09-02, PR #96 2026-09-03).**
+- **Software factory M0–M2 are delivered (ADR-029..040; PRs #95, #96, #119 — 2026-09-02/03/04).**
   `POST /api/runs` → `cs.run-commands` → `spire-run-worker` (:34083) → a three-container run unit on
   Docker → push gate → a branch on the real remote. M1 added the run event stream, cancel over
   `cs.run-control`, salvage-before-teardown, the orphan watchdog, idempotent dispatch that fails
   closed, the harness credential pool, the corporate run-unit environment (FR-F14) and the checkable
-  agent image contract (`spire-agent-image verify`). **Next is M2** — `docs/factory/ROADMAP.md`. The
-  two factory images are not on GHCR and `spire-run-worker` is not in `deploy/` yet.
+  agent image contract (`spire-agent-image verify`). **M2 made the reviewer close its own findings:**
+  `/fix` on a finding dispatches a run that pushes onto the pull request's own source branch
+  (ADR-040), bounded by two caps (per finding AND per review, FR-F32); a `PullRequestSink` port with
+  three adapters, so a run can end at a pull request rather than at a branch; `GET /api/runs`, the
+  run↔review join and the `/runs` screen; and `spire-run-worker` in **both packaged stacks behind
+  the `factory` compose profile** — opt-in because the Docker socket it mounts is root-equivalent
+  on the host. **The loop M2 exists to close has never been run end to end in one place**: the
+  dispatch, the push and the reconciliation are each proved separately, and a run unit cannot
+  reach the e2e stack's GitLab because `RunUnitSpec` has no network field (`docs/UNVERIFIED.md`).
+  **Next is M3** — `docs/factory/ROADMAP.md`. The two factory images are still not on GHCR.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-03):** 2549 Java tests across 299 suites (`testFast` +
-  `testServices`; the nightly `testE2e` tier is separate — 44 tests across 9 suites); 457 `spire-ui`
-  vitest tests across 59 files; `tsc --noEmit` silent.
+- **Measured, not estimated (2026-09-04):** 2877 Java tests across 323 suites, 0 failures, 1
+  skipped (`testFast` + `testServices`); 483 `spire-ui` vitest tests across 61 files;
+  `tsc --noEmit` silent. The nightly `testE2e` tier is separate and was **not** re-run for this
+  figure — 44 tests across 9 suites when it was last measured, on 2026-09-03.
 
 ## Build & run
 
