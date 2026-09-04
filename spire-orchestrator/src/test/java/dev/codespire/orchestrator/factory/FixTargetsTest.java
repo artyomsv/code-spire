@@ -54,9 +54,45 @@ class FixTargetsTest {
         assertEquals(8001L, target.prId());
     }
 
+    /** Seeded first, or this cannot tell a working WHERE clause from an empty table. */
     @Test
     void answersEmptyForAReviewItHasNeverSeen() {
+        insert("OPEN", "feature/login", "develop", "TESTSHA1");
+
         assertTrue(targets.forReview("review::TEST-WS/TEST-REPO#404").isEmpty());
+    }
+
+    /**
+     * Whitespace is not empty, and the distinction is the whole reason this tests blank.
+     * {@code isEmpty()} in place of {@code isBlank()} passed every other case here — nothing
+     * seeded a whitespace ref, so the difference the javadoc argues for was asserted by nothing.
+     */
+    @Test
+    void refusesARowWhoseSourceBranchIsOnlyWhitespace() {
+        insert("OPEN", "   ", "develop", "TESTSHA1");
+
+        assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable());
+    }
+
+    /** {@code commit_sha} carries the same blank default and the same in-container failure. */
+    @Test
+    void refusesARowWhoseCommitWasNeverRecorded() {
+        insert("OPEN", "feature/login", "develop", "");
+
+        assertFalse(targets.forReview(REVIEW).orElseThrow().isPushable(),
+                "a blank commit fails Env.required inside the container, after the agent is paid");
+    }
+
+    /** ADR-040 §3 asks for a repository match, and a row that resolves is not a row that matches. */
+    @Test
+    void belongsOnlyToTheRepositoryItNames() {
+        insert("OPEN", "feature/login", "develop", "TESTSHA1");
+        FixTargets.PushTarget target = targets.forReview(REVIEW).orElseThrow();
+
+        assertTrue(target.belongsTo("github", "TEST-WS", "TEST-REPO"));
+        assertFalse(target.belongsTo("gitlab", "TEST-WS", "TEST-REPO"), "provider must match");
+        assertFalse(target.belongsTo("github", "OTHER-WS", "TEST-REPO"), "workspace must match");
+        assertFalse(target.belongsTo("github", "TEST-WS", "OTHER-REPO"), "slug must match");
     }
 
     /**
@@ -110,19 +146,19 @@ class FixTargetsTest {
     // --- fixtures ---------------------------------------------------------------------------
 
     private void insert(String prState, String sourceBranch, String destBranch, String commit) {
+        // Every parameter bound explicitly and in order. The helper used to prepend the review id
+        // for anything starting "INSERT", which silently shifted the offset for any other
+        // statement that took one — an UPDATE added later would bind wrong and fail confusingly.
         exec("""
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, status, commit_sha,
                                            source_branch, dest_branch, pr_state, provider_type)
                 VALUES (?, 'TEST-WS', 'TEST-REPO', 8001, 'completed', ?, ?, ?, ?, 'github')
-                """, commit, sourceBranch, destBranch, prState);
+                """, REVIEW, commit, sourceBranch, destBranch, prState);
     }
 
     private void exec(String sql, String... args) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             int i = 1;
-            if (sql.startsWith("INSERT")) {
-                ps.setString(i++, REVIEW);
-            }
             for (String arg : args) {
                 ps.setString(i++, arg);
             }

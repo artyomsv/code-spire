@@ -180,6 +180,7 @@ class PublisherConfigTest {
         env.put("SPIRE_BRANCH_MODE", "existing");
         env.put("SPIRE_BRANCH_BASE", "feature/login");
         env.put("SPIRE_BRANCH", "feature/login");
+        env.put("SPIRE_PROTECTED_BRANCH", "develop");
 
         PublisherConfig config = PublisherConfig.fromEnv(env);
         assertEquals("feature/login", config.branch());
@@ -199,18 +200,93 @@ class PublisherConfigTest {
         assertTrue(refusal(env).getMessage().contains(PublisherConfig.BRANCH_NAMESPACE));
     }
 
-    /** An unrecognised mode is refused, not treated as the permissive one. */
+    /** Case and surrounding space are operator typing, not a different mode. */
     @Test
-    void anUnknownModeIsRefusedRatherThanGuessed() {
+    void theModeIsReadCaseInsensitivelyAndTrimmed() {
         Map<String, String> env = env();
         env.put("SPIRE_BRANCH_MODE", "Existing ");
         env.put("SPIRE_BRANCH", "feature/login");
         env.put("SPIRE_BRANCH_BASE", "feature/login");
+        env.put("SPIRE_PROTECTED_BRANCH", "develop");
 
-        assertEquals("feature/login", PublisherConfig.fromEnv(env).branch(),
-                "case and surrounding space are operator typing, not a different mode");
+        assertEquals("feature/login", PublisherConfig.fromEnv(env).branch());
+    }
 
+    /**
+     * <b>The destination floor was optional exactly when it was needed.</b>
+     *
+     * <p>The check ran only when the variable was present, so a dispatch that forgot one map entry
+     * skipped it silently — and the class javadoc's "refused in EVERY mode" became false. Existing
+     * mode has one meaning, push to an open pull request's source branch, and every pull request
+     * has a destination the orchestrator already holds. A missing value is a caller bug, which is
+     * the thing a floor exists to survive.
+     *
+     * <p>Blank as well as absent, because {@code review_status.dest_branch} defaults to the empty
+     * string rather than null — so copying it through unconditionally yields blank, not missing.
+     */
+    @Test
+    void existingModeRefusesToStartWithoutADestinationBranch() {
+        for (String value : new String[] {null, "", "   "}) {
+            Map<String, String> env = env();
+            env.put("SPIRE_BRANCH_MODE", "existing");
+            env.put("SPIRE_BRANCH_BASE", "feature/login");
+            env.put("SPIRE_BRANCH", "feature/login");
+            if (value != null) {
+                env.put("SPIRE_PROTECTED_BRANCH", value);
+            }
+            assertTrue(refusal(env).getMessage().contains("SPIRE_PROTECTED_BRANCH"),
+                    "value=" + value);
+        }
+    }
+
+    /** The default mode does not need it — nothing there pushes to a human's branch. */
+    @Test
+    void theNamespaceModeDoesNotRequireADestinationBranch() {
+        assertEquals("spire/fix-typo", PublisherConfig.fromEnv(env()).branch());
+    }
+
+    /**
+     * Names a human reads as the trunk, refused although none of them IS the trunk.
+     *
+     * <p>Measured against the pinned JGit: every one of these passes {@code isValidRefName}, and
+     * none reaches {@code refs/heads/main} — forge refs are case-sensitive, and {@code refs/heads/}
+     * {@code main} as a branch name pushes to {@code refs/heads/refs/heads/main}. So this is not a
+     * bypass; it is a machine creating a branch a person will misread, which is worth refusing on
+     * its own. Invisible characters are refused; an umlaut would not be.
+     */
+    @Test
+    void refusesNamesThatImpersonateATrunk() {
+        for (String confusable : List.of("Main", "MAIN", "HEAD", "refs/heads/main", "heads/main",
+                "-main", "+main", "ma\u200bin", "ma\u00a0in")) {
+            Map<String, String> env = env();
+            env.put("SPIRE_BRANCH_MODE", "existing");
+            env.put("SPIRE_BRANCH_BASE", "develop");
+            env.put("SPIRE_BRANCH", confusable);
+            env.put("SPIRE_PROTECTED_BRANCH", "develop");
+            assertTrue(refusal(env).getMessage().contains("SPIRE_BRANCH"), confusable);
+        }
+    }
+
+    /** And an ordinary non-ASCII name is NOT refused — the rule is invisibility, not ASCII. */
+    @Test
+    void allowsAnOrdinaryNonAsciiBranchName() {
+        Map<String, String> env = env();
+        env.put("SPIRE_BRANCH_MODE", "existing");
+        env.put("SPIRE_BRANCH_BASE", "feature/gr\u00f6\u00dfe");
+        env.put("SPIRE_BRANCH", "feature/gr\u00f6\u00dfe");
+        env.put("SPIRE_PROTECTED_BRANCH", "develop");
+
+        assertEquals("feature/gr\u00f6\u00dfe", PublisherConfig.fromEnv(env).branch());
+    }
+
+    /** An unrecognised mode is refused, not treated as the permissive one. */
+    @Test
+    void anUnknownModeIsRefusedRatherThanGuessed() {
+        Map<String, String> env = env();
         env.put("SPIRE_BRANCH_MODE", "anything-else");
+        env.put("SPIRE_BRANCH", "feature/login");
+        env.put("SPIRE_BRANCH_BASE", "feature/login");
+
         assertTrue(refusal(env).getMessage().contains("SPIRE_BRANCH_MODE"));
     }
 
@@ -294,12 +370,48 @@ class PublisherConfigTest {
         }
     }
 
-    /** The default mode is unaffected by a protected branch it was never told about. */
+    /**
+     * A protected branch that does not match is simply not the target — in either mode.
+     *
+     * <p>This used to be called "the namespace mode IGNORES the protected branch variable", which
+     * overclaimed: the code does not ignore it, and the case could not fail either way because the
+     * branch and the protected branch never matched. Renamed to what it actually shows.
+     */
     @Test
-    void theNamespaceModeIgnoresTheProtectedBranchVariable() {
+    void aProtectedBranchThatIsNotTheTargetChangesNothing() {
         Map<String, String> env = env();
         env.put("SPIRE_PROTECTED_BRANCH", "main");
 
         assertEquals("spire/fix-typo", PublisherConfig.fromEnv(env).branch());
+    }
+
+    /**
+     * <b>The destination floor applies in EVERY mode, and nothing pinned that.</b>
+     *
+     * <p>Moving the check inside the existing-mode branch passed the whole suite. The trunk floor
+     * had its both-modes case; this one did not, which is the asymmetry that let the mutation live.
+     *
+     * <p>The shape is real rather than contrived: a stacked pull request whose destination is a
+     * previous factory branch. Asserted on the phrase, not the branch value — the namespace
+     * refusal also contains {@code spire/fix-typo} and would satisfy a value assertion.
+     */
+    @Test
+    void theNamespaceModeAlsoRefusesTheDestinationBranch() {
+        Map<String, String> env = env();
+        env.put("SPIRE_PROTECTED_BRANCH", "spire/fix-typo");
+
+        assertTrue(refusal(env).getMessage().contains("destination branch"));
+    }
+
+    /** Surrounding space in an operator-set variable is typing, not a different branch. */
+    @Test
+    void theDestinationBranchIsMatchedAfterTrimming() {
+        Map<String, String> env = env();
+        env.put("SPIRE_BRANCH_MODE", "existing");
+        env.put("SPIRE_BRANCH_BASE", "develop");
+        env.put("SPIRE_BRANCH", "develop");
+        env.put("SPIRE_PROTECTED_BRANCH", "  develop  ");
+
+        assertTrue(refusal(env).getMessage().contains("destination branch"));
     }
 }

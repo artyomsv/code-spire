@@ -81,12 +81,42 @@ class FixRunsTest {
         assertEquals(0, fixRuns.forReview(REVIEW));
     }
 
-    /** A BUILD run carries no target, so it is outside both counts. */
+    /** A BUILD run carrying no target at all is outside both counts. */
     @Test
     void doesNotCountABuildRunThatCarriesNoFindingTarget() {
         insertBuildRun("run::TEST-build");
 
         assertEquals(0, fixRuns.forReview(REVIEW));
+    }
+
+    /**
+     * <b>A non-fix run may not carry a review at all — and getting here took two wrong answers.</b>
+     *
+     * <p>The first CHECK was written as a biconditional against NULL:
+     * {@code (kind = 'FIX') = (review_id IS NOT NULL AND finding_ref IS NOT NULL)}. Its right side
+     * is an AND, so a non-FIX row satisfied it by failing EITHER conjunct — making
+     * {@code (BUILD, review_id, NULL)} a legal row that a count without the {@code kind} filter
+     * would have charged to that review's fix budget. So the filter WAS load-bearing, and the
+     * comment claiming the schema made that row impossible was wrong.
+     *
+     * <p>Then blank ids turned out to slip through the same CHECK ({@code '' IS NOT NULL} is true),
+     * and closing that meant writing the constraint as two explicit arms — which also, as a side
+     * effect nobody set out to produce, forbids a non-fix row from carrying a review at all. So the
+     * original claim is true again, for a reason that had nothing to do with the original argument.
+     *
+     * <p><b>The filter is therefore belt-and-braces TODAY, and stops being so the day the
+     * constraint is relaxed for SPEC and PLAN runs</b> — which the {@code kind} column exists to
+     * allow. That relaxation must bring this test back in its counting form. Written down because
+     * the honest reading of a surviving mutation is "my fixture is weak", and it took a second
+     * reviewer and an unrelated fix to establish which answer was right.
+     */
+    @Test
+    void theDatabaseRefusesANonFixRunThatCarriesAReview() {
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> insert("run::TEST-build-with-review", "BUILD", REVIEW, null));
+
+        assertTrue(rootCause(refused).contains("factory_run_fix_names_its_target"),
+                rootCause(refused));
     }
 
     /**
@@ -119,6 +149,26 @@ class FixRunsTest {
 
         assertTrue(rootCause(refused).contains("factory_run_fix_names_its_target"),
                 rootCause(refused));
+    }
+
+    /**
+     * <b>Blank is not absent, and the first version of this CHECK could not tell.</b>
+     *
+     * <p>{@code '' IS NOT NULL} is true in Postgres, so a biconditional written against NULL alone
+     * admitted a FIX row whose ids were empty strings — matched by neither cap for any real id, so
+     * the cap failed OPEN for exactly that row. Not hypothetical: this schema already uses
+     * blank-not-null for {@code source_branch} and {@code dest_branch}, so a dispatcher copying a
+     * blank through is an ordinary bug.
+     */
+    @Test
+    void theDatabaseRefusesAFixRunWhoseTargetIsBlank() {
+        for (String[] ids : new String[][] {{"", FINDING}, {REVIEW, ""}, {"   ", "   "}}) {
+            IllegalStateException refused = assertThrows(IllegalStateException.class,
+                    () -> insert("run::TEST-blank", "FIX", ids[0], ids[1]),
+                    ids[0] + "/" + ids[1]);
+            assertTrue(rootCause(refused).contains("factory_run_fix_names_its_target"),
+                    rootCause(refused));
+        }
     }
 
     private static String rootCause(Throwable t) {
@@ -184,6 +234,14 @@ class FixRunsTest {
 
         insertFixRun("run::TEST-1", REVIEW, FINDING);
         assertEquals(2, fixRuns.nextAttempt(REVIEW, FINDING));
+
+        // The PER-FINDING axis, asserted. Reading the per-review count here passed every case
+        // above, because each seeded one run for one finding on one review and the two counts
+        // agreed. They must not: per-review numbering would report "attempt 3" for a finding's
+        // FIRST fix, contradicting the per-finding refusal message in the same class.
+        insertFixRun("run::TEST-2", REVIEW, OTHER_FINDING);
+        assertEquals(2, fixRuns.nextAttempt(REVIEW, FINDING),
+                "another finding's run is not this finding's attempt");
     }
 
     // --- fixtures ---------------------------------------------------------------------------

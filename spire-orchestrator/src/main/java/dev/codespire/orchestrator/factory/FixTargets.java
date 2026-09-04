@@ -22,8 +22,20 @@ import java.util.Optional;
  *
  * <p><b>A resolved target is not a pushable one.</b> {@link #forReview} answers what the review row
  * says; {@link PushTarget#isPushable()} answers whether a fix may go there. Keeping them apart is
- * what lets the caller refuse with a reason the author can act on, instead of an empty Optional that
- * cannot distinguish "no such review" from "that pull request is merged".
+ * what lets the caller distinguish "no such review" from "that pull request is merged", which an
+ * empty Optional cannot.
+ *
+ * <p><b>An archived review is NOT filtered here</b>, unlike every read in {@code AttentionQueries}.
+ * It is gated upstream — {@code IntegrationSaga.handle} stops an archived review before the command
+ * switch, so no {@code /fix} reaches this class for one. Recorded rather than added, in the style
+ * {@code SpendWindow} uses for its own deliberate omissions: a second filter here would read as the
+ * guard and hide where the real one lives.
+ *
+ * <p><b>The row is the KEY, not the proof.</b> {@code pr_state} is set to OPEN by every pull-request
+ * event, so a redelivery after a merge flips a closed pull request back to pushable here. Closing
+ * that needs a dispatch-time re-read from the forge — which the orchestrator may do and the
+ * publisher may not — and it is the same re-read that would close the fork gap. Until then this
+ * class answers what the deployment last saw, which is not the same as what is true now.
  */
 @ApplicationScoped
 public class FixTargets {
@@ -68,9 +80,10 @@ public class FixTargets {
      * A pull request, as the review row recorded it.
      *
      * @param sourceBranch the branch a fix pushes to. Defaults to the empty string rather than null
-     *     in {@code review_status}, which is why {@link #isPushable()} tests for blank: a null check
-     *     alone passes a blank ref to the publisher, where it fails {@code isValidRefName} inside a
-     *     container, after the agent has been paid
+     *     in {@code review_status}, which is why {@link #isPushable()} tests for blank rather than
+     *     null: a blank ref reaches the publisher and fails {@code isValidRefName} inside a
+     *     container, after the agent has been paid. {@code commit} carries the identical default
+     *     and the identical failure, so it is guarded identically
      */
     public record PushTarget(String providerType, String workspace, String slug, long prId,
                              String sourceBranch, String destBranch, String commit, String prState) {
@@ -87,7 +100,26 @@ public class FixTargets {
          * {@code techdebt/spire-orchestrator/2-3-a-fork-pull-request-is-indistinguishable-from-a-branch-one.md}.
          */
         public boolean isPushable() {
-            return OPEN.equals(prState) && sourceBranch != null && !sourceBranch.isBlank();
+            // BOTH columns, because both are NOT NULL DEFAULT '' and both fail the same way: the
+            // publisher's Env.required refuses a blank INSIDE the container, after the agent has
+            // been paid. Guarding one and not the other was an oversight, not a distinction. And
+            // isBlank rather than isEmpty, because a whitespace ref is not empty and still reaches
+            // git — a null check is not needed at all, since neither column can be null.
+            return OPEN.equals(prState) && !sourceBranch.isBlank() && !commit.isBlank();
+        }
+
+        /**
+         * Whether this target names the repository the dispatch is for (ADR-040 §3).
+         *
+         * <p>Separate from {@link #isPushable()} because it needs what the CALLER is dispatching
+         * for, which this row cannot know. The ADR asks for it in as many words, and the hazard is
+         * one step less exotic than the fork gap this slice filed: a branch name resolved against
+         * one repository and pushed against another.
+         */
+        public boolean belongsTo(String providerType, String workspace, String slug) {
+            return this.providerType.equals(providerType)
+                    && this.workspace.equals(workspace)
+                    && this.slug.equals(slug);
         }
     }
 }

@@ -33,15 +33,24 @@ import java.sql.SQLException;
 public class FixRuns {
 
     /**
-     * A fix run names its target, and the V54 CHECK is what makes that true.
+     * A fix run names its target, and the {@code kind} filter keeps everything else out.
      *
-     * <p><b>The {@code kind} filter here is belt-and-braces, not the guard.</b> A mutation removing
-     * it survives every behavioural test, because the constraint makes "carries a review and is not
-     * a fix" an unrepresentable state — so no fixture can build the row the filter would exclude.
-     * It is kept because that constraint is exactly what loosens when SPEC and PLAN runs arrive
-     * (both already in the same CHECK's kind list), and the day one of those carries a review is
-     * the day this filter starts doing work. {@code FixRunsTest} asserts the constraint itself, so
-     * the load-bearing half is the half that is tested.
+     * <p><b>Whether this filter is load-bearing has now been answered wrongly twice, so the answer
+     * is written down with its expiry.</b> Today it is belt-and-braces: V54's constraint has two
+     * explicit arms and a non-FIX row may carry no review at all, so there is no row for the filter
+     * to exclude. That was NOT true of the constraint's first form — written as a biconditional
+     * against NULL, whose right side is an AND, it admitted {@code (BUILD, review_id, NULL)} and
+     * the filter was the only thing keeping that row out of a review's fix budget.
+     *
+     * <p>The constraint only tightened because blank ids turned out to slip through it as well.
+     * So the filter's redundancy is a side effect of an unrelated fix, not a property anyone
+     * designed — and it ends the day the constraint is relaxed for SPEC and PLAN runs, which the
+     * {@code kind} column exists to allow.
+     *
+     * <p>The reasoning lesson is the durable part: a mutation survived, and the first conclusion
+     * drawn was "the schema must be guarding it" rather than "my fixture cannot build the row".
+     * The second reading was the correct one to reach for, even though the first happens to be
+     * true now for a reason that had nothing to do with the original argument.
      */
     private static final String COUNT_FOR_FINDING = """
                 SELECT count(*) FROM factory_run

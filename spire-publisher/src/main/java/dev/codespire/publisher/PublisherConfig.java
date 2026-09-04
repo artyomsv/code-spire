@@ -41,7 +41,10 @@ import java.util.Set;
  *       own two variables.</li>
  * </ul>
  *
- * <p>Every refusal names the variable and never its value, because the value may be the secret.
+ * <p>Every refusal names the variable, and names its value only where the value cannot be a secret
+ * and an operator could not act without it. A branch name qualifies on both counts, and the ADR-040
+ * refusals print it; a credential, a remote URI and a byte budget do not. The rule used to read
+ * "never its value", which those refusals made false the moment they were written.
  */
 record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, String branch,
                        List<String> protectedPaths, long bundleMaxBytes, GitCredential credential,
@@ -66,7 +69,7 @@ record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, S
                 Path.of(env.getOrDefault("SPIRE_HANDOFF_DIR", DEFAULT_HANDOFF_DIR)));
     }
 
-    /** The two branch shapes this process will push (ADR-040). Absent means {@link #NAMESPACE}. */
+    /** The two branch shapes this process will push (ADR-040). Absent means this one. */
     private static final String MODE_NAMESPACE = "namespace";
 
     /** A pull request's own source branch, so a fix lands where the finding lives. */
@@ -106,12 +109,24 @@ record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, S
         if (!Repository.isValidRefName("refs/heads/" + branch)) {
             throw new IllegalStateException("SPIRE_BRANCH is not a valid git branch name");
         }
-        if (NEVER_PUSHED.contains(branch)) {
+        if (looksLikeATrunk(branch)) {
             throw new IllegalStateException("SPIRE_BRANCH names " + branch + ", which this process "
                     + "never pushes to in any mode — the push gate judges paths, not refs, so a trunk "
                     + "would be fast-forwarded with whatever the agent produced");
         }
         String destination = env.get("SPIRE_PROTECTED_BRANCH");
+        // REQUIRED in existing mode, because otherwise the floor is optional exactly when it is
+        // needed. Existing mode has one meaning — push to an open pull request's source branch —
+        // and every pull request has a destination, which the orchestrator always holds in
+        // review_status.dest_branch. So a missing value is a caller bug, and a caller bug is the
+        // thing a floor exists to survive. Without this the javadoc's "refused in EVERY mode" is
+        // false the moment the dispatch forgets one map entry, and a trunk called develop — which
+        // the convention list below does not cover — is fast-forwarded.
+        if (MODE_EXISTING.equals(mode) && (destination == null || destination.isBlank())) {
+            throw new IllegalStateException("SPIRE_PROTECTED_BRANCH is required in " + MODE_EXISTING
+                    + " mode; a fix pushes to a pull request's SOURCE branch, and every pull request "
+                    + "has a destination that must not be pushed to");
+        }
         if (destination != null && !destination.isBlank() && branch.equals(destination.strip())) {
             throw new IllegalStateException("SPIRE_BRANCH names " + branch + ", which is the pull "
                     + "request's destination branch; a fix is pushed to its SOURCE branch");
@@ -128,6 +143,34 @@ record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, S
                     + "pushes to the branch it forked from");
         }
         return branch;
+    }
+
+    /**
+     * Whether a branch name is, or is trying to look like, a trunk.
+     *
+     * <p>Exact matching was not enough. Measured against the JGit this repository pins:
+     * {@code Main}, {@code MAIN}, {@code refs/heads/main}, {@code heads/main}, {@code -main},
+     * {@code HEAD} and names carrying a zero-width space or a Cyrillic {@code а} all pass
+     * {@code isValidRefName}. <b>None of them reaches {@code refs/heads/main}</b> — forge refs are
+     * case-sensitive, and {@code refs/heads/main} as a branch pushes to
+     * {@code refs/heads/refs/heads/main}. So this is not a bypass of the floor; it is a branch a
+     * HUMAN reads as the trunk, created by a machine, which is worth refusing on its own.
+     *
+     * <p>Invisible characters are refused rather than all non-ASCII: an umlaut in a branch name is
+     * ordinary, a zero-width space is not.
+     */
+    private static boolean looksLikeATrunk(String branch) {
+        String plain = branch.toLowerCase(Locale.ROOT);
+        if (NEVER_PUSHED.contains(plain) || plain.equals("head")) {
+            return true;
+        }
+        for (String prefix : List.of("refs/", "heads/", "-", "+")) {
+            if (plain.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return branch.codePoints().anyMatch(c -> Character.getType(c) == Character.FORMAT
+                || Character.getType(c) == Character.SPACE_SEPARATOR);
     }
 
     private static String mode(Map<String, String> env) {

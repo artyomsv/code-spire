@@ -33,9 +33,18 @@ The publisher could instead *infer* the intent by noticing `branch == base`. An 
 default, and a default is what an orchestrator bug reaches by accident. An explicit mode means the
 dangerous shape is only reachable by a caller that named it.
 
-**2. The floor survives in both modes.** The pull request's destination branch is passed as its own
-variable and refused as a push target, as is the repository default branch; a branch must still be a
-name git accepts. These are the checks that survive an orchestrator bug, so they do not move.
+**2. The floor survives in both modes.** The pull request's destination branch is passed as
+`SPIRE_PROTECTED_BRANCH` and refused as a push target, as are the conventional trunk names `main`
+and `master`; a branch must still be a name git accepts. These are the checks that survive an
+orchestrator bug, so they do not move.
+
+**The trunk half is a convention list, not a truth, and saying so is the point.** A deployment
+whose trunk is `develop` or `release/2026.1` is not in it. That is exactly why the destination
+branch arrives as its own variable: the orchestrator READ the pull request and knows the real
+answer, while the publisher must not be able to make an API call to find out. The list is what
+survives an orchestrator that forgets to pass one; the variable is the truth. An earlier draft of
+this point claimed the refusal covered "the repository default branch", which promised more than
+the code delivers.
 
 **3. The proof that a branch is a real pull-request source branch is the ORCHESTRATOR's.** The
 publisher makes no API call — it holds a write credential and under ADR-039 does the least it can.

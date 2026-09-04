@@ -1757,7 +1757,7 @@ against a forge, authenticated as a machine account.
 | `503` naming `could not be read` | A database fault reading the pool, NOT a missing credential. Nothing was dispatched and nothing was spent — do not add keys in response to it |
 | `400` naming `spire.factory.agent-image` | The harness has no image configured in the orchestrator (`spire.factory.agent-image.<harness>`) |
 | `failed` / `SANDBOX_UNREACHABLE`, init exit non-zero | The clone failed: wrong token, wrong base commit (must be reachable from the remote's branches), or `spire-publisher:latest` not built. The unit is left behind on purpose — `docker logs` the init container |
-| `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: branch outside `spire/`, equal to the base, or a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
+| `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: an invalid ref name; a trunk name (`main`/`master`) or the pull request's destination branch (`SPIRE_PROTECTED_BRANCH`), both refused in **every** mode; an unrecognised `SPIRE_BRANCH_MODE`; or — in the default `namespace` mode only — a branch outside `spire/` or equal to the base. Also a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
 | Codex exits immediately, `no output` | The pool member's key was rejected or absent, and the key must be OpenAI's for this arm. Nothing retires it automatically (see step 5) — `DELETE /api/harness-credentials/{id}` and dispatch again |
 | `succeeded` with `pushedRef: null` | The agent committed nothing — its bundle never existed. Read the agent container's log; the prompt may not have asked for a commit |
 
