@@ -313,7 +313,7 @@ function MyActivityBody({ state, subject }: { state: LoadState<MyActivity>; subj
         <p className="an-empty-title">Your SCM identity isn’t linked</p>
         <p className="prov-note">
           That is different from having no activity — nobody has told the dashboard which SCM account
-          is yours. An admin can link you under <strong>Settings → Operators</strong>.
+          is yours. An admin can link you under <strong>Settings → Accounts → People</strong>.
         </p>
         <ConnectOptions />
         {subject && (

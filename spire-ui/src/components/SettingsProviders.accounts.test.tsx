@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
@@ -152,6 +152,26 @@ describe('SettingsProviders — the Machine accounts list', () => {
     renderPage();
 
     expect(await screen.findByText('TEST Jira')).toBeInTheDocument();
+    expect(screen.queryByText(/no machine accounts yet/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The same rule in the gap between the two fetches. Clearing the loading flag when the forge list
+   * answered rendered a page with no forge rows and no trackers yet — indistinguishable from having
+   * neither — so a deployment holding only tracker accounts flashed the empty state for one render.
+   * The tracker fetch is left unresolved here, which IS that gap, held open.
+   */
+  it('keeps showing Loading until the tracker list answers too', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchContextProviders').mockReturnValue(new Promise<api.ContextProviderView[]>(() => {}));
+    renderPage();
+
+    // The forge fetch has answered by the time the tracker fetch is issued, so this is the gap —
+    // asserted rather than slept for, since "Loading…" is also the state before anything resolved.
+    await waitFor(() => expect(api.fetchContextProviders).toHaveBeenCalled());
+    await act(async () => {});
+
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
     expect(screen.queryByText(/no machine accounts yet/i)).not.toBeInTheDocument();
   });
 });

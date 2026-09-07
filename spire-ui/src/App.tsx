@@ -104,8 +104,8 @@ export default function App() {
    *
    * Each service is a separate OIDC client with a cookie scoped to its own prefix (ADR-022), so
    * signing in to the dashboard mints `/api` and nothing else. Every call to `/gw` or `/wk` then
-   * answered with a redirect that `fetch` cannot follow — the Webhooks screen reported "failed to
-   * fetch", a review's Context card failed alone on an otherwise working page, and the attention
+   * answered with a redirect that `fetch` cannot follow — the Repositories screen reported "failed
+   * to fetch", a review's Context card failed alone on an otherwise working page, and the attention
    * socket declared the gateway down. Done here, once, rather than on first use: the attention panel
    * opens its gateway socket on every page, so first use is immediately.
    */

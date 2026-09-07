@@ -58,8 +58,6 @@ export default function SettingsProviders() {
       list.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
     }
 
     // Tracker and knowledge accounts are listed read-only. Loaded separately so a failure there
@@ -70,6 +68,11 @@ export default function SettingsProviders() {
     } catch (err) {
       setTrackerError(err instanceof Error ? err.message : String(err));
     }
+
+    // Cleared once, after BOTH lists have answered. Clearing it after the forge list alone renders
+    // the page with no forge accounts and no trackers yet, which is exactly the empty state — so a
+    // deployment holding only tracker accounts flashed "no machine accounts yet" before its rows.
+    setLoading(false);
   }
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ServingCell from './ServingCell';
 import * as api from '../api';
 
@@ -41,6 +41,39 @@ describe('ServingCell', () => {
 
     rerender(<ServingCell role="reviewer" lookup={lookupFor('TEST-second', 'second-bot')} repo={repo} />);
     await waitFor(() => expect(screen.getByText('second-bot')).toBeInTheDocument());
+    expect(screen.queryByText('reachable')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The reset above only clears a result that has already arrived. A probe still in flight answers
+   * after the account changed, and its "reachable" would be written beside the new chip — the same
+   * false statement, reached by the other order. The request is numbered, so the late answer is
+   * recognised as stale and dropped.
+   */
+  it('drops a stale verify response after the account changes while in flight', async () => {
+    let resolveVerify: (value: api.RepoCheck) => void = () => {};
+    const pending = new Promise<api.RepoCheck>((resolve) => {
+      resolveVerify = resolve;
+    });
+    vi.spyOn(api, 'verifyRepo').mockReturnValue(pending);
+    const { rerender } = render(
+      <ServingCell role="reviewer" lookup={lookupFor('TEST-first', 'first-bot')} repo={repo} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /verify review account for TEST-acme\/widgets/i }));
+    // The button keeps its aria-label while in flight, so the progress wording is read off its text.
+    expect(await screen.findByText('Verifying…')).toBeInTheDocument();
+
+    // The lookup resolves to a different account while the probe is still in flight.
+    rerender(<ServingCell role="reviewer" lookup={lookupFor('TEST-second', 'second-bot')} repo={repo} />);
+    await waitFor(() => expect(screen.getByText('second-bot')).toBeInTheDocument());
+
+    // The original (now-stale) request resolves after the reset; flush it and confirm it was dropped.
+    await act(async () => {
+      resolveVerify({ ok: true, detail: null });
+      await pending;
+    });
+
     expect(screen.queryByText('reachable')).not.toBeInTheDocument();
   });
 });

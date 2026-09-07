@@ -67,7 +67,7 @@ export function ConnectOptions() {
       {nothingConfigured && (
         <p className="prov-note">
           No platform is set up for sign-in yet. An admin registers an application under
-          <strong> Settings → Operators</strong>, and then this becomes a single click.
+          <strong> Settings → Accounts → People</strong>, and then this becomes a single click.
         </p>
       )}
     </div>

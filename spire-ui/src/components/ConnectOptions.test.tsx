@@ -56,7 +56,7 @@ describe('ConnectOptions', () => {
     render(<ConnectOptions />);
 
     expect(await screen.findByText(/No platform is set up for sign-in yet/)).toBeTruthy();
-    expect(screen.getByText(/Settings → Operators/)).toBeTruthy();
+    expect(screen.getByText(/Settings → Accounts → People/)).toBeTruthy();
   });
 
   /**

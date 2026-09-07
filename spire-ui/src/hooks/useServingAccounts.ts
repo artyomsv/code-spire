@@ -45,7 +45,9 @@ export function useServingAccounts(repos: WebhookRepoView[]): Record<string, Ser
 
   useEffect(() => {
     let alive = true;
-    setLookups({});
+    // A fresh `{}` is a new reference React cannot bail out of, so clearing an already-empty map
+    // would re-render every consumer of this hook for no change.
+    setLookups((prev) => (Object.keys(prev).length === 0 ? prev : {}));
     for (const [key, { type, owner }] of pairs) {
       fetchServingAccounts(type, owner)
         .then((data) => {

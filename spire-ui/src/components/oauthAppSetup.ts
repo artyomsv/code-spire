@@ -1,7 +1,7 @@
 // Per-platform "what to do on the portal" steps for the OAuth application an operator signs into
-// (Settings → Operators → Sign-in applications). The same shape as `webhookSetup.ts`, and for the
-// same reason: the product hands the admin a value to paste into somebody else's portal, and every
-// mistake there fails on the platform's side with a message that names nothing in this product.
+// (Settings → Accounts → People → Sign-in applications). The same shape as `webhookSetup.ts`, and
+// for the same reason: the product hands the admin a value to paste into somebody else's portal, and
+// every mistake there fails on the platform's side with a message that names nothing in this product.
 //
 // The steps reference "above" for the redirect address, which the panel renders with a Copy button.
 // Kept framework-free so it unit-tests without rendering.

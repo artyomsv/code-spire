@@ -14,7 +14,7 @@ import { baseUrlHint, oauthSetupGuide } from './oauthAppSetup';
  *
  * <p><b>The instructions are the feature.</b> Registering an application means working in the
  * platform's own portal, where every field is named differently and one wrong value fails with a
- * message that mentions nothing from this product. Settings → Webhooks already learned this and
+ * message that mentions nothing from this product. Settings → Repositories already learned this and
  * ships a numbered checklist; this reuses that shape, and the same {@link CopyField}, so the value
  * that must match exactly is copied rather than retyped.
  */
@@ -230,7 +230,7 @@ function AppRow({
   );
 }
 
-/** The platform's own portal, step by step — the same shape Settings → Webhooks uses. */
+/** The platform's own portal, step by step — the same shape Settings → Repositories uses. */
 function SetupChecklist({ providerType }: { providerType: string }) {
   const guide = oauthSetupGuide(providerType);
   if (!guide) {

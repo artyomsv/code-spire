@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { checkProvider, verifyRepo, type WebhookRepoView } from '../api';
 import type { ServingLookup } from '../hooks/useServingAccounts';
 import { servingChip } from './servingAccounts';
@@ -27,19 +27,28 @@ export default function ServingCell({ role, lookup, repo }: Props) {
     state: 'idle',
   });
   const canVerify = account !== undefined && account.state !== 'missing' && account.id !== null;
+  const verifyReq = useRef(0);
 
   // A verify result describes one account. The row is never remounted — `<tr key={w.id}>` is stable
   // — so when the lookup resolves to a different account, drop the result it no longer describes
-  // rather than leave "reachable" sitting beside a chip it was never about.
-  useEffect(() => setVerify({ state: 'idle' }), [account?.id, account?.state]);
+  // rather than leave "reachable" sitting beside a chip it was never about. Bumping the request
+  // number here also invalidates a probe still in flight, whose answer would otherwise land after
+  // the reset and describe the previous account.
+  useEffect(() => {
+    verifyReq.current += 1;
+    setVerify({ state: 'idle' });
+  }, [account?.id, account?.state]);
 
   async function onVerify() {
     if (account === undefined || account.id === null) return;
+    const reqId = ++verifyReq.current;
     setVerify({ state: 'checking' });
     try {
       const result = repo.scope === 'repo' ? await verifyRepo(account.id, repo.target) : await checkProvider(account.id);
+      if (reqId !== verifyReq.current) return; // account changed while in flight — drop the stale result
       setVerify(result.ok ? { state: 'ok' } : { state: 'fail', detail: result.detail ?? 'Not reachable' });
     } catch (err) {
+      if (reqId !== verifyReq.current) return;
       setVerify({ state: 'fail', detail: err instanceof Error ? err.message : String(err) });
     }
   }
