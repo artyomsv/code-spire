@@ -138,7 +138,7 @@ down is the original design-time roadmap (kept for reference).
   issue-comments into the same `PullRequestEventReceived`/`PullRequestClosed`/`ManualCommandReceived` the
   manual path emits — so the whole saga (incl. the decider's same-commit re-delivery no-op) is untouched.
   **The gateway OWNS the webhook registry** (schema-per-service): its own `gateway` Postgres schema +
-  Flyway + `WebhookRepoRegistry` + `/api/webhook-repos` CRUD + Settings → **Webhooks** UI. Secrets are
+  Flyway + `WebhookRepoRegistry` + `/api/webhook-repos` CRUD + Settings → **Repositories** UI. Secrets are
   Tink-encrypted under a **dedicated webhook keyset the gateway alone holds** (never the master keyset), and
   the gateway's DB role is **scoped to its own schema** — so a compromised internet-facing edge can verify
   signatures but cannot read (or reach) the SCM/LLM API-token registry, the event store, or anything else.
@@ -424,7 +424,7 @@ down is the original design-time roadmap (kept for reference).
    2026-07-16). A single
    registry-backed edge `POST /webhooks/github/{key}` auto-registers PRs on open/update/reopen (and
    `closed` → cancel; `/review` issue-comments → force). Per-repository registrations live in a new
-   `webhook_repo` table (Settings → **Webhooks**): an unguessable routing `key` in the URL + a
+   `webhook_repo` table (Settings → **Repositories**): an unguessable routing `key` in the URL + a
    Tink-encrypted HMAC secret under a **dedicated webhook keyset** (`SPIRE_ENCRYPTION_WEBHOOK_KEYSET`),
    so the gateway verifies inbound signatures without ever holding the master keyset that unlocks API
    tokens. `GitHubIngress` (X-Hub-Signature-256, constant-time) translates to the same

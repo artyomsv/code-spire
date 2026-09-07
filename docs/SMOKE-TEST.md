@@ -323,7 +323,7 @@ per-repo **HMAC secret** (stored encrypted under the dedicated webhook keyset) a
    internet-facing edge can never decrypt (or even read) the SCM/LLM API-token registry. The
    orchestrator never sees webhook secrets. (Also ensure the scoped `gateway` DB role exists —
    `GATEWAY_POSTGRES_*` in `.env`; a fresh `docker compose up` provisions it.)
-3. **Register the repository webhook:** Settings → **Webhooks** → Add → choose the provider type, enter
+3. **Register the repository webhook:** Settings → **Repositories** → Add → choose the provider type, enter
    `owner/repo`, and set a **secret** (any strong random string — you'll paste the same one into
    GitHub). Save. The row shows the **Payload URL path** `/webhooks/github/<key>`.
 
@@ -394,7 +394,7 @@ only the verification scheme and the payload shape differ.
 2. **Webhook keyset (gateway only):** the same `SPIRE_ENCRYPTION_WEBHOOK_KEYSET` as Mode E — reuse
    it if the gateway is already configured from Mode E; otherwise generate and set it per Mode E
    step 1.2.
-3. **Register the repository webhook:** Settings → **Webhooks** → Add → provider `gitlab`, enter
+3. **Register the repository webhook:** Settings → **Repositories** → Add → provider `gitlab`, enter
    the project path (`group[/subgroup]/project`), and set a **secret** — unlike GitHub/Bitbucket
    this secret is **not** used to compute a signature: GitLab sends it back verbatim in the
    `X-Gitlab-Token` header, so the value itself *is* the shared secret (constant-time compared,
@@ -861,7 +861,7 @@ username.
 | User | Password | Roles | Can do |
 |---|---|---|---|
 | `dev-operator` | `dev-operator` | `spire-admin` + `spire-viewer` | everything — register a PR, re-run, delete, replay the DLQ, and every settings screen |
-| `dev-viewer` | `dev-viewer` | `spire-viewer` | read reviews only — the reviews list, a review's detail/timeline/threads/context, and the attention panel. **No Configure section at all** (General, Context, Repositories, Webhooks, LLM, Prompts, Dead-letter), no Register PR, no review-mode toggle, no re-run or delete |
+| `dev-viewer` | `dev-viewer` | `spire-viewer` | read reviews only — the reviews list, a review's detail/timeline/threads/context, and the attention panel. **No Configure section at all** (Memory, Accounts, General, Context, Repositories, LLM, Prompts, Dead-letter), no Register PR, no review-mode toggle, no re-run or delete |
 
 The viewer's limits are enforced by the API (`@RolesAllowed`), not by the interface: every
 configuration endpoint answers **403** for `spire-viewer`, reads included. The dashboard hides what it
@@ -957,7 +957,7 @@ containerized stack read them as `39280` / `39281` / `39285`.
 | 9 | As `dev-viewer`, `curl` the DLQ and any registry (`/api/providers`, `/api/llm-providers`, `/api/prompts`, `/api/settings/review-mode`) with that session | **403** on every one — configuration is admin-only including its reads |
 | 10 | Wait past the session lifetime (~5 min) with the dashboard open | it goes to a login, and does **not** sit reconnecting or claim the webhook gateway is down |
 | 11 | Sign out | returned to the provider's login, and signing in again asks for credentials rather than silently resuming |
-| 11b | Sign in, then open **Webhooks** and any review's **Context** card | both load. They are served by the gateway and the worker, which are separate sessions — signing in mints `/api` only, so the dashboard establishes the siblings via `<prefix>/auth/login`. If either says "failed to fetch", that step did not happen |
+| 11b | Sign in, then open **Repositories** and any review's **Context** card | both load. They are served by the gateway and the worker, which are separate sessions — signing in mints `/api` only, so the dashboard establishes the siblings via `<prefix>/auth/login`. If either says "failed to fetch", that step did not happen |
 | 11c | With the dashboard open, check the attention bell reports no gateway outage | a missing `/gw` session used to present as "the webhook gateway is not responding", retried every 1.5s — a false BLOCKING row about a service that was fine |
 | 12 | Compare the `302` from `/api/…` with the one from `/gw/…`, both via the dashboard's origin | **different `client_id`s** (`spire-orchestrator` vs `spire-gateway`) and **different callback paths** — the per-service isolation, visible without reading any config |
 | 13 | Any `redirect_uri` in those redirects | the origin **you are browsing** (`:34000`/`:39285`), never a backend port — the dev-server proxy deliberately omits `changeOrigin`, which would rewrite `Host` and send the callback to the wrong origin |
