@@ -106,14 +106,17 @@ class ProviderResourceTest {
         org.junit.jupiter.api.Assertions.assertTrue(
                 registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
 
-        // An explicit role on update still changes it: that is a deliberate operator action.
+        // A role is fixed at registration: changing it would re-purpose this token under the other
+        // authority set. The request is refused, and both lookups still answer as before.
         update.put("role", "REVIEWER");
         given().contentType("application/json").body(update)
                 .when().put("/api/providers/" + id)
-                .then().statusCode(200)
-                .body("role", equalTo("REVIEWER"));
+                .then().statusCode(409);
         org.junit.jupiter.api.Assertions.assertTrue(
-                registry.resolve("bitbucket-cloud", "rest-factory").isPresent());
+                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                registry.resolve("bitbucket-cloud", "rest-factory").isEmpty(),
+                "a refused change must not have written the other role");
     }
 
     @Test

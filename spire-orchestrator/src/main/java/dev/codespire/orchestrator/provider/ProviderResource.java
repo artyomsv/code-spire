@@ -7,6 +7,7 @@ import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -92,8 +93,13 @@ public class ProviderResource {
     @Path("/{id}")
     public ProviderView update(@PathParam("id") String id, ProviderInput in) {
         validate(in, false);
-        ProviderView updated = registry.update(uuid(id), resolveIdentity(in))
-                .orElseThrow(() -> new NotFoundException("No provider " + id));
+        ProviderView updated;
+        try {
+            updated = registry.update(uuid(id), resolveIdentity(in))
+                    .orElseThrow(() -> new NotFoundException("No provider " + id));
+        } catch (ProviderRegistry.RoleIsFixedAtRegistration e) {
+            throw conflict(e.getMessage());
+        }
         // Only record when a secret was actually supplied: that's the only case resolveIdentity(...)
         // re-validates the token (it returns the input untouched on a blank secret). Recording success
         // unconditionally would silently clear a real prior rejection on an update that never touched
@@ -297,6 +303,16 @@ public class ProviderResource {
         if (value == null || value.isBlank()) {
             throw new BadRequestException(name + " is required");
         }
+    }
+
+    /**
+     * The message goes on the RESPONSE, not the exception: {@code new ClientErrorException(message,
+     * status)} leaves the body empty, so the client learns nothing about what to send instead.
+     * Same shape as {@code RunResource.conflict}.
+     */
+    private static ClientErrorException conflict(String message) {
+        return new ClientErrorException(
+                Response.status(Response.Status.CONFLICT).entity(message).build());
     }
 
     private static UUID uuid(String id) {
