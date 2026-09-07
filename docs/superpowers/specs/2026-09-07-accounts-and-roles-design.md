@@ -108,8 +108,9 @@ actions**.
   `Tracker · confluence` / `Tracker · github-issues` / `Tracker · gitlab-issues` / `Knowledge ·
   code`; Role `Read`; Identity the stored `username` or `—`; Scope the `baseUrl` host; Connection
   from `lastCheckOk/lastCheckAt`; Enabled. One action: **Manage on Context** (link to
-  `/settings/context`). No edit or delete here. The link carries no `?edit=`: no screen reads that
-  parameter today (§11), so pretending it opens the row would be a lie.
+  `/settings/context?edit=<id>`, which opens that row's edit dialog — the Context screen already
+  consumes `?edit=` through `useEditDeepLink`, `spire-ui/src/hooks/useEditDeepLink.ts`). No edit or
+  delete here.
 - Sort: forge rows first, then tracker rows; within each, `createdAt`.
 - Empty state: "No machine accounts yet. Add a reviewer account to start reviewing."
 
@@ -233,9 +234,18 @@ at registration; register a new account for the other role"*. Absent/blank keeps
 | `spire-gateway/.../WebhookAttentionRows.java:56` | `/settings/webhooks?edit=` | `/settings/repositories?edit=` |
 | `spire-gateway/.../WebhookRepoResource.java:25` (javadoc) | `Settings -> Webhooks` | `Settings -> Repositories` |
 | `docker-compose.dev.yml:233` (comment) | `Settings -> Webhooks` | `Settings -> Repositories` |
+| `spire-ui/src/components/AttentionBell.tsx:13-20` `ACTION_LABELS` | `'/settings/webhooks': 'Settings · Webhooks'`, `'/settings/providers': 'Settings · Providers'` | add `'/settings/repositories': 'Settings · Repositories'` and `'/settings/accounts': 'Settings · Accounts'`; **keep the two old keys**, relabelled the same way, so a row emitted by a not-yet-upgraded service still reads correctly |
+| `spire-ui/src/components/SettingsWebhookRepos.tsx:79-84` (list note) | `…registered under Settings → Repositories.` | `…registered under Settings → Accounts.` |
+| `spire-ui/src/components/SettingsWebhookRepos.tsx:339` (empty state) | `Register a provider first under Settings → Providers…` | `Register a reviewer account first under Settings → Accounts…` |
 
-Tests asserting the old strings (`AttentionQueriesTest.java:411`, `WebhookAttentionResourceTest.java:108`)
-change with them.
+Tests asserting the old strings (`AttentionQueriesTest.java:411`, `WebhookAttentionResourceTest.java:108`,
+`AttentionBell.test.tsx:238`, `App.routes.test.tsx`) change with them.
+
+**One existing test asserts the opposite of Decision 2.** The third part of
+`ProviderResourceTest.aFactoryRoleSurvivesTheRestPathOnCreateAndUpdate` (`spire-orchestrator/src/test/…/provider/ProviderResourceTest.java:112-120`)
+sends `role: REVIEWER` on a FACTORY row's `PUT` and expects `200` with the role changed — "a deliberate
+operator action". This design reverses that: the same request now expects `409` and the role
+unchanged. The comment on the test changes to say why.
 
 ### 6.4 TypeScript types
 
@@ -270,10 +280,11 @@ says a route added without a row is a screen with no coverage.
   row's Verify is disabled. This is the legacy-edit case the form already handles.
 - Two enabled reviewer rows for one (type, workspace) cannot exist (unique key); the endpoint does
   not handle it and says so in a comment.
-- Redirects preserve the query string. Attention-panel links carry `?edit=<id>` today and land on
-  the right screen; no screen opens the row from it (verified 2026-09-07: none of
-  `SettingsProviders`, `SettingsContextProviders`, `SettingsWebhookRepos` reads the query string).
-  This change keeps that behaviour as it is — it neither adds nor removes the parameter's effect.
+- Redirects preserve the query string, because `?edit=<id>` is load-bearing: `SettingsProviders`,
+  `SettingsWebhookRepos`, `SettingsContextProviders` and `SettingsLlmProviders` all consume it
+  through `useEditDeepLink` (`spire-ui/src/hooks/useEditDeepLink.ts`) to open the named row. An
+  attention row that still carries an old path must therefore arrive at the new route with its
+  query intact, or the row it names stops opening.
 - The factory-role form path never shows or sends `authors` / `conversationLevel`; on the server
   they remain accepted and ignored for FACTORY rows, as today. No migration touches existing rows.
 
@@ -292,6 +303,9 @@ says a route added without a row is a screen with no coverage.
   owner); Verify calls `verify-repo` with the *chip's* account id (Factory verify uses the factory
   id, not the reviewer's); the Factory verify label says push rights are not checked.
 - `SettingsContextProviders`: the Used-by column renders `Reviewer · read` on every row.
+- `AttentionBell.test.tsx`: a row whose action is `/settings/repositories?edit=x` is labelled
+  `Settings · Repositories`; one whose action is the old `/settings/webhooks?edit=x` is labelled the
+  same way (the old key stays in the map).
 - `styles.contract.test.ts` gains any new class the chips introduce.
 - `tsc --noEmit` silent.
 
@@ -338,10 +352,6 @@ says a route added without a row is a screen with no coverage.
   a lookup-by-handle is a new port method on three adapters.
 - **Teaching the self-loop guard the Factory identity.** FR-F22 (M3) territory; the guard's
   REVIEWER-only behaviour is intentional for pull-request events (ADR-038).
-- **Making `?edit=<id>` open the row.** The attention panel has linked to
-  `/settings/providers?edit=` and `/settings/webhooks?edit=` since 2026-07-27, and no screen has
-  ever read it. Small, real, and its own change: three screens, one shared hook, one test each.
-  Worth a `techdebt/spire-ui/` entry when this spec is approved.
 - **The stale identity section of `docs/DATA-MODEL.md`** (`operator_seen`, `scm_oauth_app`,
   `scm_provider`, `factory_run` absent; "secrets never stored" contradicted by the encrypted
   registry). A doc-only follow-up; noted so it is not lost.
