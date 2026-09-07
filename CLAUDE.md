@@ -45,7 +45,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
 The per-milestone story — what shipped, what each review round found, the traps each one paid for —
 is in **`docs/HISTORY.md`**. A new milestone gets a new entry there; this section is rewritten to
-describe the new current state. Everything below is true as of **2026-09-04**.
+describe the new current state. Everything below is true as of **2026-09-08**.
 
 - **The reviewer (P0–P4) is delivered.** Three deployables over Kafka — `spire-gateway` (:34081),
   `spire-orchestrator` (:34080), `spire-review-worker` (:34082) — plus the `spire-ui` dashboard
@@ -77,12 +77,21 @@ describe the new current state. Everything below is true as of **2026-09-04**.
   dispatch, the push and the reconciliation are each proved separately, and a run unit cannot
   reach the e2e stack's GitLab because `RunUnitSpec` has no network field (`docs/UNVERIFIED.md`).
   **Next is M3** — `docs/factory/ROADMAP.md`. The two factory images are still not on GHCR.
+- **Accounts and roles (PR #120, 2026-09-07/08).** The Settings screens say what the code does:
+  **Accounts** (`/settings/accounts`; tabs *Machine accounts* and *People*) is the bot-account
+  registry that was labelled "Repositories", with a **Role** field (Reviewer | Factory) fixed at
+  registration — a role-changing `PUT /api/providers/{id}` is refused with 409; **Repositories**
+  (`/settings/repositories`) is the per-repository webhook registry that was labelled "Webhooks",
+  and shows per row which account reviews and which pushes, from `GET /api/providers/serving`
+  (five states: `ok | no-identity | no-login | disabled | missing`, computed with the pipeline's own
+  resolvers). Old routes redirect and keep `?edit=<id>`. The machine account a `/fix` needs can now
+  be registered from the UI. Design: `docs/superpowers/specs/2026-09-07-accounts-and-roles-design.md`.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-04):** 2877 Java tests across 323 suites, 0 failures, 1
-  skipped (`testFast` + `testServices`); 483 `spire-ui` vitest tests across 61 files;
-  `tsc --noEmit` silent. The nightly `testE2e` tier is separate and was **not** re-run for this
-  figure — 44 tests across 9 suites when it was last measured, on 2026-09-03.
+- **Measured, not estimated (2026-09-08):** 2889 Java tests across 324 suites, 0 failures, 1
+  skipped (`testFast` + `testServices`, every module re-run); 529 `spire-ui` vitest tests across
+  70 files; `tsc --noEmit` silent. The nightly `testE2e` tier is separate and was **not** re-run
+  for this figure — 44 tests across 9 suites when it was last measured, on 2026-09-03.
 
 ## Build & run
 
