@@ -19,9 +19,11 @@ import { CopyableValue } from '../render';
 import CopyField from './CopyField';
 import IconButton from './IconButton';
 import Select from './Select';
+import ServingCell from './ServingCell';
 import Tooltip from './Tooltip';
 import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
+import { ownerOf, servingKey, useServingAccounts } from '../hooks/useServingAccounts';
 
 const SCOPES: { value: WebhookScope; label: string }[] = [
   { value: 'repo', label: 'Repository' },
@@ -45,6 +47,7 @@ export default function SettingsWebhookRepos() {
   // An attention row names one registration; land the operator on it, not just on this page.
   useEditDeepLink(repos, setForm);
   const [confirmDelete, setConfirmDelete] = useState<WebhookRepoView | null>(null);
+  const serving = useServingAccounts(repos);
 
   async function load() {
     setLoading(true);
@@ -66,7 +69,7 @@ export default function SettingsWebhookRepos() {
     <section className="content">
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">Webhooks</h2>
+          <h2 className="prov-title">Repositories</h2>
           <Tooltip label="Add webhook">
             <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add webhook">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -80,8 +83,8 @@ export default function SettingsWebhookRepos() {
           <p className="prov-note">
             Paste each row’s <strong>Payload URL</strong> + <strong>Secret</strong> into that repository or
             organization’s webhook settings, prefixing the path with your public webhook base (e.g. your
-            Cloudflare tunnel URL). The owner must match a provider registered under Settings →
-            Repositories.
+            Cloudflare tunnel URL). The owner must match a reviewer account registered under Settings →
+            Accounts.
           </p>
         )}
 
@@ -125,7 +128,9 @@ export default function SettingsWebhookRepos() {
               <tr>
                 <th>Scope</th>
                 <th>Target</th>
-                <th>Provider</th>
+                <th>Forge</th>
+                <th>Reviewed by</th>
+                <th>Pushed by</th>
                 <th>Payload URL (path)</th>
                 <th>Secret</th>
                 <th>Enabled</th>
@@ -141,6 +146,12 @@ export default function SettingsWebhookRepos() {
                   </td>
                   <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
                     {w.providerType}
+                  </td>
+                  <td>
+                    <ServingCell role="reviewer" lookup={serving[servingKey(w.providerType, ownerOf(w))]} repo={w} />
+                  </td>
+                  <td>
+                    <ServingCell role="factory" lookup={serving[servingKey(w.providerType, ownerOf(w))]} repo={w} />
                   </td>
                   <td>
                     <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
@@ -198,7 +209,9 @@ export default function SettingsWebhookRepos() {
 }
 
 /** Loads enabled providers and preselects one — the row's provider on edit (matched by type + owner),
- *  else the first. Keeps the modal under the max-8 useState rule. */
+ *  else the first. Keeps the modal under the max-8 useState rule.
+ *  Reviewer accounts only: this form registers what will be reviewed, and a Factory account has
+ *  nothing to review with. */
 function useWebhookProviders(initial: WebhookRepoView | null) {
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [providersLoaded, setProvidersLoaded] = useState(false);
@@ -210,10 +223,10 @@ function useWebhookProviders(initial: WebhookRepoView | null) {
     fetchProviders()
       .then((all) => {
         if (!alive) return;
-        const usable = all.filter((p) => p.enabled);
+        const usable = all.filter((p) => p.enabled && p.role === 'REVIEWER');
         setProviders(usable);
         if (initial) {
-          const owner = initial.scope === 'org' ? initial.target : initial.target.split('/')[0];
+          const owner = ownerOf(initial);
           const match = usable.find((p) => p.type === initial.providerType && p.workspace === owner);
           setProviderId(match?.id ?? '');
         } else if (usable.length > 0) {
@@ -344,25 +357,28 @@ function WebhookRepoFormModal({
         <form className="modal-body scroll" onSubmit={submit}>
           {noProviders ? (
             <div className="modal-msg">
-              Register a provider first under Settings → Providers, then add a webhook for one of its repositories.
+              Register a reviewer account first under Settings → Accounts, then add a webhook for one of its repositories.
             </div>
           ) : (
             <>
               <div className="field-row-2">
                 <label className="field">
-                  <span>Provider</span>
+                  <span>Workspace</span>
                   {legacyEdit ? (
                     <div className="mono field-static">
                       {initial!.providerType} · {owner}
                     </div>
                   ) : (
                     <Select
-                      ariaLabel="Provider"
+                      ariaLabel="Workspace"
                       value={providerId}
-                      options={providers.map((p) => ({ value: p.id, label: `${p.name} · ${p.type} · ${p.workspace}` }))}
+                      options={providers.map((p) => ({ value: p.id, label: `${p.type} · ${p.workspace} (${p.name})` }))}
                       onChange={setProviderId}
                     />
                   )}
+                  <small className="field-hint">
+                    Which accounts review and push here is decided by the forge and workspace, not stored on this row.
+                  </small>
                 </label>
                 <label className="field">
                   <span>Scope</span>
