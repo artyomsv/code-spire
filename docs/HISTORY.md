@@ -1743,3 +1743,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   the review budget, and the same reasoning held for the call level. Model pricing is delivered and
   deliberately operator-entered (ADR-018): a hardcoded cost table would silently mis-price every
   review as prices drift, which is the no-fabricated-data rule applied to money.
+- **Accounts and roles (2026-09-07, PR #120) — the screens say what the code does.** The Settings
+  screen labelled *Repositories* was the SCM account registry, and the one labelled *Webhooks* was
+  the screen that lists repositories; `POST /api/runs` sent operators to "Settings -> Providers",
+  which no nav had, to set a role the form could not set. Renamed: **Accounts** (tabs *Machine
+  accounts* and *People*; the Operators screen became the People tab) and **Repositories**; old
+  routes redirect and keep `?edit=`. The account form gained a **Role** field that is fixed after
+  registration — a `PUT` that changes it is refused with 409, because a role-less `PUT` once demoted
+  a Factory row to reviewer and handed the review path the push token. `GET /api/providers/serving`
+  answers which accounts serve a forge + workspace in five states, using the pipeline's own
+  resolvers, and the Repositories screen shows both roles per row with a per-account Verify.
+  Tracker accounts are listed read-only on Accounts; Context shows *Used by*. The allowlist field
+  asks for the stable user id, which is what `/fix` accepts. No new tables. Design:
+  `docs/superpowers/specs/2026-09-07-accounts-and-roles-design.md`; out of scope, with reasons, in its §11.

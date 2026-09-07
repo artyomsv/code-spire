@@ -60,7 +60,7 @@ sidebar **Review-mode** slider is the live control.
 - **Your own Re-run button still works.** The dashboard re-run and `POST /api/runs` are
   `spire-admin` and deliberately ungated: they are the operator exercising a posture they own,
   and they are the only way to review a single PR without flipping the whole deployment active.
-- The **PR-author allowlist** is per-provider (Settings → Providers → Authors), so
+- The **PR-author allowlist** is per reviewer account (Settings → Accounts → May command this bot), so
   only listed authors are registered; everyone else is skipped with a
   `PullRequestSkipped` note. Matches account id OR username; empty = everyone.
 
@@ -84,7 +84,7 @@ password + LLM key, start the worker, and continue with the full review below.
 2. As the bot: *Personal settings -> App passwords -> Create* with scopes
    **Pull requests: Write** and **Repositories: Read**.
 3. You do **not** need the bot's `account_id` at all — register the provider in
-   Settings → Providers, leave "Bot account id" blank, and it is resolved from the
+   Settings → Accounts, leave "Bot account id" blank, and it is resolved from the
    token on save (which also validates the token). The same resolved id drives the
    orchestrator's self-loop guard, so nothing reads it from env anymore.
 4. Give the bot access to a **sandbox test repository** (read + comment is enough).
@@ -105,7 +105,7 @@ Note the public https URL it prints.
 
 ### 4. Register the webhook
 
-First in Code Spire (*Settings -> Webhooks -> Add*): provider `bitbucket-cloud`,
+First in Code Spire (*Settings -> Repositories -> Add*): provider `bitbucket-cloud`,
 scope `Repository`, target `workspace/repo`, and a secret you generate
 (e.g. `openssl rand -hex 24`). Save — it shows the routing path
 `/webhooks/bitbucket-cloud/<key>`.
@@ -195,7 +195,7 @@ topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
 
 ### 1. One-time prerequisites
 
-1. Register a **GitHub provider** in Settings → Providers (workspace = repo owner, e.g.
+1. Register a **GitHub account** in Settings → Accounts (role Reviewer; workspace = repo owner, e.g.
    `artyomsv`) with a token scoped **Contents: Read** + **Pull requests: Read and write**.
    Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
 2. In Settings → LLM (ADR-018): first **add a model** (e.g. name `gpt-4o`, input `$2.50` / output
@@ -262,7 +262,7 @@ GitLab (`baseUrl` drives it — e.g. a company `https://git.example.com/api/v4`)
 
 ### GitLab-specific prerequisites
 
-1. Register a **GitLab provider** in Settings → Providers:
+1. Register a **GitLab account** in Settings → Accounts (role Reviewer):
    - **workspace** = the top-level group (for `gitlab.com/<group>/<sub>/<project>`, use `<group>`;
      the sub-group + project become the slug automatically),
    - **base URL** = `https://gitlab.com/api/v4` (or `https://<self-managed-host>/api/v4`),
@@ -369,14 +369,14 @@ laptop is off, deliveries fail and can be redelivered later.
 
 | Symptom | Cause |
 |---|---|
-| GitHub shows **401** in Recent Deliveries | the secret in Settings → Webhooks ≠ the secret in GitHub |
+| GitHub shows **401** in Recent Deliveries | the secret in Settings → Repositories ≠ the secret in GitHub |
 | GitHub shows **404** | wrong/rotated key in the payload URL, or the webhook row is disabled |
 | GitHub shows **400** | the delivery's repo ≠ the registered `owner/repo` (wrong key pasted into another repo) |
 | **202** but nothing on the dashboard | PR author not in the provider allowlist, or the Review-mode slider is on observe |
 
 ### Cleanup
 
-Delete the GitHub webhook + stop the funnel; remove the row in Settings → Webhooks (its key stops
+Delete the GitHub webhook + stop the funnel; remove the row in Settings → Repositories (its key stops
 working immediately). Flip the **Review-mode** slider to observe to return to a no-write posture.
 
 ## Mode F — real GitLab MR via **webhook** (Tailscale Funnel)
@@ -438,14 +438,14 @@ MR (or a `Draft:`/`WIP:` title) is skipped until it is marked ready, same policy
 
 | Symptom | Cause |
 |---|---|
-| GitLab shows **401**-equivalent (delivery marked failed) | the secret in Settings → Webhooks ≠ the **Secret token** pasted into GitLab |
+| GitLab shows **401**-equivalent (delivery marked failed) | the secret in Settings → Repositories ≠ the **Secret token** pasted into GitLab |
 | **404** | wrong/rotated key in the payload URL, or the webhook row is disabled |
 | **400** | the delivery's project ≠ the registered path (wrong key pasted into another project) |
 | **202** but nothing on the dashboard | MR author not in the provider allowlist, or the Review-mode slider is on observe |
 
 ### Cleanup
 
-Delete the GitLab webhook + stop the funnel; remove the row in Settings → Webhooks (its key stops
+Delete the GitLab webhook + stop the funnel; remove the row in Settings → Repositories (its key stops
 working immediately). Flip the **Review-mode** slider to observe to return to a no-write posture.
 
 ## Conversation + reconciliation (all real modes)
@@ -548,7 +548,7 @@ provider's own webhook-delivery UI. Both happened during the 2026-07-26 pass. In
 
 **Editing a GitLab webhook's URL silently clears its secret token.** GitLab never redisplays the token,
 so saving the form after a URL change blanks it and every later delivery is rejected. Re-issue via
-Settings → Webhooks → **Rotate secret** and paste it back into GitLab's *Secret token* field. Expect to
+Settings → Repositories → **Rotate secret** and paste it back into GitLab's *Secret token* field. Expect to
 do this every time the tunnel URL changes.
 
 | # | Action | Expected on every provider |
@@ -605,7 +605,7 @@ dismissal.
 
 1. **No usable default LLM provider.** Settings → LLM, disable the default provider. Expect a
    red badge with `LLM_DEFAULT_MISSING`. Re-enable it; the row goes.
-2. **Rejected credential.** Settings → Providers, edit a provider's token to a wrong value and
+2. **Rejected credential.** Settings → Accounts, edit an account's token to a wrong value and
    press Check. Expect `CREDENTIAL_REJECTED` naming that provider. Restore the token and press
    Check; the row goes.
 3. **Rejected webhook deliveries.** Change a registration's secret at the provider without
@@ -805,7 +805,7 @@ discriminate (it fails when `contextRef` is null).
 |---|---|
 | No `ContextAssembled` at all; stage never leaves Received | Review-mode is `observe` |
 | `ContextAssembled` but never a blob row, every scenario | Provider disabled, or its allow-list (project-keys field) excludes the repository — an **empty** allow-list accepts everything; a wrong entry silently excludes |
-| Only the bare-reference scenarios fail | Expected off-platform (that is Part 3); on-platform it means the review's SCM provider type did not resolve — check Settings → Providers |
+| Only the bare-reference scenarios fail | Expected off-platform (that is Part 3); on-platform it means the review's SCM provider type did not resolve — check Settings → Accounts |
 | Contribution missing after ~20s, worker logs "did not contribute within the budget" | Fan-out timeout — a slow host, or too many references |
 | Test works, review does not | Extraction reads only title / branch / description; check the reference is in one of those |
 
@@ -1586,7 +1586,7 @@ resulting claim could not be checked by anything. This is the platform answering
 | 2 | Click it | The platform's own consent screen, naming your application and asking only for profile access |
 | 3 | Approve | Back on **My activity** with *Your SCM account is linked*, and the linked account shown as a chip |
 | 4 | Compare the chip's id against a review that platform produced | Identical. This is the assertion that matters: a link to any other spelling of your identity matches no rows and looks exactly like having done nothing |
-| 5 | Open Settings → Operators as an **admin** | The link is listed, with your operator name and the author name the reviews recorded — neither shown as a bare opaque id |
+| 5 | Open Settings → Accounts → People as an **admin** | The link is listed, with your operator name and the author name the reviews recorded — neither shown as a bare opaque id |
 | 6 | Repeat steps 1–3 on a second platform with the same operator | Two chips. One human owns several accounts, and the totals cover both |
 | 7 | Start a sign-in, then **decline** at the consent screen | Back on My activity saying you declined. Nothing linked |
 | 8 | Start a sign-in, wait past 15 minutes, then approve | Refused as expired, with an instruction to start again |
@@ -1604,7 +1604,7 @@ reviewed yet.
 | Symptom | Cause |
 |---|---|
 | The button is absent and the screen says no platform is set up | No OAuth application saved for any platform — Setup step 3 |
-| The platform refuses with a redirect-URI error | The address registered on the application does not match the one shown on the Operators screen exactly. Behind a proxy, check `SPIRE_PUBLIC_HOST` and the forwarded headers — the address is derived from the request |
+| The platform refuses with a redirect-URI error | The address registered on the application does not match the one shown on the People tab exactly. Behind a proxy, check `SPIRE_PUBLIC_HOST` and the forwarded headers — the address is derived from the request |
 | Back on My activity with *The platform refused the sign-in* | Client id or secret wrong, or the application was deleted on the platform. The platform's own words are deliberately not repeated: its error response echoes back what was sent, and one of those values is the client secret |
 | *That sign-in belonged to a different session* | The callback arrived under a different operator's session — expected if you switched accounts mid-flow, and the refusal an intercepted callback URL would meet |
 | Linked, but the activity screen stays empty | Step 4's failure. Compare the stored id against `review_status.author_id` for a review that platform produced |
@@ -1612,7 +1612,7 @@ reviewed yet.
 
 ### Cleanup
 
-Unlink under Settings → Operators, and remove the application with the trash control beside it (or
+Unlink under Settings → Accounts → People, and remove the application with the trash control beside it (or
 `DELETE /api/scm-oauth-apps/{providerType}`). Revoke the application on the platform too — this
 product never held your access token beyond the one call that read your profile, but the
 application itself is a standing grant on the platform side.
@@ -1642,8 +1642,11 @@ against a forge, authenticated as a machine account.
    three) with a `main` branch. Note its head: `git ls-remote <url> refs/heads/main`.
 
 4. **The machine account.** A *separate* forge account with write access to that repository and a
-   token that can push (ADR-038: the factory never pushes as the review bot). Register it with role
-   `FACTORY` — the Providers screen does not expose the role yet, so use the API:
+   token that can push (ADR-038: the factory never pushes as the review bot). Register it under
+   Settings → Accounts → Add account with **Role: Factory**; the login is resolved from the token
+   on save. The row's Identity column must show `@<login>` — a Factory account with no resolved
+   login cannot push, and Settings → Repositories shows it amber as "no login". The same thing
+   through the API:
 
    ```bash
    curl -sS -X POST http://localhost:34080/api/providers -H 'content-type: application/json' -d '{

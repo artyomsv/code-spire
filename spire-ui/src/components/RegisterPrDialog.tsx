@@ -132,7 +132,7 @@ export default function RegisterPrDialog({
               </div>
             ) : (
               <div className="resolve-hint warn">
-                No provider registered for “{resolved.workspace}” — add one under Settings → Providers
+                No provider registered for “{resolved.workspace}” — add one under Settings → Accounts
               </div>
             ))}
           {!resolved && urlUnrecognised && (

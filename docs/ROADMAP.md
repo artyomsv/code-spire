@@ -50,7 +50,7 @@ down is the original design-time roadmap (kept for reference).
 - **P0 + P1**: event backbone, 3 services over Redpanda, real Bitbucket adapter set, event store,
   idempotent posting + stale-run guard, live operator UI (`spire-ui`).
 - **Encryption at rest** (ADR-009): `EncryptionService`/Tink in the shared `spire-encryption` module.
-- **Provider registry** (Settings → Providers): encrypted credentials in the DB, no `.env` tokens.
+- **Provider registry** (Settings → Accounts): encrypted credentials in the DB, no `.env` tokens.
 - **ADR-015**: active-mode worker gets per-command SCM credentials brokered (encrypted) over the bus.
 - **GitHub adapter** (`spire-scm-github`): registry is type-aware end-to-end; GitHub PRs register and
   observe live (verified against `github.com/artyomsv/spire-test`). GitHub/GitLab were built out first
