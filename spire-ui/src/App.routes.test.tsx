@@ -369,8 +369,8 @@ describe('App — what a viewer may see', () => {
 
       expect(await screen.findByText('Not available to your role')).toBeInTheDocument();
       // The screen itself must not have mounted — a guard that renders the page and then covers it
-      // has already fired its requests.
-      expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
+      // has already fired its requests. Both names: Accounts adds an account, LLM adds a provider.
+      expect(screen.queryByRole('button', { name: /add (account|provider)/i })).not.toBeInTheDocument();
     },
   );
 

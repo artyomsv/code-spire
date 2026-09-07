@@ -33,11 +33,12 @@ const existing: api.ProviderView = {
 };
 
 /**
- * "Add provider" names three different controls (the header icon, the empty-state button and the
- * modal's submit), so every form interaction is scoped to the dialog rather than the page.
+ * The page's two "Add account" controls (the header icon and the empty-state button) and the
+ * modal's own submit all read as add buttons, so every form interaction is scoped to the dialog
+ * rather than the page.
  */
 async function openAddForm(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /add account/i }));
   return await screen.findByRole('dialog');
 }
 
@@ -49,8 +50,9 @@ async function openFilledAddForm(): Promise<HTMLElement> {
   return dialog;
 }
 
+// The modal's submit is renamed to "Add account" in a later task; accept either until then.
 const submit = (dialog: HTMLElement) =>
-  fireEvent.click(within(dialog).getByRole('button', { name: /^(add provider|save changes)$/i }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /^(add provider|add account|save changes)$/i }));
 
 const typeSecret = (dialog: HTMLElement) =>
   fireEvent.change(within(dialog).getByLabelText(/secret \/ token/i), {
@@ -60,6 +62,7 @@ const typeSecret = (dialog: HTMLElement) =>
 describe('SettingsProviders — provider form', () => {
   beforeEach(() => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
     vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'acme-bot' } as never);
   });
 

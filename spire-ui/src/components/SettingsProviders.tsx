@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { checkProvider, fetchProviders, type ProviderView } from '../api';
+import {
+  checkProvider,
+  fetchContextProviders,
+  fetchProviders,
+  type ContextProviderView,
+  type ProviderView,
+} from '../api';
 import AccountsTable, { type Conn } from './AccountsTable';
 import AccountsTabs from './AccountsTabs';
 import ProviderFormModal, { DeleteConfirmModal } from './ProviderFormModal';
@@ -13,6 +19,9 @@ export default function SettingsProviders() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [conns, setConns] = useState<Record<string, Conn>>({});
+  // Tracker and knowledge accounts, listed read-only beneath the forge rows.
+  const [trackers, setTrackers] = useState<ContextProviderView[]>([]);
+  const [trackerError, setTrackerError] = useState<string | null>(null);
 
   // null = form closed; a ProviderView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | ProviderView | null>(null);
@@ -52,6 +61,15 @@ export default function SettingsProviders() {
     } finally {
       setLoading(false);
     }
+
+    // Tracker and knowledge accounts are listed read-only. Loaded separately so a failure there
+    // cannot take the forge list with it: the forge list is the one a review depends on.
+    try {
+      setTrackers(await fetchContextProviders());
+      setTrackerError(null);
+    } catch (err) {
+      setTrackerError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   useEffect(() => {
@@ -65,8 +83,8 @@ export default function SettingsProviders() {
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">Accounts</h2>
-          <Tooltip label="Add provider">
-            <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add provider">
+          <Tooltip label="Add account">
+            <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add account">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                 <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
@@ -77,24 +95,28 @@ export default function SettingsProviders() {
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading && providers.length === 0 ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : providers.length === 0 ? (
+        ) : providers.length === 0 && trackers.length === 0 ? (
           <div className="prov-empty">
-            <span>No providers registered yet.</span>
+            <span>No machine accounts yet. Add a reviewer account to start reviewing.</span>
             <button className="btn" onClick={() => setForm('new')}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                 <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
-              Add provider
+              Add account
             </button>
           </div>
         ) : (
-          <AccountsTable
-            providers={providers}
-            conns={conns}
-            onRecheck={(id) => void checkOne(id)}
-            onEdit={setForm}
-            onDelete={setConfirmDelete}
-          />
+          <>
+            {trackerError && <p className="prov-note">Tracker accounts could not be loaded: {trackerError}</p>}
+            <AccountsTable
+              providers={providers}
+              trackers={trackers}
+              conns={conns}
+              onRecheck={(id) => void checkOne(id)}
+              onEdit={setForm}
+              onDelete={setConfirmDelete}
+            />
+          </>
         )}
       </div>
 

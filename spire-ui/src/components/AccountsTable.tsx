@@ -1,6 +1,7 @@
-import { type ProviderView } from '../api';
+import { type ContextProviderView, type ProviderView } from '../api';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
+import { accountKind, hostOf, roleLabel } from './accounts';
 import { conversationLabel } from './ProviderFormModal';
 
 // Per-provider connectivity status, keyed by provider id.
@@ -13,25 +14,36 @@ export interface Conn {
 
 interface Props {
   providers: ProviderView[];
+  trackers: ContextProviderView[];
   conns: Record<string, Conn>;
   onRecheck: (id: string) => void;
   onEdit: (p: ProviderView) => void;
   onDelete: (p: ProviderView) => void;
 }
 
-/** The machine-accounts table. The page owns loading and the modals; this only renders rows. */
-export default function AccountsTable({ providers, conns, onRecheck, onEdit, onDelete }: Props) {
+/**
+ * The machine-accounts table: forge accounts first (edited here), then tracker and knowledge
+ * accounts (read-only, managed on Context). One list answers "who acts as what"; two registries
+ * still back it, which is why the second kind links out rather than opening a form here.
+ *
+ * <p>Reviewer-only columns show a dash on a Factory row. The allowlist and the conversation level
+ * are read through the REVIEWER lookup alone, so on a factory row they are dead data, and showing
+ * a number there would invite editing it.
+ */
+export default function AccountsTable({ providers, trackers, conns, onRecheck, onEdit, onDelete }: Props) {
+  const mono = { fontSize: 12, color: 'var(--text-2)' } as const;
   return (
     <table className="prov-table">
       <thead>
         <tr>
           <th>Name</th>
-          <th>Type</th>
-          <th>Workspace</th>
-          <th>Auth</th>
+          <th>Kind</th>
+          <th>Role</th>
+          <th>Identity</th>
+          <th>Scope</th>
           <th>Connection</th>
-          <th className="cell-r">Authors</th>
           <th>Enabled</th>
+          <th className="cell-r">May command</th>
           <th>Conversation</th>
           <th></th>
         </tr>
@@ -43,25 +55,17 @@ export default function AccountsTable({ providers, conns, onRecheck, onEdit, onD
               <div className="prov-name">{p.name}</div>
               <div className="prov-sub">{p.baseUrl}</div>
             </td>
-            <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-              {p.type}
+            <td className="mono" style={mono}>{`Forge · ${p.type}`}</td>
+            <td>{roleLabel(p.role)}</td>
+            <td className="mono" style={mono}>
+              {identityOf(p)}
             </td>
-            <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+            <td className="mono" style={mono}>
               {p.workspace}
-            </td>
-            <td>
-              <div className="mono" style={{ fontSize: 12 }}>
-                {p.authKind}
-                {p.authKind === 'basic' && p.authUsername ? ` · ${p.authUsername}` : ''}
-              </div>
-              <div className="prov-sub">{p.hasSecret ? 'token set' : 'no token'}</div>
             </td>
             <td>
               <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => onRecheck(p.id)} />
               <LastChecked item={p} />
-            </td>
-            <td className="cell-r mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-              {p.authors.length}
             </td>
             <td>
               <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
@@ -69,8 +73,11 @@ export default function AccountsTable({ providers, conns, onRecheck, onEdit, onD
                 {p.enabled ? 'Enabled' : 'Disabled'}
               </span>
             </td>
+            <td className="cell-r mono" style={mono}>
+              {p.role === 'REVIEWER' ? p.authors.length : '—'}
+            </td>
             <td>
-              <span className="prov-sub">{conversationLabel(p.conversationLevel)}</span>
+              <span className="prov-sub">{p.role === 'REVIEWER' ? conversationLabel(p.conversationLevel) : '—'}</span>
             </td>
             <td>
               <div className="prov-actions">
@@ -80,9 +87,54 @@ export default function AccountsTable({ providers, conns, onRecheck, onEdit, onD
             </td>
           </tr>
         ))}
+        {trackers.map((t) => (
+          <tr key={`context-${t.id}`}>
+            <td>
+              <div className="prov-name">{t.name}</div>
+              <div className="prov-sub">{t.baseUrl}</div>
+            </td>
+            <td className="mono" style={mono}>{`${accountKind(t.type)} · ${t.type}`}</td>
+            <td>Read</td>
+            <td className="mono" style={mono}>
+              {t.username ?? '—'}
+            </td>
+            <td className="mono" style={mono}>
+              {hostOf(t.baseUrl)}
+            </td>
+            <td>
+              <LastChecked item={t} />
+            </td>
+            <td>
+              <span className={`pill ${t.enabled ? 'completed' : 'cancelled'}`}>
+                <span className="glyph"></span>
+                {t.enabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </td>
+            <td className="cell-r mono" style={mono}>
+              —
+            </td>
+            <td>
+              <span className="prov-sub">—</span>
+            </td>
+            <td>
+              <div className="prov-actions">
+                <a className="btn-ghost" href={`#/settings/context?edit=${encodeURIComponent(t.id)}`}>
+                  Manage on Context
+                </a>
+              </div>
+            </td>
+          </tr>
+        ))}
       </tbody>
     </table>
   );
+}
+
+/** The login the forge knows the bot by; the id when only that resolved; a plain word when neither did. */
+function identityOf(p: ProviderView): string {
+  if (p.botUsername) return `@${p.botUsername}`;
+  if (p.botAccountId) return p.botAccountId;
+  return 'not resolved';
 }
 
 function ConnCell({ conn, enabled, onRecheck }: { conn: Conn | undefined; enabled: boolean; onRecheck: () => void }) {
