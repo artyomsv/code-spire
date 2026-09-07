@@ -14,6 +14,7 @@ const provider = (over: Partial<api.ProviderView>): api.ProviderView => ({
   id: 'p1', name: 'Acme Bot', type: 'github', baseUrl: 'https://api.github.com', workspace: 'acme',
   authKind: 'bearer', authUsername: null, hasSecret: true, botAccountId: 'b1', enabled: true,
   authors: [], conversationLevel: null, createdAt: '2026-07-23T00:00:00Z',
+  role: 'REVIEWER', botUsername: null,
   lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...over,
 });
 

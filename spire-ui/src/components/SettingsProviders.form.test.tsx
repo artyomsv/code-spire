@@ -24,6 +24,8 @@ const existing: api.ProviderView = {
   enabled: true,
   authors: [],
   conversationLevel: null,
+  role: 'REVIEWER',
+  botUsername: null,
   createdAt: '2026-07-31T00:00:00Z',
   lastCheckAt: null,
   lastCheckOk: null,
