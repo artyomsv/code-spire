@@ -16,6 +16,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 
@@ -108,10 +109,14 @@ class ProviderResourceTest {
 
         // A role is fixed at registration: changing it would re-purpose this token under the other
         // authority set. The request is refused, and both lookups still answer as before.
+        //
+        // The BODY is asserted, not just the status: the refusal exists to tell the operator what to
+        // do instead, and building the 409 as new ClientErrorException(message, status) sends an
+        // empty body — a change the status assertion alone would pass unchanged.
         update.put("role", "REVIEWER");
         given().contentType("application/json").body(update)
                 .when().put("/api/providers/" + id)
-                .then().statusCode(409);
+                .then().statusCode(409).body(containsString("Register a new account"));
         org.junit.jupiter.api.Assertions.assertTrue(
                 registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
         org.junit.jupiter.api.Assertions.assertTrue(
