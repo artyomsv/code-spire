@@ -9,8 +9,10 @@ import {
   updateProvider,
   type AuthKind,
   type ProviderInput,
+  type ProviderRole,
   type ProviderView,
 } from '../api';
+import { roleLabel } from './accounts';
 import Select from './Select';
 
 // Options for the per-provider conversation-level override ('' = inherit the global default).
@@ -43,6 +45,18 @@ const BEARER_ONLY = new Set(['github', 'gitlab']);
 const KNOWN_DEFAULTS = new Set(Object.values(DEFAULT_BASE_URLS));
 const DEFAULT_BASE_URL = DEFAULT_BASE_URLS['bitbucket-cloud'];
 
+/** The fields only a REVIEWER has, held together: a Factory row has none of them. */
+interface ReviewerFields {
+  conversationLevel: string;
+  authors: string[];
+  authorDraft: string;
+}
+
+const ROLE_OPTIONS: { value: ProviderRole; label: string }[] = [
+  { value: 'REVIEWER', label: 'Reviewer' },
+  { value: 'FACTORY', label: 'Factory' },
+];
+
 export default function ProviderFormModal({
   initial,
   onClose,
@@ -62,10 +76,14 @@ export default function ProviderFormModal({
   const [authUsername, setAuthUsername] = useState(initial?.authUsername ?? '');
   const [secret, setSecret] = useState('');
   const [botAccountId, setBotAccountId] = useState(initial?.botAccountId ?? '');
-  const [conversationLevel, setConversationLevel] = useState(initial?.conversationLevel ?? '');
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
-  const [authors, setAuthors] = useState<string[]>(initial?.authors ?? []);
-  const [authorDraft, setAuthorDraft] = useState('');
+  const [role, setRole] = useState<ProviderRole>(initial?.role ?? 'REVIEWER');
+  const [reviewer, setReviewer] = useState<ReviewerFields>({
+    conversationLevel: initial?.conversationLevel ?? '',
+    authors: initial?.authors ?? [],
+    authorDraft: '',
+  });
+  const patchReviewer = (patch: Partial<ReviewerFields>) => setReviewer((prev) => ({ ...prev, ...patch }));
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,17 +101,16 @@ export default function ProviderFormModal({
   }
 
   function addAuthor() {
-    const v = authorDraft.trim();
-    if (!v || authors.includes(v)) {
-      setAuthorDraft('');
+    const v = reviewer.authorDraft.trim();
+    if (!v || reviewer.authors.includes(v)) {
+      patchReviewer({ authorDraft: '' });
       return;
     }
-    setAuthors([...authors, v]);
-    setAuthorDraft('');
+    patchReviewer({ authors: [...reviewer.authors, v], authorDraft: '' });
   }
 
   function removeAuthor(a: string) {
-    setAuthors(authors.filter((x) => x !== a));
+    patchReviewer({ authors: reviewer.authors.filter((x) => x !== a) });
   }
 
   async function submit(e: React.FormEvent) {
@@ -112,8 +129,8 @@ export default function ProviderFormModal({
     }
 
     // Flush a typed-but-not-yet-added author so it isn't silently dropped on submit.
-    const draft = authorDraft.trim();
-    const finalAuthors = draft && !authors.includes(draft) ? [...authors, draft] : authors;
+    const draft = reviewer.authorDraft.trim();
+    const finalAuthors = draft && !reviewer.authors.includes(draft) ? [...reviewer.authors, draft] : reviewer.authors;
 
     const input: ProviderInput = {
       name: name.trim(),
@@ -124,8 +141,10 @@ export default function ProviderFormModal({
       authUsername: authKind === 'basic' ? authUsername.trim() : null,
       botAccountId: botAccountId.trim(),
       enabled,
-      authors: finalAuthors,
-      conversationLevel: conversationLevel || undefined,
+      authors: role === 'REVIEWER' ? finalAuthors : [],
+      conversationLevel: role === 'REVIEWER' && reviewer.conversationLevel ? reviewer.conversationLevel : undefined,
+      // Fixed at registration: on edit the stored role goes back as it came. A different one is a 409.
+      role: editing && initial ? initial.role : role,
     };
     if (secret.trim()) input.secret = secret;
 
@@ -149,12 +168,37 @@ export default function ProviderFormModal({
     <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
-          <h3>{editing ? 'Edit provider' : 'Add provider'}</h3>
+          <h3>{editing ? 'Edit account' : 'Add account'}</h3>
           <button className="iconbtn" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>
         <form className="modal-body scroll" onSubmit={submit}>
+          <label className="field">
+            <span>Role</span>
+            {editing && initial ? (
+              <>
+                <div className="field-static">{roleLabel(initial.role)}</div>
+                <small className="field-hint">
+                  Set at registration. To change it, register a new account with the other role and delete this one.
+                </small>
+              </>
+            ) : (
+              <>
+                <Select
+                  ariaLabel="Role"
+                  value={role}
+                  options={ROLE_OPTIONS}
+                  onChange={(v) => setRole(v as ProviderRole)}
+                />
+                <small className="field-hint">
+                  Reviewer reads pull requests and posts comments. Factory pushes branches and opens pull
+                  requests as a separate machine account (ADR-038) — never as the reviewer.
+                </small>
+              </>
+            )}
+          </label>
+
           <label className="field">
             <span>Name</span>
             <input placeholder="Acme Bitbucket" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
@@ -222,18 +266,20 @@ export default function ProviderFormModal({
             </label>
           </div>
 
-          <label className="field">
-            <span>Conversation level</span>
-            <Select
-              ariaLabel="Conversation level"
-              value={conversationLevel}
-              options={CONVERSATION_OPTIONS.map((lvl) => ({ value: lvl, label: conversationLabel(lvl) }))}
-              onChange={setConversationLevel}
-            />
-            <small className="field-hint">
-              How deeply the bot converses in this provider&apos;s review threads. Inherit uses the global default.
-            </small>
-          </label>
+          {role === 'REVIEWER' && (
+            <label className="field">
+              <span>Conversation level</span>
+              <Select
+                ariaLabel="Conversation level"
+                value={reviewer.conversationLevel}
+                options={CONVERSATION_OPTIONS.map((lvl) => ({ value: lvl, label: conversationLabel(lvl) }))}
+                onChange={(v) => patchReviewer({ conversationLevel: v })}
+              />
+              <small className="field-hint">
+                How deeply the bot converses in this provider&apos;s review threads. Inherit uses the global default.
+              </small>
+            </label>
+          )}
 
           {authKind === 'basic' && (
             <label className="field">
@@ -259,41 +305,54 @@ export default function ProviderFormModal({
               Leave blank — it's resolved from the token when you save (which also validates the token).
               A Bitbucket workspace/repo access token has no user account, so it stays blank; the token
               is still validated against the workspace.
+              {role === 'FACTORY' && (
+                <>
+                  {' '}
+                  A Factory account must resolve to a login: a push is authenticated as one, and a workspace
+                  access token with no user cannot push.
+                </>
+              )}
             </small>
           </label>
 
-          <div className="field">
-            <span>Authors (PR-author allowlist)</span>
-            <div className="chip-add">
-              <input
-                className="mono"
-                placeholder="username"
-                value={authorDraft}
-                onChange={(e) => setAuthorDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addAuthor();
-                  }
-                }}
-              />
-              <button type="button" className="btn-ghost" onClick={addAuthor}>
-                Add
-              </button>
-            </div>
-            {authors.length > 0 && (
-              <div className="chips-edit">
-                {authors.map((a) => (
-                  <span key={a} className="chip-x">
-                    {a}
-                    <button type="button" onClick={() => removeAuthor(a)} aria-label={`Remove ${a}`}>
-                      ✕
-                    </button>
-                  </span>
-                ))}
+          {role === 'REVIEWER' && (
+            <div className="field">
+              <span>May command this bot</span>
+              <div className="chip-add">
+                <input
+                  className="mono"
+                  placeholder="stable user id"
+                  value={reviewer.authorDraft}
+                  onChange={(e) => patchReviewer({ authorDraft: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addAuthor();
+                    }
+                  }}
+                />
+                <button type="button" className="btn-ghost" onClick={addAuthor}>
+                  Add
+                </button>
               </div>
-            )}
-          </div>
+              <small className="field-hint">
+                The id the forge reports for the user, not the handle: /fix accepts ids only, because a
+                handle can change hands and /fix pushes code. Empty means everyone may /review; nobody may /fix.
+              </small>
+              {reviewer.authors.length > 0 && (
+                <div className="chips-edit">
+                  {reviewer.authors.map((a) => (
+                    <span key={a} className="chip-x">
+                      {a}
+                      <button type="button" onClick={() => removeAuthor(a)} aria-label={`Remove ${a}`}>
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <label className="field-check">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
@@ -307,7 +366,7 @@ export default function ProviderFormModal({
               Cancel
             </button>
             <button type="submit" className="btn" disabled={busy}>
-              {busy ? 'Saving…' : editing ? 'Save changes' : 'Add provider'}
+              {busy ? 'Saving…' : editing ? 'Save changes' : 'Add account'}
             </button>
           </div>
         </form>
@@ -345,7 +404,7 @@ export function DeleteConfirmModal({
     <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
-          <h3>Delete provider</h3>
+          <h3>Delete account</h3>
           <button className="iconbtn" onClick={onClose} aria-label="Close">
             ✕
           </button>
