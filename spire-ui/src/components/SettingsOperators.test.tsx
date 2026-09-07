@@ -35,6 +35,16 @@ describe('SettingsOperators', () => {
     vi.spyOn(api, 'fetchScmOAuthApps').mockResolvedValue([]);
   });
 
+  /** The screen is the People tab of Accounts, and says so above its own content. */
+  it('renders as the People tab of Accounts', async () => {
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
+
+    render(<SettingsOperators />);
+
+    await waitFor(() => expect(screen.getByRole('link', { name: 'People' })).toHaveAttribute('aria-current', 'page'));
+    expect(screen.getByRole('link', { name: 'Machine accounts' })).toHaveAttribute('href', '#/settings/accounts');
+  });
+
   it('lists the existing mappings with the operator and the name the reviews recorded', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
       { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '3218389' },

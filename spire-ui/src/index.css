@@ -894,6 +894,12 @@
   .wh-verify.ok { color: var(--good); }
   .wh-verify.fail { color: var(--crit); }
 
+  /* Settings → Accounts: two tabs above the card. The first tab strip in the app; kept to anchors. */
+  .tabs { display: flex; gap: 4px; margin: 0 0 14px; }
+  .tab { padding: 6px 12px; border-radius: 8px; font-size: 13px; color: var(--text-2); text-decoration: none; border: 1px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--border); }
+
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 18px; border-bottom: 1px solid var(--border);

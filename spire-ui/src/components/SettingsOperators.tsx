@@ -10,6 +10,7 @@ import {
   linkOperatorIdentity,
   unlinkOperatorIdentity,
 } from '../api';
+import AccountsTabs from './AccountsTabs';
 import { ScmConnections } from './ScmConnections';
 
 /**
@@ -89,6 +90,8 @@ export function SettingsOperators() {
 
   return (
     <section className="content">
+      <AccountsTabs active="people" />
+
       <ScmConnections />
 
       <div className="card">

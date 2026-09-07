@@ -9,6 +9,7 @@ import {
   type ProviderInput,
   type ProviderView,
 } from '../api';
+import AccountsTabs from './AccountsTabs';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Select from './Select';
@@ -105,9 +106,11 @@ export default function SettingsProviders() {
 
   return (
     <section className="content">
+      <AccountsTabs active="machine" />
+
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">Repositories</h2>
+          <h2 className="prov-title">Accounts</h2>
           <Tooltip label="Add provider">
             <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add provider">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
