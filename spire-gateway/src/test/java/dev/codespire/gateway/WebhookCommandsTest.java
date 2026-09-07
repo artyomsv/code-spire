@@ -9,9 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class WebhookCommandsTest {
 
+    /**
+     * The exact set, not a containment check. A command the orchestrator does not handle would be
+     * translated into a {@code ManualCommandReceived} that reaches the saga's {@code default} branch
+     * and is logged as "no handler" — which reads to an operator exactly like a lost webhook.
+     */
     @Test
     void recognisesTheCommandsTheOrchestratorHandles() {
-        assertEquals(Set.of("review", "finding"), WebhookCommands.SUPPORTED);
+        assertEquals(Set.of("review", "finding", "fix"), WebhookCommands.SUPPORTED);
     }
 
     @Test

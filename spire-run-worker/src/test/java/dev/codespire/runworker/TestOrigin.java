@@ -50,6 +50,28 @@ final class TestOrigin implements AutoCloseable {
         return git("rev-parse", "refs/heads/main");
     }
 
+    /**
+     * The tip of any branch, not only of {@code main}.
+     *
+     * <p>ADR-040's existing mode clones the branch it pushes to, so a run's base commit is that
+     * branch's tip rather than the trunk's — and a test that read the trunk would hand the run a
+     * commit that is not an ancestor of what it pushes.
+     */
+    String commitOf(String branch) {
+        return git("rev-parse", "refs/heads/" + branch);
+    }
+
+    /**
+     * A branch that exists BEFORE a run does — a human's branch, with a pull request open on it.
+     *
+     * <p>The whole subject of ADR-040 is pushing onto one of these, and M0 could not create one:
+     * every branch on this remote was made by the publisher, inside {@code spire/}. So the fixture
+     * has to make it, or the case cannot be set up at all.
+     */
+    void branchFrom(String branch, String from) {
+        git("branch", "-f", branch, "refs/heads/" + from);
+    }
+
     boolean hasBranch(String branch) {
         return TestImages.dockerStatus("exec", container, "git", "-C", BARE,
                 "rev-parse", "--verify", "--quiet", "refs/heads/" + branch) == 0;

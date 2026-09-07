@@ -12,7 +12,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -99,6 +103,21 @@ public class FactoryRunProjection {
     static final String DISPATCH_FAILED = "DISPATCH_FAILED";
 
     /**
+     * Every status a row may hold, for a caller that has to VALIDATE one rather than write one.
+     *
+     * <p>Listed here so the runs endpoint can refuse an unknown filter value instead of silently
+     * returning everything. A mistyped status that answers "all runs" reads as "nothing is stuck",
+     * which is the most dangerous possible answer to the question that page is opened to ask.
+     *
+     * <p>Hand-maintained, and {@code FactoryRunStatusesAreCompleteTest} DERIVES the same set by
+     * reflecting over the constants above rather than trusting this line. A tenth status added
+     * without a tenth entry here would otherwise be unfilterable and nothing would notice.
+     */
+    public static final Set<String> STATUSES = Set.of(QUEUED, RUNNING, SUCCEEDED, FAILED,
+            PUSH_GATE_REFUSED, DISPATCH_UNCERTAIN, CANCELLED, DELIVERED_NOTHING,
+            DELIVERED_UNFINISHED);
+
+    /**
      * The model this run was dispatched with, or empty when the row cannot be read.
      *
      * <p>Read from the run's own row rather than carried on the result, because the result is
@@ -154,6 +173,159 @@ public class FactoryRunProjection {
                           String failureCause, String failureDetail, String unitId) {
     }
 
+    /**
+     * One row of the runs list — a LIST shape, deliberately not {@link RunView}.
+     *
+     * <p>That record answers "what happened to this one run" and is the detail endpoint's wire
+     * contract; this answers "what is going on". Adding components to the detail record to serve a
+     * list would change a shipped wire shape for a reader that does not want them, and would drag
+     * the blocked-change list into a page that renders fifty rows.
+     *
+     * @param reviewId and {@code findingRef} — null for anything that is not a fix. V54's CHECK
+     *     already refuses a non-FIX row that names either, and this read must not invent them back:
+     *     a blank here would render as a broken join rather than as "this run had no review"
+     * @param cost unknown until the charge lands, and unknown forever if the model could not be
+     *     priced. Never zero for either — see {@link RunCost}
+     */
+    public record RunListEntry(String runId, String status, String kind, String harness,
+                               String model, String branch, String pushedRef, String reviewId,
+                               String findingRef, String failureCause, Instant startedAt,
+                               Instant endedAt, RunCost cost) {
+    }
+
+    /**
+     * What to list. Every field null means "no filter", which is the default page.
+     *
+     * <p>A record rather than four parameters for the naming and for putting the {@code limit}
+     * invariant in one place. <b>It does NOT remove the transposition hazard</b>, which an earlier
+     * version of this javadoc claimed: a canonical constructor is positional, so the call site can
+     * still swap two Strings. What actually polices that is
+     * {@code FactoryRunListTest.eachFilterNarrowsRatherThanAnsweringEverything}, which asserts each
+     * filter separately against rows differing on the other two — swap two at the call site and it
+     * turns red.
+     *
+     * @param limit how many rows, already validated by the caller against its own bound
+     */
+    public record RunFilter(String status, String kind, String reviewId, int limit) {
+
+        public RunFilter {
+            if (limit <= 0) {
+                throw new IllegalArgumentException("a page of runs needs a positive size: " + limit);
+            }
+        }
+    }
+
+    /**
+     * The runs list, newest first.
+     *
+     * <p><b>The cost is joined in SQL rather than fetched per row.</b> A per-row lookup over a
+     * fifty-row page is fifty round trips for a column, and the aggregate has to be computed
+     * server-side anyway to stay unknown-aware: {@code SUM} skips NULL, so the count of null lines
+     * is what distinguishes "cost nothing" from "nobody knows what it cost".
+     *
+     * <p>Ordered by {@code started_at DESC} with the run id as a tiebreak, so two runs dispatched in
+     * the same millisecond order deterministically rather than arbitrarily.
+     */
+    public List<RunListEntry> list(RunFilter filter) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch,
+                       r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
+                       r.started_at, r.ended_at,
+                       c.priced_millicents, c.unpriced_lines, c.line_count
+                  FROM factory_run r
+                  LEFT JOIN (
+                        SELECT subject_id,
+                               SUM(cost_millicents) AS priced_millicents,
+                               COUNT(*) FILTER (WHERE cost_millicents IS NULL) AS unpriced_lines,
+                               COUNT(*) AS line_count
+                          FROM llm_charge
+                         -- archived_at filtered like every other llm_charge read
+                         -- (ReviewProjection does it in four places). NOTHING writes the column
+                         -- today -- V32 reserves it for a future purge -- so this predicate is
+                         -- inert right now and looks dead. It is here because the day purge lands,
+                         -- this page would total lines every other cost surface excludes, and the
+                         -- two would disagree about what one run cost.
+                         WHERE subject_kind = 'RUN' AND archived_at IS NULL
+                         GROUP BY subject_id
+                  ) c ON c.subject_id = r.run_id
+                 WHERE 1 = 1
+                """);
+        List<String> bound = new ArrayList<>();
+        if (filter.status() != null) {
+            sql.append(" AND r.status = ?");
+            bound.add(filter.status());
+        }
+        if (filter.kind() != null) {
+            sql.append(" AND r.kind = ?");
+            bound.add(filter.kind());
+        }
+        if (filter.reviewId() != null) {
+            sql.append(" AND r.review_id = ?");
+            bound.add(filter.reviewId());
+        }
+        sql.append(" ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?");
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            int i = 1;
+            for (String value : bound) {
+                ps.setString(i++, value);
+            }
+            ps.setInt(i, filter.limit());
+            try (ResultSet rs = ps.executeQuery()) {
+                List<RunListEntry> rows = new ArrayList<>();
+                while (rs.next()) {
+                    rows.add(new RunListEntry(rs.getString("run_id"), rs.getString("status"),
+                            rs.getString("kind"), rs.getString("harness"), rs.getString("model"),
+                            rs.getString("branch"), rs.getString("pushed_ref"),
+                            rs.getString("review_id"), rs.getString("finding_ref"),
+                            rs.getString("failure_cause"), instant(rs, "started_at"),
+                            instant(rs, "ended_at"), costOf(rs)));
+                }
+                return List.copyOf(rows);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not list factory runs", e);
+        }
+    }
+
+    /**
+     * A run costs what its priced lines came to, and only when EVERY line is priced.
+     *
+     * <p>Three ways to be unknown and they all arrive here as the same answer: no charge row at all
+     * (the run has not finished, or reported no usage), or at least one line the pricer could not
+     * value. The last is the one a plain {@code SUM} hides — it skips NULL and returns the priced
+     * remainder, which is a number that looks like a total and is not one.
+     */
+    private static RunCost costOf(ResultSet rs) throws SQLException {
+        long lines = rs.getLong("line_count");
+        // Read IMMEDIATELY, and into a local. wasNull() describes the last column read, so the
+        // previous shape was correct only because it sat to the left of another getLong in the
+        // same short-circuit expression -- a correctness that depends on operand order, which any
+        // reordering-for-readability would have silently broken.
+        boolean noChargeRows = rs.wasNull();
+        if (noChargeRows) {
+            return RunCost.unknown();
+        }
+        // Defensive, and unreachable through this query: GROUP BY emits no group without a row, so
+        // COUNT(*) is never 0 when the join matched. Kept because that is a property of the SQL
+        // above rather than of this method, and a future edit to the join could make it false.
+        if (lines == 0) {
+            return RunCost.unknown();
+        }
+        if (rs.getLong("unpriced_lines") > 0) {
+            return RunCost.unknown();
+        }
+        long priced = rs.getLong("priced_millicents");
+        // Defensive for the same reason: with line_count > 0 and no unpriced lines, every summed
+        // value is non-null, so SUM cannot be. Neither of these two can be tested through list().
+        return rs.wasNull() ? RunCost.unknown() : RunCost.of(priced);
+    }
+
+    private static Instant instant(ResultSet rs, String column) throws SQLException {
+        Timestamp at = rs.getTimestamp(column);
+        return at == null ? null : at.toInstant();
+    }
+
     @Inject
     DataSource dataSource;
 
@@ -169,7 +341,50 @@ public class FactoryRunProjection {
      */
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
                             String baseCommit, String branch, String pushedAs,
-                            UUID harnessCredentialId) {
+                            UUID harnessCredentialId, String kind, String reviewId,
+                            String findingRef, String commentId) {
+
+        /** A build run: what every dispatch was before M2, and what the REST endpoint still sends. */
+        public QueuedRun(String runId, String harness, String model, String baseBranch,
+                         String baseCommit, String branch, String pushedAs,
+                         UUID harnessCredentialId) {
+            this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, RunKind.BUILD.name(), null, null, null);
+        }
+
+        /**
+         * The same row, recorded as a fix for one finding (FR-F32).
+         *
+         * <p>A wither because adding components to a record leaves every shorter constructor
+         * valid — so a rebuild site keeps compiling while silently dropping them, which is the
+         * trap this repository records. Enumerating them once here is what it does instead.
+         *
+         * <p>V54 refuses a FIX row that names neither, and refuses a non-FIX row that names
+         * either, so a caller cannot half-apply this. V56 adds the third: a FIX row must name
+         * the comment as well, so a row the cap counts can never be one the claim cannot see.
+         *
+         * @param commentId the comment that asked, and the claim that stops it buying twice. Not
+         *     optional: without it a redelivered command derives a HIGHER attempt through
+         *     {@code nextAttempt} — which counts the row the first delivery wrote — so it derives a
+         *     different run id and sails past the {@code ON CONFLICT (run_id)} guard that catches
+         *     every other duplicate. The numbering defeats the one mechanism that would have
+         *     stopped it, which is why the claim is a column of its own
+         */
+        public QueuedRun asFixFor(String reviewId, String findingRef, String commentId) {
+            // Refused here rather than one layer away as a constraint violation, which is the same
+            // argument ExecuteRun's compact constructor makes. isBlank rather than isEmpty because
+            // V54 uses btrim(...) <> '' -- matching it exactly is what keeps the two from drifting.
+            if (reviewId == null || reviewId.isBlank() || findingRef == null || findingRef.isBlank()) {
+                throw new IllegalArgumentException("a fix run must name the review and the finding "
+                        + "it fixes, or neither cap can count it");
+            }
+            if (commentId == null || commentId.isBlank()) {
+                throw new IllegalArgumentException("a fix run must name the comment that asked for "
+                        + "it, or a redelivery of that comment buys a second run with no symptom");
+            }
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId);
+        }
     }
 
     /**
@@ -228,8 +443,9 @@ public class FactoryRunProjection {
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
-                                         harness_credential_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         harness_credential_id, kind, review_id, finding_ref,
+                                         comment_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -250,6 +466,19 @@ public class FactoryRunProjection {
                    AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit
                    AND factory_run.branch = EXCLUDED.branch
                    AND factory_run.pushed_as IS NOT DISTINCT FROM EXCLUDED.pushed_as
+                   -- What the run is FOR and what it fixes, compared like every other component of
+                   -- its identity. Without these three the method's own stated property -- "a
+                   -- differing retry matches no row here and is refused by the caller" -- was
+                   -- silently false for them: a BUILD row re-armed as FIX would stay BUILD, so
+                   -- NEITHER cap would count it, which is the cap failing open in the direction
+                   -- V54 exists to prevent.
+                   AND factory_run.kind = EXCLUDED.kind
+                   AND factory_run.review_id IS NOT DISTINCT FROM EXCLUDED.review_id
+                   AND factory_run.finding_ref IS NOT DISTINCT FROM EXCLUDED.finding_ref
+                   -- And the comment, for the same reason as the three above: a re-arm that changed
+                   -- it would move a claim from one request to another while the unique index --
+                   -- which is an INDEX, not a row comparison -- saw nothing move.
+                   AND factory_run.comment_id IS NOT DISTINCT FROM EXCLUDED.comment_id
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);
@@ -266,13 +495,68 @@ public class FactoryRunProjection {
             ps.setString(12, branch);
             ps.setString(13, pushedAs);
             ps.setObject(14, row.harnessCredentialId());
-            ps.setString(15, FAILED);
-            ps.setString(16, DISPATCH_FAILED);
+            // What the run is FOR, and what it is fixing. V54 refuses a FIX row naming neither and a
+            // non-FIX row naming either, so these three cannot be half-applied by a caller.
+            ps.setString(15, row.kind());
+            ps.setString(16, row.reviewId());
+            ps.setString(17, row.findingRef());
+            ps.setString(18, row.commentId());
+            ps.setString(19, FAILED);
+            ps.setString(20, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record run " + runId, e);
+        }
+    }
+
+    private static final String FIX_RUN_FOR_COMMENT = """
+            SELECT run_id FROM factory_run
+             WHERE kind = 'FIX' AND review_id = ? AND comment_id = ?
+            """;
+
+    /**
+     * The fix run a comment already bought, or empty when it has bought none.
+     *
+     * <p><b>Scoped to the review, because the comment id is the FORGE's.</b> Every ingress passes
+     * the forge's own id through, and it is unique within one forge and nowhere else — two
+     * providers, or two self-hosted GitLabs whose note ids both start at 1, collide. Unscoped, that
+     * collision refuses a legitimate {@code /fix} while naming another workspace's run id in this
+     * review's durable history.
+     *
+     * <p>The read half of the claim V56 adds. It exists so a redelivered {@code /fix} produces a
+     * REFUSAL naming the run rather than a constraint violation: the index is the backstop for a
+     * race that should not be reachable (one review keys to one partition and one consumer, in
+     * order), and a dead-lettered record is the right answer to a race and the wrong one to an
+     * ordinary redelivery.
+     *
+     * <p><b>Throws on a read fault rather than answering empty</b>, unlike most of this class.
+     * Empty here means "nothing has been paid for yet", which is the answer that AUTHORISES a paid
+     * run. An unreadable table must not be able to say that — {@code FixRuns} takes the identical
+     * posture for the identical reason, and both are the ADR-023 rule applied to a guard rather
+     * than to a number.
+     */
+    public Optional<String> fixRunFor(String reviewId, String commentId) {
+        if (reviewId == null || reviewId.isBlank()) {
+            throw new IllegalArgumentException("a fix claim is scoped to its review: a comment id "
+                    + "is the forge's own and collides across forges");
+        }
+        if (commentId == null || commentId.isBlank()) {
+            // Not a lookup that can succeed: the index is partial ON comment_id IS NOT NULL, so
+            // every blank would collide in the answer while colliding with nothing in the table.
+            throw new IllegalArgumentException("a fix claim needs the comment that asked for it");
+        }
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(FIX_RUN_FOR_COMMENT)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, commentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString("run_id")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the fix claim for comment " + commentId
+                    + " on " + reviewId, e);
         }
     }
 

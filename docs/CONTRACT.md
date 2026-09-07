@@ -200,6 +200,19 @@ interface CommentSink {                                 // scm adapter
   CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd);  // ThreadRef, not bare id
   Author     getPullRequestAuthor(RepoRef repo, long prId);
 }   // DiffRefs feeds GitLab/GitHub anchoring; ThreadRef = comment id (BB/GH/DC) or discussion_id (GitLab). See SCM-MAPPING.md
+interface ThreadSource {                                // scm adapter
+  ScmType type();
+  ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread);   // the whole conversation, in order
+}
+interface IdentitySource {                              // scm adapter
+  ScmType type();
+  Author whoami();                                      // who the configured token IS — the self-loop guard
+}
+interface PullRequestSink {                             // scm adapter — the factory opens PRs (M2)
+  ScmType type();
+  PullRequestRef open(RepoRef repo, NewPullRequest request);              // throws NothingToPropose
+  Optional<PullRequestRef> findByHead(RepoRef repo, String head, String base);  // find-first, so a redelivery opens nothing
+}   // NothingToPropose normalises "the agent changed nothing", which all four forges report as a 4xx that reads like failure
 interface ContextProvider {                             // jira, confluence, issues, rules (shipped) / code (P3) / memory
   String source();
   boolean supports(ContextRequest req);

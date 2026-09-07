@@ -3,20 +3,24 @@ package dev.codespire.orchestrator.provider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.IdentitySource;
+import dev.codespire.contract.port.PullRequestSink;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.scm.bitbucket.BitbucketCloudClient;
 import dev.codespire.scm.bitbucket.BitbucketCloudCommentSink;
 import dev.codespire.scm.bitbucket.BitbucketCloudConfig;
 import dev.codespire.scm.bitbucket.BitbucketCloudDiffSource;
+import dev.codespire.scm.bitbucket.BitbucketCloudPullRequestSink;
 import dev.codespire.scm.github.GitHubClient;
 import dev.codespire.scm.github.GitHubCommentSink;
 import dev.codespire.scm.github.GitHubConfig;
 import dev.codespire.scm.github.GitHubDiffSource;
+import dev.codespire.scm.github.GitHubPullRequestSink;
 import dev.codespire.scm.gitlab.GitLabClient;
 import dev.codespire.scm.gitlab.GitLabCommentSink;
 import dev.codespire.scm.gitlab.GitLabConfig;
 import dev.codespire.scm.gitlab.GitLabDiffSource;
+import dev.codespire.scm.gitlab.GitLabPullRequestSink;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -70,6 +74,44 @@ public class ProviderClients {
                     new GitLabClient(gitlabConfig(provider), mapper), provider.botUsername());
             default -> throw new UnsupportedOperationException(
                     "Thread re-fetch is not supported for provider type: " + provider.type());
+        };
+    }
+
+    /**
+     * A client that can OPEN a pull request for a resolved provider (M2, SCM-MAPPING §8).
+     *
+     * <p><b>The provider must be the FACTORY-role account, and that is now CHECKED.</b> An earlier
+     * version of this javadoc said the check was impossible because the role is part of the lookup
+     * key rather than of the row. A security review showed the row had it all along —
+     * {@code ProviderRegistry.resolve} filters {@code WHERE role = ?} and the mapper simply did not
+     * read the column — so the assertion costs one field.
+     *
+     * <p>The same review corrected WHY it matters. This javadoc used to say the reviewer's author
+     * allowlist would skip a pull request the reviewer itself opened. <b>That was wrong:</b>
+     * nothing gates pull-request authorship — the bot-authored check covers comments and commands
+     * only — and an empty allowlist means everyone, so by default the reviewer WOULD review its
+     * own. The real consequences are narrower and still sufficient: the branch is pushed as the
+     * factory account, so a pull request opened as the reviewer misattributes the work; the
+     * reviewer's token is not provisioned for that write, and its 403 would read as the factory
+     * account failing, sending an operator to the wrong account; and an operator who HAS set an
+     * allowlist does get the skip.
+     *
+     * <p>All three forges are supported, so unlike {@code threadSource} there is no degraded
+     * path — a fourth provider type cannot open a pull request at all, and pretending otherwise
+     * would record a run as delivered with nothing behind it.
+     */
+    public PullRequestSink pullRequestSink(ScmProvider provider) {
+        if (provider.role() != ProviderRole.FACTORY) {
+            throw new IllegalArgumentException("a pull request is opened by the FACTORY account; "
+                    + "this was handed the " + provider.role() + " provider " + provider.id());
+        }
+        return switch (provider.type()) {
+            case "github" -> new GitHubPullRequestSink(new GitHubClient(githubConfig(provider), mapper));
+            case "bitbucket-cloud" -> new BitbucketCloudPullRequestSink(
+                    new BitbucketCloudClient(bitbucketConfig(provider), mapper));
+            case "gitlab" -> new GitLabPullRequestSink(new GitLabClient(gitlabConfig(provider), mapper));
+            default -> throw new IllegalStateException(
+                    "Cannot open a pull request on provider type: " + provider.type());
         };
     }
 

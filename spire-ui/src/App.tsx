@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Brain, FileText, GitPullRequest, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Bot, Brain, FileText, GitPullRequest, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import SessionMenu from './components/SessionMenu';
@@ -17,6 +17,7 @@ import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
 import PromptDetail from './components/PromptDetail';
 import RequireRole from './components/RequireRole';
+import Runs from './components/Runs';
 import { AnalyticsOverview, AnalyticsRepo, MyAnalytics } from './components/Analytics';
 import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
@@ -80,6 +81,7 @@ export default function App() {
   // entries highlight at once and neither tells the operator where they are.
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
+  const onRuns = location.pathname.startsWith('/runs');
   // Reviews owns the list and every review detail page -- a POSITIVE test. It used to be styled as
   // "not settings", which was right while the rail had two sections and silently wrong the moment
   // Analytics arrived: both entries lit up at once.
@@ -182,6 +184,13 @@ export default function App() {
           <a className={onAnalytics ? 'active' : ''} href="#/analytics">
             <BarChart3 className="ic" size={16} />
             Analytics
+          </a>
+          {/* Viewer-readable for the same reason: GET /api/runs is viewer-and-admin, matching the
+              run detail endpoint beside it. Dispatching is the privilege that matters and stays
+              admin-only on the POST. */}
+          <a className={onRuns ? 'active' : ''} href="#/runs">
+            <Bot className="ic" size={16} />
+            Runs
           </a>
           <a className={onMyActivity ? 'active' : ''} href="#/analytics/me">
             <UserRound className="ic" size={16} />
@@ -355,6 +364,7 @@ export default function App() {
             }
           />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
+          <Route path="/runs" element={<Runs />} />
           <Route path="/analytics" element={<AnalyticsOverview />} />
           {/* Before the :workspace/:slug route, or "me" would be read as a workspace. */}
           <Route path="/analytics/me" element={<MyAnalytics subject={me?.subject} />} />

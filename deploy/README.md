@@ -133,6 +133,53 @@ unpinned Keycloak derives its issuer from the `Host` it was called on, so the tw
 every token would fail validation. The bundled instance pins `KC_HOSTNAME` and sets
 `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` so front- and backchannel can differ while the issuer stays fixed.
 
+## The factory, and why it is not on by default
+
+The run worker — the service that executes agent runs — is behind a compose **profile**, so
+`docker compose up` does not start it:
+
+```bash
+# Build it locally first; the two factory images are not on GHCR yet (see CLAUDE.md, Mode Q).
+docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
+./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
+
+docker compose -f deploy/compose.yml --env-file deploy/.env --profile factory up -d
+```
+
+**Read this before you do.** The run worker mounts the host Docker socket so it can place run
+units, and a Docker socket is **root-equivalent on the host** — `docs/SECURITY.md` says so under
+"What is NOT mitigated". The run worker is also the one service that executes untrusted model
+output. Those two facts together are why this is a profile and not a default: a compromised run
+worker is a compromised machine, and that should be something an operator opted into rather than
+something that happened because they typed `up`.
+
+`DockerSocketMountsAreOptInTest` (in `spire-arch`) enforces it: any compose service mounting the
+socket must carry a profile. Delete the one line and the build fails rather than the next
+`compose up` quietly mounting your socket.
+
+The cheapest mitigation is a daemon that is not this host — point `SPIRE_RUN_DOCKER_HOST` at a
+remote or rootless one and drop the socket mount.
+
+### Kubernetes does NOT get the run worker yet, and this is deliberate
+
+The Helm chart, the kustomize overlays and the rendered manifests under `k8s/` carry the three
+reviewer services and the dashboard. They do **not** carry the run worker, and adding it would be
+wrong rather than merely incomplete.
+
+There is one runtime implementation — `spire-runtime-docker` — and `WorkerRuntimes` says so in as
+many words: *"M0 has one arm. Selecting between them by configuration is M5's job, and doing it
+now would be a switch with one case in it."* So a Kubernetes deployment of the run worker would
+have to mount the **node's** Docker socket into a pod, which is precisely what `SECURITY.md` says
+the Kubernetes arm exists to remove:
+
+> Docker socket access is root-equivalent on the host. The run worker drives the daemon directly,
+> so a compromised worker is a compromised host. **The Kubernetes arm removes this**; the Docker
+> arm cannot.
+
+Shipping a chart template that mounts it would ship the exact thing that sentence promises the
+Kubernetes arm does not do. The run worker reaches Kubernetes when a Kubernetes `RunRuntime`
+exists — a producer change in `WorkerRuntimes`, planned for M5 — and not before.
+
 ## Verifying a deployment
 
 ```bash

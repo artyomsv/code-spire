@@ -14,6 +14,7 @@ import dev.codespire.orchestrator.policy.ReviewPolicy;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
@@ -42,7 +43,8 @@ class ResultSagaCredentialTest {
     private static final RepoRef REPO = new RepoRef("TEST-WS", "TEST-REPO");
     private static final String REVIEW_ID = ReviewIds.reviewId(REPO, 1L);
     private static final ScmProvider PROVIDER = new ScmProvider(UUID.randomUUID(), "test provider", "stub",
-            null, "TEST-WS", "token", null, "secret", "bot-1", true, List.of(), null, null);
+            null, "TEST-WS", "token", null, "secret", "bot-1", true, List.of(), null, null,
+            ProviderRole.REVIEWER);
 
     /** Recorded against the review's OWN provider, resolved by its stored provider type. */
     @Test

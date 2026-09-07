@@ -20,5 +20,14 @@ public enum ChargeKind {
      * totals and the worker never sees the individual calls, so a finer grain would be invented
      * rather than measured.
      */
-    BUILD
+    BUILD,
+    /**
+     * A factory run dispatched to fix a review finding (FR-F27).
+     *
+     * <p>Its own kind rather than a BUILD, because the two answer different questions of the same
+     * ledger: what a repository costs to build against, versus what the reviewer costs when it fixes
+     * what it finds. Collapsing them would make the second unanswerable, and it is the one M2 exists
+     * to make true. The V42 CHECK has admitted this value since the ledger learned about runs.
+     */
+    FIX
 }

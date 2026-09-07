@@ -64,7 +64,7 @@ class ApkUpgradeIsNotCachedTest {
      * is one string — {@code spire-publisher/Dockerfile} chains its upgrade into an {@code adduser}.
      */
     private static final Pattern UPGRADES_OS_PACKAGES =
-            Pattern.compile("\\bapk\\b[^\\n]*\\bupgrade\\b|\\bapt-get\\b[^\\n]*\\bupgrade\\b");
+            Pattern.compile("\\bapk\\b[^\\r\\n]*\\bupgrade\\b|\\bapt-get\\b[^\\r\\n]*\\bupgrade\\b");
 
     /**
      * The build matrix's {@code include:} list — every following line indented past the four spaces
@@ -73,13 +73,22 @@ class ApkUpgradeIsNotCachedTest {
      * <p>Scoping to this block is not tidiness. A workflow step is also spelled {@code - name: …},
      * so a pattern that only looked for that read {@code - name: Build} as a matrix entry and the
      * check failed against a correct workflow.
+     *
+     * <p><b>Line breaks are {@code \R}, not {@code \n}, and that is the whole reason this check ran
+     * green in CI while failing on every developer machine.</b> {@code core.autocrlf} is on for
+     * Windows checkouts, so the workflow is CRLF on disk; Java's {@code .} excludes {@code \r}, so
+     * {@code .*\n} could never reach the newline and the {@code include:} block "was not found".
+     * The failure then read as "the parser and the workflow disagree about its shape" — a message
+     * about the workflow, for a fault in the parser. The Dockerfile splitter below already used
+     * {@code \r?\n}; these two did not, which is the same fix-on-one-of-two-siblings shape this
+     * repository keeps paying for.
      */
     private static final Pattern MATRIX_INCLUDE =
-            Pattern.compile("^ +include:\\n(?<entries>(?:^ {5,}.*\\n)+)", Pattern.MULTILINE);
+            Pattern.compile("^ +include:\\R(?<entries>(?:^ {5,}.*\\R)+)", Pattern.MULTILINE);
 
     /** One `- name: &lt;image&gt;` block within that list, up to the next entry. */
     private static final Pattern MATRIX_ENTRY = Pattern.compile(
-            "^ +- name: (?<name>\\S+)\\n(?<body>(?:^ +\\w+: .*\\n)+)", Pattern.MULTILINE);
+            "^ +- name: (?<name>\\S+)\\R(?<body>(?:^ +\\w+: .*\\R)+)", Pattern.MULTILINE);
 
     private static final Pattern DECLARED_DOCKERFILE =
             Pattern.compile("^ +dockerfile: (.+)$", Pattern.MULTILINE);

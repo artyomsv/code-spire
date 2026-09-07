@@ -230,8 +230,10 @@ mp:
             reset: earliest
         failure-strategy: ignore
 
-# Global review mode (see ReviewPolicy). observe = register PR events, emit no
-# work (no diff/LLM/comments). The live value lives in the DB (app_setting, key
+# Global review mode (see ReviewPolicy). observe = register SCM-originated triggers
+# (PR events, /commands, replies), emit no work (no diff/LLM/comments). An operator's own
+# admin REST action — the Re-run button, POST /api/runs — is the deliberate exception.
+# The live value lives in the DB (app_setting, key
 # review.mode) and is flipped from the Settings slider without a restart — that
 # stored value is the sole control. The seed default (fresh DB, before the slider
 # is ever used) is "observe" in code — safe first contact. The per-provider author
@@ -243,6 +245,13 @@ spire:
     agent-image:
       codex: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:spire-agent-codex:latest}
     wall-clock-seconds: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:1800}
+    # What a /fix run uses, since nobody types it. NO DEFAULTS on purpose: an operator who has
+    # not named both has not turned /fix on, and the command says which key is missing rather
+    # than picking a harness and a price on their behalf. Both are refused at dispatch, before a
+    # row is written or a token moves -- the same place an unconfigured agent image is refused.
+    fix:
+      harness: ${SPIRE_FACTORY_FIX_HARNESS:}
+      model: ${SPIRE_FACTORY_FIX_MODEL:}
   review:
     # Bounded auto-retry (C8/ADR-016): total pipeline runs before a transient
     # failure fails terminally. Tuning knob — a safe default is fine here.

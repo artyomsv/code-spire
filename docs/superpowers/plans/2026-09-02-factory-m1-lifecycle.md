@@ -382,7 +382,7 @@ for Task 9) — orchestrator, encrypted secrets like every registry,
 new `HarnessCredentialPool.java`, `HarnessCredentialResource.java`, `RunAttentionRows`.
 The settings UI is deliberately NOT built -- one screen for credentials while runs themselves have
 none would make the pool the only visible part of the factory; see
-`techdebt/spire-ui/4-3-the-factory-has-no-screens-at-all.md`.
+`techdebt/spire-ui/4-3-three-factory-surfaces-still-have-no-screen.md`.
 
 **Test scenarios**
 

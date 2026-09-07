@@ -9,7 +9,9 @@ export function normalizeMode(value: unknown): ReviewMode {
 const MODE_INFO =
   'Active runs the full pipeline and posts comments to PRs. ' +
   'Observe registers PRs on the dashboard but posts nothing — no diff fetch, no LLM call, no comments. ' +
-  'Takes effect on the next PR event; no restart.';
+  'Every /command in a PR is refused and replies go unanswered. ' +
+  'Your own Re-run button still works — that is the operator override. ' +
+  'Takes effect on the next PR event, command or reply; no restart.';
 
 /**
  * Global observe/active switch, docked at the bottom of the sidebar. Reads the

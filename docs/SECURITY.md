@@ -284,7 +284,7 @@ reaches all three containers — until it was written, nothing anywhere did.
 - **Egress is not restricted on the Docker arm.** `docs/factory/PRD.md` says egress
   defaults to deny; that is the Kubernetes arm's NetworkPolicy. On Docker the agent container sits
   on the default bridge and reaches whatever the host reaches. Tracked in
-  `techdebt/spire-runtime-docker/4-3-the-agent-container-on-the-default-bridge-reaches-host-published-ports.md`.
+  `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`.
 - **One SCM token serves the clone and the push.** The design calls for a read-scoped clone token
   and a separate write token; the code packs one machine-account secret into both slots. The agent
   still cannot reach either — JGit persists no credential under `/workspace` and the

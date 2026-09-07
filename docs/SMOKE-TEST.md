@@ -52,13 +52,21 @@ sidebar **Review-mode** slider is the live control.
 
 - `observe` registers each PR event — visible on the dashboard as
   `PullRequestEventReceived → ReviewRequested → ReviewObserved` — but emits no work.
+- **Every SCM-originated trigger is refused, not only the PR event.** A `/review` or
+  `/finding` comment records `ManualCommandObserveOnly` and does nothing; an author reply
+  records `FollowUpObserveOnly` and is not answered; the archived-review notice is not posted.
+  Each leaves a timeline note and a review-history row and **no PR comment** — a reply would be
+  the very thing the mode forbids, so the refusal has to be silent on the pull request.
+- **Your own Re-run button still works.** The dashboard re-run and `POST /api/runs` are
+  `spire-admin` and deliberately ungated: they are the operator exercising a posture they own,
+  and they are the only way to review a single PR without flipping the whole deployment active.
 - The **PR-author allowlist** is per-provider (Settings → Providers → Authors), so
   only listed authors are registered; everyone else is skipped with a
   `PullRequestSkipped` note. Matches account id OR username; empty = everyone.
 
 In observe mode the **worker never runs and no app password / LLM key is needed** —
 only the gateway + orchestrator. The orchestrator logs the posture at boot:
-`Review policy: mode=OBSERVE (register only, no diff/LLM/comments), author-allowlist=N author(s)`.
+`Review policy: mode=OBSERVE (register only; no diff/LLM/comments, commands and replies refused)`.
 
 ```bash
 ./gradlew :spire-orchestrator:quarkusDev
@@ -1749,7 +1757,7 @@ against a forge, authenticated as a machine account.
 | `503` naming `could not be read` | A database fault reading the pool, NOT a missing credential. Nothing was dispatched and nothing was spent — do not add keys in response to it |
 | `400` naming `spire.factory.agent-image` | The harness has no image configured in the orchestrator (`spire.factory.agent-image.<harness>`) |
 | `failed` / `SANDBOX_UNREACHABLE`, init exit non-zero | The clone failed: wrong token, wrong base commit (must be reachable from the remote's branches), or `spire-publisher:latest` not built. The unit is left behind on purpose — `docker logs` the init container |
-| `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: branch outside `spire/`, equal to the base, or a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
+| `failed` / `PUBLISHER_MISCONFIGURED` | The publisher refused its own configuration: an invalid ref name; a trunk name (`main`/`master`) or the pull request's destination branch (`SPIRE_PROTECTED_BRANCH`), both refused in **every** mode; an unrecognised `SPIRE_BRANCH_MODE`; or — in the default `namespace` mode only — a branch outside `spire/` or equal to the base. Also a userinfo-bearing remote URL. The line on the publisher's stdout names the variable |
 | Codex exits immediately, `no output` | The pool member's key was rejected or absent, and the key must be OpenAI's for this arm. Nothing retires it automatically (see step 5) — `DELETE /api/harness-credentials/{id}` and dispatch again |
 | `succeeded` with `pushedRef: null` | The agent committed nothing — its bundle never existed. Read the agent container's log; the prompt may not have asked for a commit |
 

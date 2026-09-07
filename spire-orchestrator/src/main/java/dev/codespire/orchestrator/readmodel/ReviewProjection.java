@@ -242,6 +242,24 @@ public class ReviewProjection {
         broadcast(reviewId);
     }
 
+    /**
+     * Whether this pull request's source branch lives in a different repository than its base.
+     *
+     * <p>Its own write rather than a fourteenth parameter on {@code registerHeader}. That method
+     * already takes thirteen, and a component added to a call that long is dropped silently at a
+     * rebuild site — the trap this project records for wire records applies to method signatures for
+     * the same reason. {@code setPrState} sits here for the same reason.
+     *
+     * <p>No broadcast: nothing on the dashboard renders it, and it changes only when a pull-request
+     * event has just triggered one anyway.
+     */
+    public void setFromFork(String reviewId, boolean fromFork) {
+        update("UPDATE review_status SET from_fork = ?, updated_at = now() WHERE review_id = ?", ps -> {
+            ps.setBoolean(1, fromFork);
+            ps.setString(2, reviewId);
+        });
+    }
+
     public void setNote(String reviewId, String note) {
         update("UPDATE review_status SET note = ?, updated_at = now() WHERE review_id = ?", ps -> {
             ps.setString(1, note);
