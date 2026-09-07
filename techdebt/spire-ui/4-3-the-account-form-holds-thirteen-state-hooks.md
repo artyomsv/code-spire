@@ -21,9 +21,10 @@ The same file also exceeds the 250-line component cap, and for the same reason. 
 dialog out of the page as a pure move and it landed at **370 lines**; this task's Role field, its two
 hints and the two reviewer-only wrappers took it to **429 lines**. Both overages have one remedy —
 the state grouping above removes roughly nine declarations and their inline setters — so they are
-recorded together rather than as two entries that would be closed by the same commit. The file is
-under the 300-line general guideline for neither reading, and splitting the JSX into a
-`ReviewerFieldsSection` child is the cheap second half if grouping alone is not enough.
+recorded together rather than as two entries that would be closed by the same commit. At 429 lines
+the file is 179 over the 250-line component cap, and over the 300-line general guideline as well.
+Splitting the JSX into a `ReviewerFieldsSection` child is the cheap second half if grouping the state
+alone does not get it under.
 
 ## Risks
 

@@ -203,12 +203,21 @@ describe('SettingsProviders — provider form', () => {
    * The form can express the FACTORY role, because the 409 from POST /api/runs sends the operator
    * here. Asserted on what reaches the API rather than on the control: a form that omits the field
    * sends a payload the server reads as REVIEWER, and both look identical on screen.
+   *
+   * Both reviewer-only fields are filled BEFORE the switch, because hiding a field and clearing it
+   * from the payload are different things. A form that only stops rendering them still submits the
+   * values its state kept, and the server would store an allowlist and a conversation level on an
+   * account whose screen shows neither.
    */
-  it('sends the FACTORY role the machine account needs', async () => {
+  it('sends the FACTORY role the machine account needs, and no reviewer field with it', async () => {
     const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
     renderPage();
     const dialog = await openFilledAddForm();
     typeSecret(dialog);
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: /conversation level/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Explain' }));
+    fireEvent.change(within(dialog).getByPlaceholderText('stable user id'), { target: { value: '3218389' } });
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Factory' }));
@@ -216,6 +225,8 @@ describe('SettingsProviders — provider form', () => {
 
     await waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0][0].role).toBe('FACTORY');
+    expect(create.mock.calls[0][0].authors).toEqual([]);
+    expect(create.mock.calls[0][0].conversationLevel).toBeUndefined();
   });
 
   it('defaults a new account to REVIEWER and sends that explicitly', async () => {
