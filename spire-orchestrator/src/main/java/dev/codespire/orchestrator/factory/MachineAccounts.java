@@ -53,6 +53,16 @@ public class MachineAccounts {
     }
 
     /**
+     * The one rule behind {@link #resolve}: a push is authenticated as the login, so a registration
+     * without one cannot push. Public and over the string so a caller holding only a view can judge
+     * a registration without decrypting its token — the Repositories screen asks this once per
+     * workspace on every load, and a display read must not depend on the keyset being current.
+     */
+    public static boolean canAuthenticateAPush(String botUsername) {
+        return botUsername != null && !botUsername.isBlank();
+    }
+
+    /**
      * A registration with no login cannot authenticate a push, so it is not a usable account.
      *
      * <p>Filtered rather than thrown, so every caller gets the answer it already knows how to
@@ -60,6 +70,6 @@ public class MachineAccounts {
      * would reintroduce on the saga arm the escaping-exception shape this guard exists to remove.
      */
     private static boolean canAuthenticateAPush(ScmProvider provider) {
-        return provider.botUsername() != null && !provider.botUsername().isBlank();
+        return canAuthenticateAPush(provider.botUsername());
     }
 }

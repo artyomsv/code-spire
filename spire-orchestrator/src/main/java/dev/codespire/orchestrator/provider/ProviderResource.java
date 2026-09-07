@@ -1,6 +1,5 @@
 package dev.codespire.orchestrator.provider;
 
-import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
@@ -60,10 +59,6 @@ public class ProviderResource {
 
     @Inject
     ProviderClients clients;
-
-    /** The dispatch path's own filter, so the factory chip and the 409 cannot disagree. */
-    @Inject
-    MachineAccounts machineAccounts;
 
     /**
      * SSRF guard (CWE-918) escape hatch: create/update immediately issues a
@@ -161,16 +156,26 @@ public class ProviderResource {
      * <p>Reads the same rows through the same rules the pipeline applies. An enabled REVIEWER row is
      * {@code ok} when its bot identity resolved and {@code no-identity} otherwise — the condition
      * under which {@code ConversationSaga} skips every follow-up. An enabled FACTORY row is
-     * {@code ok} exactly when {@link MachineAccounts#resolve} would hand it to a run, and
-     * {@code no-login} otherwise — the case {@code POST /api/runs} answers 409 for. A registered
-     * but disabled row is {@code disabled}, not {@code missing}: the two have different cures.
-     * Nothing here names a forge; {@link ScmType#fromProviderType} does the one translation.
+     * {@code ok} exactly when it satisfies the predicate {@link MachineAccounts#resolve} applies,
+     * and {@code no-login} otherwise — the case {@code POST /api/runs} answers 409 for. The
+     * predicate, not the resolution: resolving decrypts the push credential, which this display
+     * read has no use for and which turns an undecryptable ciphertext into a 500 on a page load.
+     * A registered but disabled row is {@code disabled}, not {@code missing}: the two have
+     * different cures.
+     *
+     * <p>An unknown forge type is refused rather than answered. Every role would read
+     * {@code missing} for a type no adapter serves, which names a cure — register an account —
+     * that the operator cannot carry out.
      */
     @GET
     @Path("/serving")
     public ServingAccounts serving(@QueryParam("type") String type, @QueryParam("workspace") String workspace) {
         requireField(type, "type");
         requireField(workspace, "workspace");
+        if (!TYPES.contains(type)) {
+            throw new BadRequestException("Unsupported provider type '" + type
+                    + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
+        }
         ServingAccount reviewer = registry.registration(type, workspace, ProviderRole.REVIEWER)
                 .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
                         : isBlank(v.botAccountId()) ? ServingAccount.of("no-identity", v)
@@ -178,16 +183,10 @@ public class ProviderResource {
                 .orElseGet(ServingAccount::missing);
         ServingAccount factory = registry.registration(type, workspace, ProviderRole.FACTORY)
                 .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
-                        : canPush(type, workspace) ? ServingAccount.of("ok", v)
+                        : MachineAccounts.canAuthenticateAPush(v.botUsername()) ? ServingAccount.of("ok", v)
                         : ServingAccount.of("no-login", v))
                 .orElseGet(ServingAccount::missing);
         return new ServingAccounts(type, workspace, reviewer, factory);
-    }
-
-    private boolean canPush(String type, String workspace) {
-        return ScmType.fromProviderType(type)
-                .flatMap(scm -> machineAccounts.resolve(scm, workspace))
-                .isPresent();
     }
 
     private static boolean isBlank(String s) {

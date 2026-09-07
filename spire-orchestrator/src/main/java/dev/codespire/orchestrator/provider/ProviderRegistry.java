@@ -107,8 +107,11 @@ public class ProviderRegistry {
             if (stored.isEmpty()) {
                 return Optional.empty();
             }
-            if (in.role() != null && !in.role().isBlank() && ProviderRole.of(in.role()) != stored.get()) {
-                throw new RoleIsFixedAtRegistration(stored.get(), ProviderRole.of(in.role()));
+            if (in.role() != null && !in.role().isBlank()) {
+                ProviderRole requested = ProviderRole.of(in.role());
+                if (requested != stored.get()) {
+                    throw new RoleIsFixedAtRegistration(stored.get(), requested);
+                }
             }
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
             // bot_username is refreshed only when the token was (re)validated; a token-less

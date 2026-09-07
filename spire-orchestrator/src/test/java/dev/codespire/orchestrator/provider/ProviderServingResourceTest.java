@@ -138,6 +138,18 @@ class ProviderServingResourceTest {
                 .when().get("/api/providers/serving").then().statusCode(400);
     }
 
+    /**
+     * A type no adapter serves would otherwise be answered {@code missing} on both roles, which
+     * names a cure the operator cannot carry out. The wrong case is the realistic form of it: the
+     * registry stores the lowercase type, so "Github" matches no row and reads as an empty
+     * workspace rather than as a typo.
+     */
+    @Test
+    void anUnknownForgeTypeIsA400() {
+        given().queryParam("type", "Github").queryParam("workspace", "TEST-wrong-case")
+                .when().get("/api/providers/serving").then().statusCode(400);
+    }
+
     /** A registry read is an inventory of the deployment's reach; viewers are refused, like every other. */
     @Test
     @TestSecurity(user = "test-viewer", roles = {"spire-viewer"})
