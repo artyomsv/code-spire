@@ -76,6 +76,17 @@ class ProviderServingResourceTest {
         serving(ws).body("reviewer.state", equalTo("no-identity"));
     }
 
+    /**
+     * The identity the self-loop guard compares against is the account id, not the login. A row
+     * whose token could not name a login is still a recognisable bot, and must not be flagged.
+     */
+    @Test
+    void aReviewerIdentifiedByAccountIdAloneIsOk() {
+        String ws = workspace("rev-id-only");
+        registry.create(row(ws, "TEST-reviewer", null, "TEST-acct-1", null, true));
+        serving(ws).body("reviewer.state", equalTo("ok"));
+    }
+
     /** Registered-but-disabled has a different cure from missing, so it is a different word. */
     @Test
     void aDisabledRowIsDisabledNotMissing() {
