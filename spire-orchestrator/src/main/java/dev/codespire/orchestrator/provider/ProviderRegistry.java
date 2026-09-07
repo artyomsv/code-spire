@@ -257,6 +257,33 @@ public class ProviderRegistry {
         }
     }
 
+    /**
+     * The registration for a (type, workspace, role), <b>enabled or not</b>, as a view — for saying
+     * which account WOULD serve and in what state, never for acting as it. {@link #resolve} is the
+     * only method that hands out a usable credential, and it filters {@code enabled}; this one exists
+     * so a disabled row can be reported as "disabled" rather than confused with "missing", which
+     * an operator fixes differently.
+     */
+    public Optional<ProviderView> registration(String type, String workspace, ProviderRole role) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT * FROM scm_provider WHERE type = ? AND workspace = ? AND role = ?")) {
+            ps.setString(1, type);
+            ps.setString(2, workspace);
+            ps.setString(3, role.name());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                UUID id = rs.getObject("id", UUID.class);
+                return Optional.of(toView(rs, authorsOf(c, id)));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the " + role + " registration for "
+                    + type + "/" + workspace, e);
+        }
+    }
+
     private ScmProvider decryptedProvider(Connection c, ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         return new ScmProvider(id, rs.getString("name"), rs.getString("type"),

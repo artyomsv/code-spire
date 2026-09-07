@@ -1,8 +1,11 @@
 package dev.codespire.orchestrator.provider;
 
+import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
+import dev.codespire.orchestrator.factory.MachineAccounts;
+import dev.codespire.orchestrator.provider.ServingAccounts.ServingAccount;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -17,6 +20,7 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -56,6 +60,10 @@ public class ProviderResource {
 
     @Inject
     ProviderClients clients;
+
+    /** The dispatch path's own filter, so the factory chip and the 409 cannot disagree. */
+    @Inject
+    MachineAccounts machineAccounts;
 
     /**
      * SSRF guard (CWE-918) escape hatch: create/update immediately issues a
@@ -145,6 +153,45 @@ public class ProviderResource {
         return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
                 in.authUsername(), in.secret(), botId, in.enabled(), in.authors(),
                 botUsername, in.conversationLevel(), in.role());
+    }
+
+    /**
+     * Which accounts serve a (forge type, workspace), per role — for the Repositories screen.
+     *
+     * <p>Reads the same rows through the same rules the pipeline applies. An enabled REVIEWER row is
+     * {@code ok} when its bot identity resolved and {@code no-identity} otherwise — the condition
+     * under which {@code ConversationSaga} skips every follow-up. An enabled FACTORY row is
+     * {@code ok} exactly when {@link MachineAccounts#resolve} would hand it to a run, and
+     * {@code no-login} otherwise — the case {@code POST /api/runs} answers 409 for. A registered
+     * but disabled row is {@code disabled}, not {@code missing}: the two have different cures.
+     * Nothing here names a forge; {@link ScmType#fromProviderType} does the one translation.
+     */
+    @GET
+    @Path("/serving")
+    public ServingAccounts serving(@QueryParam("type") String type, @QueryParam("workspace") String workspace) {
+        requireField(type, "type");
+        requireField(workspace, "workspace");
+        ServingAccount reviewer = registry.registration(type, workspace, ProviderRole.REVIEWER)
+                .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
+                        : isBlank(v.botAccountId()) ? ServingAccount.of("no-identity", v)
+                        : ServingAccount.of("ok", v))
+                .orElseGet(ServingAccount::missing);
+        ServingAccount factory = registry.registration(type, workspace, ProviderRole.FACTORY)
+                .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
+                        : canPush(type, workspace) ? ServingAccount.of("ok", v)
+                        : ServingAccount.of("no-login", v))
+                .orElseGet(ServingAccount::missing);
+        return new ServingAccounts(type, workspace, reviewer, factory);
+    }
+
+    private boolean canPush(String type, String workspace) {
+        return ScmType.fromProviderType(type)
+                .flatMap(scm -> machineAccounts.resolve(scm, workspace))
+                .isPresent();
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     /**
