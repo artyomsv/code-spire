@@ -233,7 +233,7 @@ describe('AttentionBell', () => {
     await waitFor(() => expect(screen.getByText(webhook.message)).toBeInTheDocument());
 
     // The label map is keyed on the path alone, so `?edit=` must not push the row onto "Open".
-    expect(screen.getByRole('link', { name: 'Settings · Webhooks' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Settings · Repositories' })).toHaveAttribute(
       'href',
       '/settings/webhooks?edit=TEST-id-1',
     );
@@ -241,6 +241,37 @@ describe('AttentionBell', () => {
       'href',
       '/settings/llm',
     );
+  });
+
+  /**
+   * The renamed screens label their rows by the new path, and a row still carrying the old path —
+   * emitted by a service not yet upgraded — labels the same way rather than falling to "Open".
+   */
+  it('labels the Accounts and Repositories rows, old path or new', async () => {
+    const renamed: AttentionItem = {
+      code: 'WEBHOOK_DELIVERIES_REJECTED',
+      severity: 'WARNING',
+      subject: 'stub · TEST-OWNER/TEST-REPO',
+      message: '1 webhook delivery was refused.',
+      action: '/settings/repositories?edit=TEST-id-1',
+      dismiss: null,
+    };
+    const legacy: AttentionItem = { ...renamed, message: 'Legacy row.', action: '/settings/webhooks?edit=TEST-id-9' };
+    const accounts: AttentionItem = {
+      code: 'SCM_PROVIDER_MISSING',
+      severity: 'BLOCKING',
+      subject: null,
+      message: 'No enabled source-control provider is configured.',
+      action: '/settings/accounts',
+      dismiss: null,
+    };
+    await renderWithFeeds([accounts], [renamed, legacy]);
+    await waitFor(() => screen.getByTestId('attention-count'));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => expect(screen.getByText(renamed.message)).toBeInTheDocument());
+
+    expect(screen.getAllByRole('link', { name: 'Settings · Repositories' })).toHaveLength(2);
+    expect(screen.getByRole('link', { name: 'Settings · Accounts' })).toHaveAttribute('href', '/settings/accounts');
   });
 
   /** CREDENTIAL_REJECTED subjects are provider names with no cross-registry uniqueness, so two rows

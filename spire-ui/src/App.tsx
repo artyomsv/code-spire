@@ -17,6 +17,7 @@ import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
 import PromptDetail from './components/PromptDetail';
 import RequireRole from './components/RequireRole';
+import RedirectKeepingQuery from './components/RedirectKeepingQuery';
 import Runs from './components/Runs';
 import { AnalyticsOverview, AnalyticsRepo, MyAnalytics } from './components/Analytics';
 import { SettingsOperators } from './components/SettingsOperators';
@@ -47,13 +48,12 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/r/', 'Review detail'],
   ['/analytics/me', 'My activity'],
   ['/analytics', 'Analytics'],
-  ['/settings/operators', 'Operators'],
+  ['/settings/accounts', 'Accounts'],
   ['/settings/memory', 'Memory'],
   ['/settings/general', 'General'],
-  ['/settings/providers', 'Repositories'],
   ['/settings/llm', 'LLM'],
   ['/settings/context', 'Context'],
-  ['/settings/webhooks', 'Webhooks'],
+  ['/settings/repositories', 'Repositories'],
   ['/settings/prompts', 'Prompts'],
   ['/settings/dlq', 'Dead-letter'],
 ];
@@ -69,13 +69,12 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const onGeneral = location.pathname.startsWith('/settings/general');
-  const onProviders = location.pathname.startsWith('/settings/providers');
+  const onAccounts = location.pathname.startsWith('/settings/accounts');
   const onLlm = location.pathname.startsWith('/settings/llm');
   const onContext = location.pathname.startsWith('/settings/context');
-  const onWebhooks = location.pathname.startsWith('/settings/webhooks');
+  const onRepositories = location.pathname.startsWith('/settings/repositories');
   const onDlq = location.pathname.startsWith('/settings/dlq');
   const onPrompts = location.pathname.startsWith('/settings/prompts');
-  const onOperators = location.pathname.startsWith('/settings/operators');
   const onMemory = location.pathname.startsWith('/settings/memory');
   // '/analytics/me' is its own screen, so the overview flag must exclude it -- otherwise both nav
   // entries highlight at once and neither tells the operator where they are.
@@ -208,9 +207,9 @@ export default function App() {
             <Brain className="ic" size={16} />
             Memory
           </a>
-          <a className={onOperators ? 'active' : ''} href="#/settings/operators">
+          <a className={onAccounts ? 'active' : ''} href="#/settings/accounts">
             <UsersRound className="ic" size={16} />
-            Operators
+            Accounts
           </a>
           <a className={onGeneral ? 'active' : ''} href="#/settings/general">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
@@ -228,7 +227,7 @@ export default function App() {
             </svg>
             Context
           </a>
-          <a className={onProviders ? 'active' : ''} href="#/settings/providers">
+          <a className={onRepositories ? 'active' : ''} href="#/settings/repositories">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <circle cx="4" cy="3.5" r="1.9" stroke="currentColor" strokeWidth="1.4" />
               <circle cx="4" cy="12.5" r="1.9" stroke="currentColor" strokeWidth="1.4" />
@@ -237,25 +236,6 @@ export default function App() {
               <path d="M12 5.4c0 3.4-3.5 3.6-6 5.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
             Repositories
-          </a>
-          <a className={onWebhooks ? 'active' : ''} href="#/settings/webhooks">
-            <svg className="ic" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
-                stroke="currentColor"
-                strokeWidth="2.1"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
-                stroke="currentColor"
-                strokeWidth="2.1"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Webhooks
           </a>
           <a className={onLlm ? 'active' : ''} href="#/settings/llm">
             <svg
@@ -369,11 +349,17 @@ export default function App() {
           {/* Before the :workspace/:slug route, or "me" would be read as a workspace. */}
           <Route path="/analytics/me" element={<MyAnalytics subject={me?.subject} />} />
           <Route path="/analytics/:workspace/:slug" element={<AnalyticsRepo />} />
-          <Route path="/settings/operators" element={configure(<SettingsOperators />)} />
+          <Route path="/settings/accounts" element={configure(<SettingsProviders />)} />
+          <Route path="/settings/accounts/people" element={configure(<SettingsOperators />)} />
           <Route path="/settings/memory" element={configure(<SettingsMemory />)} />
           <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
-          <Route path="/settings/providers" element={configure(<SettingsProviders />)} />
-          <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
+          <Route path="/settings/repositories" element={configure(<SettingsWebhookRepos />)} />
+          {/* The three screens moved on 2026-09-07. Old addresses live in bookmarks and in attention
+              rows emitted by a service not yet upgraded; the query rides along because ?edit=<id> is
+              what opens the named record. */}
+          <Route path="/settings/providers" element={<RedirectKeepingQuery to="/settings/accounts" />} />
+          <Route path="/settings/operators" element={<RedirectKeepingQuery to="/settings/accounts/people" />} />
+          <Route path="/settings/webhooks" element={<RedirectKeepingQuery to="/settings/repositories" />} />
           <Route path="/settings/llm" element={configure(<SettingsLlmProviders />)} />
           <Route path="/settings/context" element={configure(<SettingsContextProviders />)} />
           <Route path="/settings/prompts" element={configure(<PromptsSettings />)} />
