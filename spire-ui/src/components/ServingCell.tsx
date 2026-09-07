@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { checkProvider, verifyRepo, type WebhookRepoView } from '../api';
 import type { ServingLookup } from '../hooks/useServingAccounts';
 import { servingChip } from './servingAccounts';
@@ -27,6 +27,11 @@ export default function ServingCell({ role, lookup, repo }: Props) {
     state: 'idle',
   });
   const canVerify = account !== undefined && account.state !== 'missing' && account.id !== null;
+
+  // A verify result describes one account. The row is never remounted — `<tr key={w.id}>` is stable
+  // — so when the lookup resolves to a different account, drop the result it no longer describes
+  // rather than leave "reachable" sitting beside a chip it was never about.
+  useEffect(() => setVerify({ state: 'idle' }), [account?.id, account?.state]);
 
   async function onVerify() {
     if (account === undefined || account.id === null) return;

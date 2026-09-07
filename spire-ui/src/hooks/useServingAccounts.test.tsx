@@ -55,6 +55,30 @@ describe('useServingAccounts', () => {
     expect(lookups[servingKey('github', 'TEST-acme')].data.reviewer.state).toBe('ok');
   });
 
+  /**
+   * The effect's input is the SET of pairs, not the array carrying them. A caller that rebuilds its
+   * array — a save, a delete, an inline literal — must not re-ask, and must not loop.
+   */
+  it('does not re-ask when the same rows arrive in a new array', async () => {
+    const fetch = vi.spyOn(api, 'fetchServingAccounts').mockImplementation(async (_t, ws) => serving(ws));
+    const repos = [
+      repo({ id: 'TEST-w1', target: 'TEST-acme/widgets' }),
+      repo({ id: 'TEST-w2', scope: 'org', target: 'TEST-other' }),
+    ];
+    const { rerender } = render(<Probe repos={repos} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+
+    rerender(<Probe repos={[...repos]} />);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    // A genuinely new owner does change the set, so it is asked — once. Every pair is re-asked with
+    // it, because clearing the answers is what makes the changed set honest.
+    rerender(<Probe repos={[...repos, repo({ id: 'TEST-w3', target: 'TEST-third/thing' })]} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('github', 'TEST-third'));
+    expect(fetch.mock.calls.filter(([, ws]) => ws === 'TEST-third')).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(5);
+  });
+
   it('keeps a failed lookup as an error, not as an empty answer', async () => {
     vi.spyOn(api, 'fetchServingAccounts').mockRejectedValue(new Error('Failed to load the accounts serving this workspace'));
     render(<Probe repos={[repo({})]} />);
