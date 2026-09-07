@@ -182,7 +182,7 @@ services:
   # QUICK tunnel: no Cloudflare account, no domain. Every start mints a FRESH
   # https://<random>.trycloudflare.com and the previous one dies — so grab the URL
   # and (re-)register it in each SCM's webhook config after every (re)start:
-  # Every provider is a keyed registry edge — register under Settings -> Webhooks to
+  # Every provider is a keyed registry edge — register under Settings -> Repositories to
   # mint the <key>, then paste https://<random>.trycloudflare.com/webhooks/<provider>/<key>
   # (provider = bitbucket-cloud | github | gitlab) into that provider's webhook config.
   #

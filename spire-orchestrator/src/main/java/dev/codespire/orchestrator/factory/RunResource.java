@@ -185,7 +185,7 @@ public class RunResource {
                     + "login is what the push is authenticated as.";
         }
         return "No FACTORY-role provider is registered for " + where + ". Register the machine "
-                + "account under Settings -> Providers with role FACTORY (ADR-038). "
+                + "account under Settings -> Accounts with role Factory (ADR-038). "
                 + "The factory never pushes as the review bot.";
     }
 

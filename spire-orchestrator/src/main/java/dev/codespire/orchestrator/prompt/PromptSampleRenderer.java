@@ -69,7 +69,7 @@ public class PromptSampleRenderer {
         RepoRef repo = new RepoRef(review.workspace(), review.slug());
         ScmProvider provider = reviewProviders.resolveForReview(reviewId)
                 .orElseThrow(() -> new PromptSampleUnavailable(
-                        "No enabled provider for " + repo.full() + " — add one under Settings -> Providers."));
+                        "No enabled provider for " + repo.full() + " — add one under Settings -> Accounts."));
 
         String diffText = fetchDiffText(provider, repo, review.pr(), review.sha());
         Map<String, String> values = valuesFor(kind, review, provider, repo, diffText);

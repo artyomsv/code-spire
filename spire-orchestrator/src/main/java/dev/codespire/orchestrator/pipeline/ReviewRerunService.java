@@ -66,7 +66,7 @@ public class ReviewRerunService {
         // right provider (the review's stored SCM type), not just the oldest by name.
         String scmCredential = workerCredentials.packForReview(reviewId)
                 .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
-                        + workspace + "'. Add one under Settings -> Providers."));
+                        + workspace + "'. Add one under Settings -> Accounts."));
 
         // Drop the worker's cached result + comment claims BEFORE re-requesting, so the worker re-runs
         // the LLM instead of re-emitting the stored result. This is what makes a re-run a genuinely

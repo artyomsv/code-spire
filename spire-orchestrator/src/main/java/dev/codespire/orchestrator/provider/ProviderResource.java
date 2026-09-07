@@ -31,7 +31,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * CRUD for registered SCM providers (spire-ui Settings -> Providers).
+ * CRUD for registered SCM providers (spire-ui Settings -> Accounts).
  *
  * <p>Admin-only in full, reads included: the listing is an inventory of every repository host and
  * workspace this deployment can reach, and of the bot identity acting in them. No secret is in the

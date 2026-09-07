@@ -408,7 +408,7 @@ class AttentionQueriesTest {
                 .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
                 .findFirst().orElseThrow();
         assertEquals("TEST-scm", row.subject());
-        assertTrue(row.action().startsWith("/settings/providers?edit="), row.action());
+        assertTrue(row.action().startsWith("/settings/accounts?edit="), row.action());
         assertTrue(row.message().contains("401"), row.message());
     }
 

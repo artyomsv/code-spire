@@ -22,7 +22,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * CRUD for webhook registrations (spire-ui Settings -> Webhooks). Gateway-owned.
+ * CRUD for webhook registrations (spire-ui Settings -> Repositories). Gateway-owned.
  *
  * <p>Admin-only in full, reads included: a registration names the repository and the routing key that
  * addresses it, and its secret is what authenticates an inbound SCM delivery.

@@ -53,7 +53,7 @@ public class WebhookAttentionRows {
      * working webhook.
      */
     private static String editLink(String id) {
-        return "/settings/webhooks?edit=" + id;
+        return "/settings/repositories?edit=" + id;
     }
 
     /**
