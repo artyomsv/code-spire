@@ -936,6 +936,10 @@
   .conn-fail .conn-dot { background: var(--crit); }
   .conn-fail .conn-label { color: var(--crit); }
   .conn:not(:disabled):hover .conn-label { text-decoration: underline; }
+  /* The same badge where nothing can be checked from — a tracker account, managed on Context. */
+  .conn-static { cursor: default; }
+  /* The shared icon button, used as a link out of a table row. */
+  a.icon-btn { text-decoration: none; }
 
   /* Cells refuse to wrap, so a narrow window scrolls the table sideways instead of stacking a row
      three lines tall. Applied to Accounts and to Repositories. */
@@ -1120,10 +1124,6 @@
   .conn-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
   .conn-detail { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.4; color: var(--crit);
     max-width: 260px; white-space: normal; }
-  /* The check button and its last-check badge on ONE line. The failure detail may still sit under
-     the button — it appears only on a failed check, where the extra height is the point. */
-  .conn-line { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-
   /* Last credential-check standing, shown beside a provider's Check control. Date only; the time
      of day is the badge's tooltip, because it is what pushed a row onto a second line. A rejection
      carries the provider's own words, which can be a paragraph — bounded here so it ellipses, with

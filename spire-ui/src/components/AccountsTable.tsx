@@ -1,8 +1,9 @@
-import { BookOpen, ClipboardList, GitFork } from 'lucide-react';
+import { BookOpen, ClipboardList, ExternalLink, GitFork } from 'lucide-react';
 import { type ContextProviderView, type ProviderView } from '../api';
 import { CopyableValue } from '../render';
 import IconButton from './IconButton';
-import LastChecked from './LastCheckedBadge';
+import Tooltip from './Tooltip';
+import { lastCheckedTitle, type LastChecked } from './lastChecked';
 import { accountKind, hostOf, roleLabel, type AccountKind } from './accounts';
 import { conversationLabel } from './ProviderFormModal';
 
@@ -36,6 +37,11 @@ interface Props {
  * its last-check badge rather than above it. A row that wrapped its kind and stacked a date under
  * a login stood three lines tall, and ten of those stopped reading as a list. The Name cell keeps
  * its second line (the base URL) because that is the house pattern for a name in these tables.
+ *
+ * <p>The connection is ONE badge with four states. The cell used to print the login the token
+ * authenticated as beside the date of the last check, and on a refusal the provider's own message
+ * as well — three variable-length strings in the column, the longest of them a paragraph. All of
+ * it is on the badge's tooltip now, which is where an operator looks once, not on every row.
  *
  * <p>A value with no bound on its length — a base URL, a bot login, a workspace — is bounded here,
  * ellipses, and carries the whole value in its tooltip and in what its copy button copies. The
@@ -90,11 +96,8 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                   <CopyableValue text={p.workspace} mono copyTitle="Copy the workspace" />
                 </div>
               </td>
-              <td>
-                <div className="conn-line">
-                  <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => onRecheck(p.id)} />
-                  <LastChecked item={p} />
-                </div>
+              <td className="nowrap">
+                <ConnBadge conn={conns[p.id]} stored={p} enabled={p.enabled} onRecheck={() => onRecheck(p.id)} />
               </td>
               <td className="nowrap">
                 <span className="prov-sub">
@@ -136,19 +139,26 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                   <CopyableValue text={hostOf(t.baseUrl)} mono copyTitle="Copy the host" />
                 </div>
               </td>
-              <td>
-                <div className="conn-line">
-                  <LastChecked item={t} />
-                </div>
+              <td className="nowrap">
+                <StoredBadge stored={t} />
               </td>
               <td className="nowrap">
                 <span className="prov-sub">—</span>
               </td>
               <td>
                 <div className="prov-actions">
-                  <a className="btn-ghost" href={`#/settings/context?edit=${encodeURIComponent(t.id)}`}>
-                    Manage on Context
-                  </a>
+                  {/* An icon, like the Edit and Delete buttons it lines up with. The words took the
+                      width of two of them and, squeezed, wrapped onto a second line — which is what
+                      made the tracker rows taller than the forge rows above them. */}
+                  <Tooltip label="Manage on Context">
+                    <a
+                      className="icon-btn"
+                      href={`#/settings/context?edit=${encodeURIComponent(t.id)}`}
+                      aria-label="Manage on Context"
+                    >
+                      <ExternalLink size={16} />
+                    </a>
+                  </Tooltip>
                 </div>
               </td>
             </tr>
@@ -207,41 +217,74 @@ function identityOf(p: ProviderView): string {
   return 'not resolved';
 }
 
-function ConnCell({ conn, enabled, onRecheck }: { conn: Conn | undefined; enabled: boolean; onRecheck: () => void }) {
+/** The four standings a credential can be in, as the badge says them. */
+const CONN_LABEL: Record<ConnState, string> = {
+  idle: 'Not checked',
+  checking: 'Checking…',
+  ok: 'OK',
+  fail: 'Failed',
+};
+
+/**
+ * The live connection check, as one badge of fixed width.
+ *
+ * <p>Everything variable is on the tooltip: the login the token authenticated as, when the
+ * credential was last checked, and — the widest of the three — the provider's own words when it
+ * refused. The badge itself only says which of the four states this account is in, because that is
+ * the part an operator scans a column of eleven rows for.
+ */
+function ConnBadge({
+  conn,
+  stored,
+  enabled,
+  onRecheck,
+}: {
+  conn: Conn | undefined;
+  stored: LastChecked;
+  enabled: boolean;
+  onRecheck: () => void;
+}) {
   // No stored result yet: an enabled provider is being auto-checked; a disabled
   // one was skipped on purpose and sits idle until the operator clicks to check.
   const state = conn?.state ?? (enabled ? 'checking' : 'idle');
-  const label =
-    state === 'idle'
-      ? 'Not checked'
-      : state === 'checking'
-        ? 'Checking…'
-        : state === 'ok'
-          ? conn?.account
-            ? `@${conn.account}`
-            : 'Connected'
-          : 'Failed';
-  const title =
+  const said =
     state === 'idle'
       ? 'Disabled — not checked automatically. Click to check anyway.'
       : state === 'checking'
         ? 'Contacting the provider…'
         : state === 'ok'
-          ? `Connected${conn?.account ? ` as @${conn.account}` : ''} — click to re-check`
-          : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
+          ? `Connected${conn?.account ? ` as @${conn.account}` : ''}`
+          : (conn?.detail ?? 'Connection failed');
+  // The stored standing dates the LAST check, which the live result may already have replaced —
+  // it is worth a hover on an idle or a failing row and noise on a row that just answered.
+  const history = state === 'ok' || state === 'checking' ? '' : lastCheckedTitle(stored);
+  const clickable = state === 'ok' || state === 'fail' ? ' — click to re-check' : '';
   return (
-    <div className="conn-cell">
-      <button
-        type="button"
-        className={`conn conn-${state}`}
-        onClick={onRecheck}
-        disabled={state === 'checking'}
-        title={title}
-      >
-        <span className="conn-dot" />
-        <span className="conn-label">{label}</span>
-      </button>
-      {state === 'fail' && conn?.detail && <div className="conn-detail">{conn.detail}</div>}
-    </div>
+    <button
+      type="button"
+      className={`conn conn-${state}`}
+      onClick={onRecheck}
+      disabled={state === 'checking'}
+      title={[said, history].filter(Boolean).join(' · ') + clickable}
+    >
+      <span className="conn-dot" />
+      <span className="conn-label">{CONN_LABEL[state]}</span>
+    </button>
+  );
+}
+
+/**
+ * A tracker's stored standing, in the same badge. Nothing checks it from here — the account is
+ * registered and checked on Context — so this one is a plain span: a control that looks like the
+ * button beside it and does nothing on click would be worse than the date it replaced.
+ */
+function StoredBadge({ stored }: { stored: LastChecked }) {
+  const state: ConnState =
+    stored.lastCheckAt === null || stored.lastCheckOk === null ? 'idle' : stored.lastCheckOk ? 'ok' : 'fail';
+  return (
+    <span className={`conn conn-static conn-${state}`} title={lastCheckedTitle(stored) || 'Never checked'}>
+      <span className="conn-dot" />
+      <span className="conn-label">{CONN_LABEL[state]}</span>
+    </span>
   );
 }

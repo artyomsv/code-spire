@@ -132,6 +132,46 @@ describe('SettingsProviders — the Machine accounts list', () => {
     );
   });
 
+  /**
+   * The connection is one badge in four states. Who the token authenticated as is variable-length
+   * text that sat in the column on every row; it is on the hover now, and the badge says only which
+   * of the four states this account is in.
+   */
+  it('reports a connected account as one OK badge, naming the login it connected as on the hover', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({})]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
+    renderPage();
+
+    const row = await rowNamed('TEST reviewer');
+    const badge = await within(row).findByRole('button', { name: 'OK' });
+    expect(badge.getAttribute('title')).toContain('Connected as @test-checked');
+    expect(badge.getAttribute('title')).toContain('click to re-check');
+    // The login is on the tooltip and NOT in the column: that is the whole width saving.
+    expect(within(row).queryByText('@test-checked')).not.toBeInTheDocument();
+  });
+
+  /**
+   * A tracker is registered and checked on Context, so its badge reports the stored standing and
+   * is not a control. A refusal can be a paragraph, and it is the tooltip that carries it.
+   */
+  it('shows a refused tracker as a Failed badge that cannot be clicked, with the reason on the hover', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
+      {
+        ...tracker,
+        lastCheckAt: '2026-09-07T09:00:00Z',
+        lastCheckOk: false,
+        lastCheckError: 'Authentication failed (HTTP 401)',
+      },
+    ]);
+    renderPage();
+
+    const row = await rowNamed('TEST Jira');
+    const badge = within(row).getByText('Failed');
+    expect(badge.closest('.conn')?.getAttribute('title')).toContain('Authentication failed (HTTP 401)');
+    expect(within(row).queryByRole('button', { name: 'Failed' })).not.toBeInTheDocument();
+  });
+
   /** Tracker accounts are listed so one screen answers "who acts as what"; they are edited on Context. */
   it('lists tracker accounts read-only, after the forge rows, with a link to manage them on Context', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({})]);
@@ -144,6 +184,8 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('Read')).toBeInTheDocument();
     expect(within(row).getByText('jira-bot@example.invalid')).toBeInTheDocument();
     expect(within(row).getByText('test-acme.atlassian.net')).toBeInTheDocument();
+    // Never checked is information, not a problem — the fourth state of the same badge.
+    expect(within(row).getByText('Not checked')).toBeInTheDocument();
     expect(within(row).getByText('—')).toBeInTheDocument(); // Policy: a tracker commands nothing
     expect(within(row).getByRole('link', { name: 'Manage on Context' })).toHaveAttribute(
       'href',
