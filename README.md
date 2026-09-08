@@ -77,8 +77,8 @@ Open **http://localhost:34000** for the operator UI — a live reviews list; cli
 its pipeline, findings, model usage, and event stream. (The orchestrator on `:34080` also serves a
 raw event-timeline dashboard and the `/api` + `/ws` endpoints the UI proxies to.)
 
-Register an SCM provider in the UI (Settings -> Providers) and an LLM in Settings -> LLM — both
-encrypted at rest. For GitHub/GitLab, add a per-repo webhook in Settings -> Webhooks and point the
+Register an SCM account in the UI (Settings -> Accounts, role Reviewer) and an LLM in Settings -> LLM — both
+encrypted at rest. For GitHub/GitLab, add a per-repo webhook in Settings -> Repositories and point the
 repo's webhook at `https://<gateway>/webhooks/{provider}/{key}`; the bot then reviews real PRs. See
 [docs/SMOKE-TEST.md](docs/SMOKE-TEST.md) for the safe observe-only first-contact flow.
 

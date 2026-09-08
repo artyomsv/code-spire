@@ -308,6 +308,9 @@ export async function resolvePrUrl(url: string): Promise<ResolvedUrl> {
 
 export type AuthKind = 'bearer' | 'basic';
 
+/** REVIEWER posts comments and is the subject of the author allowlist; FACTORY pushes (ADR-038). */
+export type ProviderRole = 'REVIEWER' | 'FACTORY';
+
 export interface ProviderView {
   id: string;
   name: string;
@@ -321,6 +324,12 @@ export interface ProviderView {
   enabled: boolean;
   authors: string[];
   conversationLevel: string | null; // '' / null = inherit the global default
+  // Fixed at registration (a PUT that changes it is refused with 409). Arrives as runtime JSON: read it
+  // through roleLabel(), which treats anything outside the union as unknown rather than as a reviewer.
+  role: ProviderRole;
+  // The login the forge resolved from the token — what a Factory push is authenticated as. The server
+  // has always returned it; the type never declared it, so no screen could show it.
+  botUsername: string | null;
   createdAt: string;
   lastCheckAt: string | null;
   lastCheckOk: boolean | null;
@@ -339,6 +348,7 @@ export interface ProviderInput {
   enabled: boolean;
   authors: string[];
   conversationLevel?: string; // omit/'' = inherit the global default
+  role?: ProviderRole; // sent on create; on edit the stored role, never another — a change is a 409
 }
 
 /**
@@ -423,6 +433,36 @@ export async function verifyRepo(providerId: string, repo: string): Promise<Repo
     body: JSON.stringify({ repo }),
   });
   if (!res.ok) await throwResponse(res, 'Failed to verify repository');
+  return res.json();
+}
+
+/**
+ * Which registration serves one role for a (forge type, workspace). The set is closed on the server
+ * and mirrored here; a reader must treat an unlisted value as unknown, never as `ok`.
+ */
+export type ServingState = 'ok' | 'no-identity' | 'no-login' | 'disabled' | 'missing';
+
+export interface ServingAccount {
+  state: ServingState;
+  id: string | null; // null only for 'missing'
+  name: string | null;
+  botUsername: string | null;
+  botAccountId: string | null;
+}
+
+export interface ServingAccounts {
+  type: string;
+  workspace: string;
+  reviewer: ServingAccount;
+  factory: ServingAccount;
+}
+
+// Which accounts would review and push for this forge + workspace, decided by the orchestrator's own
+// resolvers. Nothing on a repository row stores this; the screen asks rather than infers.
+export async function fetchServingAccounts(type: string, workspace: string): Promise<ServingAccounts> {
+  const query = new URLSearchParams({ type, workspace });
+  const res = await apiFetch(`/api/providers/serving?${query.toString()}`);
+  if (!res.ok) return throwResponse(res, 'Failed to load the accounts serving this workspace');
   return res.json();
 }
 

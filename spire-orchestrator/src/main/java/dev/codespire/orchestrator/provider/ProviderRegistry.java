@@ -103,8 +103,15 @@ public class ProviderRegistry {
     @Transactional
     public Optional<ProviderView> update(UUID id, ProviderInput in) {
         try (Connection c = dataSource.getConnection()) {
-            if (!exists(c, id)) {
+            Optional<ProviderRole> stored = storedRole(c, id);
+            if (stored.isEmpty()) {
                 return Optional.empty();
+            }
+            if (in.role() != null && !in.role().isBlank()) {
+                ProviderRole requested = ProviderRole.of(in.role());
+                if (requested != stored.get()) {
+                    throw new RoleIsFixedAtRegistration(stored.get(), requested);
+                }
             }
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
             // bot_username is refreshed only when the token was (re)validated; a token-less
@@ -126,9 +133,9 @@ public class ProviderRegistry {
                 ps.setString(7, in.botAccountId() == null ? "" : in.botAccountId());
                 ps.setString(8, blankToNull(in.conversationLevel()));
                 ps.setBoolean(9, in.enabled() == null || in.enabled());
-                // An absent role keeps the stored one (COALESCE above). The dashboard's edit form
-                // sends none, so writing ProviderRole.of(null) here turned every Settings edit of a
-                // FACTORY registration into a REVIEWER — the round-1 critical, back through the UI.
+                // An absent role keeps the stored one (COALESCE above); a present one was checked
+                // equal to it just above, so this write can only ever repeat the stored value. The
+                // dashboard's edit form sends the stored role; older clients send none.
                 ps.setString(10, in.role() == null || in.role().isBlank() ? null : ProviderRole.of(in.role()).name());
                 int idx = 11;
                 if (rotateSecret) {
@@ -253,6 +260,33 @@ public class ProviderRegistry {
         }
     }
 
+    /**
+     * The registration for a (type, workspace, role), <b>enabled or not</b>, as a view — for saying
+     * which account WOULD serve and in what state, never for acting as it. {@link #resolve} is the
+     * only method that hands out a usable credential, and it filters {@code enabled}; this one exists
+     * so a disabled row can be reported as "disabled" rather than confused with "missing", which
+     * an operator fixes differently.
+     */
+    public Optional<ProviderView> registration(String type, String workspace, ProviderRole role) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT * FROM scm_provider WHERE type = ? AND workspace = ? AND role = ?")) {
+            ps.setString(1, type);
+            ps.setString(2, workspace);
+            ps.setString(3, role.name());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                UUID id = rs.getObject("id", UUID.class);
+                return Optional.of(toView(rs, authorsOf(c, id)));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the " + role + " registration for "
+                    + type + "/" + workspace, e);
+        }
+    }
+
     private ScmProvider decryptedProvider(Connection c, ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         return new ScmProvider(id, rs.getString("name"), rs.getString("type"),
@@ -278,11 +312,12 @@ public class ProviderRegistry {
         }
     }
 
-    private boolean exists(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM scm_provider WHERE id = ?")) {
+    /** The stored role, or empty when no such provider — one read serves both the 404 and the guard. */
+    private Optional<ProviderRole> storedRole(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT role FROM scm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
+                return rs.next() ? Optional.of(ProviderRole.valueOf(rs.getString("role"))) : Optional.empty();
             }
         }
     }
@@ -349,6 +384,22 @@ public class ProviderRegistry {
                 }
             }
             ins.executeBatch();
+        }
+    }
+
+    /**
+     * A registration's role is fixed for its lifetime (spec 2026-09-07-accounts-and-roles, decision 2).
+     *
+     * <p>Changing it would re-purpose one token under the other authority set: a reviewer that
+     * suddenly holds the push identity, or a factory account that the review path starts posting
+     * as. HISTORY records the day a role-less PUT did exactly that by accident; an explicit change
+     * is the same event on purpose. The cure is the one an operator would apply to any real service
+     * account — register the new one, delete the old one — and the message says so.
+     */
+    public static final class RoleIsFixedAtRegistration extends RuntimeException {
+        public RoleIsFixedAtRegistration(ProviderRole stored, ProviderRole requested) {
+            super("The role is set at registration and this account is " + stored + "; it cannot become "
+                    + requested + ". Register a new account for that role and delete this one.");
         }
     }
 

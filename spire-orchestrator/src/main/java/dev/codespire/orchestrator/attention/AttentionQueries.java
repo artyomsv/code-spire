@@ -156,7 +156,7 @@ public class AttentionQueries {
         if (count(c, "SELECT COUNT(*) FROM scm_provider WHERE enabled = TRUE AND role = 'REVIEWER'") == 0) {
             rows.add(new AttentionView("SCM_PROVIDER_MISSING", Severity.BLOCKING, null,
                     "No enabled source-control provider is configured, so no pull request can be reviewed.",
-                    "/settings/providers"));
+                    "/settings/accounts"));
         }
         // bot_account_id is NOT NULL DEFAULT '' while bot_username is a nullable TEXT, so both
         // blank forms have to be tested. Either field alone is enough to identify the bot.
@@ -173,7 +173,7 @@ public class AttentionQueries {
                 rows.add(new AttentionView("BOT_IDENTITY_UNRESOLVED", Severity.WARNING, rs.getString("name"),
                         "The bot's own identity could not be resolved, so it cannot recognise its own "
                                 + "comments and will not hold a conversation.",
-                        editLink("/settings/providers", rs.getObject("id", UUID.class))));
+                        editLink("/settings/accounts", rs.getObject("id", UUID.class))));
             }
         }
     }
@@ -345,7 +345,7 @@ public class AttentionQueries {
                 SELECT id, name, last_check_error FROM scm_provider
                  WHERE enabled = TRUE AND last_check_ok = FALSE
                  ORDER BY name""",
-                "/settings/providers", "source-control provider"),
+                "/settings/accounts", "source-control provider"),
 
         LLM("""
                 SELECT id, name, last_check_error FROM llm_provider

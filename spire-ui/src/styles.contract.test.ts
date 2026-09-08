@@ -27,9 +27,6 @@ import { join } from 'node:path';
 
 const SRC = join(process.cwd(), 'src');
 
-/** Prefixes the app composes from data (`sev-${severity}`), so the literal never appears in source. */
-const DYNAMIC_PREFIXES = ['sev-', 'llm-', 'prov-', 'pr-', 'chip-', 'conn-', 'rail-'];
-
 function componentFiles(dir: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -47,14 +44,38 @@ function definedClasses(): Set<string> {
   return found;
 }
 
-/** Every literal `className="…"` in the component tree, mapped to the files that use it. */
+/** An interpolation, standing in for the value it will produce. One level of nesting is enough
+ *  for the shapes this app writes (`${a ? 'x' : 'y'}`). */
+const INTERPOLATION = /\$\{(?:[^{}]|\{[^{}]*\})*\}/g;
+
+/**
+ * Every class a component asks for, mapped to the files that use it — from a literal
+ * `className="…"` and from the STATIC words of a `className={\`…\`}` template.
+ *
+ * <p>The template half was added because three classes this project shipped were invisible here:
+ * `conn-badge` and `enabled-dot` are written in template literals beside a composed `conn-${state}`,
+ * so a scan that read only quoted attributes never saw them, and both could have been deleted from
+ * the stylesheet with the whole suite green — the exact failure this file exists to catch.
+ *
+ * <p>A word touching an interpolation is dropped: `conn-${state}` is a PREFIX and not a class name,
+ * and reporting it would be a false alarm on every render-time class in the app. That is also why
+ * there is no longer a list of prefixes to excuse: a composed name never reaches the check now, so
+ * excusing whole families of names by their first syllable only hid the whole ones. It hid a real
+ * one — `prov-error`, asked for twice by the General screen and defined nowhere.
+ */
 function usedClasses(files: string[]): Map<string, Set<string>> {
   const byClass = new Map<string, Set<string>>();
+  const add = (name: string, file: string) =>
+    byClass.set(name, (byClass.get(name) ?? new Set()).add(file.slice(SRC.length + 1)));
   for (const file of files) {
     const source = readFileSync(file, 'utf8');
     for (const match of source.matchAll(/className="([^"{}]+)"/g)) {
-      for (const name of match[1].split(/\s+/).filter(Boolean)) {
-        byClass.set(name, (byClass.get(name) ?? new Set()).add(file.slice(SRC.length + 1)));
+      for (const name of match[1].split(/\s+/).filter(Boolean)) add(name, file);
+    }
+    for (const match of source.matchAll(/className=\{`([^`]*)`\}/g)) {
+      // Mark where the values go, then keep only the words that touch none of them.
+      for (const name of match[1].replace(INTERPOLATION, '\u0000').split(/\s+/).filter(Boolean)) {
+        if (!name.includes('\u0000')) add(name, file);
       }
     }
   }
@@ -76,7 +97,6 @@ describe('stylesheet contract', () => {
 
     for (const [name, files] of usedClasses(componentFiles(SRC))) {
       if (defined.has(name)) continue;
-      if (DYNAMIC_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
       orphans.push(`${name} (used in ${[...files].join(', ')})`);
     }
 

@@ -336,7 +336,7 @@ Each of these is silent in at least one component, which is why the symptom is t
 | Everything starts, but `redirect_uri` is `http://` anyway | `SPIRE_TRUSTED_PROXIES` is *set but wrong* — it does not cover the dashboard's actual address, so the headers are distrusted. A Docker range carried into Kubernetes does this. |
 | Dashboard loads, REST works, no live updates | The terminator is not upgrading WebSockets. |
 | Live updates connect then drop every minute | The terminator's read timeout is at its default, or its Ingress class ignores the chart's nginx-specific annotation. |
-| Webhooks screen says "failed to fetch" while reviews work | `/gw` is not routed to the gateway, or is routed somewhere other than through the single origin. |
+| Repositories screen says "failed to fetch" while reviews work | `/gw` is not routed to the gateway, or is routed somewhere other than through the single origin. |
 | SCM reports a successful delivery but no review starts | `/webhooks` is falling through to the SPA, which answers 200 with `index.html`. It must be routed to the gateway ahead of the fallback. |
 
 ## Related

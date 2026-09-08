@@ -11,8 +11,12 @@ import Tooltip from './Tooltip';
  * indistinguishable from each other — including to a screen reader, which announces link text.
  */
 const ACTION_LABELS: Record<string, string> = {
-  '/settings/webhooks': 'Settings · Webhooks',
-  '/settings/providers': 'Settings · Providers',
+  '/settings/repositories': 'Settings · Repositories',
+  '/settings/accounts': 'Settings · Accounts',
+  // The two addresses these screens had until 2026-09-07. A row emitted by a not-yet-upgraded
+  // service still carries them; it must read as the screen it lands on, not as "Open".
+  '/settings/webhooks': 'Settings · Repositories',
+  '/settings/providers': 'Settings · Accounts',
   '/settings/llm': 'Settings · LLM',
   '/settings/context': 'Settings · Context',
   '/settings/dlq': 'Dead-letter',

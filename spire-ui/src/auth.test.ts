@@ -8,6 +8,8 @@ import {
   isAuthFailure,
   needsLogin,
   prefixFor,
+  RETURN_ROUTE_KEY,
+  takeReturnRoute,
   type Me,
 } from './auth';
 
@@ -32,14 +34,22 @@ const freshAuth = async () => {
   return import('./auth');
 };
 
-const stubLocation = () => {
+/**
+ * A window that records where it was asked to go, without going.
+ *
+ * <p>`hash` is part of it because a login now notes the screen it is leaving. jsdom's own `location`
+ * cannot have `assign` replaced, so the whole object is stubbed — which means a test that cares about
+ * the remembered route has to say what the hash was, since a stub has no history of its own.
+ */
+const stubLocation = (hash = '') => {
   const assign = vi.fn();
-  vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
+  vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost', hash });
   return assign;
 };
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  sessionStorage.clear();
 });
 
 describe('auth failure detection', () => {
@@ -277,6 +287,96 @@ describe('leaving for the identity provider', () => {
   });
 });
 
+/**
+ * The second half of the reported glitch. The dashboard came back from a re-login on Reviews, whatever
+ * screen the operator had been on — because the server's login endpoint takes no redirect target from
+ * the caller (a client-supplied one is an open redirect) and always returns to `/`. The route is
+ * therefore kept on this side of the wire, and never sent anywhere.
+ */
+describe('coming back to the screen the login left', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('notes the current route before the window leaves for a login', async () => {
+    const auth = await freshAuth();
+    stubLocation('#/settings/accounts');
+
+    auth.goToFullLogin();
+
+    expect(sessionStorage.getItem(auth.RETURN_ROUTE_KEY)).toBe('#/settings/accounts');
+  });
+
+  /** Re-establishing one prefix leaves the page just as thoroughly, so it must remember too. */
+  it('notes it for a single-prefix login as well', async () => {
+    const auth = await freshAuth();
+    stubLocation('#/runs');
+
+    auth.goToLogin('/gw');
+
+    expect(sessionStorage.getItem(auth.RETURN_ROUTE_KEY)).toBe('#/runs');
+  });
+
+  /** Both already mean the default screen; storing one would buy a redundant navigation and nothing else. */
+  it.each(['', '#/'])('stores nothing for a hash of "%s"', async (hash) => {
+    const auth = await freshAuth();
+    stubLocation(hash);
+
+    auth.goToFullLogin();
+
+    expect(sessionStorage.getItem(auth.RETURN_ROUTE_KEY)).toBeNull();
+  });
+
+  /**
+   * Signing out should land on `/`. Returning the operator to the screen they signed out from would
+   * either bounce them straight back into a login or, on a shared machine, name the last screen the
+   * previous operator was reading.
+   */
+  it('stores nothing when the operator signs out', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+    stubLocation('#/settings/accounts');
+
+    await auth.goToLogout();
+
+    expect(sessionStorage.getItem(auth.RETURN_ROUTE_KEY)).toBeNull();
+  });
+
+  /** Good for exactly one arrival. Left in place it would bounce every later visit to `/` off the rail. */
+  it('gives the route back once and then has none', () => {
+    sessionStorage.setItem(RETURN_ROUTE_KEY, '#/settings/accounts');
+
+    expect(takeReturnRoute()).toBe('#/settings/accounts');
+    expect(takeReturnRoute()).toBeNull();
+  });
+
+  /**
+   * Only a hash route of this app is ever returned. Nothing but the login writes this key, so a value
+   * of another shape is a leftover or something else on this origin — and either way not a place to
+   * send the window.
+   */
+  it.each([
+    'https://evil.invalid/',
+    '//evil.invalid/',
+    // Both start with "#/" and are protocol-relative the moment the "#" is stripped. This app's
+    // HashRouter makes them inert, which is the router's property and not this guard's.
+    '#//evil.invalid/',
+    '#/\\evil.invalid',
+    '/settings/accounts',
+    '#not-a-route',
+    '',
+  ])(
+    'refuses to return %s',
+    (stored) => {
+      sessionStorage.setItem(RETURN_ROUTE_KEY, stored);
+
+      expect(takeReturnRoute()).toBeNull();
+      // Consumed even so: a value this refuses must not sit there being refused on every page load.
+      expect(sessionStorage.getItem(RETURN_ROUTE_KEY)).toBeNull();
+    },
+  );
+});
+
 describe('which service a call belongs to', () => {
   it('reads the prefix from the path and defaults to the dashboard', () => {
     expect(prefixFor('/gw/webhook-repos')).toBe('/gw');
@@ -304,23 +404,54 @@ describe('establishing the other services sessions', () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
-  it('logs in to the service that has none', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => Promise.resolve(url.startsWith('/gw') ? { ok: false, status: 499 } : okResponse)),
-    );
-    const assign = vi.fn();
-    vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
+  const marks = () => ['/gw', '/wk'].filter((p) => sessionStorage.getItem(`spire.session.attempted${p}`));
 
-    expect(await ensureServiceSessions()).toBe(true);
-    expect(assign).toHaveBeenCalledWith('/gw/auth/login');
+  /**
+   * The blink this exists to remove. After the services restart, `/api` can still be valid while BOTH
+   * siblings have lapsed — and answering the first refusal on its own meant one full navigation back to
+   * the root per lapsed prefix: the page booted, found `/gw`, left; booted again, found `/wk`, left
+   * again. The operator saw the dashboard flicker and settle on Reviews.
+   *
+   * <p>So every sibling is probed before anything navigates, and the lapsed ones are re-established by
+   * a single chained login, which the browser follows without painting the documents in between.
+   */
+  it('re-establishes every lapsed sibling in one chained login', async () => {
+    const auth = await freshAuth();
+    // 401, not 499: a lapsed cookie on a script-marked call is answered either way, and the loop must
+    // treat both as "log in" — see `isAuthFailure`.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+    const assign = stubLocation();
+
+    expect(await auth.ensureServiceSessions()).toBe(true);
+
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
+    // Both, not just the first one found: a prefix left unmarked is one this navigation is about to
+    // establish anyway, and marking it is what stops the next load asking a second time.
+    expect(marks()).toEqual(['/gw', '/wk']);
   });
 
   /**
-   * A prefix that still refuses after its own login cannot be fixed by logging in again — without
-   * this the dashboard would reload forever, which is worse than the broken page it replaced.
+   * The other half of that guard, on a page that has not navigated yet: every lapsed prefix is
+   * already marked, so there is nothing left to try and the window must stay put. Without this the
+   * dashboard would reload forever, which is worse than the broken page it replaced.
    */
-  it('gives up on a prefix that refuses even after being logged in to', async () => {
+  it('does not navigate again once every lapsed prefix has been tried', async () => {
+    const auth = await freshAuth();
+    sessionStorage.setItem('spire.session.attempted/gw', '1');
+    sessionStorage.setItem('spire.session.attempted/wk', '1');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+    const assign = stubLocation();
+
+    expect(await auth.ensureServiceSessions()).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A prefix that still refuses after its own login cannot be fixed by logging in again, and a prefix
+   * that is answering must not be retired alongside it.
+   */
+  it('gives up on the prefixes that refuse even after being logged in to', async () => {
     // Its own instance, per the convention above: this test navigates, and on the shared module
     // `leavingForAuth` may already be set by an earlier one. That mattered — while the mark was
     // written on intent rather than on the attempt, this test passed with its login suppressed, so it
@@ -333,7 +464,8 @@ describe('establishing the other services sessions', () => {
     const assign = stubLocation();
 
     expect(await auth.ensureServiceSessions()).toBe(true);
-    expect(assign).toHaveBeenCalledWith('/gw/auth/login');
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
+    expect(marks()).toEqual(['/gw']); // `/wk` answered, so it is neither lapsed nor retired
     assign.mockClear();
 
     expect(await auth.ensureServiceSessions()).toBe(false);
@@ -343,26 +475,41 @@ describe('establishing the other services sessions', () => {
   /**
    * Two callers race on a fresh page: App's effect asks for the sibling sessions as soon as `/api/me`
    * answers, and the attention panel's gateway socket — which fails precisely because those sessions
-   * do not exist yet — asks again from its close handler. `goToLogin` is first-caller-wins, so the
-   * second caller's navigation silently does nothing.
-   *
-   * <p>The mark must therefore record a login that RAN, not one that was merely intended. Marking a
-   * prefix whose navigation was suppressed retires it permanently: the next load sees the mark, skips
-   * the prefix, and that service never gets a session — which the panel then reports as the service
-   * being unreachable, forever, 1.5s at a time.
+   * do not exist yet — asks again from its close handler. Navigation is first-caller-wins, so the
+   * second caller's silently does nothing.
    */
-  it('only marks a prefix attempted when its login actually ran', async () => {
+  it('navigates once however many callers ask at the same time', async () => {
     const auth = await freshAuth();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 499 }));
     const assign = stubLocation();
 
     await Promise.all([auth.ensureServiceSessions(), auth.ensureServiceSessions()]);
 
-    // First-caller-wins is intended: one navigation, not two.
     expect(assign).toHaveBeenCalledTimes(1);
-    const navigatedPrefix = (assign.mock.calls[0][0] as string).replace('/auth/login', '');
-    const marked = ['/gw', '/wk'].filter((p) => sessionStorage.getItem(`spire.session.attempted${p}`));
-    expect(marked).toEqual([navigatedPrefix]);
+    expect(marks()).toEqual(['/gw', '/wk']);
+  });
+
+  /**
+   * The mark must record a login that RAN, not one that was merely intended — which is why it is
+   * written after the navigation call and not before it.
+   *
+   * <p>Here the window is already leaving for one prefix's own login, started by the attention panel's
+   * socket close handler. This call's chained login is therefore suppressed, and nothing it found
+   * lapsed has been logged in to. Marking on intent retires those prefixes permanently: the next load
+   * sees the marks, skips the prefixes, and those services never get a session for the life of the tab
+   * — which the panel then reports as the service being unreachable, forever, 1.5s at a time.
+   */
+  it('records no attempt when its login was suppressed by a departure already in flight', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 499 }));
+    const assign = stubLocation();
+
+    expect(auth.goToLogin('/gw')).toBe(true); // something else got there first
+    assign.mockClear();
+
+    expect(await auth.ensureServiceSessions()).toBe(true);
+    expect(assign).not.toHaveBeenCalled();
+    expect(marks()).toEqual([]);
   });
 
   /** An unreachable service is an outage. Navigating to its login would blame the operator for it. */

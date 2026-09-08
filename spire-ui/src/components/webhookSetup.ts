@@ -1,7 +1,7 @@
 // Per-provider "what to do on the portal" steps, shown in the one-time reveal after a webhook is
-// created (Settings → Webhooks). The reveal already shows the Payload URL + Secret to copy, so these
-// steps reference "above" for those two values and cover the rest: where to go, and which events to
-// enable. Kept framework-free so it unit-tests without rendering.
+// created (Settings → Repositories). The reveal already shows the Payload URL + Secret to copy, so
+// these steps reference "above" for those two values and cover the rest: where to go, and which
+// events to enable. Kept framework-free so it unit-tests without rendering.
 
 export interface WebhookSetupStep {
   /** Short imperative — the action for this step. */

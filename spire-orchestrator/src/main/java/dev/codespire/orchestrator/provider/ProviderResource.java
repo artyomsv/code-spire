@@ -3,10 +3,13 @@ package dev.codespire.orchestrator.provider;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
+import dev.codespire.orchestrator.factory.MachineAccounts;
+import dev.codespire.orchestrator.provider.ServingAccounts.ServingAccount;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -16,6 +19,7 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -26,7 +30,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * CRUD for registered SCM providers (spire-ui Settings -> Providers).
+ * CRUD for registered SCM providers (spire-ui Settings -> Accounts).
  *
  * <p>Admin-only in full, reads included: the listing is an inventory of every repository host and
  * workspace this deployment can reach, and of the bot identity acting in them. No secret is in the
@@ -92,8 +96,13 @@ public class ProviderResource {
     @Path("/{id}")
     public ProviderView update(@PathParam("id") String id, ProviderInput in) {
         validate(in, false);
-        ProviderView updated = registry.update(uuid(id), resolveIdentity(in))
-                .orElseThrow(() -> new NotFoundException("No provider " + id));
+        ProviderView updated;
+        try {
+            updated = registry.update(uuid(id), resolveIdentity(in))
+                    .orElseThrow(() -> new NotFoundException("No provider " + id));
+        } catch (ProviderRegistry.RoleIsFixedAtRegistration e) {
+            throw conflict(e.getMessage());
+        }
         // Only record when a secret was actually supplied: that's the only case resolveIdentity(...)
         // re-validates the token (it returns the input untouched on a blank secret). Recording success
         // unconditionally would silently clear a real prior rejection on an update that never touched
@@ -139,6 +148,49 @@ public class ProviderResource {
         return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
                 in.authUsername(), in.secret(), botId, in.enabled(), in.authors(),
                 botUsername, in.conversationLevel(), in.role());
+    }
+
+    /**
+     * Which accounts serve a (forge type, workspace), per role — for the Repositories screen.
+     *
+     * <p>Reads the same rows through the same rules the pipeline applies. An enabled REVIEWER row is
+     * {@code ok} when its bot identity resolved and {@code no-identity} otherwise — the condition
+     * under which {@code ConversationSaga} skips every follow-up. An enabled FACTORY row is
+     * {@code ok} exactly when it satisfies the predicate {@link MachineAccounts#resolve} applies,
+     * and {@code no-login} otherwise — the case {@code POST /api/runs} answers 409 for. The
+     * predicate, not the resolution: resolving decrypts the push credential, which this display
+     * read has no use for and which turns an undecryptable ciphertext into a 500 on a page load.
+     * A registered but disabled row is {@code disabled}, not {@code missing}: the two have
+     * different cures.
+     *
+     * <p>An unknown forge type is refused rather than answered. Every role would read
+     * {@code missing} for a type no adapter serves, which names a cure — register an account —
+     * that the operator cannot carry out.
+     */
+    @GET
+    @Path("/serving")
+    public ServingAccounts serving(@QueryParam("type") String type, @QueryParam("workspace") String workspace) {
+        requireField(type, "type");
+        requireField(workspace, "workspace");
+        if (!TYPES.contains(type)) {
+            throw new BadRequestException("Unsupported provider type '" + type
+                    + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
+        }
+        ServingAccount reviewer = registry.registration(type, workspace, ProviderRole.REVIEWER)
+                .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
+                        : isBlank(v.botAccountId()) ? ServingAccount.of("no-identity", v)
+                        : ServingAccount.of("ok", v))
+                .orElseGet(ServingAccount::missing);
+        ServingAccount factory = registry.registration(type, workspace, ProviderRole.FACTORY)
+                .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
+                        : MachineAccounts.canAuthenticateAPush(v.botUsername()) ? ServingAccount.of("ok", v)
+                        : ServingAccount.of("no-login", v))
+                .orElseGet(ServingAccount::missing);
+        return new ServingAccounts(type, workspace, reviewer, factory);
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     /**
@@ -297,6 +349,16 @@ public class ProviderResource {
         if (value == null || value.isBlank()) {
             throw new BadRequestException(name + " is required");
         }
+    }
+
+    /**
+     * The message goes on the RESPONSE, not the exception: {@code new ClientErrorException(message,
+     * status)} leaves the body empty, so the client learns nothing about what to send instead.
+     * Same shape as {@code RunResource.conflict}.
+     */
+    private static ClientErrorException conflict(String message) {
+        return new ClientErrorException(
+                Response.status(Response.Status.CONFLICT).entity(message).build());
     }
 
     private static UUID uuid(String id) {

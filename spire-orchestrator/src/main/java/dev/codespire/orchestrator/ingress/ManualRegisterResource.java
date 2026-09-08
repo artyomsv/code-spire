@@ -88,7 +88,7 @@ public class ManualRegisterResource {
                 .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
                         + target.workspace + "'"
                         + (target.providerType == null ? "" : " on " + target.providerType)
-                        + ". Add one under Settings -> Providers."));
+                        + ". Add one under Settings -> Accounts."));
         DiffSource diffSource = clients.diffSource(provider);
 
         PullRequest pr;

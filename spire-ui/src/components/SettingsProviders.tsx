@@ -1,63 +1,27 @@
 import { useEffect, useState } from 'react';
 import {
   checkProvider,
-  createProvider,
-  deleteProvider,
+  fetchContextProviders,
   fetchProviders,
-  updateProvider,
-  type AuthKind,
-  type ProviderInput,
+  type ContextProviderView,
   type ProviderView,
 } from '../api';
-import IconButton from './IconButton';
-import LastChecked from './LastCheckedBadge';
-import Select from './Select';
+import AccountsTable, { type Conn } from './AccountsTable';
+import AccountsTabs from './AccountsTabs';
+import ProviderFormModal, { DeleteConfirmModal } from './ProviderFormModal';
 import Tooltip from './Tooltip';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
-// Options for the per-provider conversation-level override ('' = inherit the global default).
-const CONVERSATION_OPTIONS = ['', 'REPORT_ONLY', 'EXPLAIN', 'INTERACTIVE'] as const;
-
-/** Human label for a conversation level; '' / null / unknown = inherit the global default. */
-export function conversationLabel(level: string | null | undefined): string {
-  switch (level) {
-    case 'REPORT_ONLY':
-      return 'Report-only';
-    case 'EXPLAIN':
-      return 'Explain';
-    case 'INTERACTIVE':
-      return 'Interactive';
-    default:
-      return 'Inherit (global)';
-  }
-}
-
-// Provider types and their default API base URLs. When a user switches type
-// without having customised the base URL, we swap in the matching default.
-const PROVIDER_TYPES = ['bitbucket-cloud', 'github', 'gitlab'] as const;
-const DEFAULT_BASE_URLS: Record<string, string> = {
-  'bitbucket-cloud': 'https://api.bitbucket.org/2.0',
-  github: 'https://api.github.com',
-  gitlab: 'https://gitlab.com/api/v4',
-};
-// Providers that authenticate with a Bearer token only (no Basic-auth path).
-const BEARER_ONLY = new Set(['github', 'gitlab']);
-const KNOWN_DEFAULTS = new Set(Object.values(DEFAULT_BASE_URLS));
-const DEFAULT_BASE_URL = DEFAULT_BASE_URLS['bitbucket-cloud'];
-
-// Per-provider connectivity status, keyed by provider id.
-type ConnState = 'idle' | 'checking' | 'ok' | 'fail';
-interface Conn {
-  state: ConnState;
-  account?: string | null;
-  detail?: string | null;
-}
+export { conversationLabel } from './ProviderFormModal';
 
 export default function SettingsProviders() {
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [conns, setConns] = useState<Record<string, Conn>>({});
+  // Tracker and knowledge accounts, listed read-only beneath the forge rows.
+  const [trackers, setTrackers] = useState<ContextProviderView[]>([]);
+  const [trackerError, setTrackerError] = useState<string | null>(null);
 
   // null = form closed; a ProviderView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | ProviderView | null>(null);
@@ -87,16 +51,33 @@ export default function SettingsProviders() {
     try {
       const list = await fetchProviders();
       setProviders(list);
+      // A live result belongs to the account as it was when it answered. Disabling an account that
+      // had just checked green used to leave that green behind — the row said OK for a credential
+      // nothing was using any more. Anything no longer enabled goes back to its stored standing.
+      const live = new Set(list.filter((x) => x.enabled).map((x) => x.id));
+      setConns((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => live.has(id))));
       // Check connectivity once on load, but ONLY for enabled providers — a
       // disabled provider is intentionally inactive, so contacting the SCM for
       // it is wasteful and confusing (it may hold a deliberately stale/revoked
-      // token). Disabled rows render an idle cell and can be re-checked on demand.
+      // token). A disabled row shows what the registry stored and can be re-checked on demand.
       list.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
     }
+
+    // Tracker and knowledge accounts are listed read-only. Loaded separately so a failure there
+    // cannot take the forge list with it: the forge list is the one a review depends on.
+    try {
+      setTrackers(await fetchContextProviders());
+      setTrackerError(null);
+    } catch (err) {
+      setTrackerError(err instanceof Error ? err.message : String(err));
+    }
+
+    // Cleared once, after BOTH lists have answered. Clearing it after the forge list alone renders
+    // the page with no forge accounts and no trackers yet, which is exactly the empty state — so a
+    // deployment holding only tracker accounts flashed "no machine accounts yet" before its rows.
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -105,11 +86,13 @@ export default function SettingsProviders() {
 
   return (
     <section className="content">
+      <AccountsTabs active="machine" />
+
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">Repositories</h2>
-          <Tooltip label="Add provider">
-            <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add provider">
+          <h2 className="prov-title">Accounts</h2>
+          <Tooltip label="Add account">
+            <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add account">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                 <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
@@ -120,77 +103,28 @@ export default function SettingsProviders() {
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading && providers.length === 0 ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : providers.length === 0 ? (
+        ) : providers.length === 0 && trackers.length === 0 ? (
           <div className="prov-empty">
-            <span>No providers registered yet.</span>
+            <span>No machine accounts yet. Add a reviewer account to start reviewing.</span>
             <button className="btn" onClick={() => setForm('new')}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                 <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
-              Add provider
+              Add account
             </button>
           </div>
         ) : (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Workspace</th>
-                <th>Auth</th>
-                <th>Connection</th>
-                <th className="cell-r">Authors</th>
-                <th>Enabled</th>
-                <th>Conversation</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {providers.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <div className="prov-name">{p.name}</div>
-                    <div className="prov-sub">{p.baseUrl}</div>
-                  </td>
-                  <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                    {p.type}
-                  </td>
-                  <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                    {p.workspace}
-                  </td>
-                  <td>
-                    <div className="mono" style={{ fontSize: 12 }}>
-                      {p.authKind}
-                      {p.authKind === 'basic' && p.authUsername ? ` · ${p.authUsername}` : ''}
-                    </div>
-                    <div className="prov-sub">{p.hasSecret ? 'token set' : 'no token'}</div>
-                  </td>
-                  <td>
-                    <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => void checkOne(p.id)} />
-                    <LastChecked item={p} />
-                  </td>
-                  <td className="cell-r mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                    {p.authors.length}
-                  </td>
-                  <td>
-                    <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
-                      <span className="glyph"></span>
-                      {p.enabled ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="prov-sub">{conversationLabel(p.conversationLevel)}</span>
-                  </td>
-                  <td>
-                    <div className="prov-actions">
-                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
-                      <IconButton kind="delete" onClick={() => setConfirmDelete(p)} title="Delete" aria-label="Delete" />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            {trackerError && <p className="prov-note">Tracker accounts could not be loaded: {trackerError}</p>}
+            <AccountsTable
+              providers={providers}
+              trackers={trackers}
+              conns={conns}
+              onRecheck={(id) => void checkOne(id)}
+              onEdit={setForm}
+              onDelete={setConfirmDelete}
+            />
+          </>
         )}
       </div>
 
@@ -216,370 +150,5 @@ export default function SettingsProviders() {
         />
       )}
     </section>
-  );
-}
-
-function ConnCell({ conn, enabled, onRecheck }: { conn: Conn | undefined; enabled: boolean; onRecheck: () => void }) {
-  // No stored result yet: an enabled provider is being auto-checked; a disabled
-  // one was skipped on purpose and sits idle until the operator clicks to check.
-  const state = conn?.state ?? (enabled ? 'checking' : 'idle');
-  const label =
-    state === 'idle'
-      ? 'Not checked'
-      : state === 'checking'
-        ? 'Checking…'
-        : state === 'ok'
-          ? conn?.account
-            ? `@${conn.account}`
-            : 'Connected'
-          : 'Failed';
-  const title =
-    state === 'idle'
-      ? 'Disabled — not checked automatically. Click to check anyway.'
-      : state === 'checking'
-        ? 'Contacting the provider…'
-        : state === 'ok'
-          ? `Connected${conn?.account ? ` as @${conn.account}` : ''} — click to re-check`
-          : `${conn?.detail ?? 'Connection failed'} — click to re-check`;
-  return (
-    <div className="conn-cell">
-      <button
-        type="button"
-        className={`conn conn-${state}`}
-        onClick={onRecheck}
-        disabled={state === 'checking'}
-        title={title}
-      >
-        <span className="conn-dot" />
-        <span className="conn-label">{label}</span>
-      </button>
-      {state === 'fail' && conn?.detail && <div className="conn-detail">{conn.detail}</div>}
-    </div>
-  );
-}
-
-function ProviderFormModal({
-  initial,
-  onClose,
-  onSaved,
-}: {
-  initial: ProviderView | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const editing = initial !== null;
-
-  const [name, setName] = useState(initial?.name ?? '');
-  const [type, setType] = useState(initial?.type ?? 'bitbucket-cloud');
-  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? DEFAULT_BASE_URL);
-  const [workspace, setWorkspace] = useState(initial?.workspace ?? '');
-  const [authKind, setAuthKind] = useState<AuthKind>(initial?.authKind ?? 'bearer');
-  const [authUsername, setAuthUsername] = useState(initial?.authUsername ?? '');
-  const [secret, setSecret] = useState('');
-  const [botAccountId, setBotAccountId] = useState(initial?.botAccountId ?? '');
-  const [conversationLevel, setConversationLevel] = useState(initial?.conversationLevel ?? '');
-  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
-  const [authors, setAuthors] = useState<string[]>(initial?.authors ?? []);
-  const [authorDraft, setAuthorDraft] = useState('');
-
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function changeType(next: string) {
-    setType(next);
-    // Swap the base URL to the new type's default unless the user has customised it.
-    if (!baseUrl.trim() || KNOWN_DEFAULTS.has(baseUrl.trim())) {
-      setBaseUrl(DEFAULT_BASE_URLS[next] ?? baseUrl);
-    }
-    // GitHub and GitLab authenticate with a Bearer token only.
-    if (BEARER_ONLY.has(next)) {
-      setAuthKind('bearer');
-    }
-  }
-
-  function addAuthor() {
-    const v = authorDraft.trim();
-    if (!v || authors.includes(v)) {
-      setAuthorDraft('');
-      return;
-    }
-    setAuthors([...authors, v]);
-    setAuthorDraft('');
-  }
-
-  function removeAuthor(a: string) {
-    setAuthors(authors.filter((x) => x !== a));
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !workspace.trim() || !baseUrl.trim()) {
-      setError('Name, base URL and workspace are required.');
-      return;
-    }
-    if (authKind === 'basic' && !authUsername.trim()) {
-      setError('Username is required for basic auth.');
-      return;
-    }
-    if (!editing && !secret.trim()) {
-      setError('A secret / token is required.');
-      return;
-    }
-
-    // Flush a typed-but-not-yet-added author so it isn't silently dropped on submit.
-    const draft = authorDraft.trim();
-    const finalAuthors = draft && !authors.includes(draft) ? [...authors, draft] : authors;
-
-    const input: ProviderInput = {
-      name: name.trim(),
-      type,
-      baseUrl: baseUrl.trim(),
-      workspace: workspace.trim(),
-      authKind,
-      authUsername: authKind === 'basic' ? authUsername.trim() : null,
-      botAccountId: botAccountId.trim(),
-      enabled,
-      authors: finalAuthors,
-      conversationLevel: conversationLevel || undefined,
-    };
-    if (secret.trim()) input.secret = secret;
-
-    setBusy(true);
-    setError(null);
-    try {
-      if (editing && initial) {
-        await updateProvider(initial.id, input);
-      } else {
-        await createProvider(input);
-      }
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="modal-head">
-          <h3>{editing ? 'Edit provider' : 'Add provider'}</h3>
-          <button className="iconbtn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        <form className="modal-body scroll" onSubmit={submit}>
-          <label className="field">
-            <span>Name</span>
-            <input placeholder="Acme Bitbucket" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-          </label>
-
-          <div className="field-row-12">
-            <label className="field">
-              <span>Type</span>
-              <Select
-                ariaLabel="Type"
-                value={type}
-                options={PROVIDER_TYPES.map((t) => ({ value: t, label: t }))}
-                onChange={changeType}
-              />
-            </label>
-            <label className="field">
-              <span>Workspace</span>
-              <input
-                className="mono"
-                placeholder="workspace"
-                value={workspace}
-                onChange={(e) => setWorkspace(e.target.value)}
-              />
-            </label>
-          </div>
-
-          <label className="field">
-            <span>Base URL</span>
-            <input
-              className="mono"
-              placeholder={DEFAULT_BASE_URL}
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </label>
-
-          <div className="field-row-13">
-            <label className="field">
-              <span>Auth kind</span>
-              <Select
-                ariaLabel="Auth kind"
-                value={authKind}
-                disabled={BEARER_ONLY.has(type)}
-                options={[
-                  { value: 'bearer', label: 'bearer' },
-                  ...(BEARER_ONLY.has(type) ? [] : [{ value: 'basic', label: 'basic' }]),
-                ]}
-                onChange={(v) => setAuthKind(v as AuthKind)}
-              />
-            </label>
-            <label className="field">
-              <span>Secret / token</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                placeholder={editing ? 'leave blank to keep current' : 'access token'}
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-              />
-              {editing && (
-                <small className="field-hint">
-                  {initial?.hasSecret ? 'A token is stored — leave blank to keep it.' : 'No token stored yet.'}
-                </small>
-              )}
-            </label>
-          </div>
-
-          <label className="field">
-            <span>Conversation level</span>
-            <Select
-              ariaLabel="Conversation level"
-              value={conversationLevel}
-              options={CONVERSATION_OPTIONS.map((lvl) => ({ value: lvl, label: conversationLabel(lvl) }))}
-              onChange={setConversationLevel}
-            />
-            <small className="field-hint">
-              How deeply the bot converses in this provider&apos;s review threads. Inherit uses the global default.
-            </small>
-          </label>
-
-          {authKind === 'basic' && (
-            <label className="field">
-              <span>Username</span>
-              <input
-                className="mono"
-                placeholder="username"
-                value={authUsername}
-                onChange={(e) => setAuthUsername(e.target.value)}
-              />
-            </label>
-          )}
-
-          <label className="field">
-            <span>Bot account id <span className="field-optional">optional</span></span>
-            <input
-              className="mono"
-              placeholder="auto-detected from the token"
-              value={botAccountId}
-              onChange={(e) => setBotAccountId(e.target.value)}
-            />
-            <small className="field-hint">
-              Leave blank — it's resolved from the token when you save (which also validates the token).
-              A Bitbucket workspace/repo access token has no user account, so it stays blank; the token
-              is still validated against the workspace.
-            </small>
-          </label>
-
-          <div className="field">
-            <span>Authors (PR-author allowlist)</span>
-            <div className="chip-add">
-              <input
-                className="mono"
-                placeholder="username"
-                value={authorDraft}
-                onChange={(e) => setAuthorDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addAuthor();
-                  }
-                }}
-              />
-              <button type="button" className="btn-ghost" onClick={addAuthor}>
-                Add
-              </button>
-            </div>
-            {authors.length > 0 && (
-              <div className="chips-edit">
-                {authors.map((a) => (
-                  <span key={a} className="chip-x">
-                    {a}
-                    <button type="button" onClick={() => removeAuthor(a)} aria-label={`Remove ${a}`}>
-                      ✕
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <label className="field-check">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            <span>Enabled</span>
-          </label>
-
-          {error && <div className="modal-msg modal-error">{error}</div>}
-
-          <div className="modal-actions">
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn" disabled={busy}>
-              {busy ? 'Saving…' : editing ? 'Save changes' : 'Add provider'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function DeleteConfirmModal({
-  provider,
-  onClose,
-  onDeleted,
-}: {
-  provider: ProviderView;
-  onClose: () => void;
-  onDeleted: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function remove() {
-    setBusy(true);
-    setError(null);
-    try {
-      await deleteProvider(provider.id);
-      onDeleted();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="modal-head">
-          <h3>Delete provider</h3>
-          <button className="iconbtn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        <div className="modal-body">
-          <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text)' }}>
-            Delete <strong>{provider.name}</strong>? This removes its stored token and cannot be undone.
-          </p>
-          {error && <div className="modal-msg modal-error">{error}</div>}
-          <div className="modal-actions">
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }

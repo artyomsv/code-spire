@@ -65,7 +65,7 @@ describe('ScmConnections', () => {
       screen.getByText('https://spire.example.invalid/api/operator-connect/github/callback'),
     ).toBeTruthy();
     // Copied, never retyped. One wrong character fails on the platform with a message that names
-    // nothing in this product, which is the same reason Settings -> Webhooks copies its payload URL.
+    // nothing in this product, the same reason Settings -> Repositories copies its payload URL.
     expect(screen.getByText('Copy')).toBeTruthy();
   });
 
@@ -79,7 +79,7 @@ describe('ScmConnections', () => {
 
     expect(await screen.findByText(/once per platform/)).toBeTruthy();
     expect(screen.getByText(/not the bot/i)).toBeTruthy();
-    // Read beside Settings -> Webhooks, which DOES need a public URL, so the difference has to be
+    // Read beside Settings -> Repositories, which DOES need a public URL, so the difference has to be
     // stated rather than left to be inferred: a sign-in needs nothing inbound at all.
     expect(screen.getByText(/No tunnel needed/i)).toBeTruthy();
 

@@ -79,6 +79,12 @@ class AttentionQueriesTest {
         assertTrue(found.contains("SCM_PROVIDER_MISSING"), found.toString());
         // Not this one: with no providers at all, "no default" is not the actionable problem.
         assertFalse(found.contains("LLM_DEFAULT_MISSING"), found.toString());
+        // The row's whole value is the screen it lands on, and that screen was renamed. A stale
+        // path is a 404 on the one click the operator is being told to make.
+        AttentionView row = queries.collect().stream()
+                .filter(v -> "SCM_PROVIDER_MISSING".equals(v.code()))
+                .findFirst().orElseThrow();
+        assertEquals("/settings/accounts", row.action());
     }
 
     /**
@@ -184,6 +190,8 @@ class AttentionQueriesTest {
                 .findFirst().orElseThrow();
         assertEquals("TEST-nameless", row.subject());
         assertEquals(AttentionView.Severity.WARNING, row.severity());
+        // Named rows deep-link to the registration, not just to the screen it sits on.
+        assertTrue(row.action().startsWith("/settings/accounts?edit="), row.action());
     }
 
     /** Either identity field alone is enough -- only a provider with neither is unresolved. */
@@ -408,7 +416,7 @@ class AttentionQueriesTest {
                 .filter(v -> "CREDENTIAL_REJECTED".equals(v.code()))
                 .findFirst().orElseThrow();
         assertEquals("TEST-scm", row.subject());
-        assertTrue(row.action().startsWith("/settings/providers?edit="), row.action());
+        assertTrue(row.action().startsWith("/settings/accounts?edit="), row.action());
         assertTrue(row.message().contains("401"), row.message());
     }
 

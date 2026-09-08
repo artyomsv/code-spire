@@ -19,9 +19,11 @@ import { CopyableValue } from '../render';
 import CopyField from './CopyField';
 import IconButton from './IconButton';
 import Select from './Select';
+import ServingCell from './ServingCell';
 import Tooltip from './Tooltip';
 import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
+import { ownerOf, servingKey, useServingAccounts } from '../hooks/useServingAccounts';
 
 const SCOPES: { value: WebhookScope; label: string }[] = [
   { value: 'repo', label: 'Repository' },
@@ -29,6 +31,10 @@ const SCOPES: { value: WebhookScope; label: string }[] = [
 ];
 
 const scopeLabel = (s: WebhookScope) => SCOPES.find((x) => x.value === s)?.label ?? s;
+
+/** Cell types, hoisted: they close over nothing and were rebuilt for every cell of every row. */
+const CELL_SUB = { fontSize: 12, color: 'var(--text-2)' } as const;
+const CELL_TARGET = { fontSize: 12.5 } as const;
 
 /** The gateway path a delivery is routed on. Prefix with the public webhook base to build the payload URL. */
 export function webhookPath(w: Pick<WebhookRepoView, 'providerType' | 'webhookKey'>): string {
@@ -45,6 +51,7 @@ export default function SettingsWebhookRepos() {
   // An attention row names one registration; land the operator on it, not just on this page.
   useEditDeepLink(repos, setForm);
   const [confirmDelete, setConfirmDelete] = useState<WebhookRepoView | null>(null);
+  const serving = useServingAccounts(repos);
 
   async function load() {
     setLoading(true);
@@ -66,7 +73,7 @@ export default function SettingsWebhookRepos() {
     <section className="content">
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">Webhooks</h2>
+          <h2 className="prov-title">Repositories</h2>
           <Tooltip label="Add webhook">
             <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add webhook">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -78,10 +85,11 @@ export default function SettingsWebhookRepos() {
 
         {repos.length > 0 && (
           <p className="prov-note">
-            Paste each row’s <strong>Payload URL</strong> + <strong>Secret</strong> into that repository or
-            organization’s webhook settings, prefixing the path with your public webhook base (e.g. your
-            Cloudflare tunnel URL). The owner must match a provider registered under Settings →
-            Repositories.
+            Paste each row’s <strong>Payload URL</strong>, and the <strong>secret</strong> you were shown
+            when the row was created, into that repository or organization’s webhook settings, prefixing
+            the path with your public webhook base (e.g. your Cloudflare tunnel URL). The secret is shown
+            once; use Rotate in the edit dialog to mint a new one. The owner must match a reviewer account
+            registered under Settings → Accounts.
           </p>
         )}
 
@@ -120,55 +128,78 @@ export default function SettingsWebhookRepos() {
             </button>
           </div>
         ) : (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Scope</th>
-                <th>Target</th>
-                <th>Provider</th>
-                <th>Payload URL (path)</th>
-                <th>Secret</th>
-                <th>Enabled</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {repos.map((w) => (
-                <tr key={w.id}>
-                  <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{scopeLabel(w.scope)}</td>
-                  <td className="mono" style={{ fontSize: 12.5 }}>
-                    {w.target}
-                  </td>
-                  <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                    {w.providerType}
-                  </td>
-                  <td>
-                    <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
-                  </td>
-                  <td>
-                    <div className="prov-sub">{w.hasSecret ? 'secret set' : 'no secret'}</div>
-                  </td>
-                  <td>
-                    <span className={`pill ${w.enabled ? 'completed' : 'cancelled'}`}>
-                      <span className="glyph"></span>
-                      {w.enabled ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="prov-actions">
-                      <IconButton kind="edit" onClick={() => setForm(w)} title="Edit" aria-label="Edit" />
-                      <IconButton
-                        kind="delete"
-                        onClick={() => setConfirmDelete(w)}
-                        title="Delete"
-                        aria-label="Delete"
-                      />
-                    </div>
-                  </td>
+          // Every cell is one line, so a narrow window scrolls the table rather than stacking the
+          // payload path under the target and turning nine rows into thirty.
+          <div className="prov-scroll">
+            <table className="prov-table">
+              <thead>
+                <tr>
+                  <th>Scope</th>
+                  <th>Target</th>
+                  <th>Forge</th>
+                  <th>Accounts</th>
+                  <th>Payload URL (path)</th>
+                  <th>Enabled</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {repos.map((w) => {
+                  // One lookup for both chips: the same (type, owner) pair answers reviewer and factory.
+                  const serves = serving[servingKey(w.providerType, ownerOf(w))];
+                  return (
+                  <tr key={w.id}>
+                    <td style={CELL_SUB}>{scopeLabel(w.scope)}</td>
+                    {/* The secret has no column of its own: it read "secret set" on every healthy
+                        row. A missing one is the only case worth pixels, and it is said here — the
+                        attention panel raises WEBHOOK_SECRET_MISSING for it too, and Rotate mints a
+                        new one from the edit dialog. */}
+                    <td className="mono nowrap" style={CELL_TARGET}>
+                      {w.target}
+                      {!w.hasSecret && <div className="prov-sub wh-nosecret">no secret</div>}
+                    </td>
+                    <td className="mono nowrap" style={CELL_SUB}>
+                      {w.providerType}
+                    </td>
+                    <td>
+                      <div className="serving-pair">
+                        <ServingCell role="reviewer" lookup={serves} />
+                        <ServingCell role="factory" lookup={serves} />
+                      </div>
+                    </td>
+                    {/* Bounded so the path ellipses instead of taking the row's width. Nothing is
+                        lost: CopyableValue puts the whole path in its own title and copies it in full.
+                        The bound is on a div, not on the td: max-width on a table cell is undefined in
+                        CSS 2.1 and every browser ignores it under table-layout:auto, so the same class
+                        one element up did nothing at all. */}
+                    <td>
+                      <div className="wh-url">
+                        <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`pill ${w.enabled ? 'completed' : 'cancelled'}`}>
+                        <span className="glyph"></span>
+                        {w.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="prov-actions">
+                        <IconButton kind="edit" onClick={() => setForm(w)} title="Edit" aria-label="Edit" />
+                        <IconButton
+                          kind="delete"
+                          onClick={() => setConfirmDelete(w)}
+                          title="Delete"
+                          aria-label="Delete"
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -198,7 +229,9 @@ export default function SettingsWebhookRepos() {
 }
 
 /** Loads enabled providers and preselects one — the row's provider on edit (matched by type + owner),
- *  else the first. Keeps the modal under the max-8 useState rule. */
+ *  else the first. Keeps the modal under the max-8 useState rule.
+ *  Reviewer accounts only: this form registers what will be reviewed, and a Factory account has
+ *  nothing to review with. */
 function useWebhookProviders(initial: WebhookRepoView | null) {
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [providersLoaded, setProvidersLoaded] = useState(false);
@@ -210,10 +243,10 @@ function useWebhookProviders(initial: WebhookRepoView | null) {
     fetchProviders()
       .then((all) => {
         if (!alive) return;
-        const usable = all.filter((p) => p.enabled);
+        const usable = all.filter((p) => p.enabled && p.role === 'REVIEWER');
         setProviders(usable);
         if (initial) {
-          const owner = initial.scope === 'org' ? initial.target : initial.target.split('/')[0];
+          const owner = ownerOf(initial);
           const match = usable.find((p) => p.type === initial.providerType && p.workspace === owner);
           setProviderId(match?.id ?? '');
         } else if (usable.length > 0) {
@@ -344,25 +377,28 @@ function WebhookRepoFormModal({
         <form className="modal-body scroll" onSubmit={submit}>
           {noProviders ? (
             <div className="modal-msg">
-              Register a provider first under Settings → Providers, then add a webhook for one of its repositories.
+              Register a reviewer account first under Settings → Accounts, then add a webhook for one of its repositories.
             </div>
           ) : (
             <>
               <div className="field-row-2">
                 <label className="field">
-                  <span>Provider</span>
+                  <span>Workspace</span>
                   {legacyEdit ? (
                     <div className="mono field-static">
                       {initial!.providerType} · {owner}
                     </div>
                   ) : (
                     <Select
-                      ariaLabel="Provider"
+                      ariaLabel="Workspace"
                       value={providerId}
-                      options={providers.map((p) => ({ value: p.id, label: `${p.name} · ${p.type} · ${p.workspace}` }))}
+                      options={providers.map((p) => ({ value: p.id, label: `${p.type} · ${p.workspace} (${p.name})` }))}
                       onChange={setProviderId}
                     />
                   )}
+                  <small className="field-hint">
+                    Which accounts review and push here is decided by the forge and workspace, not stored on this row.
+                  </small>
                 </label>
                 <label className="field">
                   <span>Scope</span>

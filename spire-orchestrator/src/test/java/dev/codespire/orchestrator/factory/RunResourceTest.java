@@ -666,7 +666,7 @@ class RunResourceTest {
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
                 .then().statusCode(409)
-                .body(containsString("FACTORY"));
+                .body(containsString("Factory"));
     }
 
     @Test

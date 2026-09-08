@@ -105,7 +105,7 @@ class WebhookAttentionResourceTest {
                 .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.severity",
                         is("WARNING"))
                 .body("find { it.code == 'WEBHOOK_SECRET_MISSING' && it.subject == 'stub · " + target + "' }.action",
-                        startsWith("/settings/webhooks?edit="));
+                        startsWith("/settings/repositories?edit="));
     }
 
     /**

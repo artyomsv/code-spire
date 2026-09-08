@@ -231,6 +231,7 @@ export default function SettingsContextProviders() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
+                <th>Used by</th>
                 <th>Base URL</th>
                 <th>Connection</th>
                 <th>Status</th>
@@ -242,6 +243,11 @@ export default function SettingsContextProviders() {
                 <tr key={p.id}>
                   <td>{p.name}</td>
                   <td className="mono">{p.type}</td>
+                  {/* One consumer today: the review worker's context aggregator, reading. Becomes data
+                      when M3 registers a write-capable account against the same host (ADR-035). */}
+                  <td>
+                    <span className="prov-sub">Reviewer · read</span>
+                  </td>
                   <td className="mono">{p.baseUrl}</td>
                   <td>
                     <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />

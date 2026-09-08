@@ -14,6 +14,7 @@ const provider = (over: Partial<api.ProviderView>): api.ProviderView => ({
   id: 'p1', name: 'Acme Bot', type: 'github', baseUrl: 'https://api.github.com', workspace: 'acme',
   authKind: 'bearer', authUsername: null, hasSecret: true, botAccountId: 'b1', enabled: true,
   authors: [], conversationLevel: null, createdAt: '2026-07-23T00:00:00Z',
+  role: 'REVIEWER', botUsername: null,
   lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...over,
 });
 
@@ -29,18 +30,31 @@ describe('WebhookRepoFormModal — provider picker', () => {
   it('lists registered providers and fixes the owner for repo scope', async () => {
     renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
-    // open the provider dropdown, then assert both are offered
-    fireEvent.click(await screen.findByRole('combobox', { name: /provider/i }));
-    await waitFor(() => expect(screen.getByRole('option', { name: /Acme Bot · github · acme/ })).toBeInTheDocument());
-    expect(screen.getByRole('option', { name: /Lab Bot · gitlab · my-team/ })).toBeInTheDocument();
+    // open the workspace dropdown, then assert both are offered
+    fireEvent.click(await screen.findByRole('combobox', { name: /workspace/i }));
+    await waitFor(() => expect(screen.getByRole('option', { name: /github · acme \(Acme Bot\)/ })).toBeInTheDocument());
+    expect(screen.getByRole('option', { name: /gitlab · my-team \(Lab Bot\)/ })).toBeInTheDocument();
     expect(screen.getByText('acme/')).toBeInTheDocument();
+  });
+
+  /** The picker registers what will be REVIEWED; a Factory account has nothing to review with. */
+  it('offers reviewer accounts only', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([
+      provider({ id: 'p1', name: 'Acme Bot', type: 'github', workspace: 'acme' }),
+      provider({ id: 'p9', name: 'Acme Factory', type: 'github', workspace: 'acme', role: 'FACTORY' }),
+    ]);
+    renderPage();
+    fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
+    fireEvent.click(await screen.findByRole('combobox', { name: /workspace/i }));
+    await waitFor(() => expect(screen.getByRole('option', { name: /github · acme \(Acme Bot\)/ })).toBeInTheDocument());
+    expect(screen.queryByRole('option', { name: /Acme Factory/ })).not.toBeInTheDocument();
   });
 
   it('shows an empty state when no providers are registered', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
     renderPage();
     fireEvent.click((await screen.findAllByRole('button', { name: /add webhook/i }))[0]);
-    await waitFor(() => expect(screen.getByText(/register a provider first/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/register a reviewer account first/i)).toBeInTheDocument());
   });
 
   it('verifies the repository via the selected provider', async () => {

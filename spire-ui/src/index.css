@@ -488,8 +488,11 @@
   .dhead .meta-line .sep { color: var(--text-3); }
   .dhead .meta-line .sha { color: var(--text); }
   .dhead .actions { display: flex; gap: 8px; }
+  /* `nowrap` is not decoration. In a squeezed last table column "Manage on Context" broke onto three
+     lines and took the whole row's height with it, which is what made the tracker rows tall. A ghost
+     button is a control, and a control never wraps. */
   .btn-ghost {
-    display: inline-flex; align-items: center; gap: 7px;
+    display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
     background: var(--panel); color: var(--text-2); border: 1px solid var(--border);
     font-weight: 600; font-size: 12.5px; padding: 8px 13px; border-radius: 8px; cursor: pointer;
   }
@@ -894,6 +897,25 @@
   .wh-verify.ok { color: var(--good); }
   .wh-verify.fail { color: var(--crit); }
 
+  /* Settings → Accounts: two tabs above the card. The first tab strip in the app; kept to anchors. */
+  .tabs { display: flex; gap: 4px; margin: 0 0 14px; }
+  .tab { padding: 6px 12px; border-radius: 8px; font-size: 13px; color: var(--text-2); text-decoration: none; border: 1px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--border); }
+
+  /* Settings → Repositories: the who-serves-this-row cell. One chip per role, one line — the state
+     it means is the chip's tooltip, and verifying happens where the account or the webhook is edited. */
+  .serving-cell { display: inline-flex; align-items: center; white-space: nowrap; }
+  /* Both roles share one Accounts column: each chip names its role, so two columns of anonymous
+     chips are one column of labelled ones, and the table fits the card. */
+  .serving-pair { display: inline-flex; gap: 6px; white-space: nowrap; }
+  /* The payload path is bounded so it ellipses (.copyval-text) rather than taking the row's width.
+     The full path stays in CopyableValue's own title and in what the copy button copies. */
+  .wh-url { max-width: 280px; }
+  /* A registration with no secret, said under the target. There is no Secret column any more: it
+     read "secret set" on every healthy row, and a missing one already raises WEBHOOK_SECRET_MISSING. */
+  .wh-nosecret { color: var(--crit); }
+
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 18px; border-bottom: 1px solid var(--border);
@@ -914,6 +936,30 @@
   .conn-fail .conn-dot { background: var(--crit); }
   .conn-fail .conn-label { color: var(--crit); }
   .conn:not(:disabled):hover .conn-label { text-decoration: underline; }
+  /* The credential's standing on Accounts, as one icon. The state's word is the icon's label and
+     the head of its tooltip; the column has ten rows of it and no room to say each one twice. */
+  .conn-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; padding: 0; color: var(--muted); cursor: pointer;
+  }
+  .conn-badge:disabled { cursor: default; }
+  .conn-badge.conn-ok { color: var(--good); }
+  .conn-badge.conn-fail { color: var(--crit); }
+  .conn-badge.conn-checking { color: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+  /* The same icon where nothing can be checked from — a tracker account, managed on Context. */
+  .conn-static { cursor: default; }
+  /* Two marks, not two sentences: how many ids may command this bot, and how far it converses. */
+  .policy-cell { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .policy-bit {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+  }
+  /* The shared icon button, used as a link out of a table row. */
+  a.icon-btn { text-decoration: none; }
+
+  /* Cells refuse to wrap, so a narrow window scrolls the table sideways instead of stacking a row
+     three lines tall. Applied to Accounts and to Repositories. */
+  .prov-scroll { overflow-x: auto; }
 
   .prov-table { width: 100%; border-collapse: collapse; }
   .prov-table thead th {
@@ -929,12 +975,35 @@
   .prov-table tbody tr:last-child td { border-bottom: none; }
   .prov-table tbody tr:hover { background: var(--hover); }
   .prov-table .cell-r { text-align: right; }
+  /* One line per cell. Opt-in per column: the name cell keeps its second line on purpose. */
+  .prov-table td.nowrap { white-space: nowrap; }
+  /* A value that may be arbitrarily long — a base URL, a bot login, a workspace — bounded so the
+     CopyableValue inside it ellipses (.copyval is max-width:100%) rather than setting the column's
+     width. The whole value stays in that widget's title and in what its copy button copies. */
+  .cell-cap { max-width: 150px; }
+  /* The copy button is invisible until something is hovered. Reading a row is when an operator
+     wants it, so the row reveals every copy button in it, not each value only under its own mouse. */
+  .prov-table tbody tr:hover .copybtn { opacity: 1; }
+  /* Kind is an icon plus the stored type. The category word — Forge, Tracker, Knowledge — was the
+     same three strings down a column of a table that has to fit eight. */
+  .kind-cell { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .kind-cell svg { color: var(--text-3); flex: none; }
   .prov-name { font-weight: 600; }
+  /* Enabled is a dot beside the name, not a column of its own: it is one bit, and a pill spent a
+     whole column of a table that had to fit eight. The word is on the dot's title and aria-label. */
+  .enabled-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 8px; background: var(--good); vertical-align: middle;
+  }
+  .enabled-dot.off { background: var(--muted); }
   .prov-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
   /* A METERED model with no rate at all — an upgraded deployment can leave one behind (see
      ratesSummary) and it needs an operator's attention, not a blank cell. */
   .rate-unset { color: var(--warn); font-weight: 600; }
   .prov-note { margin: 0; padding: 15px 18px 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
+  /* A settings screen's own error line — General asks for this twice, and it rendered as ordinary
+     body text until the style contract learned to read a class out of a template literal. */
+  .prov-error { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--crit); }
   .prov-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
   .btn-danger { background: var(--crit); }
@@ -1074,11 +1143,18 @@
   .conn-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
   .conn-detail { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.4; color: var(--crit);
     max-width: 260px; white-space: normal; }
-
-  /* Last credential-check standing, shown beside a provider's Check control. */
+  /* Last credential-check standing, shown beside a provider's Check control. Date only; the time
+     of day is the badge's tooltip, because it is what pushed a row onto a second line. A rejection
+     carries the provider's own words, which can be a paragraph — bounded here so it ellipses, with
+     the whole message on the tooltip. */
   .last-checked {
     font-size: 11px;
     color: var(--text-2);
+    display: inline-block;
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .last-checked.failed {

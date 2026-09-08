@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
 import App from './App';
+import { RETURN_ROUTE_KEY } from './auth';
 
 /**
  * `App` is composition — a rail, a topbar and a `Routes` table — so this covers the one piece of
@@ -137,6 +138,20 @@ const renderAt = (path: string) =>
     </MemoryRouter>,
   );
 
+/** Where the router ended up — for the redirect tests, which must see the query survive. */
+function LocationProbe() {
+  const location = useLocation();
+  return <span data-testid="url">{location.pathname + location.search}</span>;
+}
+
+const renderAtWithProbe = (path: string) =>
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
+
 /**
  * Every route, because the `main .content` assertion below is also the padding check.
  *
@@ -150,12 +165,12 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/', title: 'Reviews', nav: 'Reviews' },
   { path: '/analytics', title: 'Analytics', nav: 'Analytics' },
   { path: '/analytics/me', title: 'My activity', nav: 'My activity' },
-  { path: '/settings/operators', title: 'Operators', nav: 'Operators' },
+  { path: '/settings/accounts', title: 'Accounts', nav: 'Accounts' },
+  { path: '/settings/accounts/people', title: 'Accounts', nav: 'Accounts' },
   { path: '/settings/memory', title: 'Memory', nav: 'Memory' },
   { path: '/settings/general', title: 'General', nav: 'General' },
   { path: '/settings/context', title: 'Context', nav: 'Context' },
-  { path: '/settings/providers', title: 'Repositories', nav: 'Repositories' },
-  { path: '/settings/webhooks', title: 'Webhooks', nav: 'Webhooks' },
+  { path: '/settings/repositories', title: 'Repositories', nav: 'Repositories' },
   { path: '/settings/llm', title: 'LLM', nav: 'LLM' },
   { path: '/settings/prompts', title: 'Prompts', nav: 'Prompts' },
   { path: '/settings/dlq', title: 'Dead-letter', nav: 'Dead-letter' },
@@ -220,8 +235,8 @@ describe('App — routing shell', () => {
         text: async () => '{}',
       }),
     );
-    renderAt('/settings/providers');
-    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Repositories');
+    renderAt('/settings/accounts');
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Accounts');
 
     fireEvent.click(screen.getByRole('button', { name: /register pr/i }));
     const dialog = await screen.findByRole('dialog');
@@ -234,6 +249,39 @@ describe('App — routing shell', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Reviews'),
     );
+  });
+});
+
+/**
+ * The three renamed screens keep their old addresses working. Preserving the query is not
+ * cosmetic: an attention row deep-links to one record with `?edit=<id>`, and the screens open it
+ * through `useEditDeepLink` — a redirect that dropped the query would land on the page and open
+ * nothing, which reads as the row having been fixed.
+ */
+describe('App — old settings routes redirect', () => {
+  beforeEach(() => {
+    session = ADMIN_SESSION;
+    vi.stubGlobal('WebSocket', SilentSocket);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+    );
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['/settings/providers?edit=TEST-id-1', '/settings/accounts?edit=TEST-id-1', 'Accounts'],
+    ['/settings/operators', '/settings/accounts/people', 'Accounts'],
+    ['/settings/webhooks?edit=TEST-id-2', '/settings/repositories?edit=TEST-id-2', 'Repositories'],
+  ])('sends %s to %s', async (from, to, title) => {
+    renderAtWithProbe(from);
+
+    await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent(to));
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(title);
   });
 });
 
@@ -294,7 +342,7 @@ describe('App — what a viewer may see', () => {
     // exercise the gate at all.
     await waitFor(() => expect(within(rail()).queryByText('Configure')).not.toBeInTheDocument());
     expect(within(rail()).getByText('Reviews')).toBeInTheDocument();
-    for (const label of ['General', 'Context', 'Repositories', 'Webhooks', 'LLM', 'Prompts', 'Dead-letter']) {
+    for (const label of ['General', 'Context', 'Accounts', 'Repositories', 'LLM', 'Prompts', 'Dead-letter']) {
       expect(within(rail()).queryByText(label)).not.toBeInTheDocument();
     }
   });
@@ -315,15 +363,15 @@ describe('App — what a viewer may see', () => {
    * back button arrives at a settings path without ever passing the rail. Said plainly rather than
    * redirected: a silent bounce to another screen is indistinguishable from a broken link.
    */
-  it.each(['/settings/general', '/settings/providers', '/settings/llm', '/settings/dlq'])(
+  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq'])(
     'tells a viewer at %s that the page is not theirs',
     async (path) => {
       renderAt(path);
 
       expect(await screen.findByText('Not available to your role')).toBeInTheDocument();
       // The screen itself must not have mounted — a guard that renders the page and then covers it
-      // has already fired its requests.
-      expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
+      // has already fired its requests. Both names: Accounts adds an account, LLM adds a provider.
+      expect(screen.queryByRole('button', { name: /add (account|provider)/i })).not.toBeInTheDocument();
     },
   );
 
@@ -412,5 +460,40 @@ describe('App — before the session is known', () => {
     await waitFor(() => expect(screen.getByText('Loading…')).toBeInTheDocument());
     expect(screen.queryByText('Not available to your role')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The other half of the same report: after the services restarted, the operator was returned to
+ * Reviews rather than to the screen they had been on. Every login ends at `/` because the server's
+ * login endpoint takes no redirect target from the caller — a client-supplied one is an open redirect
+ * — so the route is carried in the browser and spent here, on arrival.
+ */
+describe('App — returning to the screen the login left', () => {
+  beforeEach(() => {
+    session = ADMIN_SESSION;
+    sessionStorage.clear();
+    vi.stubGlobal('WebSocket', SilentSocket);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+    );
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  it('sends the operator back to the route the login took them away from', async () => {
+    sessionStorage.setItem(RETURN_ROUTE_KEY, '#/settings/accounts');
+
+    renderAtWithProbe('/');
+
+    await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent('/settings/accounts'));
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Accounts');
+    // Spent, not kept: a route left in place would bounce every later visit to Reviews off the rail.
+    expect(sessionStorage.getItem(RETURN_ROUTE_KEY)).toBeNull();
   });
 });

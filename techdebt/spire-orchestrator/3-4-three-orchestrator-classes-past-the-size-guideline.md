@@ -4,9 +4,9 @@
 |-------|-------|
 | Criticality | Medium |
 | Complexity | Large |
-| Location | `.../readmodel/ReviewProjection.java`, `.../pipeline/ResultSaga.java`, `.../pipeline/IntegrationSaga.java`, `.../attention/AttentionQueries.java`, `.../factory/RunResource.java`, `.../factory/FactoryRunProjection.java` — all under `spire-orchestrator/src/main/java/dev/codespire/orchestrator/`. **Figures live in the 2026-09-04 table below, in one place**, because six counts spread across a header and three updates is how they went stale twice |
-| Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. |
-| Date | 2026-08-07 (updated 2026-08-09) |
+| Location | `.../readmodel/ReviewProjection.java`, `.../pipeline/ResultSaga.java`, `.../pipeline/IntegrationSaga.java`, `.../attention/AttentionQueries.java`, `.../factory/RunResource.java`, `.../factory/FactoryRunProjection.java`, `.../provider/ProviderRegistry.java` — all under `spire-orchestrator/src/main/java/dev/codespire/orchestrator/`. **Figures live in the 2026-09-04 table below, in one place**, because six counts spread across a header and three updates is how they went stale twice |
+| Found during | ADR-023 LLM cost accounting — flagged by two task reviews and the whole-branch review. **Updated 2026-08-09 (ADR-025 spend caps)**, when `ResultSaga` and `AttentionQueries` were each flagged again, unprompted. **Updated 2026-09-07 (accounts and roles)**, when `ProviderRegistry` crossed the guideline. |
+| Date | 2026-08-07 (updated 2026-08-09, 2026-09-07) |
 
 ## Update — 2026-08-09, ADR-025 spend caps
 
@@ -95,6 +95,7 @@ stripped. Guideline is 300.**
 | `ResultSaga.java` | **448** | 759 | — | unchanged by M2 |
 | `FactoryRunProjection.java` | **404** | 803 | 244 | **crossed 300 on this branch, +66%** |
 | `RunResource.java` | **350** | 685 | 309 | over, and further over |
+| `provider/ProviderRegistry.java` | **327** | 420 | 294 (2026-09-07, before the accounts-and-roles work) | **crossed 300 on that branch, +11%** — `registration()`, `storedRole()` and the role guard |
 | `AttentionQueries.java` | **290** | 489 | — | still under |
 | `FixRunDispatcher.java` | **160** | 272 | new | under the CLASS guideline; its `dispatch` method is not — see the sibling entry |
 

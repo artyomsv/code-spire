@@ -24,6 +24,8 @@ const existing: api.ProviderView = {
   enabled: true,
   authors: [],
   conversationLevel: null,
+  role: 'REVIEWER',
+  botUsername: null,
   createdAt: '2026-07-31T00:00:00Z',
   lastCheckAt: null,
   lastCheckOk: null,
@@ -31,11 +33,12 @@ const existing: api.ProviderView = {
 };
 
 /**
- * "Add provider" names three different controls (the header icon, the empty-state button and the
- * modal's submit), so every form interaction is scoped to the dialog rather than the page.
+ * The page's two "Add account" controls (the header icon and the empty-state button) and the
+ * modal's own submit all read as add buttons, so every form interaction is scoped to the dialog
+ * rather than the page.
  */
 async function openAddForm(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /add account/i }));
   return await screen.findByRole('dialog');
 }
 
@@ -48,7 +51,7 @@ async function openFilledAddForm(): Promise<HTMLElement> {
 }
 
 const submit = (dialog: HTMLElement) =>
-  fireEvent.click(within(dialog).getByRole('button', { name: /^(add provider|save changes)$/i }));
+  fireEvent.click(within(dialog).getByRole('button', { name: /^(add account|save changes)$/i }));
 
 const typeSecret = (dialog: HTMLElement) =>
   fireEvent.change(within(dialog).getByLabelText(/secret \/ token/i), {
@@ -58,6 +61,7 @@ const typeSecret = (dialog: HTMLElement) =>
 describe('SettingsProviders — provider form', () => {
   beforeEach(() => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
     vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'acme-bot' } as never);
   });
 
@@ -170,23 +174,6 @@ describe('SettingsProviders — provider form', () => {
   });
 
   /**
-   * Typing an allowlist entry and pressing Save without pressing Add is the obvious operator
-   * mistake; the form flushes the draft rather than dropping it silently.
-   */
-  it('includes an author typed but not added when the form is submitted', async () => {
-    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(undefined as never);
-    renderPage();
-    const dialog = await openFilledAddForm();
-    typeSecret(dialog);
-    // Under bearer auth the basic-auth Username field is hidden, so this placeholder is unambiguous.
-    fireEvent.change(within(dialog).getByPlaceholderText('username'), { target: { value: 'acme-dev' } });
-    submit(dialog);
-
-    await waitFor(() => expect(create).toHaveBeenCalled());
-    expect(create.mock.calls[0][0].authors).toEqual(['acme-dev']);
-  });
-
-  /**
    * `authUsername` is meaningless under bearer auth; sending a stale one would persist a field the
    * form no longer shows, so it is explicitly nulled rather than left at its last value.
    */
@@ -211,6 +198,99 @@ describe('SettingsProviders — provider form', () => {
     expect(await screen.findByText(/the stored credential was rejected/i)).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
+
+  /**
+   * The form can express the FACTORY role, because the 409 from POST /api/runs sends the operator
+   * here. Asserted on what reaches the API rather than on the control: a form that omits the field
+   * sends a payload the server reads as REVIEWER, and both look identical on screen.
+   *
+   * Both reviewer-only fields are filled BEFORE the switch, because hiding a field and clearing it
+   * from the payload are different things. A form that only stops rendering them still submits the
+   * values its state kept, and the server would store an allowlist and a conversation level on an
+   * account whose screen shows neither.
+   */
+  it('sends the FACTORY role the machine account needs, and no reviewer field with it', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    renderPage();
+    const dialog = await openFilledAddForm();
+    typeSecret(dialog);
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: /conversation level/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Explain' }));
+    fireEvent.change(within(dialog).getByPlaceholderText('stable user id'), { target: { value: '3218389' } });
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Factory' }));
+    submit(dialog);
+
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][0].role).toBe('FACTORY');
+    expect(create.mock.calls[0][0].authors).toEqual([]);
+    expect(create.mock.calls[0][0].conversationLevel).toBeUndefined();
+  });
+
+  it('defaults a new account to REVIEWER and sends that explicitly', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    renderPage();
+    const dialog = await openFilledAddForm();
+    typeSecret(dialog);
+    submit(dialog);
+
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][0].role).toBe('REVIEWER');
+  });
+
+  /** A role is fixed at registration; the edit form shows it and sends it back unchanged. */
+  it('shows the stored role read-only on edit and sends it back, never another', async () => {
+    const factory: api.ProviderView = { ...existing, id: 'prov-2', name: 'Acme Factory', role: 'FACTORY' };
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([factory]);
+    const update = vi.spyOn(api, 'updateProvider').mockResolvedValue(factory);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('combobox', { name: /^role$/i })).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Factory')).toBeInTheDocument();
+    expect(within(dialog).getByText(/set at registration/i)).toBeInTheDocument();
+    submit(dialog);
+
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1].role).toBe('FACTORY');
+  });
+
+  /** The allowlist and the conversation level are the reviewer's; a factory account has neither. */
+  it('hides the reviewer-only fields once Factory is chosen', async () => {
+    renderPage();
+    const dialog = await openFilledAddForm();
+    expect(within(dialog).getByText(/may command this bot/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole('combobox', { name: /conversation level/i })).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Factory' }));
+
+    expect(within(dialog).queryByText(/may command this bot/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('combobox', { name: /conversation level/i })).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/must resolve to a login/i)).toBeInTheDocument();
+  });
+
+  /**
+   * /fix matches the stable id only; a field that says "username" leads to a list /fix refuses.
+   * This also covers the flush: typing an allowlist entry and pressing Save without pressing Add is
+   * the obvious operator mistake, and the form must not drop the draft silently.
+   */
+  it('asks for a stable user id in the allowlist, and flushes a typed one on submit', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    renderPage();
+    const dialog = await openFilledAddForm();
+    typeSecret(dialog);
+
+    const field = within(dialog).getByPlaceholderText('stable user id');
+    fireEvent.change(field, { target: { value: '3218389' } });
+    submit(dialog);
+
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][0].authors).toEqual(['3218389']);
+  });
 });
 
 /**
@@ -230,6 +310,8 @@ describe('SettingsProviders — connectivity on load', () => {
 
     await waitFor(() => expect(check).toHaveBeenCalledWith('prov-1'));
     expect(check).not.toHaveBeenCalledWith('prov-2');
-    expect(await screen.findByText(/not checked/i)).toBeInTheDocument();
+    // The standing is an icon on this table; its word heads the accessible name, and the name
+    // says the action too — it is a button, and the disabled row is the one still worth pressing.
+    expect(await screen.findByRole('button', { name: 'Not checked — check the connection' })).toBeInTheDocument();
   });
 });

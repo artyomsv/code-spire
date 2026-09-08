@@ -180,12 +180,12 @@ public class RunResource {
     private String whyNoUsableAccount(DispatchRequestParser.Parsed in) {
         String where = in.scmType().providerType() + "/" + in.workspace();
         if (machineAccounts.registration(in.scmType(), in.workspace()).isPresent()) {
-            return "The FACTORY-role provider for " + where + " has no resolved login. Re-save it "
+            return "The Factory account for " + where + " has no resolved login. Re-save it "
                     + "with a token the forge can identify, or set the bot username by hand: the "
                     + "login is what the push is authenticated as.";
         }
-        return "No FACTORY-role provider is registered for " + where + ". Register the machine "
-                + "account under Settings -> Providers with role FACTORY (ADR-038). "
+        return "No Factory account is registered for " + where + ". Register the machine "
+                + "account under Settings -> Accounts with role Factory (ADR-038). "
                 + "The factory never pushes as the review bot.";
     }
 
