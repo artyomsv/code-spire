@@ -68,7 +68,10 @@ describe('SettingsProviders — the Machine accounts list', () => {
 
     expect(await screen.findByRole('heading', { name: 'Accounts' })).toBeInTheDocument();
     const row = await rowNamed('TEST reviewer');
-    expect(within(row).getByText('Forge · github')).toBeInTheDocument();
+    // The kind is an icon; the word it stands for is its accessible name, which is what makes
+    // dropping the word from the cell safe. Asserting the label rather than the glyph.
+    expect(within(row).getByLabelText('Forge account')).toBeInTheDocument();
+    expect(within(row).getByText('github')).toBeInTheDocument();
     expect(within(row).getByText('Reviewer')).toBeInTheDocument();
     expect(within(row).getByText('@test-reviewer')).toBeInTheDocument();
     expect(within(row).getByText('TEST-acme')).toBeInTheDocument();
@@ -101,7 +104,32 @@ describe('SettingsProviders — the Machine accounts list', () => {
     vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
     renderPage();
 
-    expect(within(await rowNamed('TEST reviewer')).getByText('not resolved')).toBeInTheDocument();
+    const row = await rowNamed('TEST reviewer');
+    expect(within(row).getByText('not resolved')).toBeInTheDocument();
+    // Two words are not a value. A copy button here would hand the operator "not resolved".
+    expect(within(row).queryByRole('button', { name: /^Copy the identity$/ })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The three long values are pasted into other people's portals — a forge's reviewer list, a
+   * webhook form. Truncating them without a copy button would take them away rather than shorten
+   * them, so each carries the WHOLE value: on the copy button and in the tooltip beside it.
+   */
+  it('offers the whole base URL, identity and workspace to copy, however narrow the cell', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([
+      forge({ baseUrl: 'https://api.github.com/very/long/base/url/that/will/not/fit' }),
+    ]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
+    renderPage();
+
+    const row = await rowNamed('TEST reviewer');
+    expect(within(row).getByRole('button', { name: 'Copy the base URL' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Copy the identity' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Copy the workspace' })).toBeInTheDocument();
+    expect(within(row).getByText('https://api.github.com/very/long/base/url/that/will/not/fit')).toHaveAttribute(
+      'title',
+      'https://api.github.com/very/long/base/url/that/will/not/fit',
+    );
   });
 
   /** Tracker accounts are listed so one screen answers "who acts as what"; they are edited on Context. */
@@ -111,7 +139,8 @@ describe('SettingsProviders — the Machine accounts list', () => {
     renderPage();
 
     const row = await rowNamed('TEST Jira');
-    expect(within(row).getByText('Tracker · jira')).toBeInTheDocument();
+    expect(within(row).getByLabelText('Tracker account')).toBeInTheDocument();
+    expect(within(row).getByText('jira')).toBeInTheDocument();
     expect(within(row).getByText('Read')).toBeInTheDocument();
     expect(within(row).getByText('jira-bot@example.invalid')).toBeInTheDocument();
     expect(within(row).getByText('test-acme.atlassian.net')).toBeInTheDocument();

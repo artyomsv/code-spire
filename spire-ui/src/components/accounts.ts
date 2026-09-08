@@ -15,8 +15,11 @@ export function roleLabel(role: string | null | undefined): string {
   }
 }
 
+/** What an account is, as a word. The table draws it as an icon and keeps the word in the label. */
+export type AccountKind = 'Forge' | 'Tracker' | 'Knowledge';
+
 /** The code index reads a repository; every other context source reads a tracker or a wiki. */
-export function accountKind(contextType: string): 'Knowledge' | 'Tracker' {
+export function accountKind(contextType: string): AccountKind {
   return contextType === 'code' ? 'Knowledge' : 'Tracker';
 }
 

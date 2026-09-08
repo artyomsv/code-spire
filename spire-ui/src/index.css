@@ -957,12 +957,17 @@
   .prov-table .cell-r { text-align: right; }
   /* One line per cell. Opt-in per column: the name cell keeps its second line on purpose. */
   .prov-table td.nowrap { white-space: nowrap; }
-  /* A value that may be arbitrarily long — a bot login, a mail address — bounded so it ellipses
-     instead of setting the column's width. The whole value stays in the element's own title. */
-  .cell-ellip {
-    display: inline-block; max-width: 220px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
-  }
+  /* A value that may be arbitrarily long — a base URL, a bot login, a workspace — bounded so the
+     CopyableValue inside it ellipses (.copyval is max-width:100%) rather than setting the column's
+     width. The whole value stays in that widget's title and in what its copy button copies. */
+  .cell-cap { max-width: 200px; }
+  /* The copy button is invisible until something is hovered. Reading a row is when an operator
+     wants it, so the row reveals every copy button in it, not each value only under its own mouse. */
+  .prov-table tbody tr:hover .copybtn { opacity: 1; }
+  /* Kind is an icon plus the stored type. The category word — Forge, Tracker, Knowledge — was the
+     same three strings down a column of a table that has to fit eight. */
+  .kind-cell { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .kind-cell svg { color: var(--text-3); flex: none; }
   .prov-name { font-weight: 600; }
   /* Enabled is a dot beside the name, not a column of its own: it is one bit, and a pill spent a
      whole column of a table that had to fit eight. The word is on the dot's title and aria-label. */
@@ -1127,7 +1132,7 @@
     font-size: 11px;
     color: var(--text-2);
     display: inline-block;
-    max-width: 260px;
+    max-width: 190px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

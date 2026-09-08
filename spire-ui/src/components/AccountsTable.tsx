@@ -1,7 +1,9 @@
+import { BookOpen, ClipboardList, GitFork } from 'lucide-react';
 import { type ContextProviderView, type ProviderView } from '../api';
+import { CopyableValue } from '../render';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
-import { accountKind, hostOf, roleLabel } from './accounts';
+import { accountKind, hostOf, roleLabel, type AccountKind } from './accounts';
 import { conversationLabel } from './ProviderFormModal';
 
 // Per-provider connectivity status, keyed by provider id.
@@ -35,6 +37,11 @@ interface Props {
  * a login stood three lines tall, and ten of those stopped reading as a list. The Name cell keeps
  * its second line (the base URL) because that is the house pattern for a name in these tables.
  *
+ * <p>A value with no bound on its length — a base URL, a bot login, a workspace — is bounded here,
+ * ellipses, and carries the whole value in its tooltip and in what its copy button copies. The
+ * operator pastes these into other people's portals, so truncating without offering the copy would
+ * take the value away rather than shorten it.
+ *
  * <p>Eight columns, because ten did not fit the card on a laptop and the squeezed last column is
  * what made the tracker rows tall. Enabled is one bit, so it is a dot beside the name rather than a
  * column; the two reviewer-only settings answer one question — what this bot is allowed to do — so
@@ -67,15 +74,21 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                   <EnabledDot enabled={p.enabled} />
                   {p.name}
                 </div>
-                <div className="prov-sub">{p.baseUrl}</div>
+                <div className="prov-sub cell-cap">
+                  <CopyableValue text={p.baseUrl} mono copyTitle="Copy the base URL" />
+                </div>
               </td>
-              <td className="mono nowrap" style={mono}>{`Forge · ${p.type}`}</td>
+              <td className="nowrap">
+                <KindCell kind="Forge" type={p.type} />
+              </td>
               <td className="nowrap">{roleLabel(p.role)}</td>
               <td className="mono nowrap" style={mono}>
-                <Ellipsed value={identityOf(p)} />
+                <IdentityCell value={identityOf(p)} resolved={Boolean(p.botUsername || p.botAccountId)} />
               </td>
               <td className="mono nowrap" style={mono}>
-                {p.workspace}
+                <div className="cell-cap">
+                  <CopyableValue text={p.workspace} mono copyTitle="Copy the workspace" />
+                </div>
               </td>
               <td>
                 <div className="conn-line">
@@ -105,15 +118,23 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                   <EnabledDot enabled={t.enabled} />
                   {t.name}
                 </div>
-                <div className="prov-sub">{t.baseUrl}</div>
+                <div className="prov-sub cell-cap">
+                  <CopyableValue text={t.baseUrl} mono copyTitle="Copy the base URL" />
+                </div>
               </td>
-              <td className="mono nowrap" style={mono}>{`${accountKind(t.type)} · ${t.type}`}</td>
+              <td className="nowrap">
+                <KindCell kind={accountKind(t.type)} type={t.type} />
+              </td>
               <td className="nowrap">Read</td>
               <td className="mono nowrap" style={mono}>
-                <Ellipsed value={t.username ?? '—'} />
+                <div className="cell-cap">
+                  <CopyableValue text={t.username ?? ''} mono copyTitle="Copy the identity" />
+                </div>
               </td>
               <td className="mono nowrap" style={mono}>
-                {hostOf(t.baseUrl)}
+                <div className="cell-cap">
+                  <CopyableValue text={hostOf(t.baseUrl)} mono copyTitle="Copy the host" />
+                </div>
               </td>
               <td>
                 <div className="conn-line">
@@ -149,14 +170,33 @@ function EnabledDot({ enabled }: { enabled: boolean }) {
 }
 
 /**
- * A value with no bound on its length — a bot login, a mail address — held to one line. It ellipses
- * at the column's width and carries the whole value as its own tooltip, so nothing is hidden.
+ * What kind of account this is, as an icon, followed by the type the registry stored.
+ *
+ * <p>The category word read "Forge · " on six rows and "Tracker · " on four: a column of the same
+ * three words, spending the width the identity beside it needed. The word is not dropped — it is
+ * the icon's accessible name and the cell's tooltip, so a hover and a screen reader both say it.
  */
-function Ellipsed({ value }: { value: string }) {
+function KindCell({ kind, type }: { kind: AccountKind; type: string }) {
+  const Icon = kind === 'Forge' ? GitFork : kind === 'Tracker' ? ClipboardList : BookOpen;
   return (
-    <span className="cell-ellip" title={value}>
-      {value}
+    <span className="kind-cell" title={`${kind} account`}>
+      <Icon size={14} role="img" aria-label={`${kind} account`} />
+      <span className="mono">{type}</span>
     </span>
+  );
+}
+
+/**
+ * The login the forge knows this bot by, copyable — it is the value an operator pastes into a
+ * repository's reviewer list. "not resolved" is a sentence about the account rather than a value,
+ * so it gets no copy button: copying it would hand over two words instead of an identity.
+ */
+function IdentityCell({ value, resolved }: { value: string; resolved: boolean }) {
+  if (!resolved) return <span className="prov-sub">{value}</span>;
+  return (
+    <div className="cell-cap">
+      <CopyableValue text={value} mono copyTitle="Copy the identity" />
+    </div>
   );
 }
 
