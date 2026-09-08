@@ -1001,6 +1001,9 @@
      ratesSummary) and it needs an operator's attention, not a blank cell. */
   .rate-unset { color: var(--warn); font-weight: 600; }
   .prov-note { margin: 0; padding: 15px 18px 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-3); }
+  /* A settings screen's own error line — General asks for this twice, and it rendered as ordinary
+     body text until the style contract learned to read a class out of a template literal. */
+  .prov-error { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--crit); }
   .prov-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
   .btn-danger { background: var(--crit); }

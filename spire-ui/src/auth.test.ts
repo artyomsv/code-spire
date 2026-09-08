@@ -355,7 +355,17 @@ describe('coming back to the screen the login left', () => {
    * of another shape is a leftover or something else on this origin — and either way not a place to
    * send the window.
    */
-  it.each(['https://evil.invalid/', '//evil.invalid/', '/settings/accounts', '#not-a-route', ''])(
+  it.each([
+    'https://evil.invalid/',
+    '//evil.invalid/',
+    // Both start with "#/" and are protocol-relative the moment the "#" is stripped. This app's
+    // HashRouter makes them inert, which is the router's property and not this guard's.
+    '#//evil.invalid/',
+    '#/\\evil.invalid',
+    '/settings/accounts',
+    '#not-a-route',
+    '',
+  ])(
     'refuses to return %s',
     (stored) => {
       sessionStorage.setItem(RETURN_ROUTE_KEY, stored);

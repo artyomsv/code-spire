@@ -139,12 +139,23 @@ export const RETURN_ROUTE_KEY = 'spire.return-route';
  *
  * <p>Anything that is not a `#/…` route of this app is discarded rather than returned. Only
  * {@link startLogin} writes this key, so a value of another shape is a leftover from an older build or
- * something else on this origin, and neither is a place to send the window.
+ * something else on this origin, and neither is a place to send the window. The second character
+ * matters: `#//host` and `#/\host` start with `#/` and are protocol-relative once the `#` is
+ * stripped. Under this app's HashRouter they are inert, which is a property of the router rather
+ * than of this guard, so the guard refuses them itself.
+ *
+ * <p>Storage can throw — a browser set to block site data does exactly that — and a route that
+ * cannot be read is a lost convenience, so the failure is swallowed rather than propagated.
  */
 export function takeReturnRoute(): string | null {
-  const stored = sessionStorage.getItem(RETURN_ROUTE_KEY);
-  sessionStorage.removeItem(RETURN_ROUTE_KEY);
-  return stored?.startsWith('#/') ? stored : null;
+  let stored: string | null = null;
+  try {
+    stored = sessionStorage.getItem(RETURN_ROUTE_KEY);
+    sessionStorage.removeItem(RETURN_ROUTE_KEY);
+  } catch {
+    return null;
+  }
+  return stored && /^#\/(?![/\\])/.test(stored) ? stored : null;
 }
 
 function startLogin(prefix: SessionPrefix, chained: boolean): boolean {
@@ -166,11 +177,20 @@ function startLogin(prefix: SessionPrefix, chained: boolean): boolean {
  * <p>An empty hash and `#/` are skipped: both already mean the default screen, so storing them would
  * buy nothing but a redundant navigation on the way back. Not called from {@link goToLogout} either —
  * signing out should land on `/`, not on whichever screen the operator happened to sign out from.
+ *
+ * <p>It cannot be allowed to throw. It runs between {@link startLogin} raising its in-flight flag and
+ * the navigation that flag exists to guard, so a browser blocking site data would leave the flag up
+ * with no login under way and every later attempt refused — a tab stuck on "Signing in…" until it is
+ * reloaded. Losing the route is acceptable; losing the login is not.
  */
 function rememberReturnRoute(): void {
   const hash = window.location.hash;
   if (!hash || hash === '#/') return;
-  sessionStorage.setItem(RETURN_ROUTE_KEY, hash);
+  try {
+    sessionStorage.setItem(RETURN_ROUTE_KEY, hash);
+  } catch {
+    // Site data blocked. The login still has to happen.
+  }
 }
 
 /**

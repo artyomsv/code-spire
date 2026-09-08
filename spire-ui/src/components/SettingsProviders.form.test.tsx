@@ -310,7 +310,8 @@ describe('SettingsProviders — connectivity on load', () => {
 
     await waitFor(() => expect(check).toHaveBeenCalledWith('prov-1'));
     expect(check).not.toHaveBeenCalledWith('prov-2');
-    // The standing is an icon on this table; its word is the accessible name.
-    expect(await screen.findByLabelText('Not checked')).toBeInTheDocument();
+    // The standing is an icon on this table; its word heads the accessible name, and the name
+    // says the action too — it is a button, and the disabled row is the one still worth pressing.
+    expect(await screen.findByRole('button', { name: 'Not checked — check the connection' })).toBeInTheDocument();
   });
 });

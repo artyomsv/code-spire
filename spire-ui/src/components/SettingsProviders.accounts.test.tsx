@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
@@ -27,8 +27,10 @@ const forge = (over: Partial<api.ProviderView>): api.ProviderView => ({
   conversationLevel: 'EXPLAIN',
   role: 'REVIEWER',
   createdAt: '2026-09-07T00:00:00Z',
-  lastCheckAt: null,
-  lastCheckOk: null,
+  // A stored check that PASSED on a date no live result would produce, so a tooltip that leaks the
+  // stored standing onto a freshly-answered row can be told from one that does not.
+  lastCheckAt: '2026-07-27T10:00:00Z',
+  lastCheckOk: true,
   lastCheckError: null,
   ...over,
 });
@@ -77,7 +79,9 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('TEST-acme')).toBeInTheDocument();
     // Policy is one cell: how many ids may command this bot, and how far it converses. The count
     // wears a head-count icon rather than the word "ids", so the sentence is on its tooltip.
-    expect(within(row).getByTitle('2 stable ids may command this bot')).toBeInTheDocument();
+    expect(within(row).getByLabelText('2 stable ids may command this bot')).toBeInTheDocument();
+    // The number itself, on the visible surface: a tooltip assertion alone passed with the count deleted.
+    expect(within(row).getByText('2')).toBeInTheDocument();
     expect(within(row).getByText('Explain')).toBeInTheDocument();
     // Enabled left its column for a dot beside the name. A colour with no name says nothing, so
     // the word is the dot's accessible label and this is the assertion that keeps it there.
@@ -95,9 +99,12 @@ describe('SettingsProviders — the Machine accounts list', () => {
     const row = await rowNamed('TEST factory');
     expect(within(row).getByText('Factory')).toBeInTheDocument();
     expect(within(row).getByText('@test-factory')).toBeInTheDocument();
-    // Exactly one: the two reviewer-only columns became one Policy cell, so two dashes here would
-    // mean a column that was meant to be gone is still being rendered.
-    expect(within(row).getAllByText('—')).toHaveLength(1);
+    // The dash belongs to the Policy cell and to no other. Counting dashes across the whole row
+    // would also count an empty CopyableValue, which renders one and means something else entirely.
+    const cells = within(row).getAllByRole('cell');
+    expect(cells).toHaveLength(8);
+    expect(cells[6]).toHaveTextContent('—');
+    expect(within(cells[6]).queryByRole('img')).not.toBeInTheDocument();
     expect(within(row).getByLabelText('Enabled')).toBeInTheDocument();
   });
 
@@ -132,6 +139,88 @@ describe('SettingsProviders — the Machine accounts list', () => {
       'title',
       'https://api.github.com/very/long/base/url/that/will/not/fit',
     );
+    // Shown with the @ an operator recognises, copied without it: a forge's reviewer list and its
+    // allowlist both want the bare handle, and CopyableValue's title is what the button copies.
+    expect(within(row).getByText('@test-reviewer')).toHaveAttribute('title', 'test-reviewer');
+  });
+
+  /**
+   * A disabled account is not an unknown one. The screen skips its automatic check, so there is no
+   * live result — but the registry may hold a REJECTED one, and that used to be drawn as the grey
+   * "never checked" icon with the rejection surviving only in a tooltip that contradicted it.
+   */
+  it('shows a disabled account with a rejected token as Failed, not as Not checked', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([
+      forge({
+        enabled: false,
+        lastCheckAt: '2026-09-07T09:00:00Z',
+        lastCheckOk: false,
+        lastCheckError: 'Authentication rejected (HTTP 401)',
+      }),
+    ]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
+    renderPage();
+
+    const row = await rowNamed('TEST reviewer');
+    const badge = within(row).getByRole('button', { name: 'Failed — check the connection' });
+    expect(badge.getAttribute('title')).toContain('Authentication rejected (HTTP 401)');
+    expect(within(row).queryByLabelText(/^Not checked/)).not.toBeInTheDocument();
+    // Enabled left its column for a dot; the disabled half of that bit is the one nothing asserted.
+    expect(within(row).getByLabelText('Disabled')).toBeInTheDocument();
+  });
+
+  /**
+   * The other half of the same rule. A live result belongs to the account as it was when it
+   * answered: disabling one that had just gone green must not leave the green behind, or the row
+   * reports a credential nothing is using any more. Nothing re-checks a disabled account, so only
+   * dropping the stale result can bring the row back to what the registry stored.
+   */
+  it('drops a live check result when the account it described comes back disabled', async () => {
+    const list = vi
+      .spyOn(api, 'fetchProviders')
+      .mockResolvedValue([forge({}), forge({ id: 'TEST-p9', name: 'TEST spare' })]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'deleteProvider').mockResolvedValue(undefined as never);
+    renderPage();
+
+    const row = await rowNamed('TEST reviewer');
+    await within(row).findByRole('button', { name: 'OK — check the connection' });
+
+    // Deleting the spare reloads the list — and the first account comes back disabled and refused.
+    list.mockResolvedValue([
+      forge({ enabled: false, lastCheckOk: false, lastCheckError: 'Authentication rejected (HTTP 401)' }),
+    ]);
+    fireEvent.click(within(await rowNamed('TEST spare')).getByRole('button', { name: 'Delete' }));
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Failed — check the connection' })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('button', { name: 'OK — check the connection' })).not.toBeInTheDocument();
+  });
+
+  /** No level set means the account follows the global default, and the cell has no room to say so twice. */
+  it('says Inherit when no conversation level is set on the account', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ conversationLevel: null })]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
+    renderPage();
+
+    expect(within(await rowNamed('TEST reviewer')).getByText('Inherit')).toBeInTheDocument();
+  });
+
+  /** A tracker that answered is the state no fixture covered — only its refusal and its silence were. */
+  it('shows a tracker whose last check passed as an OK badge', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
+      { ...tracker, lastCheckAt: '2026-09-07T09:00:00Z', lastCheckOk: true },
+    ]);
+    renderPage();
+
+    const row = await rowNamed('TEST Jira');
+    expect(within(row).getByLabelText('OK')).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /OK/ })).not.toBeInTheDocument();
   });
 
   /**
@@ -145,13 +234,18 @@ describe('SettingsProviders — the Machine accounts list', () => {
     renderPage();
 
     const row = await rowNamed('TEST reviewer');
-    const badge = await within(row).findByRole('button', { name: 'OK' });
+    // The name says the action too: this is a button, and "OK" alone tells a screen-reader user
+    // nothing about what pressing it does.
+    const badge = await within(row).findByRole('button', { name: 'OK — check the connection' });
     expect(badge.getAttribute('title')).toContain('Connected as @test-checked');
-    expect(badge.getAttribute('title')).toContain('click to re-check');
+    expect(badge.getAttribute('title')).toContain('click to check');
     // The login is on the tooltip and NOT in the column: that is the whole width saving. Nor is
     // the state word — the badge is an icon, and the word is its label and the head of its tooltip.
     expect(within(row).queryByText('@test-checked')).not.toBeInTheDocument();
     expect(within(row).queryByText('OK')).not.toBeInTheDocument();
+    // And not the stored date either: the live answer has just replaced it, so repeating it in the
+    // same tooltip would date a check that happened a second ago to whenever the last one did.
+    expect(badge.getAttribute('title')).not.toContain('2026');
   });
 
   /**

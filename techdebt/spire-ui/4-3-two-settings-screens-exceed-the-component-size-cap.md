@@ -4,7 +4,7 @@
 |-------|-------|
 | Criticality | Low |
 | Complexity | Medium |
-| Location | `spire-ui/src/components/SettingsWebhookRepos.tsx` (602 lines), `spire-ui/src/components/SettingsContextProviders.tsx` (599 lines) |
+| Location | `spire-ui/src/components/SettingsWebhookRepos.tsx` (622 lines), `spire-ui/src/components/SettingsContextProviders.tsx` (599 lines) |
 | Found during | Accounts and roles — PR #120 rules-compliance review |
 | Date | 2026-09-07 |
 
@@ -15,7 +15,7 @@ Both files are roughly two and a half times that, and both grew on this branch:
 
 | File | At `master` (`2b1ccb2`) | Now | Delta | What this branch added |
 |---|---|---|---|---|
-| `SettingsWebhookRepos.tsx` | 586 | **602** | +16 | the two serving-account columns (reviewer and factory) |
+| `SettingsWebhookRepos.tsx` | 586 | **622** | +36 | the two serving-account columns, then the one-line-per-cell pass |
 | `SettingsContextProviders.tsx` | 593 | **599** | +6 | the Used-by column |
 
 Neither overage is this branch's doing — both were already more than double the cap before it —
@@ -52,10 +52,13 @@ already sets out for the LLM screen, and they apply unchanged:
 
 ## Suggested Solutions
 
-1. **Mirror the split this branch already performed on the Accounts screen** (page / table / form).
-   `SettingsProviders.tsx` was decomposed into `SettingsProviders.tsx` (149), `AccountsTable.tsx`
-   (177) and `ProviderFormModal.tsx` (429) — a pure move, reviewable as one, and the precedent is in
-   the same directory. Applied here that is:
+1. **Mirror the split this branch already performed on the Accounts screen** (page / table / cells /
+   form). `SettingsProviders.tsx` was decomposed into `SettingsProviders.tsx` (154),
+   `AccountsTable.tsx` (166), `AccountsCells.tsx` (239) and `ProviderFormModal.tsx` (429) — pure
+   moves, each reviewable as one, and the precedent is in the same directory. The cells file is the
+   second half of that story: three rounds of fitting the table to the page took `AccountsTable.tsx`
+   to 345 lines, and the eight cell components moved out rather than earning an entry beside this
+   one. Applied here that is:
    - `SettingsWebhookRepos.tsx` → the screen, a `WebhookRepoTable`, and `WebhookRepoFormModal.tsx`
      carrying `useWebhookProviders`, `WebhookSetupChecklist`, `SecretRevealModal` and
      `DeleteConfirmModal` with it.

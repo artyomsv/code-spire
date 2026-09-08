@@ -51,10 +51,15 @@ export default function SettingsProviders() {
     try {
       const list = await fetchProviders();
       setProviders(list);
+      // A live result belongs to the account as it was when it answered. Disabling an account that
+      // had just checked green used to leave that green behind — the row said OK for a credential
+      // nothing was using any more. Anything no longer enabled goes back to its stored standing.
+      const live = new Set(list.filter((x) => x.enabled).map((x) => x.id));
+      setConns((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => live.has(id))));
       // Check connectivity once on load, but ONLY for enabled providers — a
       // disabled provider is intentionally inactive, so contacting the SCM for
       // it is wasteful and confusing (it may hold a deliberately stale/revoked
-      // token). Disabled rows render an idle cell and can be re-checked on demand.
+      // token). A disabled row shows what the registry stored and can be re-checked on demand.
       list.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

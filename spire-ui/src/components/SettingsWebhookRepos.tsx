@@ -32,6 +32,10 @@ const SCOPES: { value: WebhookScope; label: string }[] = [
 
 const scopeLabel = (s: WebhookScope) => SCOPES.find((x) => x.value === s)?.label ?? s;
 
+/** Cell types, hoisted: they close over nothing and were rebuilt for every cell of every row. */
+const CELL_SUB = { fontSize: 12, color: 'var(--text-2)' } as const;
+const CELL_TARGET = { fontSize: 12.5 } as const;
+
 /** The gateway path a delivery is routed on. Prefix with the public webhook base to build the payload URL. */
 export function webhookPath(w: Pick<WebhookRepoView, 'providerType' | 'webhookKey'>): string {
   return `/webhooks/${w.providerType}/${w.webhookKey}`;
@@ -140,30 +144,38 @@ export default function SettingsWebhookRepos() {
                 </tr>
               </thead>
               <tbody>
-                {repos.map((w) => (
+                {repos.map((w) => {
+                  // One lookup for both chips: the same (type, owner) pair answers reviewer and factory.
+                  const serves = serving[servingKey(w.providerType, ownerOf(w))];
+                  return (
                   <tr key={w.id}>
-                    <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{scopeLabel(w.scope)}</td>
+                    <td style={CELL_SUB}>{scopeLabel(w.scope)}</td>
                     {/* The secret has no column of its own: it read "secret set" on every healthy
                         row. A missing one is the only case worth pixels, and it is said here — the
                         attention panel raises WEBHOOK_SECRET_MISSING for it too, and Rotate mints a
                         new one from the edit dialog. */}
-                    <td className="mono nowrap" style={{ fontSize: 12.5 }}>
+                    <td className="mono nowrap" style={CELL_TARGET}>
                       {w.target}
                       {!w.hasSecret && <div className="prov-sub wh-nosecret">no secret</div>}
                     </td>
-                    <td className="mono nowrap" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                    <td className="mono nowrap" style={CELL_SUB}>
                       {w.providerType}
                     </td>
                     <td>
                       <div className="serving-pair">
-                        <ServingCell role="reviewer" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
-                        <ServingCell role="factory" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
+                        <ServingCell role="reviewer" lookup={serves} />
+                        <ServingCell role="factory" lookup={serves} />
                       </div>
                     </td>
                     {/* Bounded so the path ellipses instead of taking the row's width. Nothing is
-                        lost: CopyableValue puts the whole path in its own title and copies it in full. */}
-                    <td className="wh-url">
-                      <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
+                        lost: CopyableValue puts the whole path in its own title and copies it in full.
+                        The bound is on a div, not on the td: max-width on a table cell is undefined in
+                        CSS 2.1 and every browser ignores it under table-layout:auto, so the same class
+                        one element up did nothing at all. */}
+                    <td>
+                      <div className="wh-url">
+                        <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
+                      </div>
                     </td>
                     <td>
                       <span className={`pill ${w.enabled ? 'completed' : 'cancelled'}`}>
@@ -183,7 +195,8 @@ export default function SettingsWebhookRepos() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

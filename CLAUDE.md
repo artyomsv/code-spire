@@ -89,8 +89,8 @@ describe the new current state. Everything below is true as of **2026-09-08**.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
 - **Measured, not estimated (2026-09-08):** 2889 Java tests across 324 suites, 0 failures, 1
-  skipped (`testFast` + `testServices`, every module re-run); 546 `spire-ui` vitest tests across
-  70 files; `tsc --noEmit` silent. The nightly `testE2e` tier is separate and was **not** re-run
+  skipped (`testFast` + `testServices`, every module re-run); 560 `spire-ui` vitest tests across
+  71 files; `tsc --noEmit` silent. The nightly `testE2e` tier is separate and was **not** re-run
   for this figure — 44 tests across 9 suites when it was last measured, on 2026-09-03.
 
 ## Build & run

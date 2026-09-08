@@ -370,7 +370,9 @@ says a route added without a row is a screen with no coverage.
 1. An operator registers a **Factory** account from Settings → Accounts, and `POST /api/runs` for
    that (forge, workspace) no longer answers *"No FACTORY-role provider is registered"*.
 2. Settings → Repositories shows, for every row, which account reviews it and which pushes, in one
-   of the five states, and Verify works per chip with that chip's account.
+   of the five states. (**Superseded by §14**: the per-chip Verify is gone. A credential is checked
+   on Accounts and a repository is verified in the webhook form, so the chip says who serves the row
+   and nothing else.)
 3. `/settings/providers`, `/settings/webhooks`, `/settings/operators` redirect, keeping `?edit=`.
    Every attention-panel action lands on a screen that exists.
 4. A `PUT /api/providers/{id}` that changes the role is refused with `409`; one that repeats or
