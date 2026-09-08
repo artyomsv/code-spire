@@ -1,7 +1,7 @@
 # Accounts, roles and the screens that show them — design
 
 **Date:** 2026-09-07
-**Status:** draft, awaiting the operator's review. No code written.
+**Status:** implemented in PR #120 (2026-09-07/08); amended after the operator's walkthrough — see §14.
 **Scope:** Rename and reshape three Settings screens so that *who acts* (accounts) is separate from
 *where it acts* (repositories, context sources). Add the one field the M2 factory needs and the UI
 cannot set today: an account's **role**. Add one small read-only endpoint. No new tables.
