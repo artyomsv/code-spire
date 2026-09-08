@@ -123,63 +123,69 @@ export default function SettingsWebhookRepos() {
             </button>
           </div>
         ) : (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Scope</th>
-                <th>Target</th>
-                <th>Forge</th>
-                <th>Reviewed by</th>
-                <th>Pushed by</th>
-                <th>Payload URL (path)</th>
-                <th>Secret</th>
-                <th>Enabled</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {repos.map((w) => (
-                <tr key={w.id}>
-                  <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{scopeLabel(w.scope)}</td>
-                  <td className="mono" style={{ fontSize: 12.5 }}>
-                    {w.target}
-                  </td>
-                  <td className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                    {w.providerType}
-                  </td>
-                  <td>
-                    <ServingCell role="reviewer" lookup={serving[servingKey(w.providerType, ownerOf(w))]} repo={w} />
-                  </td>
-                  <td>
-                    <ServingCell role="factory" lookup={serving[servingKey(w.providerType, ownerOf(w))]} repo={w} />
-                  </td>
-                  <td>
-                    <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
-                  </td>
-                  <td>
-                    <div className="prov-sub">{w.hasSecret ? 'secret set' : 'no secret'}</div>
-                  </td>
-                  <td>
-                    <span className={`pill ${w.enabled ? 'completed' : 'cancelled'}`}>
-                      <span className="glyph"></span>
-                      {w.enabled ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="prov-actions">
-                      <IconButton kind="edit" onClick={() => setForm(w)} title="Edit" aria-label="Edit" />
-                      <IconButton
-                        kind="delete"
-                        onClick={() => setConfirmDelete(w)}
-                        title="Delete"
-                        aria-label="Delete"
-                      />
-                    </div>
-                  </td>
+          // Every cell is one line, so a narrow window scrolls the table rather than stacking the
+          // payload path under the target and turning nine rows into thirty.
+          <div className="prov-scroll">
+            <table className="prov-table">
+              <thead>
+                <tr>
+                  <th>Scope</th>
+                  <th>Target</th>
+                  <th>Forge</th>
+                  <th>Reviewed by</th>
+                  <th>Pushed by</th>
+                  <th>Payload URL (path)</th>
+                  <th>Secret</th>
+                  <th>Enabled</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {repos.map((w) => (
+                  <tr key={w.id}>
+                    <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{scopeLabel(w.scope)}</td>
+                    <td className="mono nowrap" style={{ fontSize: 12.5 }}>
+                      {w.target}
+                    </td>
+                    <td className="mono nowrap" style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                      {w.providerType}
+                    </td>
+                    <td>
+                      <ServingCell role="reviewer" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
+                    </td>
+                    <td>
+                      <ServingCell role="factory" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
+                    </td>
+                    {/* Bounded so the path ellipses instead of taking the row's width. Nothing is
+                        lost: CopyableValue puts the whole path in its own title and copies it in full. */}
+                    <td className="wh-url">
+                      <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
+                    </td>
+                    <td className="nowrap">
+                      <div className="prov-sub">{w.hasSecret ? 'secret set' : 'no secret'}</div>
+                    </td>
+                    <td>
+                      <span className={`pill ${w.enabled ? 'completed' : 'cancelled'}`}>
+                        <span className="glyph"></span>
+                        {w.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="prov-actions">
+                        <IconButton kind="edit" onClick={() => setForm(w)} title="Edit" aria-label="Edit" />
+                        <IconButton
+                          kind="delete"
+                          onClick={() => setConfirmDelete(w)}
+                          title="Delete"
+                          aria-label="Delete"
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

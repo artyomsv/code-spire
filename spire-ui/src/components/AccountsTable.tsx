@@ -29,104 +29,117 @@ interface Props {
  * <p>Reviewer-only columns show a dash on a Factory row. The allowlist and the conversation level
  * are read through the REVIEWER lookup alone, so on a factory row they are dead data, and showing
  * a number there would invite editing it.
+ *
+ * <p>Every cell but the name is one line — `nowrap` on the td, and the connection button beside
+ * its last-check badge rather than above it. A row that wrapped its kind and stacked a date under
+ * a login stood three lines tall, and ten of those stopped reading as a list. The Name cell keeps
+ * its second line (the base URL) because that is the house pattern for a name in these tables.
  */
 export default function AccountsTable({ providers, trackers, conns, onRecheck, onEdit, onDelete }: Props) {
   const mono = { fontSize: 12, color: 'var(--text-2)' } as const;
   return (
-    <table className="prov-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Kind</th>
-          <th>Role</th>
-          <th>Identity</th>
-          <th>Scope</th>
-          <th>Connection</th>
-          <th>Enabled</th>
-          <th className="cell-r">May command</th>
-          <th>Conversation</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {providers.map((p) => (
-          <tr key={p.id}>
-            <td>
-              <div className="prov-name">{p.name}</div>
-              <div className="prov-sub">{p.baseUrl}</div>
-            </td>
-            <td className="mono" style={mono}>{`Forge · ${p.type}`}</td>
-            <td>{roleLabel(p.role)}</td>
-            <td className="mono" style={mono}>
-              {identityOf(p)}
-            </td>
-            <td className="mono" style={mono}>
-              {p.workspace}
-            </td>
-            <td>
-              <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => onRecheck(p.id)} />
-              <LastChecked item={p} />
-            </td>
-            <td>
-              <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
-                <span className="glyph"></span>
-                {p.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </td>
-            <td className="cell-r mono" style={mono}>
-              {p.role === 'REVIEWER' ? p.authors.length : '—'}
-            </td>
-            <td>
-              <span className="prov-sub">{p.role === 'REVIEWER' ? conversationLabel(p.conversationLevel) : '—'}</span>
-            </td>
-            <td>
-              <div className="prov-actions">
-                <IconButton kind="edit" onClick={() => onEdit(p)} title="Edit" aria-label="Edit" />
-                <IconButton kind="delete" onClick={() => onDelete(p)} title="Delete" aria-label="Delete" />
-              </div>
-            </td>
+    // Ten columns that each refuse to wrap can outgrow a narrow window. Scrolling the table
+    // sideways is the honest answer; wrapping them was the three-line row this replaced.
+    <div className="prov-scroll">
+      <table className="prov-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Kind</th>
+            <th>Role</th>
+            <th>Identity</th>
+            <th>Scope</th>
+            <th>Connection</th>
+            <th>Enabled</th>
+            <th className="cell-r">May command</th>
+            <th>Conversation</th>
+            <th></th>
           </tr>
-        ))}
-        {trackers.map((t) => (
-          <tr key={`context-${t.id}`}>
-            <td>
-              <div className="prov-name">{t.name}</div>
-              <div className="prov-sub">{t.baseUrl}</div>
-            </td>
-            <td className="mono" style={mono}>{`${accountKind(t.type)} · ${t.type}`}</td>
-            <td>Read</td>
-            <td className="mono" style={mono}>
-              {t.username ?? '—'}
-            </td>
-            <td className="mono" style={mono}>
-              {hostOf(t.baseUrl)}
-            </td>
-            <td>
-              <LastChecked item={t} />
-            </td>
-            <td>
-              <span className={`pill ${t.enabled ? 'completed' : 'cancelled'}`}>
-                <span className="glyph"></span>
-                {t.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </td>
-            <td className="cell-r mono" style={mono}>
-              —
-            </td>
-            <td>
-              <span className="prov-sub">—</span>
-            </td>
-            <td>
-              <div className="prov-actions">
-                <a className="btn-ghost" href={`#/settings/context?edit=${encodeURIComponent(t.id)}`}>
-                  Manage on Context
-                </a>
-              </div>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {providers.map((p) => (
+            <tr key={p.id}>
+              <td>
+                <div className="prov-name">{p.name}</div>
+                <div className="prov-sub">{p.baseUrl}</div>
+              </td>
+              <td className="mono nowrap" style={mono}>{`Forge · ${p.type}`}</td>
+              <td className="nowrap">{roleLabel(p.role)}</td>
+              <td className="mono nowrap" style={mono}>
+                {identityOf(p)}
+              </td>
+              <td className="mono nowrap" style={mono}>
+                {p.workspace}
+              </td>
+              <td>
+                <div className="conn-line">
+                  <ConnCell conn={conns[p.id]} enabled={p.enabled} onRecheck={() => onRecheck(p.id)} />
+                  <LastChecked item={p} />
+                </div>
+              </td>
+              <td>
+                <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
+                  <span className="glyph"></span>
+                  {p.enabled ? 'Enabled' : 'Disabled'}
+                </span>
+              </td>
+              <td className="cell-r mono nowrap" style={mono}>
+                {p.role === 'REVIEWER' ? p.authors.length : '—'}
+              </td>
+              <td className="nowrap">
+                <span className="prov-sub">{p.role === 'REVIEWER' ? conversationLabel(p.conversationLevel) : '—'}</span>
+              </td>
+              <td>
+                <div className="prov-actions">
+                  <IconButton kind="edit" onClick={() => onEdit(p)} title="Edit" aria-label="Edit" />
+                  <IconButton kind="delete" onClick={() => onDelete(p)} title="Delete" aria-label="Delete" />
+                </div>
+              </td>
+            </tr>
+          ))}
+          {trackers.map((t) => (
+            <tr key={`context-${t.id}`}>
+              <td>
+                <div className="prov-name">{t.name}</div>
+                <div className="prov-sub">{t.baseUrl}</div>
+              </td>
+              <td className="mono nowrap" style={mono}>{`${accountKind(t.type)} · ${t.type}`}</td>
+              <td className="nowrap">Read</td>
+              <td className="mono nowrap" style={mono}>
+                {t.username ?? '—'}
+              </td>
+              <td className="mono nowrap" style={mono}>
+                {hostOf(t.baseUrl)}
+              </td>
+              <td>
+                <div className="conn-line">
+                  <LastChecked item={t} />
+                </div>
+              </td>
+              <td>
+                <span className={`pill ${t.enabled ? 'completed' : 'cancelled'}`}>
+                  <span className="glyph"></span>
+                  {t.enabled ? 'Enabled' : 'Disabled'}
+                </span>
+              </td>
+              <td className="cell-r mono nowrap" style={mono}>
+                —
+              </td>
+              <td className="nowrap">
+                <span className="prov-sub">—</span>
+              </td>
+              <td>
+                <div className="prov-actions">
+                  <a className="btn-ghost" href={`#/settings/context?edit=${encodeURIComponent(t.id)}`}>
+                    Manage on Context
+                  </a>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

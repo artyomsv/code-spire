@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsWebhookRepos from './SettingsWebhookRepos';
 import * as api from '../api';
@@ -66,7 +66,10 @@ describe('SettingsWebhookRepos — who reviews and who pushes', () => {
     const row = await rowFor('TEST-acme/widgets');
     const none = await within(row).findByText('none');
     expect(none.closest('.pill')).toHaveClass('cancelled');
-    expect(within(row).queryByRole('button', { name: /verify push account/i })).not.toBeInTheDocument();
+    // The chip stands alone. A Verify here named neither what it probed nor what a pass proved,
+    // and beside the factory chip it read as "can push" — which its read-only GET never showed.
+    const cell = none.closest('td') as HTMLElement;
+    expect(within(cell).queryByRole('button')).not.toBeInTheDocument();
   });
 
   it('renders a state it does not know as unknown, never green', async () => {
@@ -89,37 +92,5 @@ describe('SettingsWebhookRepos — who reviews and who pushes', () => {
     const row = await rowFor('TEST-acme/widgets');
     expect(await within(row).findAllByText('unknown')).toHaveLength(2);
     expect(within(row).queryByText('none')).not.toBeInTheDocument();
-  });
-
-  /** The chip's own account is what gets verified — the factory's Verify must not probe with the reviewer's token. */
-  it('verifies each role with that role’s account, and says push rights are not checked', async () => {
-    vi.spyOn(api, 'fetchWebhookRepos').mockResolvedValue([repo({})]);
-    vi.spyOn(api, 'fetchServingAccounts').mockResolvedValue(
-      serving(account('ok', 'reviewer-bot'), account('ok', 'factory-bot')),
-    );
-    const verify = vi.spyOn(api, 'verifyRepo').mockResolvedValue({ ok: true, detail: null });
-    renderPage();
-
-    const row = await rowFor('TEST-acme/widgets');
-    fireEvent.click(await within(row).findByRole('button', { name: /verify push account for TEST-acme\/widgets/i }));
-    await waitFor(() => expect(verify).toHaveBeenCalledWith('TEST-factory-bot', 'TEST-acme/widgets'));
-    expect(await within(row).findByText(/push rights are not checked/i)).toBeInTheDocument();
-
-    fireEvent.click(within(row).getByRole('button', { name: /verify review account for TEST-acme\/widgets/i }));
-    await waitFor(() => expect(verify).toHaveBeenCalledWith('TEST-reviewer-bot', 'TEST-acme/widgets'));
-  });
-
-  /** An organization row has no repository to GET; its verify is the account's own connectivity check. */
-  it('checks the account itself for an organization row', async () => {
-    vi.spyOn(api, 'fetchWebhookRepos').mockResolvedValue([repo({ scope: 'org', target: 'TEST-acme' })]);
-    vi.spyOn(api, 'fetchServingAccounts').mockResolvedValue(
-      serving(account('ok', 'reviewer-bot'), account('missing', '')),
-    );
-    const check = vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'reviewer-bot', detail: null });
-    renderPage();
-
-    const row = await rowFor('TEST-acme');
-    fireEvent.click(await within(row).findByRole('button', { name: /verify review account for TEST-acme$/i }));
-    await waitFor(() => expect(check).toHaveBeenCalledWith('TEST-reviewer-bot'));
   });
 });

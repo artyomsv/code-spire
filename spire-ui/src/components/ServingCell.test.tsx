@@ -1,79 +1,44 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import ServingCell from './ServingCell';
-import * as api from '../api';
+import { servingChip } from './servingAccounts';
+import type { ServingAccount, ServingAccounts, ServingState } from '../api';
 
-const repo: api.WebhookRepoView = {
-  id: 'TEST-w1',
-  providerType: 'github',
-  scope: 'repo',
-  target: 'TEST-acme/widgets',
-  webhookKey: 'TEST-key',
-  hasSecret: true,
-  enabled: true,
-  createdAt: '2026-09-07T00:00:00Z',
-};
+const account = (state: ServingState, name: string | null): ServingAccount => ({
+  state,
+  id: name === null ? null : `TEST-${name}`,
+  name,
+  botUsername: null,
+  botAccountId: null,
+});
 
-const lookupFor = (id: string, name: string) => ({
-  data: {
-    type: 'github',
-    workspace: 'TEST-acme',
-    reviewer: { state: 'ok' as api.ServingState, id, name, botUsername: null, botAccountId: null },
-    factory: { state: 'missing' as api.ServingState, id: null, name: null, botUsername: null, botAccountId: null },
-  } satisfies api.ServingAccounts,
+const lookup = (reviewer: ServingAccount, factory: ServingAccount) => ({
+  data: { type: 'github', workspace: 'TEST-acme', reviewer, factory } satisfies ServingAccounts,
 });
 
 describe('ServingCell', () => {
-  beforeEach(() => vi.restoreAllMocks());
-
   /**
-   * The row is never remounted — `<tr key={w.id}>` is stable — so without an explicit reset a
-   * "reachable" line survives the account it was about and reads as a fact about the new one.
+   * The cell is one chip and nothing else: the name of the account serving that role, in the tone
+   * servingChip chose, with the state it means as the tooltip rather than as a second line.
    */
-  it('drops a verify result when the chip’s account changes', async () => {
-    vi.spyOn(api, 'verifyRepo').mockResolvedValue({ ok: true, detail: null });
-    const { rerender } = render(
-      <ServingCell role="reviewer" lookup={lookupFor('TEST-first', 'first-bot')} repo={repo} />,
-    );
+  it('names the account serving the role, in that state’s tone, with the state as its tooltip', () => {
+    const reviewer = account('ok', 'reviewer-bot');
+    render(<ServingCell role="reviewer" lookup={lookup(reviewer, account('missing', null))} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /verify review account for TEST-acme\/widgets/i }));
-    expect(await screen.findByText('reachable')).toBeInTheDocument();
-
-    rerender(<ServingCell role="reviewer" lookup={lookupFor('TEST-second', 'second-bot')} repo={repo} />);
-    await waitFor(() => expect(screen.getByText('second-bot')).toBeInTheDocument());
-    expect(screen.queryByText('reachable')).not.toBeInTheDocument();
+    const chip = screen.getByText('reviewer-bot').closest('.pill');
+    expect(chip).toHaveClass('completed');
+    expect(chip).toHaveAttribute('title', servingChip(reviewer, null).title);
   });
 
   /**
-   * The reset above only clears a result that has already arrived. A probe still in flight answers
-   * after the account changed, and its "reachable" would be written beside the new chip — the same
-   * false statement, reached by the other order. The request is numbered, so the late answer is
-   * recognised as stale and dropped.
+   * No button in the cell. The per-chip Verify said nothing about WHAT it verified, and beside the
+   * factory chip a pass read as "can push" — a claim its read-only probe never made. Checking an
+   * account lives on Accounts, and checking a repository lives in the webhook form.
    */
-  it('drops a stale verify response after the account changes while in flight', async () => {
-    let resolveVerify: (value: api.RepoCheck) => void = () => {};
-    const pending = new Promise<api.RepoCheck>((resolve) => {
-      resolveVerify = resolve;
-    });
-    vi.spyOn(api, 'verifyRepo').mockReturnValue(pending);
-    const { rerender } = render(
-      <ServingCell role="reviewer" lookup={lookupFor('TEST-first', 'first-bot')} repo={repo} />,
-    );
+  it('says none for a role no account serves, and offers no button to press', () => {
+    render(<ServingCell role="factory" lookup={lookup(account('ok', 'reviewer-bot'), account('missing', null))} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /verify review account for TEST-acme\/widgets/i }));
-    // The button keeps its aria-label while in flight, so the progress wording is read off its text.
-    expect(await screen.findByText('Verifying…')).toBeInTheDocument();
-
-    // The lookup resolves to a different account while the probe is still in flight.
-    rerender(<ServingCell role="reviewer" lookup={lookupFor('TEST-second', 'second-bot')} repo={repo} />);
-    await waitFor(() => expect(screen.getByText('second-bot')).toBeInTheDocument());
-
-    // The original (now-stale) request resolves after the reset; flush it and confirm it was dropped.
-    await act(async () => {
-      resolveVerify({ ok: true, detail: null });
-      await pending;
-    });
-
-    expect(screen.queryByText('reachable')).not.toBeInTheDocument();
+    expect(screen.getByText('none').closest('.pill')).toHaveClass('cancelled');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
