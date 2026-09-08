@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import App from './App';
+import { RETURN_ROUTE_KEY } from './auth';
 
 /**
  * `App` is composition — a rail, a topbar and a `Routes` table — so this covers the one piece of
@@ -459,5 +460,40 @@ describe('App — before the session is known', () => {
     await waitFor(() => expect(screen.getByText('Loading…')).toBeInTheDocument());
     expect(screen.queryByText('Not available to your role')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The other half of the same report: after the services restarted, the operator was returned to
+ * Reviews rather than to the screen they had been on. Every login ends at `/` because the server's
+ * login endpoint takes no redirect target from the caller — a client-supplied one is an open redirect
+ * — so the route is carried in the browser and spent here, on arrival.
+ */
+describe('App — returning to the screen the login left', () => {
+  beforeEach(() => {
+    session = ADMIN_SESSION;
+    sessionStorage.clear();
+    vi.stubGlobal('WebSocket', SilentSocket);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+    );
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  it('sends the operator back to the route the login took them away from', async () => {
+    sessionStorage.setItem(RETURN_ROUTE_KEY, '#/settings/accounts');
+
+    renderAtWithProbe('/');
+
+    await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent('/settings/accounts'));
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Accounts');
+    // Spent, not kept: a route left in place would bounce every later visit to Reviews off the rail.
+    expect(sessionStorage.getItem(RETURN_ROUTE_KEY)).toBeNull();
   });
 });

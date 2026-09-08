@@ -97,26 +97,80 @@ export function goToLogin(prefix: SessionPrefix = '/api'): boolean {
 /**
  * Sign in AND establish every other prefix's session, in one redirect sequence.
  *
- * <p>Use this whenever a sign-in is starting from nothing. A session is per prefix, so a cold sign-in
- * needs three of them and each needs a real navigation; done one at a time the dashboard booted,
- * fetched, found the next one missing and navigated again — three renders thrown away, which reads as
- * the app blanking and restarting rather than as a login completing. Asking the server to hand each hop
- * to the next keeps it a single sequence: the browser follows redirects without painting the documents
- * in between, so the dashboard renders once.
+ * <p>Use this whenever MORE THAN ONE prefix needs a session. Two cases qualify, and they arrive from
+ * opposite directions: a sign-in starting from nothing, and the siblings having lapsed while the
+ * dashboard's own session still holds. A session is per prefix, so either way several are wanted and
+ * each needs a real navigation; done one at a time the dashboard booted, fetched, found the next one
+ * missing and navigated again — a render thrown away per prefix, which reads as the app blanking and
+ * restarting rather than as a login completing. Asking the server to hand each hop to the next keeps it
+ * a single sequence: the browser follows redirects without painting the documents in between, so the
+ * dashboard renders once.
  *
- * <p>Deliberately NOT what {@link goToLogin} does. Re-establishing one lapsed prefix should touch that
- * prefix only, and the unchained endpoint is also what the session probe reads — chaining it would make
- * a healthy service's answer depend on a later one.
+ * <p>Deliberately NOT what {@link goToLogin} does. `goToLogin` answers ONE service's refusal, which is
+ * all {@link apiFetch} has in hand when a single sibling call comes back 499; and the unchained endpoint
+ * is also what {@link ensureServiceSessions}'s probe reads — chaining that would make a healthy
+ * service's answer depend on a later one.
  */
 export function goToFullLogin(): boolean {
   return startLogin('/api', true);
 }
 
+/**
+ * Where the operator was when the window left for a login.
+ *
+ * <p>Every login navigation comes back to `/`, and that is the server's decision rather than an
+ * oversight: its login endpoint takes no redirect target from the caller, because a client-supplied
+ * one is an open redirect pointed at whoever asks for it. The cost was that a session lapsing on
+ * `#/settings/accounts` put the operator back on Reviews, with nothing on screen to say they had been
+ * moved.
+ *
+ * <p>So the route is carried on THIS side of the wire instead. It is written immediately before the
+ * navigation, read back once on the way in, and never sent anywhere — the server's contract is
+ * untouched, and the value cannot become a redirect target for anything but this tab.
+ */
+export const RETURN_ROUTE_KEY = 'spire.return-route';
+
+/**
+ * The route to return to, consumed. Null when there is none.
+ *
+ * <p>Reading REMOVES it: a stored route is good for exactly the one arrival that follows the login
+ * that stored it. Left in place it would fire again on every later visit to `/` — the operator picks
+ * Reviews and is bounced back to the settings screen they deliberately left.
+ *
+ * <p>Anything that is not a `#/…` route of this app is discarded rather than returned. Only
+ * {@link startLogin} writes this key, so a value of another shape is a leftover from an older build or
+ * something else on this origin, and neither is a place to send the window.
+ */
+export function takeReturnRoute(): string | null {
+  const stored = sessionStorage.getItem(RETURN_ROUTE_KEY);
+  sessionStorage.removeItem(RETURN_ROUTE_KEY);
+  return stored?.startsWith('#/') ? stored : null;
+}
+
 function startLogin(prefix: SessionPrefix, chained: boolean): boolean {
   if (leavingForAuth) return false;
   leavingForAuth = true;
+  rememberReturnRoute();
   window.location.assign(`${prefix}/auth/login${chained ? '?chain=1' : ''}`);
   return true;
+}
+
+/**
+ * Note the current screen, so the login can come back to it.
+ *
+ * <p>Here rather than at each call site: a login starts from several places — the shell's own effect,
+ * a refused REST call, the session probe — and a route remembered by only some of them is worse than
+ * one remembered by none, because the same lapse would return the operator to their screen or to
+ * Reviews depending on which watcher noticed it first.
+ *
+ * <p>An empty hash and `#/` are skipped: both already mean the default screen, so storing them would
+ * buy nothing but a redundant navigation on the way back. Not called from {@link goToLogout} either —
+ * signing out should land on `/`, not on whichever screen the operator happened to sign out from.
+ */
+function rememberReturnRoute(): void {
+  const hash = window.location.hash;
+  if (!hash || hash === '#/') return;
+  sessionStorage.setItem(RETURN_ROUTE_KEY, hash);
 }
 
 /**
@@ -181,17 +235,30 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
   return res;
 }
 
+/** Where the "we have already tried this prefix" mark lives. One key per prefix, per tab. */
+function attemptedKey(prefix: SessionPrefix): string {
+  return `spire.session.attempted${prefix}`;
+}
+
 /**
  * Make sure every service's session exists, once per tab.
  *
  * <p>Called after the dashboard learns it is signed in. Each sibling prefix is probed with a
- * script-marked request; a refusal means that service has no cookie yet, and the window navigates to
- * its login, which completes silently against the existing provider session and returns here.
+ * script-marked request; a refusal means that service has no cookie yet.
  *
  * <p>Done eagerly rather than on first use because the attention panel opens a socket to the gateway
  * on every page: a WebSocket handshake cannot follow a redirect either, so a missing `/gw` session
  * surfaced as "the webhook gateway is not responding" — a false outage, retried every 1.5s forever.
  * Waiting for a lazy trigger would mean hitting that on the first page load anyway.
+ *
+ * <p>EVERY sibling is probed before anything navigates, and all the lapsed ones are then re-established
+ * by ONE chained login. Answering the first refusal on its own is what made a restart of the services
+ * blink: `/api` was still valid while `/gw` and `/wk` had both lapsed, so the page found `/gw`,
+ * navigated, booted, found `/wk`, navigated again — one discarded render per lapsed prefix, and an
+ * operator watching the dashboard flicker and settle on Reviews. {@link goToFullLogin} asks the server
+ * to hand each hop to the next, so the browser follows a single redirect sequence and paints once
+ * however many prefixes had lapsed. The probe itself still reads the UNCHAINED endpoint, deliberately:
+ * it is a question about one service, and a chained answer would depend on a later prefix.
  *
  * <p>`sessionStorage` records the attempt per prefix, so a prefix that refuses even after its login
  * (a missing role, a misconfigured client) reports honestly instead of reloading in a loop. A
@@ -201,9 +268,9 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
  *          anything after this races the unload.
  */
 export async function ensureServiceSessions(): Promise<boolean> {
+  const lapsed: SessionPrefix[] = [];
   for (const prefix of SESSION_PREFIXES) {
     if (prefix === '/api') continue; // the dashboard's own session is how we got here
-    const attempted = `spire.session.attempted${prefix}`;
     let res: Response;
     try {
       res = await fetch(`${prefix}/auth/login`, { headers: SCRIPT_REQUEST_HEADER });
@@ -211,23 +278,26 @@ export async function ensureServiceSessions(): Promise<boolean> {
       continue; // unreachable is an outage, not a missing session — say nothing and let it surface
     }
     if (res.ok) {
-      sessionStorage.removeItem(attempted);
+      sessionStorage.removeItem(attemptedKey(prefix));
       continue;
     }
     if (!isAuthFailure(res.status)) continue; // a real error is not ours to fix by logging in again
-    if (sessionStorage.getItem(attempted)) continue; // already tried; do not loop
-    // Record only a login that RAN. Two callers reach here on a fresh page — App asks once `/api/me`
-    // answers, and the attention panel's gateway socket asks from the close handler it hit *because*
-    // this session was missing — and `goToLogin` is first-caller-wins, so the loser's navigation does
-    // nothing. Marking on intent rather than on the attempt retired the loser's prefix permanently:
-    // the next load saw the mark, skipped the prefix, and that service never got a session for the
-    // life of the tab. The panel then reported it as unreachable every 1.5s, which is a false outage
-    // standing in for a session nobody ever tried to establish.
-    if (!goToLogin(prefix)) return true; // the window is already leaving for another prefix
-    sessionStorage.setItem(attempted, '1');
-    return true;
+    if (sessionStorage.getItem(attemptedKey(prefix))) continue; // already tried; do not loop
+    lapsed.push(prefix);
   }
-  return false;
+  if (lapsed.length === 0) return false;
+  // Record only a login that RAN, which is why the marks are written AFTER the navigation is
+  // confirmed rather than on the intent to make it. Two callers reach here on a fresh page — App asks
+  // once `/api/me` answers, and the attention panel's gateway socket asks from the close handler it hit
+  // *because* this session was missing — and navigation is first-caller-wins, so the loser's does
+  // nothing at all. The winner is not necessarily this chain either: it may be `apiFetch` sending a
+  // single sibling refusal to that prefix's own login, or a logout. Marking on intent retired the
+  // loser's prefixes permanently — the next load saw the marks, skipped those prefixes, and those
+  // services never got a session for the life of the tab, which the panel then reported as the service
+  // being unreachable every 1.5s: a false outage standing in for a session nobody ever tried.
+  if (!goToFullLogin()) return true; // the window is already leaving for a login or a logout
+  for (const prefix of lapsed) sessionStorage.setItem(attemptedKey(prefix), '1');
+  return true;
 }
 
 /**

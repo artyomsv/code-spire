@@ -24,7 +24,7 @@ import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
 import { useLiveReviews } from './useLiveReviews';
 import { useMe } from './hooks/useMe';
-import { canAdminister, ensureServiceSessions, goToFullLogin, needsLogin } from './auth';
+import { canAdminister, ensureServiceSessions, goToFullLogin, needsLogin, takeReturnRoute } from './auth';
 
 function toggleTheme() {
   const root = document.documentElement;
@@ -98,6 +98,26 @@ export default function App() {
   useEffect(() => {
     if (needsLogin(me)) goToFullLogin();
   }, [me]);
+
+  /**
+   * Put the operator back on the screen the login took them away from.
+   *
+   * Every login ends at `/`, and that is the server's decision rather than an oversight: its login
+   * endpoint accepts no redirect target from the caller, because a client-supplied one is an open
+   * redirect pointed at whoever asks for it. The cost was silent — a session lapsing on Accounts
+   * dropped the operator on Reviews with nothing to say they had been moved.
+   *
+   * So the route is carried on this side instead. `startLogin` writes it before the window leaves and
+   * this reads it back once; the value never crosses the wire, and `takeReturnRoute` returns nothing
+   * that is not a `#/…` route of this app. Only from `/`, because that is where a login lands — a
+   * deliberate visit to any other screen is not a return and must not be redirected.
+   */
+  useEffect(() => {
+    if (!me || (me.authEnabled && !me.authenticated)) return;
+    if (location.pathname !== '/') return;
+    const route = takeReturnRoute();
+    if (route) navigate(route.replace(/^#/, ''), { replace: true });
+  }, [me, location.pathname, navigate]);
 
   /**
    * Obtain the gateway's and the worker's sessions as soon as we know we have our own.
