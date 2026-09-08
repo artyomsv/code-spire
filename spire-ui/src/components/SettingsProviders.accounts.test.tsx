@@ -72,12 +72,15 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('Reviewer')).toBeInTheDocument();
     expect(within(row).getByText('@test-reviewer')).toBeInTheDocument();
     expect(within(row).getByText('TEST-acme')).toBeInTheDocument();
-    expect(within(row).getByText('2')).toBeInTheDocument(); // May command: two ids listed
-    expect(within(row).getByText('Explain')).toBeInTheDocument();
+    // Policy is one cell: how many ids may command this bot, and how far it converses.
+    expect(within(row).getByText('2 ids · Explain')).toBeInTheDocument();
+    // Enabled left its column for a dot beside the name. A colour with no name says nothing, so
+    // the word is the dot's accessible label and this is the assertion that keeps it there.
+    expect(within(row).getByLabelText('Enabled')).toBeInTheDocument();
   });
 
   /** A factory account has no allowlist and no conversation: those are the reviewer's job. */
-  it('shows a factory row with dashes where the reviewer-only columns are', async () => {
+  it('shows a factory row with one dash, where the reviewer-only Policy cell is', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([
       forge({ id: 'TEST-p2', name: 'TEST factory', role: 'FACTORY', botUsername: 'test-factory', authors: [] }),
     ]);
@@ -87,7 +90,10 @@ describe('SettingsProviders — the Machine accounts list', () => {
     const row = await rowNamed('TEST factory');
     expect(within(row).getByText('Factory')).toBeInTheDocument();
     expect(within(row).getByText('@test-factory')).toBeInTheDocument();
-    expect(within(row).getAllByText('—')).toHaveLength(2);
+    // Exactly one: the two reviewer-only columns became one Policy cell, so two dashes here would
+    // mean a column that was meant to be gone is still being rendered.
+    expect(within(row).getAllByText('—')).toHaveLength(1);
+    expect(within(row).getByLabelText('Enabled')).toBeInTheDocument();
   });
 
   it('says when the identity is not resolved rather than showing nothing', async () => {
@@ -109,6 +115,7 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('Read')).toBeInTheDocument();
     expect(within(row).getByText('jira-bot@example.invalid')).toBeInTheDocument();
     expect(within(row).getByText('test-acme.atlassian.net')).toBeInTheDocument();
+    expect(within(row).getByText('—')).toBeInTheDocument(); // Policy: a tracker commands nothing
     expect(within(row).getByRole('link', { name: 'Manage on Context' })).toHaveAttribute(
       'href',
       '#/settings/context?edit=TEST-c1',

@@ -44,6 +44,22 @@ describe('lastCheckedLabel', () => {
     expect(label).toContain('Authentication rejected (HTTP 401)');
   });
 
+  /**
+   * The badge is bounded and ellipses, so on a rejection the tooltip is the only place the whole
+   * message can be read. A title that carried only a longer date would lose the reason exactly
+   * where the operator needs it.
+   */
+  it('carries the whole failure — time of day and reason — on the tooltip', () => {
+    const title = lastCheckedTitle({
+      lastCheckAt: '2026-07-27T10:00:00Z',
+      lastCheckOk: false,
+      lastCheckError: 'Authentication rejected (HTTP 401)',
+    });
+
+    expect(title).toContain('Authentication rejected (HTTP 401)');
+    expect(title).toMatch(/\d:\d\d/);
+  });
+
   /** A false with no stored detail must still read as a failure, not as a blank. */
   it('reports a failing check with no detail as rejected', () => {
     const label = lastCheckedLabel({

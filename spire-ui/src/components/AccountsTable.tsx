@@ -34,11 +34,16 @@ interface Props {
  * its last-check badge rather than above it. A row that wrapped its kind and stacked a date under
  * a login stood three lines tall, and ten of those stopped reading as a list. The Name cell keeps
  * its second line (the base URL) because that is the house pattern for a name in these tables.
+ *
+ * <p>Eight columns, because ten did not fit the card on a laptop and the squeezed last column is
+ * what made the tracker rows tall. Enabled is one bit, so it is a dot beside the name rather than a
+ * column; the two reviewer-only settings answer one question — what this bot is allowed to do — so
+ * they share the Policy cell.
  */
 export default function AccountsTable({ providers, trackers, conns, onRecheck, onEdit, onDelete }: Props) {
   const mono = { fontSize: 12, color: 'var(--text-2)' } as const;
   return (
-    // Ten columns that each refuse to wrap can outgrow a narrow window. Scrolling the table
+    // Eight columns that each refuse to wrap can still outgrow a narrow window. Scrolling the table
     // sideways is the honest answer; wrapping them was the three-line row this replaced.
     <div className="prov-scroll">
       <table className="prov-table">
@@ -50,9 +55,7 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
             <th>Identity</th>
             <th>Scope</th>
             <th>Connection</th>
-            <th>Enabled</th>
-            <th className="cell-r">May command</th>
-            <th>Conversation</th>
+            <th>Policy</th>
             <th></th>
           </tr>
         </thead>
@@ -60,13 +63,16 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
           {providers.map((p) => (
             <tr key={p.id}>
               <td>
-                <div className="prov-name">{p.name}</div>
+                <div className="prov-name">
+                  <EnabledDot enabled={p.enabled} />
+                  {p.name}
+                </div>
                 <div className="prov-sub">{p.baseUrl}</div>
               </td>
               <td className="mono nowrap" style={mono}>{`Forge · ${p.type}`}</td>
               <td className="nowrap">{roleLabel(p.role)}</td>
               <td className="mono nowrap" style={mono}>
-                {identityOf(p)}
+                <Ellipsed value={identityOf(p)} />
               </td>
               <td className="mono nowrap" style={mono}>
                 {p.workspace}
@@ -77,17 +83,12 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                   <LastChecked item={p} />
                 </div>
               </td>
-              <td>
-                <span className={`pill ${p.enabled ? 'completed' : 'cancelled'}`}>
-                  <span className="glyph"></span>
-                  {p.enabled ? 'Enabled' : 'Disabled'}
-                </span>
-              </td>
-              <td className="cell-r mono nowrap" style={mono}>
-                {p.role === 'REVIEWER' ? p.authors.length : '—'}
-              </td>
               <td className="nowrap">
-                <span className="prov-sub">{p.role === 'REVIEWER' ? conversationLabel(p.conversationLevel) : '—'}</span>
+                <span className="prov-sub">
+                  {p.role === 'REVIEWER'
+                    ? `${p.authors.length} ids · ${conversationLabel(p.conversationLevel)}`
+                    : '—'}
+                </span>
               </td>
               <td>
                 <div className="prov-actions">
@@ -100,13 +101,16 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
           {trackers.map((t) => (
             <tr key={`context-${t.id}`}>
               <td>
-                <div className="prov-name">{t.name}</div>
+                <div className="prov-name">
+                  <EnabledDot enabled={t.enabled} />
+                  {t.name}
+                </div>
                 <div className="prov-sub">{t.baseUrl}</div>
               </td>
               <td className="mono nowrap" style={mono}>{`${accountKind(t.type)} · ${t.type}`}</td>
               <td className="nowrap">Read</td>
               <td className="mono nowrap" style={mono}>
-                {t.username ?? '—'}
+                <Ellipsed value={t.username ?? '—'} />
               </td>
               <td className="mono nowrap" style={mono}>
                 {hostOf(t.baseUrl)}
@@ -115,15 +119,6 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                 <div className="conn-line">
                   <LastChecked item={t} />
                 </div>
-              </td>
-              <td>
-                <span className={`pill ${t.enabled ? 'completed' : 'cancelled'}`}>
-                  <span className="glyph"></span>
-                  {t.enabled ? 'Enabled' : 'Disabled'}
-                </span>
-              </td>
-              <td className="cell-r mono nowrap" style={mono}>
-                —
               </td>
               <td className="nowrap">
                 <span className="prov-sub">—</span>
@@ -140,6 +135,28 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Enabled, as a dot beside the name. It is one bit and it spent a whole column of a table that has
+ * to fit eight, so the word moves to the title and to the accessible label — the dot alone would be
+ * a colour with no name.
+ */
+function EnabledDot({ enabled }: { enabled: boolean }) {
+  const word = enabled ? 'Enabled' : 'Disabled';
+  return <span className={`enabled-dot ${enabled ? 'on' : 'off'}`} title={word} aria-label={word} />;
+}
+
+/**
+ * A value with no bound on its length — a bot login, a mail address — held to one line. It ellipses
+ * at the column's width and carries the whole value as its own tooltip, so nothing is hidden.
+ */
+function Ellipsed({ value }: { value: string }) {
+  return (
+    <span className="cell-ellip" title={value}>
+      {value}
+    </span>
   );
 }
 

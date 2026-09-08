@@ -81,10 +81,10 @@ export default function SettingsWebhookRepos() {
 
         {repos.length > 0 && (
           <p className="prov-note">
-            Paste each row’s <strong>Payload URL</strong> + <strong>Secret</strong> into that repository or
-            organization’s webhook settings, prefixing the path with your public webhook base (e.g. your
-            Cloudflare tunnel URL). The owner must match a reviewer account registered under Settings →
-            Accounts.
+            Paste each row’s <strong>Payload URL</strong> into that repository or organization’s webhook
+            settings, prefixing the path with your public webhook base (e.g. your Cloudflare tunnel URL).
+            The <strong>secret</strong> is shown once, when the row is created — use Rotate to mint a new
+            one. The owner must match a reviewer account registered under Settings → Accounts.
           </p>
         )}
 
@@ -132,10 +132,8 @@ export default function SettingsWebhookRepos() {
                   <th>Scope</th>
                   <th>Target</th>
                   <th>Forge</th>
-                  <th>Reviewed by</th>
-                  <th>Pushed by</th>
+                  <th>Accounts</th>
                   <th>Payload URL (path)</th>
-                  <th>Secret</th>
                   <th>Enabled</th>
                   <th></th>
                 </tr>
@@ -144,25 +142,27 @@ export default function SettingsWebhookRepos() {
                 {repos.map((w) => (
                   <tr key={w.id}>
                     <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{scopeLabel(w.scope)}</td>
+                    {/* The secret has no column of its own: it read "secret set" on every healthy
+                        row. A missing one is the only case worth pixels, and it is said here — the
+                        attention panel raises WEBHOOK_SECRET_MISSING for it too, and Rotate mints a
+                        new one from the edit dialog. */}
                     <td className="mono nowrap" style={{ fontSize: 12.5 }}>
                       {w.target}
+                      {!w.hasSecret && <div className="prov-sub wh-nosecret">no secret</div>}
                     </td>
                     <td className="mono nowrap" style={{ fontSize: 12, color: 'var(--text-2)' }}>
                       {w.providerType}
                     </td>
                     <td>
-                      <ServingCell role="reviewer" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
-                    </td>
-                    <td>
-                      <ServingCell role="factory" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
+                      <div className="serving-pair">
+                        <ServingCell role="reviewer" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
+                        <ServingCell role="factory" lookup={serving[servingKey(w.providerType, ownerOf(w))]} />
+                      </div>
                     </td>
                     {/* Bounded so the path ellipses instead of taking the row's width. Nothing is
                         lost: CopyableValue puts the whole path in its own title and copies it in full. */}
                     <td className="wh-url">
                       <CopyableValue text={webhookPath(w)} mono copyTitle="Copy the webhook path" />
-                    </td>
-                    <td className="nowrap">
-                      <div className="prov-sub">{w.hasSecret ? 'secret set' : 'no secret'}</div>
                     </td>
                     <td>
                       <span className={`pill ${w.enabled ? 'completed' : 'cancelled'}`}>

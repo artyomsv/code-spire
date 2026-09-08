@@ -16,21 +16,25 @@ export interface LastChecked {
  */
 export function lastCheckedLabel(item: LastChecked): string {
   if (item.lastCheckAt === null || item.lastCheckOk === null) return 'Never checked';
-  const when = new Date(item.lastCheckAt).toLocaleDateString();
-  if (item.lastCheckOk) return `Checked ${when}`;
-  return item.lastCheckError
-    ? `Rejected ${when} — ${item.lastCheckError}`
-    : `Rejected ${when}`;
+  return standing(item, new Date(item.lastCheckAt).toLocaleDateString());
 }
 
 /**
  * The same standing with the time of day, for the badge's tooltip. Empty when the credential was
  * never checked: there is no timestamp to enlarge on, and a tooltip repeating the visible label
  * teaches the operator that hovering these badges is pointless.
+ *
+ * <p>On a rejection this is the whole message, not a longer date. The badge is bounded and ellipses,
+ * and a provider's refusal can be a paragraph, so the hover is the only place the operator can read
+ * why the token was refused.
  */
 export function lastCheckedTitle(item: LastChecked): string {
   if (item.lastCheckAt === null || item.lastCheckOk === null) return '';
-  const when = new Date(item.lastCheckAt).toLocaleString();
+  return standing(item, new Date(item.lastCheckAt).toLocaleString());
+}
+
+/** The standing itself, given an already-formatted timestamp. One wording, two precisions. */
+function standing(item: LastChecked, when: string): string {
   if (item.lastCheckOk) return `Checked ${when}`;
   return item.lastCheckError
     ? `Rejected ${when} — ${item.lastCheckError}`

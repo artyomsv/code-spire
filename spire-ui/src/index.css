@@ -488,8 +488,11 @@
   .dhead .meta-line .sep { color: var(--text-3); }
   .dhead .meta-line .sha { color: var(--text); }
   .dhead .actions { display: flex; gap: 8px; }
+  /* `nowrap` is not decoration. In a squeezed last table column "Manage on Context" broke onto three
+     lines and took the whole row's height with it, which is what made the tracker rows tall. A ghost
+     button is a control, and a control never wraps. */
   .btn-ghost {
-    display: inline-flex; align-items: center; gap: 7px;
+    display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
     background: var(--panel); color: var(--text-2); border: 1px solid var(--border);
     font-weight: 600; font-size: 12.5px; padding: 8px 13px; border-radius: 8px; cursor: pointer;
   }
@@ -900,12 +903,18 @@
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--text); background: var(--panel); border-color: var(--border); }
 
-  /* Settings → Repositories: the two who-serves-this-row cells. One chip, one line — the state it
-     means is the chip's tooltip, and verifying happens where the account or the webhook is edited. */
+  /* Settings → Repositories: the who-serves-this-row cell. One chip per role, one line — the state
+     it means is the chip's tooltip, and verifying happens where the account or the webhook is edited. */
   .serving-cell { display: inline-flex; align-items: center; white-space: nowrap; }
+  /* Both roles share one Accounts column: each chip names its role, so two columns of anonymous
+     chips are one column of labelled ones, and the table fits the card. */
+  .serving-pair { display: inline-flex; gap: 6px; white-space: nowrap; }
   /* The payload path is bounded so it ellipses (.copyval-text) rather than taking the row's width.
      The full path stays in CopyableValue's own title and in what the copy button copies. */
   .wh-url { max-width: 280px; }
+  /* A registration with no secret, said under the target. There is no Secret column any more: it
+     read "secret set" on every healthy row, and a missing one already raises WEBHOOK_SECRET_MISSING. */
+  .wh-nosecret { color: var(--crit); }
 
   .prov-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -948,7 +957,20 @@
   .prov-table .cell-r { text-align: right; }
   /* One line per cell. Opt-in per column: the name cell keeps its second line on purpose. */
   .prov-table td.nowrap { white-space: nowrap; }
+  /* A value that may be arbitrarily long — a bot login, a mail address — bounded so it ellipses
+     instead of setting the column's width. The whole value stays in the element's own title. */
+  .cell-ellip {
+    display: inline-block; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  }
   .prov-name { font-weight: 600; }
+  /* Enabled is a dot beside the name, not a column of its own: it is one bit, and a pill spent a
+     whole column of a table that had to fit eight. The word is on the dot's title and aria-label. */
+  .enabled-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 8px; background: var(--good); vertical-align: middle;
+  }
+  .enabled-dot.off { background: var(--muted); }
   .prov-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; }
   /* A METERED model with no rate at all — an upgraded deployment can leave one behind (see
      ratesSummary) and it needs an operator's attention, not a blank cell. */
@@ -1098,10 +1120,16 @@
   .conn-line { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 
   /* Last credential-check standing, shown beside a provider's Check control. Date only; the time
-     of day is the badge's tooltip, because it is what pushed a row onto a second line. */
+     of day is the badge's tooltip, because it is what pushed a row onto a second line. A rejection
+     carries the provider's own words, which can be a paragraph — bounded here so it ellipses, with
+     the whole message on the tooltip. */
   .last-checked {
     font-size: 11px;
     color: var(--text-2);
+    display: inline-block;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 

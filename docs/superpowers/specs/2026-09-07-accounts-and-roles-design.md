@@ -378,3 +378,21 @@ says a route added without a row is a screen with no coverage.
 5. No server message or doc names a screen that does not exist.
 6. Every test in §9 is green, the four mutation checks each kill exactly their test, and
    `tsc --noEmit` is silent.
+
+## 14. Amendments after the operator's walkthrough (2026-09-08)
+
+Tested on the dev stack and changed in PR #120 before merge:
+
+- Every table cell renders on one line; long identities and check failures truncate with the full
+  text on hover; the last-check badge shows the date and keeps the time in its tooltip.
+- **Accounts** has eight columns: Name (with an enabled dot) · Kind · Role · Identity · Scope ·
+  Connection · Policy (`<n> ids · <conversation level>` for a reviewer, `—` otherwise) · actions.
+- **Repositories** has no Secret column (the secret is minted on create and shown once; a missing
+  one raises `WEBHOOK_SECRET_MISSING` and is noted under the target) and one **Accounts** column with
+  two labelled chips, `Reviewer · <account>` and `Factory · <account|none>`. The per-chip Verify
+  is gone: a token is checked on Accounts, a repository in the webhook form.
+- Re-establishing lapsed sibling sessions uses the chained login (one paint) and the route the
+  operator was on is restored afterwards.
+- Decided for the next design round, not done here: the workspace belongs to the repository, not
+  the account; context sources use accounts; a repository lists its accounts and one webhook per
+  event kind (postponed to M3).
