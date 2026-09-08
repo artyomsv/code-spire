@@ -310,6 +310,7 @@ describe('SettingsProviders — connectivity on load', () => {
 
     await waitFor(() => expect(check).toHaveBeenCalledWith('prov-1'));
     expect(check).not.toHaveBeenCalledWith('prov-2');
-    expect(await screen.findByText(/not checked/i)).toBeInTheDocument();
+    // The standing is an icon on this table; its word is the accessible name.
+    expect(await screen.findByLabelText('Not checked')).toBeInTheDocument();
   });
 });

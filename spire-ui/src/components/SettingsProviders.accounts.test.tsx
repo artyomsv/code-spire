@@ -75,8 +75,10 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('Reviewer')).toBeInTheDocument();
     expect(within(row).getByText('@test-reviewer')).toBeInTheDocument();
     expect(within(row).getByText('TEST-acme')).toBeInTheDocument();
-    // Policy is one cell: how many ids may command this bot, and how far it converses.
-    expect(within(row).getByText('2 ids · Explain')).toBeInTheDocument();
+    // Policy is one cell: how many ids may command this bot, and how far it converses. The count
+    // wears a head-count icon rather than the word "ids", so the sentence is on its tooltip.
+    expect(within(row).getByTitle('2 stable ids may command this bot')).toBeInTheDocument();
+    expect(within(row).getByText('Explain')).toBeInTheDocument();
     // Enabled left its column for a dot beside the name. A colour with no name says nothing, so
     // the word is the dot's accessible label and this is the assertion that keeps it there.
     expect(within(row).getByLabelText('Enabled')).toBeInTheDocument();
@@ -146,8 +148,10 @@ describe('SettingsProviders — the Machine accounts list', () => {
     const badge = await within(row).findByRole('button', { name: 'OK' });
     expect(badge.getAttribute('title')).toContain('Connected as @test-checked');
     expect(badge.getAttribute('title')).toContain('click to re-check');
-    // The login is on the tooltip and NOT in the column: that is the whole width saving.
+    // The login is on the tooltip and NOT in the column: that is the whole width saving. Nor is
+    // the state word — the badge is an icon, and the word is its label and the head of its tooltip.
     expect(within(row).queryByText('@test-checked')).not.toBeInTheDocument();
+    expect(within(row).queryByText('OK')).not.toBeInTheDocument();
   });
 
   /**
@@ -167,8 +171,10 @@ describe('SettingsProviders — the Machine accounts list', () => {
     renderPage();
 
     const row = await rowNamed('TEST Jira');
-    const badge = within(row).getByText('Failed');
-    expect(badge.closest('.conn')?.getAttribute('title')).toContain('Authentication failed (HTTP 401)');
+    // The state is an icon. Its word is the accessible name — which is what makes dropping the
+    // visible label safe — and the provider's own message is on the tooltip behind it.
+    const badge = within(row).getByLabelText('Failed');
+    expect(badge.getAttribute('title')).toContain('Authentication failed (HTTP 401)');
     expect(within(row).queryByRole('button', { name: 'Failed' })).not.toBeInTheDocument();
   });
 
@@ -185,7 +191,7 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('jira-bot@example.invalid')).toBeInTheDocument();
     expect(within(row).getByText('test-acme.atlassian.net')).toBeInTheDocument();
     // Never checked is information, not a problem — the fourth state of the same badge.
-    expect(within(row).getByText('Not checked')).toBeInTheDocument();
+    expect(within(row).getByLabelText('Not checked')).toBeInTheDocument();
     expect(within(row).getByText('—')).toBeInTheDocument(); // Policy: a tracker commands nothing
     expect(within(row).getByRole('link', { name: 'Manage on Context' })).toHaveAttribute(
       'href',

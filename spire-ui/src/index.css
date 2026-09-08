@@ -936,8 +936,24 @@
   .conn-fail .conn-dot { background: var(--crit); }
   .conn-fail .conn-label { color: var(--crit); }
   .conn:not(:disabled):hover .conn-label { text-decoration: underline; }
-  /* The same badge where nothing can be checked from — a tracker account, managed on Context. */
+  /* The credential's standing on Accounts, as one icon. The state's word is the icon's label and
+     the head of its tooltip; the column has ten rows of it and no room to say each one twice. */
+  .conn-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; padding: 0; color: var(--muted); cursor: pointer;
+  }
+  .conn-badge:disabled { cursor: default; }
+  .conn-badge.conn-ok { color: var(--good); }
+  .conn-badge.conn-fail { color: var(--crit); }
+  .conn-badge.conn-checking { color: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+  /* The same icon where nothing can be checked from — a tracker account, managed on Context. */
   .conn-static { cursor: default; }
+  /* Two marks, not two sentences: how many ids may command this bot, and how far it converses. */
+  .policy-cell { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .policy-bit {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+  }
   /* The shared icon button, used as a link out of a table row. */
   a.icon-btn { text-decoration: none; }
 
@@ -964,7 +980,7 @@
   /* A value that may be arbitrarily long — a base URL, a bot login, a workspace — bounded so the
      CopyableValue inside it ellipses (.copyval is max-width:100%) rather than setting the column's
      width. The whole value stays in that widget's title and in what its copy button copies. */
-  .cell-cap { max-width: 200px; }
+  .cell-cap { max-width: 150px; }
   /* The copy button is invisible until something is hovered. Reading a row is when an operator
      wants it, so the row reveals every copy button in it, not each value only under its own mouse. */
   .prov-table tbody tr:hover .copybtn { opacity: 1; }

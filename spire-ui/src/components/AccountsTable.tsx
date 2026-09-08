@@ -1,4 +1,15 @@
-import { BookOpen, ClipboardList, ExternalLink, GitFork } from 'lucide-react';
+import {
+  BookOpen,
+  CheckCircle2,
+  CircleDashed,
+  CircleX,
+  ClipboardList,
+  ExternalLink,
+  GitFork,
+  LoaderCircle,
+  UsersRound,
+  type LucideIcon,
+} from 'lucide-react';
 import { type ContextProviderView, type ProviderView } from '../api';
 import { CopyableValue } from '../render';
 import IconButton from './IconButton';
@@ -38,10 +49,12 @@ interface Props {
  * a login stood three lines tall, and ten of those stopped reading as a list. The Name cell keeps
  * its second line (the base URL) because that is the house pattern for a name in these tables.
  *
- * <p>The connection is ONE badge with four states. The cell used to print the login the token
- * authenticated as beside the date of the last check, and on a refusal the provider's own message
- * as well — three variable-length strings in the column, the longest of them a paragraph. All of
- * it is on the badge's tooltip now, which is where an operator looks once, not on every row.
+ * <p>The connection is ONE icon in four states, and the Policy cell is a count and a word. The
+ * connection cell used to print the login the token authenticated as beside the date of the last
+ * check, and on a refusal the provider's own message as well — three variable-length strings in
+ * one column, the longest of them a paragraph. All of it is on the tooltip now, which is where an
+ * operator looks once, not on every row. The state word went with it: an operator scanning eleven
+ * rows reads the colour and the shape, and the word only when a row stops them.
  *
  * <p>A value with no bound on its length — a base URL, a bot login, a workspace — is bounded here,
  * ellipses, and carries the whole value in its tooltip and in what its copy button copies. The
@@ -100,11 +113,7 @@ export default function AccountsTable({ providers, trackers, conns, onRecheck, o
                 <ConnBadge conn={conns[p.id]} stored={p} enabled={p.enabled} onRecheck={() => onRecheck(p.id)} />
               </td>
               <td className="nowrap">
-                <span className="prov-sub">
-                  {p.role === 'REVIEWER'
-                    ? `${p.authors.length} ids · ${conversationLabel(p.conversationLevel)}`
-                    : '—'}
-                </span>
+                <PolicyCell provider={p} />
               </td>
               <td>
                 <div className="prov-actions">
@@ -217,12 +226,20 @@ function identityOf(p: ProviderView): string {
   return 'not resolved';
 }
 
-/** The four standings a credential can be in, as the badge says them. */
+/** The four standings a credential can be in. The word is the icon's label and its tooltip. */
 const CONN_LABEL: Record<ConnState, string> = {
   idle: 'Not checked',
   checking: 'Checking…',
   ok: 'OK',
   fail: 'Failed',
+};
+
+/** One glyph per standing. Distinct in shape as well as colour — a colour alone is not a state. */
+const CONN_ICON: Record<ConnState, LucideIcon> = {
+  idle: CircleDashed,
+  checking: LoaderCircle,
+  ok: CheckCircle2,
+  fail: CircleX,
 };
 
 /**
@@ -259,16 +276,17 @@ function ConnBadge({
   // it is worth a hover on an idle or a failing row and noise on a row that just answered.
   const history = state === 'ok' || state === 'checking' ? '' : lastCheckedTitle(stored);
   const clickable = state === 'ok' || state === 'fail' ? ' — click to re-check' : '';
+  const Icon = CONN_ICON[state];
   return (
     <button
       type="button"
-      className={`conn conn-${state}`}
+      className={`conn-badge conn-${state}`}
       onClick={onRecheck}
       disabled={state === 'checking'}
-      title={[said, history].filter(Boolean).join(' · ') + clickable}
+      aria-label={CONN_LABEL[state]}
+      title={`${CONN_LABEL[state]} · ${[said, history].filter(Boolean).join(' · ')}${clickable}`}
     >
-      <span className="conn-dot" />
-      <span className="conn-label">{CONN_LABEL[state]}</span>
+      <Icon size={16} aria-hidden="true" />
     </button>
   );
 }
@@ -281,10 +299,47 @@ function ConnBadge({
 function StoredBadge({ stored }: { stored: LastChecked }) {
   const state: ConnState =
     stored.lastCheckAt === null || stored.lastCheckOk === null ? 'idle' : stored.lastCheckOk ? 'ok' : 'fail';
+  const Icon = CONN_ICON[state];
   return (
-    <span className={`conn conn-static conn-${state}`} title={lastCheckedTitle(stored) || 'Never checked'}>
-      <span className="conn-dot" />
-      <span className="conn-label">{CONN_LABEL[state]}</span>
+    <span
+      className={`conn-badge conn-static conn-${state}`}
+      role="img"
+      aria-label={CONN_LABEL[state]}
+      title={`${CONN_LABEL[state]} · ${lastCheckedTitle(stored) || 'Never checked'}`}
+    >
+      <Icon size={16} aria-hidden="true" />
     </span>
   );
+}
+
+/**
+ * What this bot is allowed to do, in two marks: how many stable ids may command it, and how far it
+ * converses. Both were sentences — "0 ids · Inherit (global)" — for two settings whose value an
+ * operator compares down the column rather than reads. The count keeps a head-count icon instead of
+ * the word "ids", the level drops the parenthesis the form needs, and each says itself in full on
+ * its own tooltip.
+ *
+ * <p>A Factory account has neither: they are read through the REVIEWER lookup, so a number here
+ * would be dead data with an edit control implied beside it.
+ */
+function PolicyCell({ provider }: { provider: ProviderView }) {
+  if (provider.role !== 'REVIEWER') return <span className="prov-sub">—</span>;
+  const ids = provider.authors.length;
+  return (
+    <span className="policy-cell">
+      <span className="policy-bit" title={`${ids} stable ids may command this bot`}>
+        <UsersRound size={12} aria-hidden="true" />
+        {ids}
+      </span>
+      <span className="policy-bit" title={`Conversation: ${conversationLabel(provider.conversationLevel)}`}>
+        {shortConversation(provider.conversationLevel)}
+      </span>
+    </span>
+  );
+}
+
+/** The form says "Inherit (global)" with room to spare; a table cell has none for the parenthesis. */
+function shortConversation(level: string | null | undefined): string {
+  const label = conversationLabel(level);
+  return label === 'Inherit (global)' ? 'Inherit' : label;
 }
