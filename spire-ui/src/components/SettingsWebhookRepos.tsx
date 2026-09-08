@@ -81,10 +81,11 @@ export default function SettingsWebhookRepos() {
 
         {repos.length > 0 && (
           <p className="prov-note">
-            Paste each row’s <strong>Payload URL</strong> into that repository or organization’s webhook
-            settings, prefixing the path with your public webhook base (e.g. your Cloudflare tunnel URL).
-            The <strong>secret</strong> is shown once, when the row is created — use Rotate to mint a new
-            one. The owner must match a reviewer account registered under Settings → Accounts.
+            Paste each row’s <strong>Payload URL</strong>, and the <strong>secret</strong> you were shown
+            when the row was created, into that repository or organization’s webhook settings, prefixing
+            the path with your public webhook base (e.g. your Cloudflare tunnel URL). The secret is shown
+            once; use Rotate in the edit dialog to mint a new one. The owner must match a reviewer account
+            registered under Settings → Accounts.
           </p>
         )}
 
