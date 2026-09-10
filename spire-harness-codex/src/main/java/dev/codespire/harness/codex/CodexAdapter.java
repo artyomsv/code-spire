@@ -52,6 +52,16 @@ public final class CodexAdapter implements HarnessAdapter {
     /** What the Codex process reads its key from. Vendor knowledge, and this arm's alone. */
     private static final String API_KEY_VARIABLE = "OPENAI_API_KEY";
 
+    /**
+     * The exit code the login step uses when it cannot authenticate, so a run that never reached
+     * the model is not reported as one the model failed to answer.
+     *
+     * <p>Chosen outside sysexits (64-78), outside the shell's reserved codes (126-165), and outside
+     * what codex itself returns (1 for an error, 101 for a panic), so it cannot be confused with a
+     * code the harness produced after login succeeded.
+     */
+    private static final int LOGIN_FAILED = 120;
+
     @Override
     public HarnessType type() {
         return HarnessType.CODEX;
@@ -95,14 +105,48 @@ public final class CodexAdapter implements HarnessAdapter {
         // The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
         //
         // The trailing "-" is the prompt position, explicitly reading stdin. It is not the prompt.
-        return List.of(
-                "codex", "exec",
-                "--json",
-                "--sandbox", "danger-full-access",
-                "--skip-git-repo-check",
-                "--model", invocation.model(),
-                "-C", invocation.workspacePath(),
-                "-");
+        //
+        // THE LOGIN STEP IS NOT DECORATION. codex-cli 0.146.0 does not read OPENAI_API_KEY: with
+        // the variable set and no `~/.codex/auth.json`, it exits 1 immediately printing
+        // "Error: No such file or directory (os error 2)" and no NDJSON at all — measured in the
+        // reference image on 2026-09-10, after every run of the first live dispatch died in 31
+        // seconds and was reported as MODEL_UNAVAILABLE. `codex login --with-api-key` is what
+        // writes that file, and it is what OpenAI's own documentation prescribes for programmatic
+        // use (docs/factory/EXECUTION-LAYER.md quotes it). The design knew; the code did not do it.
+        //
+        // The key crosses on a PIPE from printenv and is never interpolated into the script: argv
+        // is world-readable through /proc/<pid>/cmdline and echoed by docker inspect.
+        //
+        // A shell, because `--with-api-key` reads the key from stdin and there is no flag or
+        // variable that avoids the pipe. It is the ONLY shell in this path, `exec` replaces it so
+        // nothing lingers to interpret anything, and the two interpolations are quoted and refused
+        // if they could close the quote. The prompt still arrives on the harness's stdin, which the
+        // entrypoint redirects into the whole command; the login reads its own stdin from the pipe.
+        String script = "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
+                + " || exit " + LOGIN_FAILED + "; "
+                + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
+                + " --model " + quoted(invocation.model(), "model")
+                + " -C " + quoted(invocation.workspacePath(), "workspace path")
+                + " -";
+        return List.of("sh", "-c", script);
+    }
+
+    /**
+     * A value for the one shell line above, in single quotes, refused rather than escaped if it
+     * could close them.
+     *
+     * <p>Both values are already validated upstream — the model against a pattern with no shell
+     * metacharacter in it, the path from the run unit's own spec — so this is the second lock on a
+     * door that is already shut, placed here because that is where the shell is.
+     */
+    private static String quoted(String value, String what) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(what + " is required");
+        }
+        if (value.indexOf('\'') >= 0 || value.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException(what + " must not contain a quote or a control character");
+        }
+        return "'" + value + "'";
     }
 
     /**
@@ -279,6 +323,13 @@ public final class CodexAdapter implements HarnessAdapter {
     public TerminalOutcome classify(int exitCode, RunEventSummary seen) {
         if (exitCode == 0) {
             return TerminalOutcome.success("codex exec completed");
+        }
+        if (exitCode == LOGIN_FAILED) {
+            // Distinct from every other failure and from "the model said nothing": the harness
+            // never started, so nothing about the model or the work item is implicated. The first
+            // live dispatch spent its diagnosis on the model because this case had no name.
+            return TerminalOutcome.failure(FailureCause.HARNESS_EXIT_NONZERO,
+                    "codex login did not accept the API key, so the harness never ran");
         }
         if (!seen.sawAnyOutput()) {
             // Distinct and nameable: the model spent its whole budget and said nothing. Reported as

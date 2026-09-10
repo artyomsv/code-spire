@@ -48,24 +48,51 @@ class CodexAdapterTest {
 
     @Test
     void buildsTheVerifiedUnattendedInvocation() {
-        List<String> argv = adapter.command(invocation());
+        String script = script(adapter.command(invocation()));
 
-        assertEquals("codex", argv.get(0));
-        assertEquals("exec", argv.get(1));
-        assertTrue(argv.contains("--json"), "the worker parses NDJSON, not prose");
-        assertTrue(argv.contains("--skip-git-repo-check"));
-        assertEquals("gpt-5.6", argv.get(argv.indexOf("--model") + 1));
-        assertEquals("/workspace", argv.get(argv.indexOf("-C") + 1));
+        assertTrue(script.contains("codex exec"));
+        assertTrue(script.contains("--json"), "the worker parses NDJSON, not prose");
+        assertTrue(script.contains("--skip-git-repo-check"));
+        assertTrue(script.contains("--model 'gpt-5.6'"));
+        assertTrue(script.contains("-C '/workspace'"));
 
         // Verified against the binary: --ask-for-approval DOES NOT EXIST. An earlier draft of the
         // plan asserted it from documentation.
-        assertFalse(argv.contains("--ask-for-approval"));
+        assertFalse(script.contains("--ask-for-approval"));
 
         // danger-full-access means "Codex adds no boundary of its own", not "there is no boundary".
         // Its sandbox is bubblewrap-based and cannot initialize under Docker's default seccomp
         // profile — and it does NOT fail fast when it can't, so any other value is a lie about the
         // security posture. The container is the boundary (ADR-039).
-        assertEquals("danger-full-access", argv.get(argv.indexOf("--sandbox") + 1));
+        assertTrue(script.contains("--sandbox danger-full-access"));
+    }
+
+    /**
+     * codex-cli 0.146.0 does NOT read OPENAI_API_KEY. Measured in the reference image: with the
+     * variable set and no `~/.codex/auth.json` it exits 1 printing "No such file or directory
+     * (os error 2)" and no NDJSON, which the classifier below then had to guess at. The login step
+     * writes that file and is what OpenAI documents for programmatic use.
+     */
+    @Test
+    void logsInWithTheApiKeyBeforeRunning() {
+        String script = script(adapter.command(invocation()));
+
+        assertTrue(script.contains("codex login --with-api-key"), "the key reaches codex no other way");
+        assertTrue(script.indexOf("codex login") < script.indexOf("codex exec"),
+                "the login has to happen first; after exec there is nothing left to log in");
+        // The pipe is the point: the key is read from the environment at run time and never
+        // interpolated, so argv carries no secret for /proc or docker inspect to show.
+        assertTrue(script.contains("printenv OPENAI_API_KEY | codex login"));
+        assertFalse(script.contains("$OPENAI_API_KEY"), "expanding it would put the key in argv");
+    }
+
+    /** A run that never reached the model must not be reported as one the model failed to answer. */
+    @Test
+    void aLoginFailureIsNamedRatherThanBlamedOnTheModel() {
+        TerminalOutcome outcome = adapter.classify(120, RunEventSummary.of(List.of()));
+
+        assertEquals(FailureCause.HARNESS_EXIT_NONZERO, outcome.cause().orElseThrow());
+        assertTrue(outcome.detail().contains("login"));
     }
 
     @Test
@@ -84,8 +111,26 @@ class CodexAdapterTest {
         assertFalse(argv.contains(hostile.prompt()));
         assertFalse(String.join(" ", argv).contains("attacker.example"));
 
-        // The trailing "-" is the prompt POSITION, telling Codex to read stdin. It is not the prompt.
-        assertEquals("-", argv.get(argv.size() - 1));
+        // The trailing "-" is the prompt POSITION, telling Codex to read stdin. It is not the
+        // prompt — and it is still the last thing on the line now that a shell runs the line.
+        assertTrue(script(argv).endsWith(" -"));
+    }
+
+    /** The one shell line refuses a value that could close its quotes rather than escaping it. */
+    @Test
+    void refusesAModelNameThatCouldEscapeTheShellQuoting() {
+        HarnessInvocation hostile = new HarnessInvocation("run_abc", "do the thing", "/workspace",
+                "gpt'; rm -rf /; echo '", Map.of(), Duration.ofMinutes(30));
+
+        assertThrows(IllegalArgumentException.class, () -> adapter.command(hostile));
+    }
+
+    /** The argv is a shell and its one line; every assertion above reads that line. */
+    private static String script(List<String> argv) {
+        assertEquals("sh", argv.get(0), "the login step needs a pipe, so the argv is a shell");
+        assertEquals("-c", argv.get(1));
+        assertEquals(3, argv.size(), "one line, so there is one place to read and one to review");
+        return argv.get(2);
     }
 
     @Test
