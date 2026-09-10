@@ -387,6 +387,58 @@ class FactoryRunProjectionTest {
                 "abc1234", "spire/x", "spire-bot", null), null);
     }
 
+    /**
+     * The row a finished run is proposed from.
+     *
+     * <p>The task summary is NOT NULL here on purpose, and that is the whole test. `wasNull()`
+     * reports on the last column read, so reading the number and asking afterwards — inside an
+     * argument list that reads three more columns first — answered about the summary instead. A
+     * queued row then reported `pr_number = 0`, which reads as "already proposed", and the first
+     * live run pushed a branch that nothing proposed, silently: no log line, no error, no row.
+     */
+    @Test
+    void aQueuedRunHasNotProposedAnythingYet() {
+        String runId = "run::github:TEST-acme/app:plan-1:1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/plan-1", "spire-bot", null), "Fix the overflow in Pricer");
+
+        FactoryRunProjection.PullRequestPlan plan = projection.pullRequestPlanOf(runId).orElseThrow();
+
+        assertEquals("BUILD", plan.kind());
+        assertEquals("main", plan.baseBranch());
+        assertEquals("spire/plan-1", plan.branch());
+        assertEquals("Fix the overflow in Pricer", plan.taskSummary());
+        assertNull(plan.prNumber(), "no forge has been asked yet");
+        assertFalse(plan.alreadyProposed());
+    }
+
+    /** And once it has, it says so — the guard that stops a redelivered result asking twice. */
+    @Test
+    void aRunThatProposedNamesItsPullRequest() {
+        String runId = "run::github:TEST-acme/app:plan-2:1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/plan-2", "spire-bot", null), "Fix the overflow in Pricer");
+
+        projection.pullRequestOpened(runId, 41L, "https://github.invalid/acme/app/pull/41");
+
+        FactoryRunProjection.PullRequestPlan plan = projection.pullRequestPlanOf(runId).orElseThrow();
+        assertEquals(41L, plan.prNumber());
+        assertTrue(plan.alreadyProposed());
+    }
+
+    /** A run with no summary stored is readable too: the body builder has its own wording for it. */
+    @Test
+    void aRunWithNoTaskSummaryStillHasAPlan() {
+        String runId = "run::github:TEST-acme/app:plan-3:1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/plan-3", "spire-bot", null), null);
+
+        FactoryRunProjection.PullRequestPlan plan = projection.pullRequestPlanOf(runId).orElseThrow();
+
+        assertNull(plan.taskSummary());
+        assertNull(plan.prNumber(), "and the missing summary must not make the number look present");
+    }
+
     @Test
     void aRunIsQueuedThenRunningThenSucceeded() {
         String runId = queuedRun();

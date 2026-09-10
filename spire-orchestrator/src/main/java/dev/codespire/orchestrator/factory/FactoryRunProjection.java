@@ -560,9 +560,16 @@ public class FactoryRunProjection {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
+                // wasNull() reports on the LAST column read, so it is consumed here and not in the
+                // argument list below: the reads there happen first, and the answer would then be
+                // about task_summary. It was, and the cost was a silent one — a queued row with a
+                // task and no pull request reported pr_number = 0, alreadyProposed() said yes, and
+                // the first live run pushed a branch that nothing ever proposed, with no log line
+                // and no error to find it by.
                 long number = rs.getLong("pr_number");
+                Long proposed = rs.wasNull() ? null : number;
                 return Optional.of(new PullRequestPlan(rs.getString("kind"), rs.getString("base_branch"),
-                        rs.getString("branch"), rs.getString("task_summary"), rs.wasNull() ? null : number));
+                        rs.getString("branch"), rs.getString("task_summary"), proposed));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read the pull-request plan for " + runId, e);
