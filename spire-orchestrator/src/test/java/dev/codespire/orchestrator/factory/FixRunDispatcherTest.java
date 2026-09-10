@@ -90,7 +90,7 @@ class FixRunDispatcherTest {
             }
 
             @Override
-            public boolean queued(QueuedRun row) {
+            public boolean queued(QueuedRun row, String taskSummary) {
                 order.add("row");
                 rows.add(row);
                 return rowAccepted;

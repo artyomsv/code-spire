@@ -170,7 +170,8 @@ public class FactoryRunProjection {
      */
     public record RunView(String runId, String status, String pushedRef,
                           List<RunResult.BlockedChange> blocked,
-                          String failureCause, String failureDetail, String unitId) {
+                          String failureCause, String failureDetail, String unitId,
+                          String prUrl, String prError) {
     }
 
     /**
@@ -186,11 +187,16 @@ public class FactoryRunProjection {
      *     a blank here would render as a broken join rather than as "this run had no review"
      * @param cost unknown until the charge lands, and unknown forever if the model could not be
      *     priced. Never zero for either — see {@link RunCost}
+     * @param prUrl and {@code prError} — what came of proposing the branch. A run that pushed and
+     *     could not be proposed stays {@code succeeded}, because the work IS on the remote, so
+     *     without these two the list shows the same row either way and the missing delivery step is
+     *     discoverable only in SQL or a server log. Both null on a fix run, which proposes nothing,
+     *     and on a run that pushed nothing
      */
     public record RunListEntry(String runId, String status, String kind, String harness,
                                String model, String branch, String pushedRef, String reviewId,
                                String findingRef, String failureCause, Instant startedAt,
-                               Instant endedAt, RunCost cost) {
+                               Instant endedAt, RunCost cost, String prUrl, String prError) {
     }
 
     /**
@@ -230,7 +236,7 @@ public class FactoryRunProjection {
         StringBuilder sql = new StringBuilder("""
                 SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch,
                        r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
-                       r.started_at, r.ended_at,
+                       r.started_at, r.ended_at, r.pr_url, r.pr_error,
                        c.priced_millicents, c.unpriced_lines, c.line_count
                   FROM factory_run r
                   LEFT JOIN (
@@ -279,7 +285,8 @@ public class FactoryRunProjection {
                             rs.getString("branch"), rs.getString("pushed_ref"),
                             rs.getString("review_id"), rs.getString("finding_ref"),
                             rs.getString("failure_cause"), instant(rs, "started_at"),
-                            instant(rs, "ended_at"), costOf(rs)));
+                            instant(rs, "ended_at"), costOf(rs), rs.getString("pr_url"),
+                            rs.getString("pr_error")));
                 }
                 return List.copyOf(rows);
             }
@@ -431,7 +438,14 @@ public class FactoryRunProjection {
      *     store would then drop the command as a redelivery and the operator would hold a 201 for a
      *     run that never runs.
      */
-    public boolean queued(QueuedRun row) {
+    /**
+     * @param taskSummary one bounded line saying what the run is for, or null when there is none.
+     *     A SEPARATE parameter rather than a component of {@link QueuedRun}: that record has a
+     *     shorter convenience constructor, so a new component would stay compiling at both call
+     *     sites while silently arriving null — the exact shape CLAUDE.md records as having dropped
+     *     a wire field at every rebuild site. A missing argument is a compile error instead.
+     */
+    public boolean queued(QueuedRun row, String taskSummary) {
         String runId = row.runId();
         String harness = row.harness();
         String model = row.model();
@@ -444,8 +458,8 @@ public class FactoryRunProjection {
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
                                          harness_credential_id, kind, review_id, finding_ref,
-                                         comment_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         comment_id, task_summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -459,8 +473,17 @@ public class FactoryRunProjection {
                    -- A instead is just the mirror-image guess. Empty is the only honest answer, and
                    -- `harnessCredentialOf` already treats it as "mark nothing", which is the safe half
                    -- the feedback class states as its own rule.
+                   -- The summary follows the retry, and is deliberately NOT part of the comparison
+                   -- below. The PROMPT has never been compared, so a retry carrying a different one
+                   -- is accepted and the run executes the new prompt; leaving the old summary in
+                   -- place would then title a pull request with work the run was not asked to do.
+                   -- Comparing it instead would refuse the ordinary "fix the prompt and retry",
+                   -- which is a legitimate flow and one the prompt's own absence from the identity
+                   -- already permits. So the row follows the work rather than contradicting it, and
+                   -- what remains true is stated plainly: a re-arm CAN change what the run does.
                    SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL,
-                       ended_at = NULL, harness_credential_id = NULL
+                       ended_at = NULL, harness_credential_id = NULL,
+                       task_summary = EXCLUDED.task_summary
                  WHERE factory_run.status = ? AND factory_run.failure_cause = ?
                    AND factory_run.harness = EXCLUDED.harness AND factory_run.model = EXCLUDED.model
                    AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit
@@ -501,14 +524,117 @@ public class FactoryRunProjection {
             ps.setString(16, row.reviewId());
             ps.setString(17, row.findingRef());
             ps.setString(18, row.commentId());
-            ps.setString(19, FAILED);
-            ps.setString(20, DISPATCH_FAILED);
+            // Kept from the dispatch because nothing later can reconstruct it: the prompt is not a
+            // column, and a finished run knows only a branch name and a list of paths.
+            ps.setString(19, taskSummary);
+            ps.setString(20, FAILED);
+            ps.setString(21, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record run " + runId, e);
         }
+    }
+
+    /**
+     * What a finished run needs in order to propose its work, from the row the dispatch wrote.
+     *
+     * @param kind BUILD or FIX. A fix run pushes onto the pull request's OWN branch (ADR-040), so
+     *     it has nothing to open and asking a forge to open one would be a second proposal for a
+     *     change that is already proposed
+     * @param taskSummary null when the dispatch stored none; the body builder prints its own
+     *     wording for an absent task rather than inventing one
+     */
+    public record PullRequestPlan(String kind, String baseBranch, String branch, String taskSummary,
+                                  Long prNumber) {
+
+        /** A run that already has one does not get a second: the forge is asked once. */
+        public boolean alreadyProposed() {
+            return prNumber != null;
+        }
+    }
+
+    private static final String PULL_REQUEST_PLAN = """
+            SELECT kind, base_branch, branch, task_summary, pr_number FROM factory_run
+             WHERE run_id = ?
+            """;
+
+    /**
+     * The plan for one run, or empty when no row exists.
+     *
+     * <p><b>Throws on a read fault rather than answering empty</b>, for the reason
+     * {@link #fixRunFor} states: empty here reads as "nothing to propose", and an unreadable table
+     * must not be able to say that — the run would be recorded as having proposed nothing while its
+     * branch sits on the remote unmentioned.
+     */
+    public Optional<PullRequestPlan> pullRequestPlanOf(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(PULL_REQUEST_PLAN)) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                // wasNull() reports on the LAST column read, so it is consumed here and not in the
+                // argument list below: the reads there happen first, and the answer would then be
+                // about task_summary. It was, and the cost was a silent one — a queued row with a
+                // task and no pull request reported pr_number = 0, alreadyProposed() said yes, and
+                // the first live run pushed a branch that nothing ever proposed, with no log line
+                // and no error to find it by.
+                long number = rs.getLong("pr_number");
+                Long proposed = rs.wasNull() ? null : number;
+                return Optional.of(new PullRequestPlan(rs.getString("kind"), rs.getString("base_branch"),
+                        rs.getString("branch"), rs.getString("task_summary"), proposed));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the pull-request plan for " + runId, e);
+        }
+    }
+
+    /**
+     * Record the pull request a run proposed, clearing any earlier failure to propose one.
+     *
+     * <p>Clearing is deliberate: the failure column answers "why is there no pull request", and
+     * once there is one the question is gone. A retry that succeeds must not leave the reason its
+     * predecessor failed sitting beside a live link.
+     */
+    public void pullRequestOpened(String runId, long number, String url) {
+        update("UPDATE factory_run SET pr_number = ?, pr_url = ?, pr_error = NULL WHERE run_id = ?",
+                ps -> {
+                    ps.setLong(1, number);
+                    ps.setString(2, url);
+                    ps.setString(3, runId);
+                }, runId, "record the pull request for");
+    }
+
+    /**
+     * Record WHY a finished run has no pull request.
+     *
+     * <p>The run keeps its status. It pushed; that is what succeeded means here, and a proposal
+     * that could not be made afterwards does not unmake it.
+     */
+    public void pullRequestFailed(String runId, String detail) {
+        update("UPDATE factory_run SET pr_error = ? WHERE run_id = ?", ps -> {
+            ps.setString(1, detail);
+            ps.setString(2, runId);
+        }, runId, "record the pull-request failure for");
+    }
+
+    /** One small write, with the same failure wording as every other. */
+    private void update(String sql, SqlWrite write, String runId, String what) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            write.accept(ps);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to " + what + " " + runId, e);
+        }
+    }
+
+    /** A prepared-statement filler that may throw, since {@link java.util.function.Consumer} may not. */
+    @FunctionalInterface
+    private interface SqlWrite {
+        void accept(PreparedStatement ps) throws SQLException;
     }
 
     private static final String FIX_RUN_FOR_COMMENT = """
@@ -781,7 +907,8 @@ public class FactoryRunProjection {
 
     public Optional<RunView> find(String runId) {
         String sql = """
-                SELECT status, pushed_ref, blocked_changes, failure_cause, failure_detail, unit_id
+                SELECT status, pushed_ref, blocked_changes, failure_cause, failure_detail, unit_id,
+                       pr_url, pr_error
                   FROM factory_run WHERE run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -793,7 +920,7 @@ public class FactoryRunProjection {
                 return Optional.of(new RunView(runId, rs.getString("status"), rs.getString("pushed_ref"),
                         BlockedChanges.fromJson(rs.getString("blocked_changes")),
                         rs.getString("failure_cause"), rs.getString("failure_detail"),
-                        rs.getString("unit_id")));
+                        rs.getString("unit_id"), rs.getString("pr_url"), rs.getString("pr_error")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read run " + runId, e);

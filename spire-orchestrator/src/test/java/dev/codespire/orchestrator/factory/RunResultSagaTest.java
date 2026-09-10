@@ -53,7 +53,43 @@ class RunResultSagaTest {
                 // nothing: what this suite asserts is the saga's ordering, not the pool's health
             }
         };
+        // The same trap, a third collaborator later: this one reads the run's row and then talks to
+        // a forge, so a null field is an NPE and a real one is a database call and an HTTP call from
+        // a plain unit test. It records the order instead, which is what this suite is about.
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override
+            public void propose(RunResult result) {
+                // nothing by default: the proposal is asserted in its own test, and a fake that
+                // wrote into the projection's list would change what every other test here reads
+            }
+        };
         return saga;
+    }
+
+    /**
+     * The proposal reads the row the projection has just written — its branch, its base and the
+     * task line stored at dispatch. Called first it would read the QUEUED row, whose pushed ref is
+     * still null, and propose nothing for a run that had in fact pushed.
+     */
+    @Test
+    void theProposalRunsAfterTheProjectionHasWrittenTheRow() {
+        RecordingProjection projection = new RecordingProjection();
+        List<Integer> appliedWhenProposed = new ArrayList<>();
+        RunResultSaga saga = saga(projection, new RecordingCharges());
+        // Named apart from the field it would otherwise shadow: inside the subclass below,
+        // `projection` resolves to FactoryPullRequests' own injected field, not to this local.
+        RecordingProjection recorder = projection;
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override
+            public void propose(RunResult result) {
+                appliedWhenProposed.add(recorder.applied.size());
+            }
+        };
+
+        saga.on(new RunResult.RunFinished("run::github:TEST-acme/app:s:1", "refs/heads/spire/s",
+                List.of("src/Foo.java"), List.of(), Map.of("input", 10L), false));
+
+        assertEquals(List.of(1), appliedWhenProposed, "the row must exist before it is read");
     }
 
     @Test

@@ -261,8 +261,13 @@ class RunUnitBuilderTest {
         RunUnitSpec unit = unit();
 
         assertEquals(HARNESS_KEY, unit.agent().environment().get("OPENAI_API_KEY"));
-        assertTrue(unit.agent().argv().contains("/workspace"));
-        assertTrue(unit.agent().argv().contains("codex"));
+        // The codex arm's argv is a shell and one line, because `codex login --with-api-key` reads
+        // the key from stdin and nothing else avoids the pipe. The workspace and the harness are
+        // still both named in it, which is what this test is about; CodexAdapterTest owns the line's
+        // shape.
+        String line = String.join(" ", unit.agent().argv());
+        assertTrue(line.contains("/workspace"), line);
+        assertTrue(line.contains("codex exec"), line);
     }
 
     @Test
@@ -297,8 +302,10 @@ class RunUnitBuilderTest {
         // a hyphen would be parsed as an option.
         RunUnitSpec unit = unit();
 
-        assertFalse(unit.agent().argv().contains("fix the typo"));
-        assertEquals("-", unit.agent().argv().getLast());
+        assertFalse(String.join(" ", unit.agent().argv()).contains("fix the typo"));
+        // The trailing "-" is the prompt POSITION, telling Codex to read stdin. It is not the
+        // prompt, and it is still the last thing on the line now that a shell runs the line.
+        assertTrue(unit.agent().argv().getLast().endsWith(" -"), unit.agent().argv().getLast());
     }
 
     /**

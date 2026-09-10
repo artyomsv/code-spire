@@ -133,7 +133,7 @@ class RunResourceTest {
         String runId = "run::github:TEST-acme/app:" + subject + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
                 "abc1234", "feature/login", "spire-bot", null)
-                .asFixFor(reviewId, "thread-" + subject, "comment-" + subject));
+                .asFixFor(reviewId, "thread-" + subject, "comment-" + subject), null);
         return runId;
     }
 
@@ -267,7 +267,7 @@ class RunResourceTest {
     private String registeredRun() {
         String runId = "run::github:TEST-acme/app:transcript-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
-                "abc1234", "spire/x", "spire-bot", null));
+                "abc1234", "spire/x", "spire-bot", null), null);
         return runId;
     }
 

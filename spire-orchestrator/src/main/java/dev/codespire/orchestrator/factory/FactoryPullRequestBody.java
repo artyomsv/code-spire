@@ -57,6 +57,9 @@ final class FactoryPullRequestBody {
      */
     static final String MARK = "<!-- codespire-factory-run -->";
 
+    /** How much of a dispatch prompt is kept for the title and the one body line that print it. */
+    private static final int MAX_STORED_CHARS = 500;
+
     /** The default fence. Widened when a path would close it — see {@link #fenceFor}. */
     private static final String BACKTICKS = "```";
 
@@ -106,6 +109,21 @@ final class FactoryPullRequestBody {
         body.append("**Run:** `").append(runId).append("`\n\n");
         body.append(paths(changedPaths));
         return body.toString();
+    }
+
+    /**
+     * The one line of a dispatch prompt worth keeping, or null when the prompt held none.
+     *
+     * <p>Stored at dispatch because nothing later can reconstruct it: the prompt is not a column —
+     * a fix prompt is model-derived and may be 64KB — and a finished run knows only a branch name
+     * and a list of paths. Bounded here rather than by each caller so that the rule for cutting
+     * model-derived text lives beside the two places that print it.
+     *
+     * <p>Generous compared with the title and the body lines, which bound it again for their own
+     * width. This bound is about what is worth STORING; theirs is about what fits.
+     */
+    static String summaryOf(String prompt) {
+        return oneLine(prompt, MAX_STORED_CHARS, null);
     }
 
     /**
