@@ -29,6 +29,11 @@ quarkus:
       # never receives the state cookie.
       redirect-path: /gw/auth/callback
       restore-path-after-redirect: true
+      # How long a session may go on being RENEWED before a real re-authentication. Inert unless
+      # `token.refresh-expired` below is on, which is why the two are one change. Must match the
+      # other three services: a session is per prefix, so a shorter one here lapses on its own and
+      # the dashboard's gateway feed is what notices.
+      session-age-extension: 8H
     # MANDATORY: Keycloak puts realm_access in the ACCESS token while cookie mode reads the ID token.
     # Omit this and login succeeds with ZERO roles — every @RolesAllowed denies every operator, which
     # presents as a broken app rather than a security error.
@@ -39,6 +44,15 @@ quarkus:
     # login fails outright with "No Audience (aud) claim present".
     token:
       audience: ${SPIRE_OIDC_CLIENT_ID:spire-gateway}
+      # Renew the session from the refresh token rather than bouncing the whole window through the
+      # identity provider at every ID-token expiry. Off by default in Quarkus; leaving it off made the
+      # dashboard reload itself every five minutes and discard unsaved form input — measured
+      # 2026-09-10, see docs/superpowers/specs/2026-09-10-session-renewal-and-unsaved-work-design.md.
+      # This service's /gw session is one of the two the dashboard probes on every socket close, so an
+      # un-renewed session here triggers that reload just as the orchestrator's does.
+      refresh-expired: true
+      # Refresh before expiry, so the cookie is never momentarily absent.
+      refresh-token-time-skew: 60S
   application:
     name: spire-gateway
   http:

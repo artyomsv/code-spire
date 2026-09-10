@@ -23,12 +23,23 @@ quarkus:
       # sit INSIDE cookie-path or the callback never receives the state cookie.
       redirect-path: /wk/auth/callback
       restore-path-after-redirect: true
+      # How long a session may go on being RENEWED before a real re-authentication. Inert unless
+      # `token.refresh-expired` below is on. Must match the other three services: a session is per
+      # prefix, and the dashboard probes /wk on every socket close.
+      session-age-extension: 8H
     # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
     roles:
       source: accesstoken
     # Needs the realm's audience mapper, or login fails with "No Audience (aud) claim present".
     token:
       audience: ${SPIRE_OIDC_CLIENT_ID:spire-review-worker}
+      # Renew the session from the refresh token rather than bouncing the whole window through the
+      # identity provider at every ID-token expiry. Off by default in Quarkus; leaving it off made the
+      # dashboard reload itself every five minutes and discard unsaved form input — measured
+      # 2026-09-10, see docs/superpowers/specs/2026-09-10-session-renewal-and-unsaved-work-design.md.
+      refresh-expired: true
+      # Refresh before expiry, so the cookie is never momentarily absent.
+      refresh-token-time-skew: 60S
   application:
     name: spire-review-worker
   http:

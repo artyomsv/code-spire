@@ -344,6 +344,16 @@ UI work follows the backends. The ADR and `SECURITY.md` rewrite land **with the 
 - **Logout and session lifetime.** Configure refresh/session-age extension against the ~5-minute default,
   and wire RP-initiated logout per service — three self-contained cookies otherwise survive an IdP logout.
   Or record "expiry only, no logout in v1" in the ADR.
+  > **Done — but late, and the delay had a visible cost (2026-09-10).** Logout was wired at the time.
+  > The session-lifetime half was neither configured **nor** recorded, so this item was closed by one
+  > of its two halves while reading as closed entirely. What that bought: the ~5-minute default stood,
+  > and §3.4's prediction — *"every socket dies every five minutes"* — came true in the operator's
+  > hands as a dashboard that reloaded itself on a timer and silently discarded whatever was typed
+  > into a form. Fixed by `token.refresh-expired` + `refresh-token-time-skew` +
+  > `authentication.session-age-extension` on all four services, guarded by `OidcSessionsAreRenewedTest`.
+  > See `docs/superpowers/specs/2026-09-10-session-renewal-and-unsaved-work-design.md`.
+  > **The lesson is about the "Or", not about OIDC:** an item offering "configure it **or** record the
+  > default" is closed by neither until one of them is actually written down.
 - **Dev IdP (D5).** Bundled Keycloak pinned, host port in the **34xxx** range, behind `--profile idp`,
   with `depends_on` + healthcheck and connection-retry tuning. External option via
   `SPIRE_OIDC_AUTH_SERVER_URL`. Both consume `infra/keycloak/realm-spire.json` — clients, both roles, an

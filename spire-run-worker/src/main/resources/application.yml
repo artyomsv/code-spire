@@ -21,11 +21,22 @@ quarkus:
       java-script-auto-redirect: false
       redirect-path: /rw/auth/callback
       restore-path-after-redirect: true
+      # How long a session may go on being RENEWED before a real re-authentication. Inert unless
+      # `token.refresh-expired` below is on. Kept identical to the other three so the posture is one
+      # posture — this service serves only health today, and the point is what is added later.
+      session-age-extension: 8H
     # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
     roles:
       source: accesstoken
     token:
       audience: ${SPIRE_OIDC_CLIENT_ID:spire-run-worker}
+      # Renew the session from the refresh token rather than bouncing the whole window through the
+      # identity provider at every ID-token expiry. Off by default in Quarkus; leaving it off made the
+      # dashboard reload itself every five minutes and discard unsaved form input — measured
+      # 2026-09-10, see docs/superpowers/specs/2026-09-10-session-renewal-and-unsaved-work-design.md.
+      refresh-expired: true
+      # Refresh before expiry, so the cookie is never momentarily absent.
+      refresh-token-time-skew: 60S
   application:
     name: spire-run-worker
   http:
