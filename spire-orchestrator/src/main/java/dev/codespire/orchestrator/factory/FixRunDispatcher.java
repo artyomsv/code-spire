@@ -209,7 +209,11 @@ public class FixRunDispatcher {
         if (!runs.queued(new FactoryRunProjection.QueuedRun(planned.runId(), harness, model,
                 planned.baseBranch(), planned.baseCommit(), planned.branch(),
                 account.get().botUsername(), credential.id())
-                .asFixFor(reviewId, threadRef, commentId))) {
+                .asFixFor(reviewId, threadRef, commentId),
+                // Kept for the same reason as a build run's, though a fix run proposes nothing: the
+                // runs list shows what each run was asked to do, and a blank there for half the rows
+                // would read as "nothing was asked" rather than "this one pushes onto an open one".
+                FactoryPullRequestBody.summaryOf(command.prompt()))) {
             return new Refused("a fix run is already recorded at " + planned.runId()
                     + ", so nothing new was dispatched");
         }

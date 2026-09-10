@@ -29,6 +29,9 @@ public class RunResultSaga {
     @Inject
     RunCredentialFeedback credentials;
 
+    @Inject
+    FactoryPullRequests pullRequests;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {
@@ -48,6 +51,10 @@ public class RunResultSaga {
             // first would let a ledger outage delay a terminal status that is already known.
             charges.record(result);
             credentials.reactTo(result);
+            // LAST, and after the projection on purpose: it reads the row the projection just
+            // wrote, it talks to a forge, and it must not delay the terminal status an operator is
+            // waiting on. It records its own failures and throws none of them back here.
+            pullRequests.propose(result);
         } finally {
             MDC.remove(MDC_RUN_ID);
         }

@@ -48,7 +48,7 @@ class FactoryRunListTest {
     private String buildRun(String subject) {
         String runId = "run::github:TEST-WS/TEST-REPO:" + subject + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL",
-                "main", "TESTSHA0", "spire/" + subject, "machine-account", null)));
+                "main", "TESTSHA0", "spire/" + subject, "machine-account", null), null));
         return runId;
     }
 
@@ -56,7 +56,7 @@ class FactoryRunListTest {
         String runId = "run::github:TEST-WS/TEST-REPO:" + subject + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL",
                 "main", "TESTSHA0", "feature/login", "machine-account", null)
-                .asFixFor(REVIEW, findingRef, "TEST-comment-" + subject)));
+                .asFixFor(REVIEW, findingRef, "TEST-comment-" + subject), null));
         return runId;
     }
 

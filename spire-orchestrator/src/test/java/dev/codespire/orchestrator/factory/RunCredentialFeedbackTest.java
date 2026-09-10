@@ -66,7 +66,7 @@ class RunCredentialFeedbackTest {
     private String runOn(UUID credential) {
         String runId = "run::github:TEST-acme/app:cred-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-RUN-MODEL", "main",
-                "abc1234", "spire/x", "spire-bot", credential));
+                "abc1234", "spire/x", "spire-bot", credential), null);
         return runId;
     }
 

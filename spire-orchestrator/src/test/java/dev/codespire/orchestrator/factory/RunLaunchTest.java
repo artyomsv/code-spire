@@ -71,7 +71,7 @@ class RunLaunchTest {
             // The row is the CALLER's write, deliberately, so that a run can never be on the bus
             // without one. If this class ever reaches it, that ordering has been lost.
             @Override
-            public boolean queued(QueuedRun row) {
+            public boolean queued(QueuedRun row, String taskSummary) {
                 throw new AssertionError("the row is written by the caller, before the launch");
             }
         };

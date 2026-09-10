@@ -151,7 +151,8 @@ public class RunResource {
         // that is queued, running or already finished, and dispatching over it would be dropped by
         // the worker's claim as a redelivery — a 201 for a run that never runs. So: 409, naming it.
         if (!projection.queued(new FactoryRunProjection.QueuedRun(runId, in.harness(), in.model(),
-                in.baseBranch(), in.baseCommit(), branch, account.botUsername(), credential.id()))) {
+                in.baseBranch(), in.baseCommit(), branch, account.botUsername(), credential.id()),
+                FactoryPullRequestBody.summaryOf(in.prompt()))) {
             throw conflict(alreadyExists(runId));
         }
         dispatch(runId, command);
