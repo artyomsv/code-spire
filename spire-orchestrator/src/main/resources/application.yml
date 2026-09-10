@@ -26,6 +26,10 @@ quarkus:
       # sit INSIDE cookie-path or the callback never receives the state cookie.
       redirect-path: /api/auth/callback
       restore-path-after-redirect: true
+      # How long a session may go on being RENEWED before a real re-authentication. Inert on its own
+      # — Quarkus honours it only when `token.refresh-expired` is on, which is why the two are
+      # written as one change. See the token block below for what this cost when it was missing.
+      session-age-extension: 8H
     # Without this, login succeeds with ZERO roles and every @RolesAllowed denies every operator.
     roles:
       source: accesstoken
@@ -38,6 +42,20 @@ quarkus:
     # Needs the realm's audience mapper, or login fails with "No Audience (aud) claim present".
     token:
       audience: ${SPIRE_OIDC_CLIENT_ID:spire-orchestrator}
+      # Renew the session from the refresh token instead of sending the whole WINDOW through the
+      # identity provider every time the ID token expires. Off by default in Quarkus, and the cost of
+      # leaving it off was measured on 2026-09-10: Keycloak's default ID-token lifespan is five
+      # minutes, so every five minutes the session was invalidated, all three of the dashboard's
+      # sockets were auto-closed, and the SPA answered by assigning `window.location` to a login. The
+      # provider's own session was still alive, so it re-authenticated silently and returned to the
+      # same screen — a page that reloaded itself every five minutes, for no stated reason, throwing
+      # away whatever the operator had typed into a form. See
+      # docs/superpowers/specs/2026-09-10-session-renewal-and-unsaved-work-design.md.
+      refresh-expired: true
+      # Refresh BEFORE expiry, not at it, so the session cookie is never momentarily absent. Setting
+      # this alone would also enable `refresh-expired`; both are written out because a reader must not
+      # have to know that to see that renewal is on.
+      refresh-token-time-skew: 60S
   application:
     name: spire-orchestrator
   http:

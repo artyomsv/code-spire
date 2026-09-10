@@ -102,8 +102,27 @@ Each has a runbook mode. None has been run by an operator.
 | The whole M1 lifecycle against a real forge | **Mode Q** | Cancel, steer, the watchdog, the push gate and the charge ledger have only ever met a WireMock LLM and a local origin |
 | Corporate-only bundle → the failure it produces | Mode R §5 | The documented trap (internal forge works, model API fails) is asserted nowhere; it is the mistake an operator will actually make |
 | A private-registry pull | Mode S §4 | Nothing pulls from a private registry in any test. `authFor` and the attachment are unit-tested; the *pull* is not |
+| **OIDC sessions actually renew instead of re-authenticating** | **Mode J check 11** (2026-09-10) | The bug it fixes needs a real browser, a real Keycloak and **fifteen elapsed minutes**. No suite here has any of the three: there are zero WebSocket client tests, and nothing observes a token reaching its `exp`. `OidcSessionsAreRenewedTest` asserts the four `application.yml` files *say* renewal is on — it cannot assert Quarkus *does* it |
 
 **Evidence needed.** An operator pass per mode. These are cheap and the runbooks are written.
+
+**The renewal row is the newest and the least settled**, so it says what would settle it precisely.
+Two things are asserted by nothing:
+
+1. **That `token.refresh-expired` applies at all under `application-type: hybrid`.** The Quarkus
+   reference scopes the option to `ApplicationType#WEB_APP`; all four services are `hybrid`. Hybrid
+   is web-app plus service and the web-app leg *should* honour it, but this project has twice shipped
+   a setting that read as applied and was not — the `${VAR}` with no default, and the `ARG` BuildKit
+   ignored. Both were green.
+2. **That the session cookie still fits.** Renewal requires the refresh token in the cookie. The
+   phase-0 spike measured the cookie **already chunked** with two roles and no custom claims
+   (`docs/D10-AUTH-PLAN.md:239-240`), and proxy buffer sizing is itself unchecked
+   (`techdebt/global/4-3-…`).
+
+**Pass looks like:** dev stack up with authentication on, a value typed into a Settings form, the tab
+left alone for **15 minutes**, and afterwards the value still present *and*
+`docker logs spire-orchestrator-dev | grep "no longer valid"` showing no new line in that window.
+Until that has been run, the reload fix is a config change nobody has watched work.
 
 ---
 

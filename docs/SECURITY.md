@@ -36,6 +36,24 @@ Trust boundaries, authn/authz, encryption, and secrets.
   dashboard calls go through one wrapper that carries the script marker and sends a refusal to the
   login of **the service that refused** — sending it to the dashboard's own login re-mints a cookie
   that was never missing.
+- **A session is RENEWED from its refresh token, not re-authenticated (2026-09-10).** All four
+  services set `token.refresh-expired: true`, `token.refresh-token-time-skew: 60S` and
+  `authentication.session-age-extension: 8H`. **This is a deliberate loosening and it is stated here
+  rather than left implicit:** a signed-in operator is not challenged again for up to eight hours,
+  bounded by the realm's SSO Session Max. The realm's SSO Session Idle still ends an idle session,
+  and a logout still ends every session including the provider's, so this extends an *active*
+  session, not an abandoned one. Quarkus ships the option off and says an admin-level decision may be
+  required; this is that decision. **What it buys is not convenience.** With it off the session died
+  at the ID token's `exp` — five minutes on a default Keycloak — Quarkus auto-closed all four
+  WebSockets, and the dashboard answered by assigning `window.location` to a login that completed
+  silently and returned to the same screen. The operator saw a page reload itself every five minutes
+  for no stated reason and lose whatever they had typed. An interface that discards work on a timer
+  teaches operators to distrust it, and a security control nobody trusts is one they route around.
+  Measured, reproduced and analysed in
+  `docs/superpowers/specs/2026-09-10-session-renewal-and-unsaved-work-design.md`; enforced by
+  `OidcSessionsAreRenewedTest` (`spire-arch`), which fails the build if any service drops any of the
+  three — `refresh-expired` is inert without `session-age-extension`, so a half-applied revert reads
+  exactly like an applied one. **Not yet observed working on a live stack** — see `docs/UNVERIFIED.md` §B.
 - **RBAC:** two roles — `spire-viewer` (read **reviews**) and `spire-admin` (everything else: manage
   config, replay, rules). Enforced with `@RolesAllowed`. Roles map from the IdP, read from the
   **access** token (Keycloak puts `realm_access` there; reading the ID token yields an operator with

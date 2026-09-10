@@ -96,6 +96,17 @@ tasks.test {
         }
     ).withPropertyName("moduleLicences").withPathSensitivity(PathSensitivity.RELATIVE)
 
+    // OidcSessionsAreRenewedTest DERIVES its service list by walking the tree for application.yml
+    // files that declare an OIDC client, so every one of them is a real input. Undeclared, switching
+    // `refresh-expired` back off changes no input of this task, and Gradle reports UP-TO-DATE — a
+    // cached PASS from the very edit the check exists to catch. The defect it guards ran for weeks
+    // behind a fully green build, so a cached green here would be indistinguishable from the bug.
+    inputs.files(
+        fileTree(rootProject.projectDir) {
+            include("spire-*/src/main/resources/application.yml")
+        }
+    ).withPropertyName("serviceConfiguration").withPathSensitivity(PathSensitivity.RELATIVE)
+
     // ApkUpgradeIsNotCachedTest DERIVES its file list by walking the tree for Dockerfiles, so every
     // Dockerfile and the docker workflow are real inputs. Undeclared, adding an image that upgrades
     // its base packages without busting the layer cache -- or dropping the per-build value from the
