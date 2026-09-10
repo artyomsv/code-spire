@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Runs, { isRunUnfinished, runStatusLabel, runStatusPill } from './Runs';
@@ -29,9 +29,44 @@ function run(overrides: Partial<RunListEntry> = {}): RunListEntry {
     startedAt: '2026-09-04T10:00:00Z',
     endedAt: '2026-09-04T10:05:00Z',
     cost: { millicents: 4600 },
+    prUrl: null,
+    prError: null,
     ...overrides,
   };
 }
+
+describe('what came of proposing the branch', () => {
+  /**
+   * A run that pushed and could not be proposed stays `succeeded` — the work IS on the remote — so
+   * the status column reads the same either way. Reported in review: both outcomes rendered
+   * identically and the missing delivery step was discoverable only in SQL or a server log.
+   */
+  it('links the pull request a run opened', async () => {
+    show([run({ prUrl: 'https://github.com/acme/app/pull/29' })]);
+
+    const link = await screen.findByRole('link', { name: '#29' });
+    expect(link).toHaveAttribute('href', 'https://github.com/acme/app/pull/29');
+  });
+
+  it('says a succeeded run was not proposed, and why on the hover', async () => {
+    show([run({ prError: '403 Forbidden: pull requests are disabled' })]);
+
+    const cell = await screen.findByText('not proposed');
+    expect(screen.getByTitle('403 Forbidden: pull requests are disabled')).toBeInTheDocument();
+    // The run itself did not fail: the branch is on the remote and the status must keep saying so.
+    // Read from the ROW, because "Succeeded" is also one of the filter's options.
+    const row = cell.closest('tr') as HTMLElement;
+    expect(within(row).getByText('Succeeded')).toBeInTheDocument();
+  });
+
+  /** A fix run proposes nothing by design, so a dash — not an error, since nothing is missing. */
+  it('shows a dash for a run that proposed nothing', async () => {
+    show([run({ kind: 'FIX', reviewId: 'review::acme/app#7', findingRef: 'thread-1' })]);
+
+    await screen.findByText('FIX');
+    expect(screen.queryByText('not proposed')).not.toBeInTheDocument();
+  });
+});
 
 function show(rows: RunListEntry[]) {
   vi.spyOn(api, 'getRuns').mockResolvedValue(rows);
@@ -98,13 +133,15 @@ describe('the runs screen', () => {
    * the conflation the charge ledger was built to remove.
    */
   it('renders an unknown cost as a dash rather than as free', async () => {
-    // A FIX run, so the review column renders a LINK rather than its own dash -- leaving the
-    // cost cell as the only em dash on the row. With a build run this asserted 'some dash exists',
-    // which the empty review column satisfies whatever the cost renders as.
+    // Scoped to the COST cell, the last one on the row. Asserting "some dash exists" was satisfied
+    // by whichever column happened to be empty -- once by the review column, and again by the
+    // proposal column when that was added, each time leaving the cost free to render as it liked.
     show([run({ status: 'running', kind: 'FIX', reviewId: 'review::acme/web#412',
       cost: { millicents: null } })]);
 
-    expect(await screen.findByText('—')).toBeTruthy();
+    const row = (await screen.findByText('review::acme/web#412')).closest('tr') as HTMLElement;
+    const cells = within(row).getAllByRole('cell');
+    expect(cells[cells.length - 1]).toHaveTextContent('—');
     expect(screen.queryByText('$0.000')).toBeNull();
   });
 

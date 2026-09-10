@@ -93,6 +93,41 @@ export function reviewPath(reviewId: string): string | null {
  * useful thing to show, so it is shown unlinked rather than dropped. The em dash is the third
  * case and a different fact: a BUILD run was never for a review at all.
  */
+/**
+ * What came of proposing this run's branch: a link to the pull request, or why there is none.
+ *
+ * <p>The run's own status cannot answer it. Proposing happens AFTER the push succeeded and can fail
+ * on its own — a narrowed token, a forge that forbids pull requests — and the run stays succeeded
+ * either way, because the work is on the remote. Without this cell both outcomes render identically
+ * and the missing delivery step is discoverable only in SQL or a server log.
+ *
+ * <p>A fix run proposes nothing and shows a dash, not an error: its change is already on a pull
+ * request's own branch (ADR-040), so there is nothing missing to report.
+ */
+function ProposalCell({ run }: { run: RunListEntry }) {
+  if (run.prUrl) {
+    return (
+      <a className="mono" href={run.prUrl} target="_blank" rel="noreferrer">
+        {prNumberOf(run.prUrl)}
+      </a>
+    );
+  }
+  if (run.prError) {
+    return (
+      <span className="wh-nosecret" title={run.prError}>
+        <span className="cell-cap">not proposed</span>
+      </span>
+    );
+  }
+  return <span className="prov-sub">—</span>;
+}
+
+/** The forge's own number, from the URL it gave us — every forge ends the address with it. */
+function prNumberOf(url: string): string {
+  const last = url.split('/').filter(Boolean).pop();
+  return last && /^\d+$/.test(last) ? `#${last}` : url;
+}
+
 function ReviewCell({ reviewId }: { reviewId: string | null }) {
   if (!reviewId) {
     return <span className="prov-sub">—</span>;
@@ -179,6 +214,7 @@ export default function Runs() {
                 <th>Status</th>
                 <th>For</th>
                 <th>Branch</th>
+                <th>Proposed</th>
                 <th className="cell-r">Cost</th>
               </tr>
             </thead>
@@ -202,6 +238,9 @@ export default function Runs() {
                     <ReviewCell reviewId={run.reviewId} />
                   </td>
                   <td className="mono">{run.pushedRef ?? run.branch}</td>
+                  <td>
+                    <ProposalCell run={run} />
+                  </td>
                   {/*
                     formatCost renders null as an em dash, which is the whole point: unknown is not
                     zero, and a run still going has no charge yet. ADR-023 reaching the screen.

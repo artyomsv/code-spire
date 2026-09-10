@@ -426,6 +426,30 @@ class FactoryRunProjectionTest {
         assertTrue(plan.alreadyProposed());
     }
 
+    /**
+     * A re-armed dispatch carries the retry's own task line.
+     *
+     * <p>The prompt has never been part of the re-arm's identity comparison, so a retry with a
+     * different one is accepted and the run executes it. Reported in review with a reproduction:
+     * queue Task A, fail the dispatch, queue Task B — the row was re-armed for B and still answered
+     * A, so the pull request the successful run opened would have been titled with work nobody
+     * asked for.
+     */
+    @Test
+    void aReArmedDispatchTakesTheRetrysTaskSummary() {
+        String runId = "run::github:TEST-acme/app:plan-4:1";
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
+                "abc1234", "spire/plan-4", "spire-bot", null), "Task A: fix the overflow");
+        projection.dispatchFailed(runId, "the broker refused the record");
+
+        assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6",
+                "main", "abc1234", "spire/plan-4", "spire-bot", null), "Task B: fix the rounding"),
+                "a definite dispatch failure re-arms");
+
+        assertEquals("Task B: fix the rounding",
+                projection.pullRequestPlanOf(runId).orElseThrow().taskSummary());
+    }
+
     /** A run with no summary stored is readable too: the body builder has its own wording for it. */
     @Test
     void aRunWithNoTaskSummaryStillHasAPlan() {

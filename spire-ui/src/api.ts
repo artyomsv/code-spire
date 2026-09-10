@@ -938,7 +938,14 @@ export interface RunCost {
   millicents: number | null;
 }
 
-/** One row of the runs list. `reviewId`/`findingRef` are null for anything that is not a fix. */
+/**
+ * One row of the runs list. `reviewId`/`findingRef` are null for anything that is not a fix.
+ *
+ * `prUrl` and `prError` are what came of proposing the branch. A run that pushed and could not be
+ * proposed stays `succeeded` — the work IS on the remote — so without these two the row reads the
+ * same whether a pull request opened or the proposal was refused. Both null on a fix run, which
+ * proposes nothing because its change is already on one, and on a run that pushed nothing.
+ */
 export interface RunListEntry {
   runId: string;
   status: RunStatus;
@@ -953,6 +960,8 @@ export interface RunListEntry {
   startedAt: string | null;
   endedAt: string | null;
   cost: RunCost;
+  prUrl: string | null;
+  prError: string | null;
 }
 
 export interface RunFilter {
