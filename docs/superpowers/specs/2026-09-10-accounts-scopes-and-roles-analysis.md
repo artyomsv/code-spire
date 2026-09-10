@@ -455,6 +455,15 @@ while claiming to say what the token can do.
   vocabulary (§4).
 - Whether the Jira/Confluence adapters work at all with a **scoped** Atlassian token via the
   `api.atlassian.com/ex/…` base URL (§4). Today's adapters assume classic tokens on the site host.
+- **An allowlist is typed as a handle and stored as an id** (operator, 2026-09-10, after adding
+  themselves to one by hand). The stable id is the only safe thing to STORE — a handle can be
+  released and re-registered by somebody else, which is why `/fix` matches on the id and says so in
+  its refusal — but it is the wrong thing to ASK FOR and the wrong thing to SHOW. Typing `@artyomsv`
+  should resolve to that account's id through the same reviewer credential the row already holds,
+  store the id, and render the handle back beside it. Today the form asks for `3218389` and the
+  Policy cell reads `1`, so an operator cannot tell whose id it is without going to the forge. It
+  belongs with whichever option §6 builds, because resolution needs an account and the account is
+  what that section moves.
 - Per-repository push-rights verification (spec §11) — belongs to the repository screen and to M3.
 - A scheduled re-check of stored credentials; the `code` provider's silent credential rejection
   (`techdebt/spire-context-code/3-3-…`).

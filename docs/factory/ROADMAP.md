@@ -380,6 +380,26 @@ Two things the first draft assumed and had to be designed instead:
 - **Policy re-resolved at every phase transition** (FR-F30), with the profile version pinned at
   admission, lowest-label-wins, and retirement when a tracker issue moves repository.
 
+**From the first live `/fix` (2026-09-10): write access is the rule, not a hand-kept list.** The
+operator posted `/fix` on their own pull request, in their own repository, and was refused: the
+reviewer account's allowlist was empty, and `IntegrationSaga.requestFix` denies by default because
+"review everyone" is the right default for one spend-capped model call and the wrong one for a
+command that pushes as the machine account. Their objection is recorded here because it is right in
+shape and wrong in wording, and M3 owns the actor allowlist that settles it:
+
+- **"The pull request's author should be allowed" is not safe as written.** On a public repository
+  that means any stranger — AUTONOMY.md Rule 3's drive-by contributor, verbatim. Half of it is
+  already blocked one layer down: `FixTargets.whyNotPushable` refuses a fork, and a stranger's pull
+  request is almost always a fork.
+- **The rule that IS safe is "the commenter can already push to this repository"** — the owner,
+  admins, collaborators, and same-repository authors. For them the command grants no power over the
+  code they lack; what it grants is the operator's model spend and a commit signed by the machine
+  account, and both are bounded by the spend cap and by FR-F32's per-finding and per-review caps.
+  All three forges expose a per-repository permission endpoint that answers it, which is the same
+  measurement spec §11 defers for the repository screen.
+- **The hand-kept list stays as the override**, for granting the command to somebody with no write
+  access, and for taking it away from somebody who has it.
+
 **Exit criteria.** A ticket labelled at each of three profiles produces three visibly different
 journeys. A label naming a profile above the ceiling is clamped and says so. A label applied by an
 actor outside the allowlist is ignored, **and so is one whose applier cannot be determined**. Lowering
