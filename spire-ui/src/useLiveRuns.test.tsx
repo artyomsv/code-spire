@@ -32,13 +32,36 @@ afterEach(() => {
 });
 
 describe('live runs', () => {
-  it('requests an unfiltered newest-200 snapshot and opens the runs socket', async () => {
+  it.each([['http:', 'ws:'], ['https:', 'wss:']])('requests the newest-200 snapshot and opens the matching socket for %s', async (protocol, expectedProtocol) => {
+    vi.stubGlobal('location', { protocol, host: 'TEST.example:8443' });
     vi.mocked(api.getRuns).mockResolvedValue([older, newer]);
     const { result } = renderHook(() => useLiveRuns());
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(api.getRuns).toHaveBeenCalledExactlyOnceWith({ limit: 200 });
-    expect(RunSocket.latest.url).toBe(`ws://${location.host}/api/ws/runs`);
+    const socketUrl = new URL(RunSocket.latest.url);
+    expect(socketUrl.protocol).toBe(expectedProtocol);
+    expect(socketUrl.host).toBe('test.example:8443');
+    expect(socketUrl.pathname).toBe('/api/ws/runs');
     expect(result.current.runs).toEqual([newer, older]);
+  });
+
+  it('keeps only the newest 200 across REST, snapshots, older updates and new arrivals', async () => {
+    const rows = Array.from({ length: 202 }, (_, index) => runRow({
+      runId: `TEST-run-${index}`, startedAt: new Date(Date.UTC(2026, 8, 11, 0, 0, index)).toISOString(),
+    }));
+    vi.mocked(api.getRuns).mockResolvedValue(rows.slice(0, 201));
+    const { result } = renderHook(() => useLiveRuns());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.runs).toEqual(rows.slice(1, 201).reverse());
+    RunSocket.push(rows.slice(0, 200));
+    RunSocket.push(rows[200]);
+    RunSocket.push({ ...rows[0], status: 'cancelled' });
+    expect(result.current.runs).toEqual(rows.slice(1, 201).reverse());
+    RunSocket.push(rows);
+    expect(result.current.runs).toEqual(rows.slice(2).reverse());
+    RunSocket.push({ ...rows[201], status: 'succeeded' });
+    expect(result.current.runs).toHaveLength(200);
+    expect(result.current.runs[0].status).toBe('succeeded');
   });
 
   it('replaces a matching row, inserts an unseen row and replaces the snapshot', async () => {

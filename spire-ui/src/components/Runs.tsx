@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import type { RunListEntry, RunStatus } from '../api';
-import { useLiveRuns } from '../useLiveRuns';
+import { MAX_LIVE_RUNS, useLiveRuns } from '../useLiveRuns';
 import { formatCost } from '../money';
 import { formatEventTime } from '../format';
 
@@ -152,6 +152,7 @@ export default function Runs() {
         <div className="prov-head">
           <h2 className="prov-title">Runs</h2>
           <div className="prov-actions">
+            <span className="prov-sub">Filters apply to the newest {MAX_LIVE_RUNS} runs.</span>
             <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind">
               <option value="">All kinds</option>
               <option value="FIX">Fix</option>
@@ -180,7 +181,7 @@ export default function Runs() {
 
         {!loading && !error && runs.length === 0 && (
           <div className="wh-empty">
-            <div className="wh-empty-title">{kind || status ? 'No matching runs' : 'No runs yet'}</div>
+            <div className="wh-empty-title">{kind || status ? `No matching runs in the newest ${MAX_LIVE_RUNS}` : 'No runs yet'}</div>
             <p className="wh-empty-text">
               A run appears here once one is dispatched — from a <code>/fix</code> comment on a
               review, or from the runs API.

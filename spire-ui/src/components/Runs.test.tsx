@@ -90,6 +90,24 @@ function show(rows: RunListEntry[]) {
 }
 
 describe('the runs screen', () => {
+  it('discloses the filter window when the only matching run is older than the newest 200', async () => {
+    const allRuns = Array.from({ length: 300 }, (_, index) => run({
+      runId: `TEST-run-${index}`, status: index === 249 ? 'cancelled' : 'succeeded',
+      startedAt: new Date(Date.UTC(2026, 8, 11, 0, 0, 300 - index)).toISOString(),
+    }));
+    show(allRuns.slice(0, 200)); // The unfiltered REST/socket window excludes the cancelled run.
+    await screen.findByTitle('TEST-run-0');
+    expect(screen.getByText('Filters apply to the newest 200 runs.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'cancelled' } });
+    expect(screen.getByText('No matching runs in the newest 200')).toBeInTheDocument();
+    expect(screen.queryByText('No matching runs', { exact: true })).toBeNull();
+    RunSocket.push(allRuns[249]);
+    expect(screen.queryByTitle('TEST-run-249')).toBeNull();
+    RunSocket.push({ ...allRuns[0], status: 'cancelled' });
+    expect(screen.getByTitle('TEST-run-0')).toBeInTheDocument();
+    expect(api.getRuns).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a run that changes into the selected status without another fetch', async () => {
     const queued = run({ status: 'queued', agentStartedAt: null, endedAt: null });
     show([queued]);

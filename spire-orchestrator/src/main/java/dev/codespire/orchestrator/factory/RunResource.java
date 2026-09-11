@@ -314,7 +314,7 @@ public class RunResource {
     @Path("/{runId:.+}/dispatch-resolution")
     @Consumes(MediaType.APPLICATION_JSON)
     public Response resolveDispatch(@PathParam("runId") String runId, DispatchResolution body) {
-        projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
+        if (!projection.exists(runId)) throw new NotFoundException("no such run: " + runId);
         Boolean neverRan = body == null ? null : body.neverRan();
         if (neverRan == null) {
             throw badRequest(
@@ -564,7 +564,7 @@ public class RunResource {
     public List<RunEventRecord> transcript(@PathParam("runId") String runId,
                                            @QueryParam("limit") Integer limit,
                                            @QueryParam("before") Long before) {
-        projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
+        if (!projection.exists(runId)) throw new NotFoundException("no such run: " + runId);
         if (before != null && before < 1) throw new BadRequestException("before must be a positive sequence");
         return before == null ? transcripts.newestPage(runId, boundedLimit(limit))
                 : transcripts.before(runId, before, boundedLimit(limit));

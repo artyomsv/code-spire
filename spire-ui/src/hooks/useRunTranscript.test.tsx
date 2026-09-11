@@ -16,10 +16,15 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-it('uses the encoded query id and loads the initial REST page', async () => {
+it.each([['http:', 'ws:'], ['https:', 'wss:']])('uses the encoded query id and matching socket for %s', async (protocol, expectedProtocol) => {
+  vi.stubGlobal('location', { protocol, host: 'TEST.example:8443' });
   vi.mocked(api.getRunTranscript).mockResolvedValue([runEvent(1)]);
   const { result } = renderHook(() => useRunTranscript(runRow().runId));
-  expect(RunSocket.latest.url).toBe(`ws://${location.host}/api/ws/runs/transcript?runId=${encodeURIComponent(runRow().runId)}`);
+  const socketUrl = new URL(RunSocket.latest.url);
+  expect(socketUrl.protocol).toBe(expectedProtocol);
+  expect(socketUrl.host).toBe('test.example:8443');
+  expect(socketUrl.pathname).toBe('/api/ws/runs/transcript');
+  expect(socketUrl.searchParams.get('runId')).toBe(runRow().runId);
   await waitFor(() => expect(result.current.events).toEqual([runEvent(1)]));
   expect(api.getRunTranscript).toHaveBeenCalledExactlyOnceWith(runRow().runId);
 });

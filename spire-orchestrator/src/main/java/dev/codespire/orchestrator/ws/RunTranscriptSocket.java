@@ -73,7 +73,7 @@ public class RunTranscriptSocket {
             connection.close(new CloseReason(1008, "a transcript tail must name its run"));
             return null;
         }
-        if (runs.find(runId).isEmpty()) {
+        if (!runs.exists(runId)) {
             // Closed rather than answered with an empty page, matching the REST route's reasoning:
             // an empty transcript reads as "this run produced nothing", which is a different answer
             // from "there is no such run" and sends an operator somewhere else.

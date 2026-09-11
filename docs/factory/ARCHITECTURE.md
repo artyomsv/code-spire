@@ -301,6 +301,8 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 | `run_event` | bounded transcript | TTL'd; encrypted where it may quote source (ADR-011 boundary) |
 
 The dashboard's `#/runs` list follows `/api/ws/runs` (newest 200 snapshot, then individual rows).
+The client retains the newest 200 after each update and labels its filters and empty state with
+that limit; the filters search this window rather than the entire run history.
 Detail reads combine the run definition with active RUN charge lines; missing or partly unpriced
 usage stays unknown. The detail's three displayed phases are recorded timestamps, not inferred
 workflow phases. Its transcript uses `/api/ws/runs/transcript?runId=…`, sorts by sequence and retains

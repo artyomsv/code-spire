@@ -35,6 +35,13 @@ class RunDetailReadTest {
     @Inject
     DataSource dataSource;
 
+    @Test
+    void existenceDistinguishesAnEmptyRunFromAnUnknownId() {
+        String runId = queue();
+        assertTrue(runs.exists(runId));
+        assertFalse(runs.exists(runId + "-missing"));
+    }
+
     @AfterEach
     void removeOwnedRows() throws Exception {
         sql("DELETE FROM llm_charge WHERE subject_id LIKE 'run::github:TEST-spend/%'");

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { getRuns, type RunListEntry } from './api';
 import { isLeavingForAuth } from './auth';
 import { isRunEntry, useRunsSocket } from './hooks/useRunsSocket';
+
+export const MAX_LIVE_RUNS = 200;
 /** PostgreSQL retains microseconds; Date.parse alone would tie different queue times. */
 function queuedTime(value: string | null): bigint {
   const milliseconds = Date.parse(value ?? '');
@@ -16,7 +18,7 @@ function sortRuns(rows: RunListEntry[]): RunListEntry[] {
     const timeB = queuedTime(b.startedAt);
     if (timeA !== timeB) return timeA > timeB ? -1 : 1;
     return a.runId === b.runId ? 0 : a.runId > b.runId ? -1 : 1;
-  });
+  }).slice(0, MAX_LIVE_RUNS);
 }
 
 export function useLiveRuns() {
@@ -30,7 +32,7 @@ export function useLiveRuns() {
     wsDelivered.current = false;
     // Same snapshot size as the socket, with no server-side filters. Once a socket frame lands,
     // this possibly older REST response must never overwrite it (useLiveReviews' race guard).
-    getRuns({ limit: 200 }).then((rows) => {
+    getRuns({ limit: MAX_LIVE_RUNS }).then((rows) => {
       if (closed || wsDelivered.current) return;
       setRuns(sortRuns(rows.filter(isRunEntry)));
       setLoading(false);

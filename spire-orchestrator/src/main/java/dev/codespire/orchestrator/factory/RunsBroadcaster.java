@@ -34,7 +34,9 @@ public class RunsBroadcaster {
             if (row.isEmpty()) return;
             String payload = mapper.writeValueAsString(row.get());
             for (WebSocketConnection subscriber : subscribers) send(subscriber, payload);
-        } catch (JsonProcessingException | RuntimeException failure) {
+        } catch (JsonProcessingException failure) {
+            LOG.warnf(failure, "run %s: row could not be serialised for the live feed", runId);
+        } catch (RuntimeException failure) {
             LOG.debugf(failure, "run %s: live update dropped", runId);
         }
     }

@@ -953,6 +953,19 @@ public class FactoryRunProjection {
         }
     }
 
+    /** Existence alone, without reading the definition or aggregating the charge ledger. */
+    public boolean exists(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT 1 FROM factory_run WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to check run " + runId, e);
+        }
+    }
+
     public Optional<RunView> find(String runId) {
         String sql = """
                 SELECT status, pushed_ref, blocked_changes, failure_cause, failure_detail, unit_id,
@@ -967,7 +980,10 @@ public class FactoryRunProjection {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
-                return Optional.of(readView(runId, rs, RunSpendReader.read(c, runId)));
+                // PgJDBC keeps each PreparedStatement's ResultSet independent. The spend query
+                // deliberately shares this connection without advancing or replacing rs.
+                RunSpend spend = RunSpendReader.read(c, runId);
+                return Optional.of(readView(runId, rs, spend));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read run " + runId, e);
