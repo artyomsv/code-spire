@@ -82,6 +82,13 @@ public class WorkerContextClients {
     public List<ContextProvider> forCommand(GatherContext command) {
         List<ContextProvider> providers = new java.util.ArrayList<>();
         for (ContextCredential cred : unpack(command)) {
+            // Old queued commands have no platform. Omit only that optional source; never guess
+            // a forge or discard the other sources and credential-free repository rules.
+            if ("code".equals(cred.type()) && !"github".equals(cred.platform()) && !"gitlab".equals(cred.platform())) {
+                org.jboss.logging.Logger.getLogger(WorkerContextClients.class)
+                        .warn("Skipping code context without a supported account platform; dispatch fresh credentials to restore it");
+                continue;
+            }
             switch (cred.type()) {
                 case "jira" -> providers.add(new JiraContextProvider(jiraConfig(cred), mapper));
                 case "confluence" -> providers.add(new ConfluenceContextProvider(confluenceConfig(cred), mapper));

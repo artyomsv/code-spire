@@ -18,5 +18,6 @@ ALTER TABLE context_provider DROP COLUMN is_default;
 -- Keep auth_* this release; drop them only in the release after the startup
 -- reconciler has run everywhere. SQL cannot move ciphertext between Tink AADs.
 -- A failed row retains its original encrypted credential for retry/recovery.
+-- Successful rows clear their legacy credentials: this does not support application downgrade.
 ALTER TABLE context_provider ADD CONSTRAINT context_provider_one_credential
     CHECK ((account_id IS NULL) <> (auth_secret IS NULL));

@@ -77,7 +77,9 @@ public class ProviderClients {
                 if (normalized.contains("bitbucket")) {
                     throw new IllegalArgumentException("Legacy source needs an explicitly supported account");
                 }
-                yield normalized.contains("gitlab") ? "gitlab" : "github";
+                if (normalized.contains("gitlab")) yield "gitlab";
+                if (normalized.equals("github.com") || normalized.endsWith(".github.com")) yield "github";
+                throw new IllegalArgumentException("Legacy code source needs an explicit account platform");
             }
             default -> throw new IllegalArgumentException("Unsupported legacy source type");
         };
@@ -132,21 +134,31 @@ public class ProviderClients {
     /** Advisory: missing headers or a failed introspection never invalidate an account. */
     public String reportedScopes(String type, String baseUrl, String authKind, String username,
                                  String secret, String workspace) {
+        return probeScopes(type, baseUrl, authKind, username, secret, workspace).scopes();
+    }
+
+    /** observed=false means the request failed, not that a token reported no scopes. */
+    public record ScopeReport(boolean observed, String scopes) {
+        static ScopeReport failed() { return new ScopeReport(false, null); }
+    }
+
+    public ScopeReport probeScopes(String type, String baseUrl, String authKind, String username,
+                                    String secret, String workspace) {
         String base = baseUrl.replaceAll("/+$", "");
         try {
             return switch (type) {
                 case "github" -> scopeHeader(accountGet(base + "/user", "bearer", null, secret));
                 case "gitlab" -> {
                     var response = accountGet(gitlabAccountBase(base) + "/personal_access_tokens/self", "bearer", null, secret);
-                    if (response.statusCode() / 100 != 2) yield null;
+                    if (response.statusCode() / 100 != 2) yield ScopeReport.failed();
                     var scopes = mapper.readTree(response.body()).path("scopes");
-                    if (!scopes.isArray()) yield null;
+                    if (!scopes.isArray()) yield ScopeReport.failed();
                     var values = new java.util.ArrayList<String>();
                     for (var scope : scopes) {
-                        if (!scope.isTextual()) yield null;
+                        if (!scope.isTextual()) yield ScopeReport.failed();
                         values.add(scope.asText());
                     }
-                    yield String.join(", ", values);
+                    yield new ScopeReport(true, String.join(", ", values));
                 }
                 case "bitbucket-cloud" -> {
                     var response = accountGet(base + "/user", authKind, username, secret);
@@ -156,13 +168,13 @@ public class ProviderClients {
                     }
                     yield scopeHeader(response);
                 }
-                default -> null;
+                default -> new ScopeReport(true, null);
             };
         } catch (java.io.IOException | RuntimeException e) {
-            return null;
+            return ScopeReport.failed();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return null;
+            return ScopeReport.failed();
         }
     }
 
@@ -171,8 +183,9 @@ public class ProviderClients {
         return base.endsWith("/api/v4") ? base : base + "/api/v4";
     }
 
-    private static String scopeHeader(java.net.http.HttpResponse<String> response) {
-        return response.statusCode() / 100 == 2 ? response.headers().firstValue("X-OAuth-Scopes").orElse(null) : null;
+    private static ScopeReport scopeHeader(java.net.http.HttpResponse<String> response) {
+        return response.statusCode() / 100 == 2
+                ? new ScopeReport(true, response.headers().firstValue("X-OAuth-Scopes").orElse(null)) : ScopeReport.failed();
     }
 
     private java.net.http.HttpResponse<String> accountGet(String url, String kind, String username, String secret)
@@ -189,8 +202,9 @@ public class ProviderClients {
         if (reported == null || role == ProviderRole.CONTEXT) return false;
         var scopes = new java.util.HashSet<>(java.util.Arrays.asList(reported.split("[,\\s]+")));
         Set<String> expected = switch (type) {
-            case "github" -> role == ProviderRole.FACTORY ? Set.of("repo", "public_repo")
-                    : Set.of("repo", "public_repo");
+            // GitHub's classic repo/public_repo grants cover both read and write; there is no
+            // separate read-only repository scope. read:org alone grants neither repository role.
+            case "github" -> Set.of("repo", "public_repo");
             case "gitlab" -> role == ProviderRole.FACTORY ? Set.of("api", "write_repository")
                     : Set.of("api", "read_api", "read_repository");
             case "bitbucket-cloud" -> role == ProviderRole.FACTORY

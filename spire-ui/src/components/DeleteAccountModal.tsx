@@ -38,6 +38,9 @@ export function DeleteConfirmModal({
           <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text)' }}>
             Delete <strong>{provider.name}</strong>? This removes its stored token and cannot be undone.
           </p>
+          <p className="prov-sub">Used by: {provider.usedBy?.join(', ') || (provider.usedBy ? 'No roles or sources' : 'Usage unavailable')}
+            {!!provider.usedBy?.length && '. Referencing sources must be reassigned or removed before deletion.'}
+          </p>
           {error && <div className="modal-msg modal-error">{error}</div>}
           <div className="modal-actions">
             <button type="button" className="btn-ghost" onClick={onClose}>

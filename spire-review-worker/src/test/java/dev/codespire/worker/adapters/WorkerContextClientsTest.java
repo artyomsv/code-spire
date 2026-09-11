@@ -58,6 +58,20 @@ class WorkerContextClientsTest {
     }
 
     @Test
+    void legacyCodeWithoutPlatformDoesNotDiscardOtherSourcesOrRules() throws Exception {
+        String json = """
+                [{"type":"code","baseUrl":"https://gitlab.example.test","authKind":"bearer","secret":"old"},
+                 {"type":"jira","baseUrl":"https://site.example.test","authKind":"basic","username":"bot","secret":"old"},
+                 {"type":"confluence","baseUrl":"https://site.example.test/wiki","authKind":"basic","username":"bot","secret":"old"}]
+                """;
+        var providers = clients().forCommand(command(ENCRYPTION.encryptString(json, ContextCredential.aad(WORKSPACE))));
+        assertEquals(3, providers.size());
+        assertInstanceOf(dev.codespire.context.jira.JiraContextProvider.class, providers.get(0));
+        assertInstanceOf(dev.codespire.context.confluence.ConfluenceContextProvider.class, providers.get(1));
+        assertInstanceOf(RulesContextProvider.class, providers.get(2));
+    }
+
+    @Test
     void codeCredentialCarriesItsPathAllowListIntoTheConstructedProvider() throws Exception {
         ContextCredential cred = new ContextCredential("code", "github", "https://api.github.com", "bearer",
                 null, "gh-token", "src/main/, src/allowed/");

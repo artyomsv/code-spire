@@ -61,7 +61,7 @@ export default function AccountsTable({ providers, conns, onRecheck, onEdit, onD
               <td className="nowrap">
                 <KindCell kind={p.type === 'atlassian' ? 'Tracker' : 'Forge'} type={p.type} />
               </td>
-              <td className="nowrap"><div className="account-uses" title={(p.usedBy ?? []).join(', ')}>{(p.usedBy ?? []).join(', ') || '—'}</div></td>
+              <td className="nowrap"><div className="account-uses" title={p.usedBy?.join(', ') ?? 'Usage unavailable'}>{(p.usedBy?.join(', ') ?? 'Usage unavailable') || '—'}</div></td>
               <td className="mono nowrap" style={MONO}>
                 <IdentityCell provider={p} />
               </td>

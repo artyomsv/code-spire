@@ -1781,5 +1781,22 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     publisher drain; the nightly E2E tier is separate.
   - Live scope-family claims and scoped Atlassian gateway limits are in UNVERIFIED. The GitHub
     header observation used OAuth, not a classic PAT; synthetic fixtures are not presented as live
-    credential evidence. No production token migration or deployment was performed. PR review
-    findings will be registered as GitHub reviews by the software-factory analyst.
+    credential evidence. No production token migration or deployment was performed. The software-factory analyst submitted
+    [a formal review with twelve inline findings](https://github.com/artyomsv/code-spire/pull/152#pullrequestreview-5183868619).
+  - **Review round 1:** two high findings were confirmed and fixed. A queued code credential with no
+    platform now skips only code context, preserving other sources and repository rules. A failed
+    scope probe retains its last observed report and timestamp, so an outage cannot erase advice.
+    Both regression tests were mutation-verified by removing their respective guards. Unrecognized
+    legacy hosts now remain recoverable instead of being persisted as GitHub, and remaining rows
+    have named Attention entries. A Java/TypeScript compatibility check guards picker drift; the
+    delete dialog shows usage, missing usage is explicitly unknown, and Preview explains disabled
+    accounts. Dead save-time ping code and its redundant tests were removed.
+  - The proposed GitHub scope-policy change was declined with the vendor contract: public_repo
+    includes writes to public repositories, so the account-level rule cannot call it read-only.
+    Per-repository private access remains outside this epic. The redundant conditional was removed
+    and the public-repository case now has an explicit assertion. Migration docs now explicitly say
+    retained columns permit retry of failed rows, not downgrade after successful re-encryption.
+
+  - Final review-fix verification: testFast, testServices and build passed; 2954 Java tests
+    across 336 suites, zero failures and one skip; 613 UI tests and TypeScript passed.
+    Nine intentional mutations were caught across the implementation and review fixes.

@@ -34,12 +34,17 @@ same origin, with the same kind and authentication identity, can share a migrate
 different credentials stay separate. Failures leave the original ciphertext for the next startup,
 log only the row id, and do not stop other rows. Legacy columns remain for one release under an
 XOR constraint; removal waits until reconciliation has succeeded everywhere. No SQL ciphertext
-copy can substitute for re-encryption with the new AAD.
+copy can substitute for re-encryption with the new AAD. Retaining those columns supports retry
+of failed rows, not application downgrade: successful rows have cleared their old credentials.
+Unrecognized legacy code hosts remain unmigrated for explicit account selection, with a named
+Attention entry linking to the source.
 
 **Scope detection is advisory.** Missing introspection means unknown, distinct from an empty
 reported scope list. Fine-grained GitHub and classic Atlassian tokens offer no usable scope report
 here, and scopes alone never prove access to a repository. Registration and manual account Check
-record the report and observation time; insufficient reported read/write scopes produce advice,
+attempt to read scopes each time. A successful response records the report and observation time;
+a failed probe preserves the previous report and its timestamp, so a transient outage cannot
+erase standing advice or pretend it re-observed the scopes. Insufficient reported scopes produce advice,
 never a refusal or a green authorization claim. Introspection currently makes a separate bounded
 HTTP request; live credential-family gaps are recorded in UNVERIFIED. Kind dispatch stays in
 `ProviderClients`, the ADR-020 composition root. Code readers consume the account's explicit
@@ -50,7 +55,8 @@ M3, as are per-repository push-rights verification and resolving typed `@handle`
 stable ids. Multiple accounts per `(forge, workspace, role)` remain unavailable. Nothing checks
 credentials on a schedule. This migration does not alter `ProviderRegistry.resolve`,
 `MachineAccounts.resolve`, or gateway behavior. Deploy orchestrator and worker together for the
-new platform field; old queued code credentials without it must be retried with fresh credentials.
+new platform field; old queued code credentials without it skip only code context, preserving
+other sources and repository rules. Fresh dispatch restores code context with an explicit platform.
 
 ---
 

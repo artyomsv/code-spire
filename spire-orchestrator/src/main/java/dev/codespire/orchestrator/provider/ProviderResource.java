@@ -185,7 +185,7 @@ public class ProviderResource {
         requireField(workspace, "workspace");
         if (!ProviderClients.SUPPORTED_TYPES.contains(type)) {
             throw new BadRequestException("Unsupported provider type '" + type
-                    + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
+                    + "' (expected one of: " + String.join(", ", ProviderClients.SUPPORTED_TYPES.stream().sorted().toList()) + ")");
         }
         ServingAccount reviewer = registry.registration(type, workspace, ProviderRole.REVIEWER)
                 .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
@@ -217,7 +217,7 @@ public class ProviderResource {
     public CheckResult check(@PathParam("id") String id) {
         ScmProvider provider = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
-        registry.recordScopes(provider.id(), clients.reportedScopes(provider.type(), provider.baseUrl(), provider.authKind(),
+        registry.recordScopes(provider.id(), clients.probeScopes(provider.type(), provider.baseUrl(), provider.authKind(),
                 provider.authUsername(), provider.secret(), provider.workspace()));
         try {
             Author owner = identity.resolveForCheck(provider);
@@ -331,7 +331,7 @@ public class ProviderResource {
     }
 
     private void recordScopes(UUID id, ProviderInput in) {
-        registry.recordScopes(id, clients.reportedScopes(in.type(), in.baseUrl(), in.authKind(), in.authUsername(),
+        registry.recordScopes(id, clients.probeScopes(in.type(), in.baseUrl(), in.authKind(), in.authUsername(),
                 in.secret(), in.workspace()));
     }
 

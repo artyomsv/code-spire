@@ -64,8 +64,6 @@ class ContextKeyValidatorTest {
     void eachPlatformProbesItsOwnRawContentRoute() {
         assertTrue(ContextKeyValidator.codeCheckPath("github")
                 .startsWith("/repos/codespire-connectivity-check/placeholder/contents/README.md"));
-        assertTrue(ContextKeyValidator.codeCheckPath("bitbucket")
-                .startsWith("/repositories/codespire-connectivity-check/placeholder/src/main/README.md"));
         // GitLab identifies the project by a percent-encoded path, slashes included.
         assertTrue(ContextKeyValidator.codeCheckPath("gitlab")
                 .startsWith("/api/v4/projects/codespire-connectivity-check%2Fplaceholder/repository/files/"));
@@ -143,33 +141,6 @@ class ContextKeyValidatorTest {
 
         assertFalse(outcome.ok());
         assertFalse(outcome.isRejected());
-    }
-
-    // --- save-time validation ------------------------------------------------
-
-    @Test
-    void pingAcceptsACodeCredentialThePlatformAnsweredWith404() {
-        answer(404, "application/json", "{}");
-
-        validator.ping("code", "github", baseUrl(), "bearer", null, "token"); // must not throw
-    }
-
-    @Test
-    void pingRefusesToSaveACodeCredentialThatOnlyReachesASignInPage() {
-        answer(200, "text/html", "<html>Sign in</html>");
-
-        BadRequestException thrown = assertThrows(BadRequestException.class,
-                () -> validator.ping("code", "github", baseUrl(), "bearer", null, "token"));
-
-        assertTrue(thrown.getMessage().contains("sign-in page"));
-    }
-
-    @Test
-    void pingRefusesARejectedCodeCredential() {
-        answer(403, "application/json", "{}");
-
-        assertThrows(BadRequestException.class,
-                () -> validator.ping("code", "github", baseUrl(), "bearer", null, "token"));
     }
 
     // --- the unchanged branch, so the code branch cannot be widened by accident ---

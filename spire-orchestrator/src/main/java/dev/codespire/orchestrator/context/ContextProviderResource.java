@@ -151,9 +151,8 @@ public class ContextProviderResource {
     @Path("/{id}/check")
     @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
     public CheckResult check(@PathParam("id") String id) {
-        ContextProviderView source = get(id);
-        if (source.accountId() == null) return new CheckResult(false, null, "Credential migration is pending; check the server log for this source id.");
-        if (Boolean.FALSE.equals(source.accountEnabled())) return new CheckResult(false, null, "Account disabled — this source does not resolve.");
+        String unavailable = unavailableReason(get(id));
+        if (unavailable != null) return new CheckResult(false, null, unavailable);
         ContextProviderConfig cfg = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
         ContextKeyValidator.CheckOutcome out =
@@ -179,6 +178,12 @@ public class ContextProviderResource {
     public record CheckResult(boolean ok, String account, String detail) {
     }
 
+    private static String unavailableReason(ContextProviderView source) {
+        if (source.accountId() == null) return "Credential migration is pending; select a compatible account for this source.";
+        if (Boolean.FALSE.equals(source.accountEnabled())) return "Account disabled — this source does not resolve.";
+        return null;
+    }
+
     /**
      * Test the integration end to end: take the operator's input (a Jira ticket number/key or a Confluence
      * page URL/id), resolve it the way a real review would, fetch it live, and return exactly the
@@ -192,6 +197,8 @@ public class ContextProviderResource {
         if (body == null || body.text() == null || body.text().isBlank()) {
             throw new BadRequestException("text is required");
         }
+        String unavailable = unavailableReason(get(id));
+        if (unavailable != null) return new PreviewResult(List.of(), "ERROR", List.of(), unavailable);
         ContextProviderConfig cfg = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
         return switch (cfg.type()) {

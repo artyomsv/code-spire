@@ -64,9 +64,10 @@ not by a live Atlassian credential in this change.
 **Upgrade evidence is synthetic.** A real PostgreSQL/Flyway V58→V59 test seeds six forge accounts
 and five legacy source types; reconciler tests exercise deduplication, new-AAD decryption,
 idempotency, per-row rollback and recovery. The operator's actual five source credentials were
-not decrypted or migrated. Legacy code sources still need a one-time host-based platform guess;
-custom GitLab hosts without `gitlab` in their name need operator reassignment to the correct
-account. Legacy Bitbucket code rows are retained for recovery, since the new code-source picker
+not decrypted or migrated. Legacy code sources use a one-time recognition of GitHub's public hosts
+or a hostname containing `gitlab`; all other hosts remain unmigrated for explicit operator account
+selection. The heuristic itself is still not proof of the server's platform. Unmigrated rows now
+produce a named Attention entry. Legacy Bitbucket code rows are retained for recovery, since the new code-source picker
 supports GitHub and GitLab only. No production rollout is claimed. A headless Chrome rendering of
 the actual account-table component and stylesheet at 1280/1440/1920 widths exercised long values:
 smaller widths scroll inside the table without body overflow, and 1920 fits fully. This isolated

@@ -44,6 +44,20 @@ class ContextProviderResourceTest {
     ContextProviderRegistry registry;
 
     @Inject dev.codespire.orchestrator.provider.ProviderRegistry accounts;
+    @Inject javax.sql.DataSource dataSource;
+
+    @Test
+    void disabledAccountPreviewExplainsTheExistingSourcesState() throws Exception {
+        var input = body("preview-disabled-token");
+        String id = given().contentType("application/json").body(input).post("/api/context-providers")
+                .then().statusCode(201).extract().path("id");
+        try (var c = dataSource.getConnection(); var ps = c.prepareStatement("UPDATE scm_provider SET enabled = FALSE WHERE id = ?")) {
+            ps.setObject(1, UUID.fromString((String) input.get("accountId"))); ps.executeUpdate();
+        }
+        given().contentType("application/json").body(Map.of("text", "TEST-1"))
+                .post("/api/context-providers/" + id + "/preview").then().statusCode(200)
+                .body("status", is("ERROR")).body("detail", containsString("Account disabled"));
+    }
 
     @BeforeAll
     static void startJira() {
@@ -203,7 +217,7 @@ class ContextProviderResourceTest {
     // after the operator pasted a working one and saved successfully.
 
     @Test
-    void createRecordsAPassingCheck() {
+    void savingAReferenceDoesNotClaimACheck() {
         String id = given().contentType("application/json").body(body("jira-token"))
                 .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
         given().when().get("/api/context-providers/" + id)
@@ -267,7 +281,7 @@ class ContextProviderResourceTest {
 
     /**
      * A sign-in page is also a genuine rejection, just expressed as 200-HTML instead of a status
-     * code: {@code ping()} already blocks the save for exactly this response, so {@code check()}
+     * code: {@code check()}
      * must record it as a rejection the same way, not leave it inconclusive like a 5xx.
      */
     @Test

@@ -73,6 +73,9 @@ class AccountNormalizationTest {
         given().post("/api/providers/" + id + "/check").then().statusCode(200).body("ok", org.hamcrest.Matchers.equalTo(true));
         assertEquals("repo, read:org", registry.get(UUID.fromString(id)).orElseThrow().reportedScopes());
         assertFalse(ProviderClients.scopesNeedAttention("github", ProviderRole.FACTORY, "repo, repo"));
+        // public_repo includes writes to public repositories. Private-repository reachability
+        // cannot be inferred from this account-wide report (the per-repository check is separate).
+        assertFalse(ProviderClients.scopesNeedAttention("github", ProviderRole.FACTORY, "public_repo"));
     }
 
     @Test void missingScopesStillRegistersAndEndpointPermissionsAreNotTokenScopes() {
@@ -81,6 +84,25 @@ class AccountNormalizationTest {
         given().contentType("application/json").body(input("github", "FACTORY")).post("/api/providers")
                 .then().statusCode(201).body("reportedScopes", nullValue()).body("scopesCheckedAt", notNullValue());
         assertFalse(ProviderClients.scopesNeedAttention("github", ProviderRole.FACTORY, null));
+    }
+
+    @Test void failedScopeProbePreservesTheStandingReportAndItsObservationTime() {
+        server.stubFor(get(urlEqualTo("/user")).willReturn(okJson("{\"id\":123,\"login\":\"factory-bot\"}")
+                .withHeader("X-OAuth-Scopes", "read:org")));
+        var body = input("github", "FACTORY");
+        String id = given().contentType("application/json").body(body).post("/api/providers")
+                .then().statusCode(201).extract().path("id");
+        var before = registry.get(UUID.fromString(id)).orElseThrow();
+        server.stubFor(get(urlEqualTo("/user")).willReturn(serviceUnavailable()));
+        given().post("/api/providers/" + id + "/check").then().statusCode(200)
+                .body("ok", org.hamcrest.Matchers.equalTo(false)).body("reportedScopes", org.hamcrest.Matchers.equalTo("read:org"));
+        var after = registry.get(UUID.fromString(id)).orElseThrow();
+        assertEquals(before.scopesCheckedAt(), after.scopesCheckedAt());
+        given().get("/api/attention").then().statusCode(200).body(containsString(body.get("name").toString()));
+        // An actual successful response with no header is an observation of unknown scopes.
+        server.stubFor(get(urlEqualTo("/user")).willReturn(okJson("{\"id\":123,\"login\":\"factory-bot\"}")));
+        given().post("/api/providers/" + id + "/check").then().statusCode(200).body("reportedScopes", nullValue());
+        assertTrue(registry.get(UUID.fromString(id)).orElseThrow().scopesCheckedAt().isAfter(before.scopesCheckedAt()));
     }
 
     @Test void readsGitLabSelfScopesFromBothSupportedAccountUrlShapes() {

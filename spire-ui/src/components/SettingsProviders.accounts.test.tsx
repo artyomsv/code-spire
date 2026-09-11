@@ -66,6 +66,19 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(row.querySelector('.account-uses')).toHaveTextContent('—');
   });
 
+  it('distinguishes missing usage data from an unused account', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ usedBy: undefined })]);
+    renderPage();
+    expect(within(await rowNamed('TEST reviewer')).getByText('Usage unavailable')).toBeInTheDocument();
+  });
+
+  it('shows referring source names before attempting account deletion', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ usedBy: ['Reviewer', 'Engineering tickets'] })]);
+    renderPage();
+    fireEvent.click(within(await rowNamed('TEST reviewer')).getByRole('button', { name: 'Delete' }));
+    expect(within(screen.getByRole('dialog')).getByText(/Used by: Reviewer, Engineering tickets/)).toBeInTheDocument();
+  });
+
   it('is titled Accounts and shows a forge row with its kind, role, identity and scope', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({})]);
     vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);

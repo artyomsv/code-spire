@@ -197,7 +197,8 @@ Operational state (not projections — ADR-013 guards):
 The existing `(type, workspace, role)` uniqueness still limits forge workspace roles to one
 account; PostgreSQL's distinct NULLs permit multiple context accounts, including Atlassian.
 `reported_scopes TEXT NULL` distinguishes unknown from an empty report; `scopes_checked_at
-TIMESTAMPTZ NULL` records the last registration/Check observation. Both are advisory metadata.
+TIMESTAMPTZ NULL` records the last completed registration/Check scope observation. Failed probes
+preserve both values; they do not replace a prior report with NULL. Both are advisory metadata.
 
 `context_provider.account_id UUID` references `scm_provider.id` with an index and restricted
 deletion. Source URL, project keys and code path allowlists stay on the source. Runtime reads
@@ -210,7 +211,8 @@ Machine-account encryption has one AAD prefix: **`provider:<account-id>`**. The 
 reconciliation. V59 retains nullable legacy `auth_*` columns for one release, with exactly one
 of `account_id` and `auth_secret` present. A failed migration preserves the old row for retry;
 it is not a runtime credential fallback. Successful rows clear their legacy authentication
-columns in the same transaction as account insertion. The worker's encrypted credential bundle
+columns in the same transaction as account insertion; retaining the columns does not permit
+downgrading the application after successful migration. The worker's encrypted credential bundle
 includes the account platform separately from the source type.
 
 ## 6. Relationships (logical ERD)

@@ -3,7 +3,7 @@
  * rendering, and so the role reader has exactly one implementation.
  */
 
-/** A role arrives as JSON; anything outside the two known values is reported, not defaulted. */
+/** A role arrives as JSON; anything outside the known values is reported, not defaulted. */
 export function roleLabel(role: string | null | undefined): string {
   switch (role) {
     case 'REVIEWER':

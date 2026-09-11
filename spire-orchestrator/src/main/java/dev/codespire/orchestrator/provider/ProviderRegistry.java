@@ -397,6 +397,11 @@ public class ProviderRegistry {
     }
 
     @Transactional
+    public void recordScopes(UUID id, ProviderClients.ScopeReport report) {
+        if (report.observed()) recordScopes(id, report.scopes());
+    }
+
+    @Transactional
     public void recordScopes(UUID id, String scopes) {
         try (var c = dataSource.getConnection(); var ps = c.prepareStatement(
                 "UPDATE scm_provider SET reported_scopes = ?, scopes_checked_at = now() WHERE id = ?")) {

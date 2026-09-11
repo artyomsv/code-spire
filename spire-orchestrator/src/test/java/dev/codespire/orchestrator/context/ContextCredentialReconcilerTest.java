@@ -19,7 +19,17 @@ class ContextCredentialReconcilerTest {
     @Inject DataSource dataSource;
     @Inject EncryptionService encryption;
     @Inject ContextCredentialReconciler reconciler;
+    @Inject dev.codespire.orchestrator.attention.AttentionQueries attention;
     private final List<UUID> sources = new ArrayList<>();
+
+    @Test
+    void ambiguousLegacyCodeHostRemainsRecoverableAndVisible() throws Exception {
+        UUID id = legacy("code", "https://forge.example.test", "legacy-secret");
+        reconciler.reconcile();
+        assertNull(account(id));
+        assertTrue(attention.collect().stream().anyMatch(row ->
+                row.code().equals("CONTEXT_ACCOUNT_MIGRATION_REQUIRED") && row.action().endsWith(id.toString())));
+    }
 
     @AfterEach
     void cleanup() throws Exception {

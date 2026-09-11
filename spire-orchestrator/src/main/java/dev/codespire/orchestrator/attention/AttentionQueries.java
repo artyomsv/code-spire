@@ -78,6 +78,7 @@ public class AttentionQueries {
             llmProviderRows(c, rows);
             scmProviderRows(c, rows);
             accountScopeRows(c, rows);
+            contextMigrationRows(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             runRows.collect(c, rows);
@@ -161,6 +162,17 @@ public class AttentionQueries {
                                     + " scope. Check the account's permissions; reported scopes alone cannot establish access.",
                             editLink("/settings/accounts", rs.getObject("id", UUID.class))));
                 }
+            }
+        }
+    }
+
+    private void contextMigrationRows(Connection c, List<AttentionView> rows) throws SQLException {
+        try (var ps = c.prepareStatement("SELECT id, name FROM context_provider WHERE account_id IS NULL");
+             var rs = ps.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new AttentionView("CONTEXT_ACCOUNT_MIGRATION_REQUIRED", Severity.WARNING, rs.getString("name"),
+                        "This source still holds a legacy credential and cannot resolve. Select a compatible account to restore it.",
+                        editLink("/settings/context", rs.getObject("id", UUID.class))));
             }
         }
     }
