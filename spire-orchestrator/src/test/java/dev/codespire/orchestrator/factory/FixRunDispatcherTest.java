@@ -82,6 +82,12 @@ class FixRunDispatcherTest {
         };
         dispatcher.runs = new FactoryRunProjection() {
             @Override
+            protected void push(String runId) {
+                // This plain unit-test fake must never reach the live feed or its database read.
+                throw new AssertionError("unexpected live broadcast");
+            }
+
+            @Override
             public Optional<String> fixRunFor(String reviewId, String commentId) {
                 // The review is recorded too: the claim is scoped to it, and a fake that dropped
                 // the scope would let the unscoped key pass this suite.

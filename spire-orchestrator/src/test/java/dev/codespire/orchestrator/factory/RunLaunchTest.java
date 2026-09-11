@@ -59,6 +59,12 @@ class RunLaunchTest {
         };
         launch.projection = new FactoryRunProjection() {
             @Override
+            protected void push(String runId) {
+                // Writes are faked below; no live-feed collaborator is installed in this unit test.
+                throw new AssertionError("unexpected live broadcast");
+            }
+
+            @Override
             public void dispatchFailed(String runId, String detail) {
                 failed.add(runId + "|" + detail);
             }

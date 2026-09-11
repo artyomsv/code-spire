@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.review.TokenType;
 import dev.codespire.orchestrator.caps.CapPolicy;
 import dev.codespire.orchestrator.caps.SpendWindow;
@@ -44,6 +45,9 @@ class RunResourceTest {
 
     @Inject
     FactoryRunProjection projection;
+
+    @Inject
+    RunEventProjection transcripts;
 
     /** The JSON form of a value, so a fixture replace is anchored to something that exists. */
     private static String quoted(String value) {
@@ -490,6 +494,34 @@ class RunResourceTest {
         // not exist at all — two different answers an operator acts on differently.
         given().when().get("/api/runs/run::github:TEST-acme/app:never-registered:1/transcript")
                 .then().statusCode(404);
+    }
+
+    @Test
+    @TestSecurity(user = "viewer", roles = "spire-viewer")
+    void aViewerCanReadEarlierTranscriptPagesByExclusiveSequence() {
+        String runId = registeredRun();
+        String other = registeredRun();
+        // Shared timestamps deliberately cannot distinguish these rows.
+        Instant at = Instant.parse("2026-09-11T10:00:00Z");
+        for (int seq = 1; seq <= 5; seq++) {
+            transcripts.record(new RunEventRecord(runId, seq, at, "OUTPUT", "TEST-event-" + seq, false));
+            transcripts.record(new RunEventRecord(other, seq, at, "OUTPUT", "TEST-other", false));
+        }
+        given().queryParam("limit", 2).when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(200).body("sequence", equalTo(List.of(4, 5)));
+        given().queryParam("before", 4).queryParam("limit", 2)
+                .when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(200).body("sequence", equalTo(List.of(2, 3)))
+                .body("text", equalTo(List.of("TEST-event-2", "TEST-event-3")));
+        given().queryParam("before", 2).queryParam("limit", 2)
+                .when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(200).body("sequence", equalTo(List.of(1)));
+        given().queryParam("before", 1).when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(200).body("size()", equalTo(0));
+        given().queryParam("before", 0).when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(400);
+        given().queryParam("before", "invalid").when().get("/api/runs/" + runId + "/transcript")
+                .then().statusCode(404); // Quarkus rejects an unparseable query parameter before the resource runs.
     }
 
     /**

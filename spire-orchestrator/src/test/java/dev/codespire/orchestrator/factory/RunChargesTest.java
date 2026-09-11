@@ -47,6 +47,14 @@ class RunChargesTest {
 
     /** Answers the model a run was dispatched with, the way factory_run does. */
     private static final class StubRuns extends FactoryRunProjection {
+        final List<String> pushed = new ArrayList<>();
+
+        @Override
+        protected void push(String runId) {
+            // A successful ledger write now refreshes spend; record it without a database read.
+            pushed.add(runId);
+        }
+
         String model = "TEST-model";
         java.util.UUID credential;
 
@@ -232,6 +240,7 @@ class RunChargesTest {
         charges.record(new RunResult.RunStarted(RUN_ID, "unit-1"));
 
         assertTrue(ledger.calls.isEmpty());
+        assertTrue(runs.pushed.isEmpty());
     }
 
     @Test
@@ -254,6 +263,14 @@ class RunChargesTest {
         assertTrue(attempted.get(),
                 "the swallow must be EXERCISED, not skipped -- without this the test stays green"
                         + " if record() is later changed to not attempt the write at all");
+        assertTrue(runs.pushed.isEmpty(), "a failed ledger write must not announce new spend");
+    }
+
+    @Test
+    void aRecordedChargeRefreshesTheRun() {
+        charges.record(finished(RUN_ID, Map.of("INPUT", 10L)));
+        assertEquals(List.of(RUN_ID), runs.pushed);
+        assertEquals(1, ledger.calls.size());
     }
 
 }

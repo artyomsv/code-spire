@@ -10,6 +10,7 @@ import dev.codespire.orchestrator.provider.ScmProvider;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.ClientErrorException;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
@@ -548,7 +549,7 @@ public class RunResource {
     }
 
     /**
-     * A run's transcript (FR-F5), newest bounded page.
+     * A run's transcript (FR-F5), newest bounded page or the page before a sequence cursor.
      *
      * <p>Declared before the detail route below because that route's {@code .+} is greedy. JAX-RS
      * ranks candidates by literal character count, so this one should win regardless — but "should"
@@ -561,9 +562,12 @@ public class RunResource {
     @Path("/{runId:.+}/transcript")
     @RolesAllowed({"spire-viewer", "spire-admin"})
     public List<RunEventRecord> transcript(@PathParam("runId") String runId,
-                                           @QueryParam("limit") Integer limit) {
+                                           @QueryParam("limit") Integer limit,
+                                           @QueryParam("before") Long before) {
         projection.find(runId).orElseThrow(() -> new NotFoundException("no such run: " + runId));
-        return transcripts.newestPage(runId, boundedLimit(limit));
+        if (before != null && before < 1) throw new BadRequestException("before must be a positive sequence");
+        return before == null ? transcripts.newestPage(runId, boundedLimit(limit))
+                : transcripts.before(runId, before, boundedLimit(limit));
     }
 
     /**

@@ -103,6 +103,13 @@ public class RunEventProjection {
                 + " WHERE run_id = ? ORDER BY seq DESC LIMIT ?) newest ORDER BY seq", runId, limit);
     }
 
+    /** The preceding bounded page, still oldest-first; timestamps cannot serve as a cursor. */
+    public List<RunEventRecord> before(String runId, long beforeSeq, int limit) {
+        return read(runId, "SELECT * FROM (SELECT seq, at, kind, is_error, payload FROM run_event"
+                + " WHERE run_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?) earlier ORDER BY seq",
+                runId, beforeSeq, limit);
+    }
+
     /** Everything after {@code afterSeq}, so a reader can page forward through a long run. */
     public List<RunEventRecord> since(String runId, long afterSeq, int limit) {
         return read(runId, "SELECT seq, at, kind, is_error, payload FROM run_event"

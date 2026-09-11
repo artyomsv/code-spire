@@ -174,6 +174,12 @@ class FactoryPullRequestsTest {
         FactoryPullRequests pullRequests = new FactoryPullRequests();
         pullRequests.projection = new FactoryRunProjection() {
             @Override
+            protected void push(String runId) {
+                // All writes are recorded below; reaching the real broadcaster is a fake defect.
+                throw new AssertionError("unexpected live broadcast");
+            }
+
+            @Override
             public Optional<PullRequestPlan> pullRequestPlanOf(String runId) {
                 return plan;
             }
