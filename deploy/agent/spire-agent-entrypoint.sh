@@ -29,23 +29,50 @@ STOP_FILE="$SCRATCH/stop"
 SUMMARY_FILE="$SCRATCH/summary"
 AUTOSAVE_MESSAGE="autosave: work in progress"
 
-# The longest commit SUBJECT taken from the summary. Beyond this git's own tooling starts wrapping
-# and the forge truncates, so a longer line is one nobody reads in full anyway.
-SUMMARY_MAX_CHARS=72
+# The longest commit SUBJECT taken from the summary, in BYTES. Beyond this git's own tooling starts
+# wrapping and the forge truncates, so a longer line is one nobody reads in full anyway. Named for
+# bytes because that is what cut measures here, and pretending otherwise is how the cut below
+# silently became able to split a character.
+SUMMARY_MAX_BYTES=72
 
 cd "$WORKSPACE" || exit 70
 umask 077
 mkdir -p "$SCRATCH" || exit 70
 
+# Shortens to at most $2 bytes WITHOUT splitting a UTF-8 character.
+#
+# `cut -c` counts bytes here — BusyBox is the floor and GNU cut does the same — so cutting at the cap
+# can land inside a multi-byte character and leave a lone continuation byte in the commit message,
+# which git then renders as a stray glyph. A cut is on a character boundary exactly when the byte
+# AFTER it is not a continuation byte (0x80-0xBF), so walk the cut left until that holds. At most
+# three steps: no UTF-8 sequence is longer than four bytes.
+cut_on_a_character_boundary() {
+  value=$1
+  max=$2
+  [ "$(printf '%s' "$value" | wc -c)" -le "$max" ] && { printf '%s' "$value"; return; }
+  while [ "$max" -gt 0 ]; do
+    # -N1 because cut appends a newline: without it od reports TWO bytes and the case below,
+    # which matches exactly two hex digits, never fires -- the bug this line was written to fix.
+    next=$(printf '%s' "$value" | cut -c "$((max + 1))-$((max + 1))" | od -An -tx1 -N1 | tr -d ' \n')
+    case "$next" in
+      [89abAB]?) max=$((max - 1)) ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$value" | cut -c "1-$max"
+}
+
 # The commit subject for the final checkpoint: the harness's own summary when it wrote one.
 #
 # It is MODEL OUTPUT on its way into a commit message that a person and the next review's model both
 # read, so it is bounded rather than trusted: the first line only, carriage returns and other control
-# characters removed, trimmed, and cut to $SUMMARY_MAX_CHARS. An empty result falls back, because git
-# refuses an empty message and a run that ends by failing to commit is the loss this file prevents.
+# characters removed, shortened to $SUMMARY_MAX_BYTES on a character boundary, and trimmed. An empty
+# result falls back, because git refuses an empty message and a run that ends by failing to commit is
+# the loss this file prevents.
 final_message() {
   [ -s "$SUMMARY_FILE" ] || { printf '%s' "$AUTOSAVE_MESSAGE"; return; }
-  line=$(head -n 1 "$SUMMARY_FILE" 2>/dev/null | tr -d '\000-\037' | cut -c "1-$SUMMARY_MAX_CHARS")
+  line=$(head -n 1 "$SUMMARY_FILE" 2>/dev/null | tr -d '\000-\037')
+  line=$(cut_on_a_character_boundary "$line" "$SUMMARY_MAX_BYTES")
   line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   if [ -n "$line" ]; then printf '%s' "$line"; else printf '%s' "$AUTOSAVE_MESSAGE"; fi
 }
@@ -84,6 +111,12 @@ export SPIRE_SUMMARY="$SUMMARY_FILE"
   elapsed=0
   while [ ! -e "$STOP_FILE" ]; do
     sleep 1
+    # Re-checked AFTER the sleep, not only before it. The harness can exit during that second, and
+    # a checkpoint that runs once shutdown has begun commits the final dirty files under the GENERIC
+    # message — leaving the summary checkpoint a clean tree and nothing left to say. Invisible while
+    # both checkpoints wrote the same constant; a defect the moment one of them carries the agent's
+    # own words.
+    [ -e "$STOP_FILE" ] && break
     elapsed=$((elapsed + 1))
     if [ "$elapsed" -ge "$INTERVAL" ]; then
       elapsed=0

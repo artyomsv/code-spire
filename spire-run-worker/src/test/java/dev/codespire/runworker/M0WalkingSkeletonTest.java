@@ -14,7 +14,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -66,12 +68,29 @@ class M0WalkingSkeletonTest {
     }
 
     private RunCommand.ExecuteRun run(String subject, String script, String baseCommit) throws Exception {
+        installHarness(script, Map.of());
+        return command(subject, baseCommit);
+    }
+
+    /**
+     * The autosave interval is an ENTRYPOINT variable, and the worker never sets one — so a test
+     * reaches it the only way anything does, through the harness adapter's environment.
+     */
+    private RunCommand.ExecuteRun runCheckpointingEverySecond(String subject, String script) throws Exception {
+        installHarness(script, Map.of("SPIRE_AUTOSAVE_SECONDS", "1"));
+        return command(subject, origin.baseCommit());
+    }
+
+    private void installHarness(String script, Map<String, String> agentEnvironment) {
         QuarkusMock.installMockForType(new HarnessRegistry() {
             @Override
             public HarnessAdapter forName(String harness) {
-                return new ScriptHarness(script);
+                return new ScriptHarness(script, agentEnvironment);
             }
         }, HarnessRegistry.class);
+    }
+
+    private RunCommand.ExecuteRun command(String subject, String baseCommit) throws Exception {
         String runId = "run::github:" + WORKSPACE + "/app:" + subject + ":1";
         // Packed the way the orchestrator packs it: the machine account's login rides with its
         // token inside the Tink envelope, bound to this run — nothing in the worker names either.
@@ -168,6 +187,67 @@ class M0WalkingSkeletonTest {
                 "including its detail, which is what names the actual problem: " + failed.detail());
         assertFalse(failed.detail().contains(TestOrigin.SECRET),
                 "a failure detail is rendered on a screen; the git credential must never be in it");
+    }
+
+    /**
+     * Shutdown beats a checkpoint that came due while the harness was exiting.
+     *
+     * <p>The autosave loop checked its stop flag only BEFORE sleeping. The harness exits during that
+     * sleep — always, since the loop's first act is to sleep — so a checkpoint falling due at the
+     * next tick committed the final dirty files under the GENERIC message, leaving the summary
+     * checkpoint a clean tree and nothing to say. Invisible while both wrote the same constant.
+     *
+     * <p>Driven at an interval of one second so the tick lands inside shutdown deterministically;
+     * the default 300 has the same race at its own boundary, just rarely.
+     */
+    @Test
+    void aCheckpointFallingDueDuringShutdownDoesNotStealTheSummary() throws Exception {
+        RunCommand.ExecuteRun command = runCheckpointingEverySecond("racing",
+                "echo new > NEW.md && printf 'Return an empty list instead of null' > \"$SPIRE_SUMMARY\"");
+
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
+
+        assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
+        assertEquals("Return an empty list instead of null", origin.messageOf("spire/racing"),
+                "the generic autosave must not win the race against the summary");
+    }
+
+    /**
+     * A non-English summary is shortened without being broken.
+     *
+     * <p>The cap is measured in BYTES — {@code cut -c} counts bytes on BusyBox, which is the floor
+     * this entrypoint targets — so cutting at it can land inside a multi-byte character and leave a
+     * lone continuation byte that git renders as a stray glyph.
+     *
+     * <p>The summary reaches the container as octal escapes rather than as literal characters, so
+     * nothing between this file and the shell can re-encode it and make the test lie about what it
+     * measured — and the escapes are DERIVED from the character rather than written out, because
+     * the first version of this test hand-wrote both and they encoded different characters.
+     */
+    @Test
+    void aMultibyteSummaryIsShortenedOnACharacterBoundary() throws Exception {
+        // 5 ASCII bytes + 30 three-byte characters = 95 bytes. The 72-byte cap falls inside the
+        // 23rd, so the honest answer is 71 bytes: the prefix and 22 whole characters.
+        String character = "\u4FEE";
+        RunCommand.ExecuteRun command = run("multibyte", "echo new > NEW.md && printf 'Fix: "
+                + printfOctal(character.repeat(30)) + "' > \"$SPIRE_SUMMARY\"");
+
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
+
+        assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
+        String subject = origin.messageOf("spire/multibyte");
+        assertEquals("Fix: " + character.repeat(22), subject);
+        assertEquals(71, subject.getBytes(StandardCharsets.UTF_8).length,
+                "shortened to the byte cap without splitting the character it landed in");
+    }
+
+    /** A string's UTF-8 bytes as {@code printf} octal escapes, so only ASCII crosses to the shell. */
+    private static String printfOctal(String text) {
+        StringBuilder escaped = new StringBuilder();
+        for (byte utf8 : text.getBytes(StandardCharsets.UTF_8)) {
+            escaped.append('\\').append(Integer.toOctalString(utf8 & 0xFF));
+        }
+        return escaped.toString();
     }
 
     @Test
